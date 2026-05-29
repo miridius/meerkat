@@ -58,7 +58,7 @@ For each QA run:
    agent file is checked into). If running from another cwd, set it
    first: `MEERKAT_REPO="$(git -C <path-to-meerkat> rev-parse --show-toplevel)"`.
 
-   Wait for `meerkat: review UI at http://127.0.0.1:NNNN/` in the
+   Wait for `human review UI at http://127.0.0.1:NNNN/` in the
    log (poll up to 30s). Extract the URL.
 
 4. **Generate the test plan.** For each affordance from step 1,
@@ -83,11 +83,11 @@ For each QA run:
    - Inline learn-from-this checkbox toggles via push event; state
      reflects in the rendered comment.
    - Multiple comments per file (different anchor ranges) coexist.
-   - Decision buttons: Cancel → exit 1 with empty stderr, Send
-     Feedback → exit 1 with the feedback payload on stderr,
-     Approve (with comments) → exit 0 with feedback, Approve (no
-     comments) → exit 0 with `approved — commit proceeding.`
-     line.
+   - Decision buttons: Cancel → exit 1 with `Review cancelled —
+     commit aborted, no feedback to act on.`, Send Feedback → exit 1
+     with the feedback payload on stderr, Approve (with comments) →
+     exit 0 with feedback, Approve (no comments) → exit 0 with `The
+     user approved your commit. Proceeding.` line.
    - File approval checkbox toggles + persists across BEAM restart.
    - File filter sidebar collapsed by default; toolbar `☰ Files`
      toggles it.

@@ -91,6 +91,26 @@ defmodule Meerkat.CLI do
       )
 
       2
+  after
+    flush_logs()
+  end
+
+  # filesync the log file handler before the launcher calls
+  # `System.halt/1` — halt tears the VM down without running handler
+  # terminate callbacks, so the `:logger_std_h` buffer (which holds the
+  # endpoint banner + request logs) would otherwise be discarded
+  # unwritten. Guarded: a no-op when the handler was never installed
+  # (auto-approve fast path) and swallows any flush error, because this
+  # runs at teardown and must never flip an already-decided exit code.
+  defp flush_logs do
+    case :logger.get_handler_config(:meerkat_file) do
+      {:ok, _} -> :logger_std_h.filesync(:meerkat_file)
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp run_live_review_safe(target, opts) do
@@ -366,20 +386,54 @@ defmodule Meerkat.CLI do
   ## Endpoint startup
 
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
+    # `meerkat_dir` resolution shells out to `git rev-parse`; do it
+    # once here so every save/load through the lifetime of this BEAM
+    # doesn't re-fork-and-exec just to discover the same path.
+    meerkat_dir = Git.meerkat_dir(repo_path)
+
     # Application env carries the derived target + initial state into
     # `ReviewLive.mount/3`. The LiveView then calls
     # `ReviewServer.ensure_started/2` with these, after which the
     # GenServer owns the canonical state and the LV reads from it.
     Application.put_env(:meerkat, :review_id, review_id)
     Application.put_env(:meerkat, :repo_path, repo_path)
-    # `meerkat_dir` resolution shells out to `git rev-parse`; do it
-    # once here so every save/load through the lifetime of this BEAM
-    # doesn't re-fork-and-exec just to discover the same path.
-    Application.put_env(:meerkat, :meerkat_dir, Git.meerkat_dir(repo_path))
+    Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
     Application.put_env(:meerkat, :review_state, state)
     Application.put_env(:meerkat, :start_endpoint, true)
     Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(requested_port))
+
+    # Redirect Phoenix/Bandit/LiveView Logger output to a file BEFORE the
+    # endpoint boots — the "Running MeerkatWeb.Endpoint" banner fires
+    # inside `ensure_all_started` — so the agent-facing stream carries
+    # only the URL + verdict, not 40+ lines of server log.
+    Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
     {:ok, _} = Application.ensure_all_started(:meerkat)
+  end
+
+  # Route Logger output to `<meerkat_dir>/meerkat.log` and return the
+  # path. Reuses the default handler's formatter so the configured log
+  # format carries over, then swaps the destination to a file. Adds the
+  # file handler BEFORE removing `:default` so an add failure leaves
+  # console logging intact for the crash output.
+  #
+  # Deliberately NOT defensive: a failure here (can't make the dir,
+  # can't open the file, handler already installed) is genuine breakage,
+  # so it raises and meerkat's top-level default-deny handler turns it
+  # into a loud exit-2 commit abort + stack trace — surfaced and fixed,
+  # not silently degraded into "logs went nowhere".
+  defp redirect_logs_to_file(meerkat_dir) do
+    log_path = Path.join(meerkat_dir, "meerkat.log")
+    File.mkdir_p!(meerkat_dir)
+    {:ok, %{formatter: formatter}} = :logger.get_handler_config(:default)
+
+    :ok =
+      :logger.add_handler(:meerkat_file, :logger_std_h, %{
+        config: %{type: {:file, String.to_charlist(log_path)}},
+        formatter: formatter
+      })
+
+    :ok = :logger.remove_handler(:default)
+    log_path
   end
 
   defp endpoint_config(requested_port) do
@@ -418,7 +472,8 @@ defmodule Meerkat.CLI do
   end
 
   defp announce_url do
-    IO.puts(:stderr, "meerkat: review UI at #{review_url()}")
+    IO.puts(:stderr, "human review UI at #{review_url()}")
+    IO.puts(:stderr, "debug logs at: #{Application.get_env(:meerkat, :log_path)}")
   end
 
   defp open_browser_unless_disabled(true), do: :ok
@@ -521,15 +576,16 @@ defmodule Meerkat.CLI do
 
   ## Exit code mapping
   #
-  # Approve with no comments: print "approved — commit proceeding."
-  # so the commit-msg hook has a consistent stderr breadcrumb.
-  # Approve-with-feedback / Reject: surface the payload
-  # (Feedback.format/1's output) as first-class feedback for the
-  # calling agent. Cancel: silently exits 1 — comments were wiped
-  # before submit, so the payload is the empty string.
+  # Every terminal decision prints a plain, user-attributed sentence to
+  # stderr — no path is silent, because a silent exit reads as a crash
+  # to the calling agent. Approve-with-feedback / Reject surface the
+  # payload (Feedback.format/3's output), which already opens with its
+  # own user-attributed framing, so they add no extra line here. Cancel
+  # wiped its comments before submit (payload is ""), so its sentence is
+  # all the agent gets — and now it gets one.
 
   defp exit_code({:approve, _payload}) do
-    IO.puts(:stderr, "meerkat: approved — commit proceeding.")
+    IO.puts(:stderr, "The user approved your commit. Proceeding.")
     0
   end
 
@@ -543,7 +599,10 @@ defmodule Meerkat.CLI do
     1
   end
 
-  defp exit_code({:cancel, _payload}), do: 1
+  defp exit_code({:cancel, _payload}) do
+    IO.puts(:stderr, "Review cancelled — commit aborted, no feedback to act on.")
+    1
+  end
 
   defp decision_atom(:approve_with_feedback), do: :approve
   defp decision_atom(tag), do: tag

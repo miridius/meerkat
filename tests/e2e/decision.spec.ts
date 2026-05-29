@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
@@ -14,8 +16,8 @@ test.describe("decision flow", () => {
 
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(0);
-			// Approval without comments prints the bare success message.
-			expect(stderr).toContain("approved — commit proceeding");
+			// Approval without comments prints a plain user-attributed sentence.
+			expect(stderr).toContain("The user approved your commit");
 		} finally {
 			await meerkat.kill();
 		}
@@ -112,6 +114,35 @@ test.describe("decision flow", () => {
 		}
 	});
 
+	test("Approve with a global comment → exits 0, stderr contains the comment body", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			const form = page.locator(".comment-form");
+			await expect(form).toBeVisible();
+			await form.locator("textarea").fill("consider extracting this into a helper");
+			await form.getByRole("button", { name: /^Issue$/ }).click();
+			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
+			await expect(form).toBeHidden();
+
+			// With a comment present, Approve becomes "Approve with feedback":
+			// the commit still proceeds (exit 0) AND the feedback reaches the
+			// calling agent — the fourth terminal decision the exit-code
+			// mapping covers.
+			await page.getByRole("button", { name: /^Approve with feedback$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr).toContain("consider extracting this into a helper");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("staged-diff with only linguist-generated files auto-approves", async () => {
 		// `*.lock linguist-generated=true` in a committed `.gitattributes`
 		// marks the staged lockfile as generated. The fast path treats
@@ -163,7 +194,7 @@ test.describe("decision flow", () => {
 		}
 	});
 
-	test("Cancel wipes comments and exits 1 silently", async ({ page }) => {
+	test("Cancel wipes comments, prints a cancelled sentence, exits 1", async ({ page }) => {
 		const meerkat = await startMeerkat();
 		try {
 			await page.goto(meerkat.url);
@@ -183,10 +214,39 @@ test.describe("decision flow", () => {
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(1);
 			// The comment was wiped before submission, so stderr does not
-			// echo it.
+			// echo it — but cancel is no longer silent: it prints a plain
+			// sentence so the agent can tell a deliberate cancel from a crash.
 			expect(stderr).not.toContain("this should be wiped on cancel");
+			expect(stderr).toContain("Review cancelled");
 		} finally {
 			await meerkat.kill();
+		}
+	});
+
+	test("server logs are redirected to meerkat.log, not the agent-facing stream", async ({
+		page,
+	}) => {
+		// keepFixture so the logfile survives meerkat's exit for
+		// inspection; we tear the fixture down by hand in the finally.
+		const meerkat = await startMeerkat({ keepFixture: true });
+		const logPath = join(meerkat.fixture.dir, ".git", "meerkat-precommit", "meerkat.log");
+		try {
+			await page.goto(meerkat.url);
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(0);
+
+			// The Phoenix/Bandit endpoint banner is the canonical noise
+			// line. It must NOT reach the agent-facing stream...
+			expect(stderr).not.toContain("MeerkatWeb.Endpoint");
+			expect(stderr).not.toContain("[info]");
+			// ...it was redirected to the logfile instead.
+			expect(existsSync(logPath)).toBe(true);
+			expect(readFileSync(logPath, "utf8")).toContain("MeerkatWeb.Endpoint");
+		} finally {
+			await meerkat.kill();
+			meerkat.fixture.cleanup?.();
 		}
 	});
 });
