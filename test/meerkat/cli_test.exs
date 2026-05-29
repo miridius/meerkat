@@ -1,7 +1,7 @@
 defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
-  alias Meerkat.CLI
+  alias Meerkat.{ApprovalCache, CLI}
 
   describe "parse_args/1" do
     test "defaults: no commit-msg / pr / positional, browser opens, port 0" do
@@ -44,6 +44,120 @@ defmodule Meerkat.CLITest do
                no_open: true,
                port: 0
              }
+    end
+  end
+
+  describe "classify_for_auto_approve/5" do
+    test "deleted + linguist-generated → :generated" do
+      gen = %{"x.lock" => {:generated, true}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "x.lock", status: :deleted},
+               %{},
+               "main",
+               gen,
+               %{}
+             ) == :generated
+    end
+
+    test "deleted + not generated → :neither (a deleted source file still gets reviewed)" do
+      gen = %{"x.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "x.rs", status: :deleted},
+               %{},
+               "main",
+               gen,
+               %{}
+             ) == :neither
+    end
+
+    test "linguist-generated → :generated" do
+      gen = %{"x.lock" => {:generated, true}}
+
+      assert CLI.classify_for_auto_approve_for_test(%{file_name: "x.lock"}, %{}, "main", gen, %{}) ==
+               :generated
+    end
+
+    test "approved at the current staged OID → :approved" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+      gen = %{"a.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "a.rs"},
+               cache,
+               "main",
+               gen,
+               %{"a.rs" => "oid1"}
+             ) == :approved
+    end
+
+    test "approved at a different OID than the staged one → :neither" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+      gen = %{"a.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "a.rs"},
+               cache,
+               "main",
+               gen,
+               %{"a.rs" => "oid2"}
+             ) == :neither
+    end
+
+    test "detached HEAD (nil branch) never matches an approval → :neither" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+      gen = %{"a.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "a.rs"},
+               cache,
+               nil,
+               gen,
+               %{"a.rs" => "oid1"}
+             ) == :neither
+    end
+  end
+
+  describe "decide_from_verdicts/2" do
+    test "all linguist-generated → auto-approve (generated message)" do
+      assert {:auto, msg} = CLI.decide_from_verdicts_for_test([:generated, :generated], 2)
+      assert msg =~ "linguist-generated"
+    end
+
+    test "all already-approved → auto-approve (approved message, no generated mention)" do
+      assert {:auto, msg} = CLI.decide_from_verdicts_for_test([:approved, :approved], 2)
+      assert msg =~ "already approved"
+      refute msg =~ "linguist-generated"
+    end
+
+    test "mix of approved + generated → auto-approve (combined message)" do
+      assert {:auto, msg} = CLI.decide_from_verdicts_for_test([:approved, :generated], 2)
+      assert msg =~ "already approved (1)"
+      assert msg =~ "linguist-generated (1)"
+    end
+
+    test "any file still :neither → live review, never auto-approve" do
+      # The safety guard: a commit carrying an unreviewed file must reach
+      # the UI, even alongside approved/generated files.
+      assert CLI.decide_from_verdicts_for_test([:approved, :neither], 2) == :live
+      assert CLI.decide_from_verdicts_for_test([:generated, :neither], 2) == :live
+      assert CLI.decide_from_verdicts_for_test([:neither], 1) == :live
+    end
+  end
+
+  describe "args_error/2" do
+    test "unrecognised options → rejection message" do
+      assert CLI.args_error([], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
+    end
+
+    test "more than one positional → rejection message" do
+      assert CLI.args_error(["a", "b"], []) =~ "at most one positional"
+    end
+
+    test "well-formed argv → nil" do
+      assert CLI.args_error([], []) == nil
+      assert CLI.args_error(["HEAD"], []) == nil
     end
   end
 end

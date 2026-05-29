@@ -36,5 +36,15 @@ defmodule Meerkat.ReviewIdTest do
       assert String.length(id) == 16
       assert id =~ ~r/^[0-9a-f]+$/
     end
+
+    test "staged with nil and empty msg-path produce the same id" do
+      assert ReviewId.derive("/repo", {:staged, nil}) == ReviewId.derive("/repo", {:staged, ""})
+    end
+
+    test "range ids distinguish base and head, not just the mode" do
+      base = ReviewId.derive("/repo", {:range, "main", "feat", :two_dot})
+      refute base == ReviewId.derive("/repo", {:range, "develop", "feat", :two_dot})
+      refute base == ReviewId.derive("/repo", {:range, "main", "develop", :two_dot})
+    end
   end
 end

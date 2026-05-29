@@ -26,6 +26,16 @@ defmodule Meerkat.ApprovalCacheTest do
       assert get_in(cache, ["main", "a.rs"]) |> length() == 2
     end
 
+    test "approve prepends OIDs newest-first" do
+      cache =
+        %{}
+        |> ApprovalCache.approve("main", "a.rs", "v1")
+        |> ApprovalCache.approve("main", "a.rs", "v2")
+        |> ApprovalCache.approve("main", "a.rs", "v3")
+
+      assert get_in(cache, ["main", "a.rs"]) == ["v3", "v2", "v1"]
+    end
+
     test "unapprove drops the file entry; empty branches are dropped too" do
       cache =
         %{}
@@ -57,6 +67,15 @@ defmodule Meerkat.ApprovalCacheTest do
       assert Map.has_key?(pruned, "main")
       assert Map.has_key?(pruned, "feature")
       refute Map.has_key?(pruned, "stale")
+    end
+
+    test "pruning against an empty known-branch set drops everything" do
+      cache =
+        %{}
+        |> ApprovalCache.approve("main", "a.rs", "1")
+        |> ApprovalCache.approve("feature", "b.rs", "2")
+
+      assert ApprovalCache.prune(cache, MapSet.new()) == %{}
     end
   end
 
