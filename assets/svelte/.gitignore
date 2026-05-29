@@ -1,0 +1,4 @@
+# live_svelte's `~V` sigil (LiveView-inline Svelte) compiles into
+# `_build/` here. Everything except hand-written .svelte files in
+# this dir is generated.
+_build/

@@ -1,0 +1,559 @@
+defmodule Meerkat.CLI do
+  @moduledoc """
+  Command-line entry point.
+
+  Usage:
+
+      meerkat                              # review staged diff
+      meerkat --commit-msg <PATH>          # staged diff + commit-msg gutter
+      meerkat HEAD                         # single ref → REF~1...REF
+      meerkat A..B                         # two-dot range
+      meerkat A...B                        # three-dot range (merge-base)
+      meerkat --pr <N>                     # GitHub PR via `gh`
+
+  Flags: `--no-open`, `--port <N>`.
+
+  Behaviour is locked in by the Playwright spec suite in `tests/e2e/`.
+  Empty-staged-diff auto-approve (the binary exits 0 before binding
+  the server) only fires for `--commit-msg`-and-no-positional
+  invocations — the commit-msg hook path.
+  """
+
+  alias Meerkat.{
+    ApprovalCache,
+    Decision,
+    Git,
+    PendingAnswers,
+    Persistence,
+    ReviewId,
+    ReviewLog,
+    ReviewState,
+    ReviewTarget
+  }
+
+  # Compile-time env so release builds don't need `Mix` at runtime.
+  @env Mix.env()
+
+  @type opts :: %{
+          commit_msg_path: String.t() | nil,
+          positional: String.t() | nil,
+          pr: String.t() | nil,
+          no_open: boolean(),
+          port: non_neg_integer()
+        }
+
+  @doc """
+  Entry point invoked by `bin/meerkat-beam` and the installed prod
+  release. Returns the exit code; the caller is responsible for
+  `System.halt/1`.
+
+  ## Safety invariant: default-deny on crash
+
+  The only path to exit-0 is an explicit `{:approve, _}` /
+  `{:approve_with_feedback, _}` from a button click — or the
+  auto-approve fast path with its visible "auto-approving" stderr
+  breadcrumb. Anything else (Decision GenServer crash, ReviewServer
+  crash, unhandled exception, endpoint failure, supervisor restart)
+  must bubble out as a non-zero exit so the git hook ABORTS the
+  commit. Two layers of `try / rescue / catch` enforce that: any
+  error / throw / exit anywhere downstream of `main/1` lands as
+  exit code 2.
+  """
+  @spec main([String.t()]) :: non_neg_integer()
+  def main(argv) do
+    opts = parse_args(argv)
+    target = ReviewTarget.from_opts(opts)
+
+    case auto_approve_decision(target, repo_path()) do
+      {:auto, message} ->
+        IO.write(:stderr, message)
+        finalise_auto_approve(repo_path())
+        0
+
+      :live ->
+        run_live_review_safe(target, opts)
+    end
+  rescue
+    e ->
+      IO.puts(
+        :stderr,
+        "meerkat: unhandled exception in CLI main — defaulting to REJECT (commit aborted).\n" <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
+
+      2
+  catch
+    kind, reason ->
+      IO.puts(
+        :stderr,
+        "meerkat: caught #{inspect(kind)} #{inspect(reason)} in CLI main — " <>
+          "defaulting to REJECT (commit aborted)."
+      )
+
+      2
+  end
+
+  defp run_live_review_safe(target, opts) do
+    try do
+      run_live_review(target, opts)
+    rescue
+      e ->
+        IO.puts(
+          :stderr,
+          "meerkat: live-review crashed — defaulting to REJECT (commit aborted).\n" <>
+            Exception.format(:error, e, __STACKTRACE__)
+        )
+
+        2
+    catch
+      kind, reason ->
+        IO.puts(
+          :stderr,
+          "meerkat: live-review caught #{inspect(kind)} #{inspect(reason)} — " <>
+            "defaulting to REJECT (commit aborted)."
+        )
+
+        2
+    end
+  end
+
+  defp run_live_review(target, opts) do
+    case ReviewState.from_target(target, repo_path()) do
+      {:ok, state} ->
+        prune_approval_cache(repo_path())
+        review_id = ReviewId.derive(repo_path(), target)
+        log = ReviewLog.start(repo_path(), state)
+        start_endpoint!(opts.port, state, review_id, repo_path())
+        announce_url()
+        open_browser_unless_disabled(opts.no_open)
+        decision = await_decision_or_reject()
+        # Give the LiveView a moment to flush the done-view
+        # assigns update to the browser before the BEAM dies.
+        Process.sleep(750)
+        {tag, payload} = decision
+        _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
+        # Clear the in-progress snapshot — the next invocation must
+        # start with an empty review, not replay stale comments from
+        # a closed cycle.
+        _ = Persistence.delete(repo_path(), review_id)
+        exit_code(decision)
+
+      {:error, reason} ->
+        IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
+        2
+    end
+  end
+
+  # `Decision.await/0` raises an exit if the Decision GenServer
+  # dies mid-call; that propagates out and the surrounding
+  # try/catch in `run_live_review_safe` converts it to exit 2.
+  # The up-front `Process.whereis/1` check turns the "Decision was
+  # never started" failure mode into a clear REJECT instead of a
+  # cryptic stack trace.
+  defp await_decision_or_reject do
+    case Process.whereis(Decision) do
+      nil ->
+        IO.puts(
+          :stderr,
+          "meerkat: Decision GenServer not running — defaulting to REJECT (commit aborted)."
+        )
+
+        {:cancel, ""}
+
+      _pid ->
+        Decision.await()
+    end
+  end
+
+  # Drop approval-cache entries for branches that no longer exist
+  # locally. Runs once per hook invocation. On git failure (e.g.
+  # corrupt repo) skip — never wipe the cache treating "no branches"
+  # as truth.
+  defp prune_approval_cache(repo_path) do
+    with path when is_binary(path) <- ApprovalCache.path_for(repo_path),
+         {:ok, branches} <- Git.local_branches(repo_path) do
+      _ = ApprovalCache.modify(path, &ApprovalCache.prune(&1, branches))
+      :ok
+    else
+      _ -> :ok
+    end
+  end
+
+  ## Argument parsing
+
+  @switches [
+    commit_msg: :string,
+    pr: :string,
+    no_open: :boolean,
+    port: :integer
+  ]
+
+  @spec parse_args([String.t()]) :: opts
+  def parse_args(argv) do
+    {parsed, positional, invalid} =
+      OptionParser.parse(argv, strict: @switches, aliases: [])
+
+    if invalid != [] do
+      IO.puts(
+        :stderr,
+        "meerkat: unrecognised options: " <>
+          Enum.map_join(invalid, ", ", fn {flag, _} -> flag end)
+      )
+
+      System.halt(2)
+    end
+
+    if length(positional) > 1 do
+      IO.puts(
+        :stderr,
+        "meerkat: at most one positional ref-or-range argument; got: #{Enum.join(positional, " ")}"
+      )
+
+      System.halt(2)
+    end
+
+    %{
+      commit_msg_path: Keyword.get(parsed, :commit_msg),
+      positional: List.first(positional),
+      pr: Keyword.get(parsed, :pr),
+      no_open: Keyword.get(parsed, :no_open, false),
+      port: Keyword.get(parsed, :port, 0)
+    }
+  end
+
+  ## Staged-diff auto-approve fast path
+  #
+  # Skip the UI when every staged file is either linguist-generated
+  # (lockfiles, vendored bundles — the UI hides them by default and the
+  # reviewer has nothing meaningful to look at) or content-addressed
+  # already-approved by this branch's reviewer in a previous round. The
+  # empty staged set qualifies vacuously (e.g. `git commit --amend`
+  # editing only the message). For range / single-ref / PR targets the
+  # user asked for a *specific* diff — even if empty they get the UI.
+
+  @spec auto_approve_decision(ReviewTarget.t(), String.t()) :: :live | {:auto, String.t()}
+  defp auto_approve_decision({:staged, _}, repo_path) do
+    case Git.staged_files(repo_path) do
+      {:ok, []} ->
+        {:auto, "meerkat: no staged file changes — auto-approving.\n"}
+
+      {:ok, files} ->
+        cache = ApprovalCache.load_for(repo_path)
+        branch = Git.current_branch(repo_path)
+        names = Enum.map(files, & &1.file_name)
+
+        generated_map = Git.linguist_generated_many(repo_path, names)
+        # One batched `git ls-files -s` for all paths instead of N+1.
+        # On batched failure we fall through to `:live` (rather than
+        # silently auto-approving with stale-OID data) — the warning
+        # is already logged by `staged_blob_oids_many`.
+        oid_map =
+          case Git.staged_blob_oids_many(repo_path, names) do
+            {:ok, map} -> map
+            {:error, _} -> %{}
+          end
+
+        verdicts =
+          Enum.map(files, fn entry ->
+            classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
+          end)
+
+        cond do
+          Enum.all?(verdicts, &(&1 == :generated)) ->
+            {:auto,
+             "meerkat: all #{length(files)} staged file(s) are linguist-generated — auto-approving.\n"}
+
+          Enum.all?(verdicts, &(&1 in [:approved, :generated])) and
+              Enum.any?(verdicts, &(&1 == :approved)) ->
+            approved = Enum.count(verdicts, &(&1 == :approved))
+            generated = Enum.count(verdicts, &(&1 == :generated))
+            total = length(files)
+
+            msg =
+              if generated == 0 do
+                "meerkat: all #{total} staged file(s) already approved — auto-approving.\n"
+              else
+                "meerkat: all #{total} staged file(s) already approved (#{approved}) or linguist-generated (#{generated}) — auto-approving.\n"
+              end
+
+            {:auto, msg}
+
+          true ->
+            :live
+        end
+
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "meerkat: warning — couldn't list staged files for auto-approve check (#{reason}); " <>
+            "falling through to live review."
+        )
+
+        :live
+    end
+  end
+
+  defp auto_approve_decision(_target, _repo_path), do: :live
+
+  # `:approved` | `:generated` | `:neither`. `generated_map` is the
+  # batched output of `Git.linguist_generated_many/2` — one git
+  # check-attr call for the whole staged set, error info preserved
+  # per file so a transient git failure can't fake `:generated`.
+  #
+  # `:approved` checks the current staged blob OID against the
+  # per-branch cache so a flip-flopping file keeps its tick. `nil`
+  # branch (detached HEAD) -> can't match an approval, but
+  # `:generated` is branch-independent and still fires.
+  defp classify_for_auto_approve(
+         %{file_name: name, status: :deleted},
+         _cache,
+         _branch,
+         generated_map,
+         _oid_map
+       ) do
+    # Deletion has no new blob to content-address against, so only
+    # the generated half applies — and you only care about
+    # generated-file deletions (regenerated lockfile removed from
+    # the tree).
+    if generated?(generated_map, name), do: :generated, else: :neither
+  end
+
+  defp classify_for_auto_approve(
+         %{file_name: name},
+         cache,
+         branch,
+         generated_map,
+         oid_map
+       ) do
+    cond do
+      generated?(generated_map, name) ->
+        :generated
+
+      not is_nil(branch) and
+          ApprovalCache.approved?(cache, branch, name, Map.get(oid_map, name, "")) ->
+        :approved
+
+      true ->
+        :neither
+    end
+  end
+
+  # Treat `{:error, _}` and missing entries as "not generated" — a
+  # transient git failure must never short-circuit the UI as
+  # auto-approve. The batched lookup itself logs the error.
+  defp generated?(generated_map, name) do
+    case Map.get(generated_map, name) do
+      {:generated, bool} -> bool
+      _ -> false
+    end
+  end
+
+  # On a successful auto-approve, clear the pending-answers banner the
+  # next live review would otherwise pin from a stale prior round.
+  defp finalise_auto_approve(repo_path) do
+    PendingAnswers.clear(repo_path)
+    :ok
+  end
+
+  defp repo_path do
+    # `bin/meerkat-beam` cd's into the Mix root before invoking the
+    # CLI; the launcher re-cd's via $MEERKAT_PWD. Use that env var
+    # if present so git operations target the user's cwd, not the
+    # Mix project.
+    System.get_env("MEERKAT_PWD") || File.cwd!()
+  end
+
+  ## Endpoint startup
+
+  defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
+    # Application env carries the derived target + initial state into
+    # `ReviewLive.mount/3`. The LiveView then calls
+    # `ReviewServer.ensure_started/2` with these, after which the
+    # GenServer owns the canonical state and the LV reads from it.
+    Application.put_env(:meerkat, :review_id, review_id)
+    Application.put_env(:meerkat, :repo_path, repo_path)
+    # `meerkat_dir` resolution shells out to `git rev-parse`; do it
+    # once here so every save/load through the lifetime of this BEAM
+    # doesn't re-fork-and-exec just to discover the same path.
+    Application.put_env(:meerkat, :meerkat_dir, Git.meerkat_dir(repo_path))
+    Application.put_env(:meerkat, :review_state, state)
+    Application.put_env(:meerkat, :start_endpoint, true)
+    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(requested_port))
+    {:ok, _} = Application.ensure_all_started(:meerkat)
+  end
+
+  defp endpoint_config(requested_port) do
+    base = Application.get_env(:meerkat, MeerkatWeb.Endpoint, [])
+
+    # Prod (mix release): override dev.exs's runtime checks with
+    # one-shot CLI flags.
+    # Dev (`bin/meerkat-beam` + MIX_ENV=dev): keep dev.exs intact.
+    # Source-change reloads come from `Meerkat.DevWatcher` halting
+    # the BEAM and the shepherd respawning it, not from Phoenix's
+    # request-time code reloader (which is off in dev too).
+    prod_overrides = [
+      code_reloader: false,
+      debug_errors: false,
+      live_reload: nil,
+      watchers: [],
+      static_url: nil
+    ]
+
+    always = [
+      http: [ip: {127, 0, 0, 1}, port: requested_port],
+      server: true,
+      secret_key_base: secret_key_base(),
+      check_origin: {MeerkatWeb.Loopback, :origin?, []}
+    ]
+
+    if @env == :dev do
+      Keyword.merge(base, always)
+    else
+      Keyword.merge(base, always ++ prod_overrides)
+    end
+  end
+
+  defp secret_key_base do
+    System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
+  end
+
+  defp announce_url do
+    IO.puts(:stderr, "meerkat: review UI at #{review_url()}")
+  end
+
+  defp open_browser_unless_disabled(true), do: :ok
+
+  defp open_browser_unless_disabled(false) do
+    # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
+    # duplicate tab. The shepherd creates the file empty; we check
+    # for non-empty contents on every call and only open + stamp it
+    # on the very first invocation. Absent env var = no shepherd, so
+    # we just open (the prod release path).
+    case marker_state() do
+      :already_opened ->
+        :ok
+
+      :first_open ->
+        do_open_browser()
+    end
+  end
+
+  defp marker_state do
+    case System.get_env("MEERKAT_OPEN_MARKER") do
+      nil ->
+        :first_open
+
+      path ->
+        case File.read(path) do
+          {:ok, "1" <> _} -> :already_opened
+          _ -> :first_open
+        end
+    end
+  end
+
+  defp stamp_marker do
+    case System.get_env("MEERKAT_OPEN_MARKER") do
+      nil ->
+        :ok
+
+      path ->
+        case File.write(path, "1\n") do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            # Best-effort: if the marker write fails the next shepherd
+            # iteration sees an empty marker and re-opens the browser,
+            # producing a duplicate tab. We log so the operator can
+            # see the race, but the duplicate tab is the known-degraded
+            # outcome — better than crashing the LV.
+            IO.puts(
+              :stderr,
+              "meerkat: warning — couldn't stamp browser-open marker at #{path}: " <>
+                "#{inspect(reason)} (may re-open browser on next restart)"
+            )
+
+            :ok
+        end
+    end
+  end
+
+  defp do_open_browser do
+    url = review_url()
+
+    case Meerkat.Browser.open(url) do
+      :ok ->
+        stamp_marker()
+        :ok
+
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "meerkat: couldn't auto-open browser (#{reason}). Open #{url} manually."
+        )
+
+        :ok
+    end
+  end
+
+  # Pull the actually-bound port from the running endpoint. Bandit
+  # exposes it via Phoenix.Endpoint.server_info/1, which the
+  # documented spec returns `{:ok, {ip, port}}` on. This is the only
+  # way to honour `--port 0` (OS-assigned).
+  defp review_url do
+    case MeerkatWeb.Endpoint.server_info(:http) do
+      {:ok, {_ip, port}} ->
+        "http://127.0.0.1:#{port}/"
+
+      # Older Phoenix shapes / unexpected returns: fall back to the
+      # configured value rather than crash. Logged so a regression
+      # surfaces.
+      other ->
+        IO.puts(
+          :stderr,
+          "meerkat: warning — unable to read bound port from endpoint (#{inspect(other)})"
+        )
+
+        port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port] || 0
+        "http://127.0.0.1:#{port}/"
+    end
+  end
+
+  ## Exit code mapping
+  #
+  # Approve with no comments: print "approved — commit proceeding."
+  # so the commit-msg hook has a consistent stderr breadcrumb.
+  # Approve-with-feedback / Reject: surface the payload
+  # (Feedback.format/1's output) as first-class feedback for the
+  # calling agent. Cancel: silently exits 1 — comments were wiped
+  # before submit, so the payload is the empty string.
+
+  defp exit_code({:approve, _payload}) do
+    IO.puts(:stderr, "meerkat: approved — commit proceeding.")
+    0
+  end
+
+  defp exit_code({:approve_with_feedback, payload}) do
+    write_feedback(payload)
+    0
+  end
+
+  defp exit_code({:reject, payload}) do
+    write_feedback(payload)
+    1
+  end
+
+  defp exit_code({:cancel, _payload}), do: 1
+
+  defp decision_atom(:approve_with_feedback), do: :approve
+  defp decision_atom(tag), do: tag
+
+  defp write_feedback(""), do: :ok
+
+  # Forward review feedback to stderr unchanged; git's pre-commit
+  # context captures stderr and surfaces it to the calling agent.
+  defp write_feedback(payload) when is_binary(payload) do
+    IO.write(:stderr, payload)
+    :ok
+  end
+end

@@ -1,0 +1,1103 @@
+/* Meerkat — dark theme. Palette: GitHub-dark family. */
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #1c222b;
+  --border: #30363d;
+  --border-strong: #444c56;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-strong: #1f6feb;
+  --success: #2ea043;
+  --success-strong: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+  --chip-bg: #21262d;
+  --chip-border: #30363d;
+  --finding-issue: #f0883e;
+  --finding-suggestion: #d4a72c;
+  --finding-question: #3fb950;
+  --finding-follow-up: #8b949e;
+  --finding-thought: var(--finding-follow-up);
+  --finding-revert: #f85149;
+  --focus-ring: 0 0 0 2px rgba(88, 166, 255, 0.5);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 0 0 1px rgba(0, 0, 0, 0.25);
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+code, pre, kbd, samp {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* --- Layout --- */
+
+main.review {
+  /* Use full viewport — wide diffs need horizontal real estate.
+     The old SvelteKit UI dropped the framework's default max-width
+     for the same reason; capping at 1400px wastes ~half the screen
+     on modern monitors. */
+  max-width: none;
+  margin: 0;
+  padding: 12px 16px 80px;  /* bottom space for sticky footer */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+main.review.done {
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  text-align: center;
+}
+
+main.review.done h1 {
+  font-size: 2rem;
+}
+
+/* --- Buttons --- */
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+button:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--border-strong);
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button.active {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #ffffff;
+}
+
+.ghost-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.ghost-btn.small {
+  padding: 2px 8px;
+  font-size: 0.8rem;
+}
+
+.primary-btn {
+  background: var(--success);
+  border-color: var(--success-strong);
+  color: #ffffff;
+}
+.primary-btn:hover:not(:disabled) {
+  background: var(--success-strong);
+  border-color: var(--success-strong);
+}
+
+.warn-btn {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #0d1117;
+  font-weight: 600;
+}
+.warn-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.cancel-btn {
+  border-color: var(--border);
+}
+
+/* --- Header --- */
+
+.review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+  /* No background / border — chips are the visual element, the
+     outer band was wasted space. */
+}
+
+.review-header-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Connection status pill. Phoenix's LiveSocket client adds
+   `.phx-loading`, `.phx-error`, `.phx-server-error`,
+   `.phx-client-error`, `.phx-disconnected` to an ancestor wrapper.
+   Default state (none of those) → connected → green. */
+.conn-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  /* Conn pill follows the branch chip in DOM order but anchors
+     to the right side of the toolbar — `margin-left: auto`
+     claims all leftover space so everything after it (Post to
+     GitHub / Split / Wrap / settings) sits to its right. */
+  margin-left: auto;
+}
+.conn-indicator .conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--success-strong);
+  box-shadow: 0 0 4px var(--success-strong);
+}
+.conn-indicator .conn-label-loading,
+.conn-indicator .conn-label-error { display: none; }
+.conn-indicator .conn-label-connected { display: inline; }
+
+.phx-loading .conn-indicator .conn-dot,
+.phx-client-error .conn-indicator .conn-dot,
+.phx-server-error .conn-indicator .conn-dot,
+.phx-disconnected .conn-indicator .conn-dot {
+  background: var(--warn);
+  box-shadow: 0 0 4px var(--warn);
+  animation: conn-pulse 1.2s ease-in-out infinite;
+}
+.phx-error .conn-indicator .conn-dot,
+.phx-server-error .conn-indicator .conn-dot,
+.phx-client-error .conn-indicator .conn-dot,
+.phx-disconnected .conn-indicator .conn-dot {
+  background: var(--danger);
+  box-shadow: 0 0 4px var(--danger);
+}
+
+.phx-loading .conn-indicator .conn-label-connected { display: none; }
+.phx-loading .conn-indicator .conn-label-loading { display: inline; }
+
+.phx-error .conn-indicator .conn-label-connected,
+.phx-error .conn-indicator .conn-label-loading,
+.phx-server-error .conn-indicator .conn-label-connected,
+.phx-server-error .conn-indicator .conn-label-loading,
+.phx-client-error .conn-indicator .conn-label-connected,
+.phx-client-error .conn-indicator .conn-label-loading,
+.phx-disconnected .conn-indicator .conn-label-connected,
+.phx-disconnected .conn-indicator .conn-label-loading { display: none; }
+.phx-error .conn-indicator .conn-label-error,
+.phx-server-error .conn-indicator .conn-label-error,
+.phx-client-error .conn-indicator .conn-label-error,
+.phx-disconnected .conn-indicator .conn-label-error { display: inline; }
+
+@keyframes conn-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.85rem;
+}
+
+a.chip-link {
+  text-decoration: none;
+  color: inherit;
+}
+a.chip-link:hover {
+  background: var(--panel);
+  border-color: var(--accent);
+}
+a.chip-link:hover .chip-value {
+  color: var(--accent);
+}
+
+.chip-label {
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.chip-value {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: var(--text);
+}
+
+.chip-title {
+  font-weight: 600;
+}
+
+.chip-arrow {
+  color: var(--muted);
+}
+
+/* --- Markdown parse warning (inline, rendered by Meerkat.Markdown
+       when earmark returns a recoverable parse error) --- */
+
+.md-warn {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid rgba(210, 153, 34, 0.6);
+  border-radius: var(--radius-sm);
+  color: #ffd28a;
+  padding: 6px 10px;
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+}
+
+.md-warn ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+/* --- Flash error banner --- */
+
+.flash-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  color: #ffa198;
+}
+
+.flash-error p {
+  margin: 0;
+  flex: 1;
+}
+
+.flash-error button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+/* --- Pending answers banner --- */
+
+.pending-answers {
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.pending-answers h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.pending-answer {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.pending-answer:first-child {
+  border-top: none;
+}
+
+.pending-answer .location {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+
+.pending-answer .question {
+  margin-bottom: 4px;
+}
+
+/* --- Commit message --- */
+
+.commit-message-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.commit-msg-gutter {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Direct child only — the markdown-rendered body inside .gutter-text
+   can contain its own <ul><li>, and we must NOT inherit flex onto
+   those nested list items (would justify their content across the
+   viewport). */
+.commit-msg-gutter > li {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.file-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+}
+.file-action:hover {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.file-action.copied {
+  background: var(--success-strong);
+  color: #ffffff;
+  border-color: var(--success-strong);
+}
+
+.toolbar-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar-settings {
+  position: relative;
+}
+.toolbar-settings > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  user-select: none;
+}
+.toolbar-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.toolbar-settings > summary:hover {
+  background: var(--panel);
+}
+.toolbar-settings[open] > summary {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border-color: var(--accent-strong);
+}
+.toolbar-settings-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  white-space: nowrap;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.commit-msg-gutter > li.dragging {
+  background: var(--accent-soft);
+}
+.commit-msg-gutter > li.dragging .gutter-line-num {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border-color: var(--accent-strong);
+}
+.commit-msg-gutter,
+.commit-msg-gutter > li,
+.commit-msg-gutter > li .gutter-line-num {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gutter-line-num {
+  flex: 0 0 auto;
+  width: 28px;
+  text-align: right;
+  background: transparent;
+  border: none;
+  border-right: 1px solid transparent;
+  padding: 2px 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.gutter-line-num:hover {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border-color: var(--accent-strong);
+}
+
+.gutter-text {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 2px 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: transparent;
+  border-left: 1px solid var(--border);
+}
+
+/* First block = commit-message subject. Bump it so the title scans
+   at a glance instead of blending into the body paragraphs. */
+.commit-msg-gutter > li:first-child .gutter-text {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.gutter-text.markdown > :first-child {
+  margin-top: 0;
+}
+.gutter-text.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.commit-msg-comments {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+/* --- Global comments --- */
+
+.global-comments {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.add-global-btn {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 2px 10px;
+}
+
+.global-comments ul,
+.file-comments,
+.comments-pane {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- Notes (comments) --- */
+
+.note {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.note header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.finding-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--finding-issue);
+  color: #0d1117;
+}
+
+.note-issue .finding-badge { background: var(--finding-issue); }
+.note-suggestion .finding-badge { background: var(--finding-suggestion); }
+.note-question .finding-badge { background: var(--finding-question); }
+.note-follow_up .finding-badge,
+.note-thought .finding-badge { background: var(--finding-follow-up); }
+.note-revert .finding-badge { background: var(--finding-revert); color: #ffffff; }
+
+.line-anchor {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+}
+
+.note header .learn-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  margin-left: auto;
+}
+.note header .learn-toggle input[type="checkbox"] {
+  /* Tiny baseline shift on Chrome — `vertical-align: middle` and a
+     flush margin keeps the checkbox visually centred with the label
+     text instead of sitting one pixel high. */
+  margin: 0;
+  padding: 0;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.note header .learn-toggle + button {
+  margin-left: 4px;
+}
+.note header button {
+  margin-left: 4px;
+  font-size: 0.8rem;
+  padding: 2px 8px;
+}
+/* First button only — the learn-toggle absorbs the margin-left:auto
+   when present so Edit/Remove cluster on the right. */
+.note header .learn-toggle ~ button:first-of-type {
+  margin-left: 4px;
+}
+
+.comment-body {
+  font-size: 0.9rem;
+}
+
+.comment-body p { margin: 0 0 4px; }
+.comment-body p:last-child { margin-bottom: 0; }
+.comment-body code {
+  background: var(--chip-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.comment-body pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  overflow-x: auto;
+}
+.comment-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.comment-body ul,
+.comment-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.comment-body a {
+  color: var(--accent);
+}
+
+/* --- Diff toolbar --- */
+
+.diff-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-group .toolbar-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-right: 2px;
+}
+
+.toolbar-value {
+  display: inline-block;
+  min-width: 36px;
+  text-align: center;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.wrap-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wrap-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+/* `.tip` paragraph removed — was decorative noise. The drag-select
+   affordance is discoverable on first hover; the gutter hover state
+   shows it. */
+
+/* --- Review body grid --- */
+
+.review-body {
+  display: grid;
+  /* File-filter is now a floating overlay (see .file-filter below),
+     so the body always uses the full viewport — no sidebar gutter. */
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.toolbar-icon-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.toolbar-icon-btn:hover {
+  border-color: var(--accent);
+}
+
+/* --- File filter (inline collapsible panel) ---
+
+   Sits in normal page flow above the file list; takes the full
+   viewport width so file paths fit on one line without truncation.
+   Toggled via the toolbar's '☰ Files' button. Same affordances
+   as the pre-port version: substring filter, status dots, full
+   relative path (dir prefix dimmed + base name bold), per-entry
+   only / hide-extension / show-all controls. */
+
+.file-filter {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.file-filter-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.file-filter-toggle {
+  background: transparent;
+  border: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 4px 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+.file-filter-toggle:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.filter-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 4px 8px;
+  font: inherit;
+  margin-bottom: 8px;
+}
+.filter-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.hidden-extensions {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-chip {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #ffffff;
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+
+.file-entries {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.file-entry:hover {
+  background: var(--panel-2);
+}
+/* File hidden by something other than its own checkbox — generated
+   filter, extension filter, or only_file_index. Dimmed so the
+   reviewer can tell at a glance "checked but not in the diff body
+   because of another filter". */
+.file-entry.hidden-by-other {
+  opacity: 0.45;
+}
+.file-entry.hidden-by-other .file-path .base-name {
+  font-style: italic;
+}
+
+.file-entry input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* Tiny coloured dot replaces the 18×18 badge — same info, way
+   less visual clutter when 39 files share the same status. */
+.file-entry .status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.file-entry .status-dot.status-added { background: var(--success-strong); }
+.file-entry .status-dot.status-modified { background: var(--warn); }
+.file-entry .status-dot.status-deleted { background: var(--danger); }
+.file-entry .status-dot.status-renamed { background: var(--accent); }
+
+.file-entry .file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.file-entry .file-path:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.file-entry .file-path .dir {
+  color: var(--muted);
+}
+.file-entry .file-path .base-name {
+  color: inherit;
+  font-weight: 500;
+}
+
+.file-entry .only-btn,
+.file-entry .hide-ext-btn,
+.file-entry .ghost-btn.small {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 80ms ease;
+  white-space: nowrap;
+}
+.file-entry:hover .only-btn,
+.file-entry:hover .hide-ext-btn,
+.file-entry:hover .ghost-btn.small {
+  opacity: 1;
+}
+
+/* --- Status badge (A/M/D/R) --- */
+
+.status-badge {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-weight: 700;
+  font-size: 0.7rem;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, monospace;
+}
+.status-added { background: rgba(63, 185, 80, 0.15); color: var(--success-strong); border-color: var(--success-strong); }
+.status-modified { background: rgba(210, 153, 34, 0.15); color: var(--warn); border-color: var(--warn); }
+.status-deleted { background: rgba(248, 81, 73, 0.15); color: var(--danger); border-color: var(--danger); }
+.status-renamed { background: rgba(88, 166, 255, 0.15); color: var(--accent); border-color: var(--accent); }
+
+/* --- File list (main diff body) --- */
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  /* Fill the parent grid column. Without this the flex container
+     shrink-wraps to its widest natural child (the @git-diff-view
+     table) and the diff renders at half-viewport. */
+  width: 100%;
+}
+
+.file-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  /* overflow stays visible — sticky positioning on .file-section-header
+     requires no scrolling parent in the chain. */
+  width: 100%;
+}
+.file-section.approved {
+  opacity: 0.7;
+}
+/* Approved-and-collapsed: header only, diff body suppressed via
+   the LV :if. The caret rotates to point right as a hint. */
+.file-section.collapsed .caret {
+  display: inline-block;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+.caret {
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+
+.file-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  /* Stick to the top of the viewport while the diff body scrolls.
+     Sits below the diff toolbar (which is also sticky at top: 0
+     with z-index: 5). Use a slightly lower z-index so the toolbar
+     wins on overlap. */
+  position: sticky;
+  top: 40px;
+  z-index: 4;
+}
+
+.file-row {
+  flex: 1 1 auto;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-row:hover {
+  background: transparent;
+}
+.file-row .caret {
+  color: var(--muted);
+}
+.file-row .file-name {
+  font-family: ui-monospace, monospace;
+}
+.file-row .rename-from {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.approved-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.approved-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.diff-content {
+  background: var(--bg);
+}
+
+/* --- Decision footer --- */
+
+.decision-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 100;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.8);
+}
+
+.decision-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.dirty-marker {
+  color: var(--warn);
+  font-style: italic;
+}
+
+.decision-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- Comment forms (rendered inside Svelte) --- */
+/* CommentForm.svelte controls its own internals; the .comment-form wrapper
+   is the boundary we style here. */
+
+.comment-form {
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.comment-form textarea {
+  width: 100%;
+  min-height: 80px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font: inherit;
+  resize: vertical;
+}
+.comment-form textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.comment-form .finding-types,
+.comment-form .form-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.comment-form .form-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.comment-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* --- Done view --- */
+
+main.review.done {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

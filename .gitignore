@@ -1,0 +1,51 @@
+node_modules
+package-lock.json
+
+# Local agent / runtime artifacts
+.beads/
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/agents/
+.runtime/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Test artifacts
+/playwright-report
+/test-results
+/coverage
+/qa-runs
+.playwright-mcp/
+
+# Elixir / Phoenix
+/deps
+/_build
+/cover
+/.fetch
+*.ez
+erl_crash.dump
+*.dump
+/priv/static/assets/
+/priv/static/.vite/
+/priv/static/cache_manifest.json
+# `mix phx.digest` output (built during scripts/install.sh)
+/priv/static/*.gz
+/priv/static/*-*.ico
+/priv/static/*-*.svg
+/priv/static/*-*.txt
+/assets/node_modules/
+
+.serena/

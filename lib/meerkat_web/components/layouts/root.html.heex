@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" type="image/x-icon" />
+    <.live_title default="meerkat">
+      {assigns[:page_title]}
+    </.live_title>
+    <PhoenixVite.Components.assets
+      names={["js/app.js"]}
+      manifest={{:meerkat, "priv/static/.vite/manifest.json"}}
+      dev_server={PhoenixVite.Components.has_vite_watcher?(MeerkatWeb.Endpoint)}
+      to_url={fn p -> p end}
+    />
+    <%!-- Imported CSS (live_svelte component imports of
+          @git-diff-view/svelte/styles/diff-view.css) lands as a
+          sibling chunk in the manifest under the `css` field — the
+          PhoenixVite.Components.assets helper auto-includes them. --%>
+  </head>
+  <body>
+    {@inner_content}
+  </body>
+</html>

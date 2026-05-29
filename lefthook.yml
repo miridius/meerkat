@@ -1,0 +1,37 @@
+pre-commit:
+  commands:
+    no-main-commits:
+      run: bash scripts/no-main-commits.sh
+    check:
+      run: bash scripts/check.sh
+
+pre-push:
+  commands:
+    mix-test:
+      run: mix test
+
+post-merge:
+  commands:
+    # Auto-install meerkat whenever main moves locally — runs after
+    # `git pull` / `git merge` on main. Other branches skip; running
+    # an install for a feature-branch merge is just noise. Detached
+    # HEAD or missing-rev-parse → log + skip rather than silently
+    # no-op, so a misconfigured worktree leaves a trail.
+    install:
+      run: |
+        branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
+        case "$branch" in
+          main)
+            bash scripts/install.sh
+            ;;
+          "")
+            echo "meerkat post-merge: couldn't resolve HEAD; skipping install." >&2
+            ;;
+          *)
+            echo "meerkat post-merge: HEAD=$branch (not main); skipping install." >&2
+            ;;
+        esac
+
+# `gh pr merge --squash` lands the squash on origin/main without
+# touching the local main. Run `git pull` on main afterwards to fire
+# the post-merge hook above and install the new binary.

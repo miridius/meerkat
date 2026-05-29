@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# Dev launcher for the Phoenix-port meerkat. Wraps `mix run` in a
+# shepherd loop so the BEAM can self-halt with exit code 75 on a
+# file-system change and the launcher respawns it on the SAME
+# port. The user's browser sees a brief WebSocket drop + LV
+# auto-reconnects to the new BEAM; `ReviewServer.init` reloads
+# in-progress comments via `Meerkat.Persistence`.
+#
+# Tests point `MEERKAT_BIN` at this script:
+#
+#     MEERKAT_BIN=./bin/meerkat-beam bun run test:e2e
+#
+# cd into the Mix project root so `mix run` works, but capture the
+# caller's cwd in $MEERKAT_PWD so `Meerkat.CLI` reads git state
+# from the right tree.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ORIG_PWD="$(pwd)"
+
+cd "$ROOT"
+
+export MIX_ENV="${MIX_ENV:-dev}"
+export MEERKAT_PWD="$ORIG_PWD"
+
+# Pre-compile guard. Cheap when the build is warm — `find` short-
+# circuits on first newer file. On compile error, return non-zero
+# WITHOUT aborting the shepherd (set -e is locally disabled around
+# the call so a syntax error in the user's edits keeps the loop
+# alive — we wait for the next source change and retry).
+precompile_if_stale() {
+  local lock="_build/${MIX_ENV}/lib/meerkat/.mix/compile.elixir"
+  if [[ ! -f "$lock" ]] || \
+     [[ -n "$(find lib config mix.exs mix.lock -newer "$lock" -print -quit 2>/dev/null)" ]]; then
+    mix compile --no-warnings-as-errors >&2
+    return $?
+  fi
+  return 0
+}
+
+# Block until something under `lib config assets` changes. Used when
+# precompile fails and we want to retry once the user fixes the
+# broken file. Polls with a 1s `find -newer` instead of pulling in
+# fswatch — small project tree, low cost.
+wait_for_source_change() {
+  local marker
+  marker="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f $marker" RETURN
+  echo >&2 "meerkat: waiting for source change before retry…"
+  while true; do
+    sleep 1
+    if [[ -n "$(find lib config mix.exs mix.lock assets/svelte assets/js assets/ts assets/css -newer "$marker" -print -quit 2>/dev/null)" ]]; then
+      return 0
+    fi
+  done
+}
+
+# Asset build — same guard.
+build_assets_if_stale() {
+  local manifest="priv/static/.vite/manifest.json"
+  if [[ ! -f "$manifest" ]] || \
+     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
+    MIX_BUILD_PATH="$ROOT/_build/${MIX_ENV}" \
+      bash -c 'cd assets && bunx vite build' >&2
+  fi
+}
+
+# Deterministic port derived from (cwd, args). Same review session
+# from the SAME repo + SAME target = same port across:
+#   * DevWatcher-triggered restarts in this shepherd
+#   * AND a fresh git-commit invocation that re-fires meerkat-beam
+# So the user's browser tab keeps working without manual
+# re-navigation. Port range 40000-59999 — above the privileged
+# 0-1023 range and chosen so the bottom half of the window sits
+# BELOW macOS's ephemeral-port range (default 49152-65535) to
+# minimise OS-allocation collisions. If Bandit can't bind the
+# deterministic port (collision or other failure), the CLI logs a
+# warning and falls back to OS-assigned.
+if [[ -n "${MEERKAT_PORT:-}" ]]; then
+  stable_port="$MEERKAT_PORT"
+else
+  hash_input="${ORIG_PWD}:$*"
+  hex8=$(printf '%s' "$hash_input" | shasum -a 256 | head -c 8)
+  # Convert lowercase-hex 8 chars → decimal → modulo 20000 + 40000.
+  stable_port=$(( 16#${hex8} % 20000 + 40000 ))
+fi
+
+# Replace --port argument in $@ with the stable one (preserve every
+# other arg verbatim). Append --port if not already present.
+rewrite_port_arg() {
+  local new_port="$1"
+  shift
+  local out=()
+  local i=1
+  local got_port=false
+  while [[ $i -le $# ]]; do
+    local arg="${!i}"
+    if [[ "$arg" == "--port" ]]; then
+      out+=("--port" "$new_port")
+      i=$((i + 2))
+      got_port=true
+    else
+      out+=("$arg")
+      i=$((i + 1))
+    fi
+  done
+  if [[ "$got_port" == "false" ]]; then
+    out+=("--port" "$new_port")
+  fi
+  printf '%s\n' "${out[@]}"
+}
+
+# `--no-start` keeps the OTP app stopped so `Meerkat.CLI.main` can
+# put_env dynamic config BEFORE the endpoint binds.
+RESTART_EXIT_CODE=75
+
+original_args=("$@")
+mapfile -t this_args < <(rewrite_port_arg "$stable_port" "${original_args[@]}")
+
+# Browser-open marker: a temp file the BEAM creates the FIRST time
+# it successfully calls `open` on the review URL. Subsequent
+# shepherd iterations (BEAM exit 75 = DevWatcher restart) see the
+# marker and skip the open, so the user's existing tab keeps its
+# reconnect instead of getting a duplicate. `open URL` on macOS
+# doesn't reliably focus an existing tab when the tab is in another
+# Chrome workspace / profile — relying on OS dedupe spammed tabs
+# across restarts. We track our own state.
+OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
+# `mktemp` creates an empty file. The BEAM treats "empty" as
+# "browser not yet opened"; after a successful open it writes "1".
+export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
+trap 'rm -f "$OPEN_MARKER"' EXIT
+
+# Crash-restart backoff. The shepherd already gates `wait_for_source_change`
+# on stale-build paths so user edits unblock the loop; this counter is
+# the safety net for a BEAM that crashes during boot before file-system
+# events fire (e.g. broken config). After @max_consecutive_crashes
+# crashes in a row we cap the retry sleep at @backoff_max_seconds so the
+# loop doesn't burn CPU on a persistent failure.
+consecutive_crashes=0
+max_backoff_seconds=30
+
+while true; do
+  set +e
+  precompile_if_stale
+  compile_rc=$?
+  set -e
+  if [[ "$compile_rc" != "0" ]]; then
+    wait_for_source_change
+    continue
+  fi
+
+  set +e
+  build_assets_if_stale
+  asset_rc=$?
+  set -e
+  if [[ "$asset_rc" != "0" ]]; then
+    wait_for_source_change
+    continue
+  fi
+
+  set +e
+  mix run --no-start --no-compile \
+    -e 'File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))' \
+    -- "${this_args[@]}"
+  exit_code=$?
+  set -e
+
+  if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
+    consecutive_crashes=0
+    echo "meerkat: code change detected — restarting on port $stable_port..." >&2
+    continue
+  fi
+
+  # Exit-code contract (set in lib/meerkat/cli.ex):
+  #   0  — Approve (user's terminal decision)
+  #   1  — Reject / Cancel (user's terminal decision)
+  #   2  — crash / unhandled exception / default-deny
+  #   75 — DevWatcher requested restart (handled above)
+  #
+  # In dev mode, ONLY 2 (crash) gets the stay-alive recovery.
+  # 0 and 1 are explicit user actions — the git-commit hook needs
+  # to see them so it can proceed (0) or abort (1). Wrapping those
+  # in a restart loop strands the hook.
+  if [[ "$MIX_ENV" == "dev" && "$exit_code" == "2" ]]; then
+    consecutive_crashes=$((consecutive_crashes + 1))
+    # Exponential-ish backoff after a streak of failed boots —
+    # prevents the loop from CPU-spinning on a persistent crash
+    # (e.g. broken config) where no file change will rescue it.
+    if (( consecutive_crashes > 1 )); then
+      backoff=$(( consecutive_crashes * 2 ))
+      (( backoff > max_backoff_seconds )) && backoff=$max_backoff_seconds
+      echo "meerkat: BEAM crashed (exit 2) ${consecutive_crashes}× in a row — sleeping ${backoff}s before next attempt…" >&2
+      sleep "$backoff"
+    fi
+    echo "meerkat: BEAM crashed (exit 2) in dev mode — waiting for source change before restart…" >&2
+    wait_for_source_change
+    continue
+  fi
+
+  exit "$exit_code"
+done
