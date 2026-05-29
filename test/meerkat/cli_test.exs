@@ -145,4 +145,19 @@ defmodule Meerkat.CLITest do
       assert CLI.decide_from_verdicts_for_test([:neither], 1) == :live
     end
   end
+
+  describe "args_error/2" do
+    test "unrecognised options → rejection message" do
+      assert CLI.args_error([], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
+    end
+
+    test "more than one positional → rejection message" do
+      assert CLI.args_error(["a", "b"], []) =~ "at most one positional"
+    end
+
+    test "well-formed argv → nil" do
+      assert CLI.args_error([], []) == nil
+      assert CLI.args_error(["HEAD"], []) == nil
+    end
+  end
 end

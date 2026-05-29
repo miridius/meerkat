@@ -213,32 +213,38 @@ defmodule Meerkat.CLI do
     {parsed, positional, invalid} =
       OptionParser.parse(argv, strict: @switches, aliases: [])
 
-    if invalid != [] do
-      IO.puts(
-        :stderr,
+    case args_error(positional, invalid) do
+      nil ->
+        %{
+          commit_msg_path: Keyword.get(parsed, :commit_msg),
+          positional: List.first(positional),
+          pr: Keyword.get(parsed, :pr),
+          no_open: Keyword.get(parsed, :no_open, false),
+          port: Keyword.get(parsed, :port, 0)
+        }
+
+      message ->
+        IO.puts(:stderr, message)
+        System.halt(2)
+    end
+  end
+
+  # `nil` when the parsed argv is well-formed; otherwise the stderr
+  # message explaining the rejection. Pure, so the rejection rules are
+  # unit-testable without `parse_args/1`'s `System.halt/1`.
+  @doc false
+  def args_error(positional, invalid) do
+    cond do
+      invalid != [] ->
         "meerkat: unrecognised options: " <>
           Enum.map_join(invalid, ", ", fn {flag, _} -> flag end)
-      )
 
-      System.halt(2)
-    end
-
-    if length(positional) > 1 do
-      IO.puts(
-        :stderr,
+      length(positional) > 1 ->
         "meerkat: at most one positional ref-or-range argument; got: #{Enum.join(positional, " ")}"
-      )
 
-      System.halt(2)
+      true ->
+        nil
     end
-
-    %{
-      commit_msg_path: Keyword.get(parsed, :commit_msg),
-      positional: List.first(positional),
-      pr: Keyword.get(parsed, :pr),
-      no_open: Keyword.get(parsed, :no_open, false),
-      port: Keyword.get(parsed, :port, 0)
-    }
   end
 
   ## Staged-diff auto-approve fast path

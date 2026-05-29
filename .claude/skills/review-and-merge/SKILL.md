@@ -9,7 +9,7 @@ description: Shepherd a GitHub PR through review-to-merge. Runs /pr-review-toolk
 2. Discard findings that are not worth fixing, detrimental to our goals, or would make the code worse. A finding kept past this step MUST be addressed on this PR's branch before merge — see "No follow-up PRs" below.
 3. Verify the remaining findings empirically — run the code, don't just read it — and fix the accurate ones on the PR's branch.
 4. Anything debatable on accuracy or actionability → `/escalate` with concrete options.
-5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Treat each surviving mutant as a finding subject to the same triage as steps 2-4: fix on this branch (add a test that kills it), escalate, or discard at step 2 with a recorded reason. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
+5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Every surviving mutant gets fixed on this branch (a test that kills it) or escalated — no discarding, no "pre-existing" pass (see "Fix every surviving mutant"). The only exceptions are provably-equivalent mutants and pure-observability mutations, each documented. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
 6. Squash-merge on GitHub once every kept finding (including surviving mutants) is resolved on this PR's branch and the quality gates ran clean from the branch tip. **There is no separate CI gate; the review IS the check.** The gates are `mix compile --warnings-as-errors`, `mix test`, and `bun run test:e2e`. The lefthook pre-commit hook runs `bash scripts/check.sh` (format-check + compile) and the pre-push hook runs `mix test`, so fix commits in steps 3/5 exercise those on `git commit` / `git push` — but the e2e suite is in no hook, so run `bun run test:e2e` yourself before merging. If no fix commits were needed, run all three gates yourself.
 
 ## Guardrails
@@ -54,13 +54,39 @@ Two load-bearing details:
 
 Mutation runs take minutes per module. `scripts/mutate.sh` prints the survivor list to read by hand.
 
-### Triage surviving mutants
+### Fix every surviving mutant
 
-- **Mutant on a line the PR introduced or modified** → kept finding; address per the no-follow-up rule. The fix is usually a new test that asserts the post-mutation behaviour would be wrong (e.g. for a guard mutated to always-true, add a case that must return false). Where the mutated code is reachable only via an unbounded-await path (server start, browser-driven flow), test at a lower layer rather than refactoring production code purely for testability.
-- **Mutant on a line the PR didn't touch** → pre-existing gap; discard with reason "pre-existing scope; not made worse by this PR." Do NOT widen the PR to fix pre-existing coverage unless the user directs it.
+This is a small, vibe-coded repo we control end-to-end — there are no external
+reviewers, no legacy callers, no compat constraints. So there is **no
+"pre-existing, not my problem" escape**: a surviving mutant is a real gap
+whether or not this PR introduced the line. Fix it now. Scope creep is free
+here; an unrelated test gap closed in passing is a free improvement, not a
+distraction.
 
-### Discard reasons that are acceptable
+For a survivor in **pure logic**, the fix is a test that asserts the
+post-mutation behaviour would be wrong (e.g. for a guard mutated to always-true,
+add a case that must return false). When the logic is buried in an
+I/O-/server-bound function, extract it behind a test seam and unit-test the pure
+part — see `cli.ex`'s `decide_from_verdicts/2` / `args_error/2` + their
+`*_for_test` shims. That's the move that pays off.
 
-- "Pre-existing line, PR didn't touch it" (most common).
-- "Mutation affects observability strings only (log/`IO.puts` message text, eprintln branch selection) — no behavioral correctness depends on the exact string." Document the discard.
-- "Mutation in a path requiring infeasible test infrastructure (end-to-end browser drive, libgit2 internal-error reproduction). Test at a lower layer where reachable; otherwise refactoring purely for testability is disproportionate to the regression surface."
+`mix muex` runs ExUnit **only** and is blind to the Playwright e2e suite, and
+its `StatementDeletion` mutants on thin I/O glue are unreliable (they survive
+even with a direct test, and the score flips between runs as slow mutants
+time-out vs survive). So treat the score as a **guide, not a hard gate**: chase
+it for pure logic, don't chase it to zero on I/O glue.
+
+### Acceptable non-fixes (prove it, don't assert it)
+
+- **Equivalent mutant** — no input, realistic or not, distinguishes the mutant
+  from the original (e.g. an `and`-guard redundant because a downstream call
+  already handles the case). Document *why*. Never delete a real safety guard
+  just to remove the mutation point.
+- **Pure observability** — the mutation only changes log/`IO.puts` message text.
+- **I/O wiring already covered end-to-end** — a `StatementDeletion`/conditional
+  mutant on thin glue (config assembly, `server_info` parsing, the CLI entry
+  point, the staged-files→classify plumbing) whose behaviour the Playwright
+  suite already exercises. muex can't see that coverage. Do **not** duplicate it
+  in a real-git-fixture ExUnit test — those are redundant with e2e, fight the
+  repo's unit-vs-e2e split, and (doing concurrent `git` I/O in an `async` module)
+  flake. Name the e2e test that covers it instead.
