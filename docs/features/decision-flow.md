@@ -10,10 +10,11 @@ normal operation.
 The footer always shows three buttons, left-to-right:
 
 1. **Cancel** — abandon the review. Wipes every in-progress
-   comment, submits a `:cancel` decision. The BEAM exits **1**
-   with an **empty** stderr feedback payload. Use when the
-   reviewer wants to back out without producing feedback for the
-   calling agent.
+   comment, submits a `:cancel` decision. The BEAM exits **1** and
+   prints `Review cancelled — commit aborted, no feedback to act
+   on.` to stderr (the comments were wiped, so there's no feedback
+   payload — just the verdict line). Use when the reviewer wants to
+   back out without producing feedback for the calling agent.
 
 2. **Send Feedback** — submit `:reject`. Disabled when there are
    zero comments or when a comment form is open (the `unsaved
@@ -22,9 +23,9 @@ The footer always shows three buttons, left-to-right:
 
 3. **Approve** — submit `:approve` (no comments) or
    `:approve_with_feedback` (any comments). Exit **0**. With no
-   comments, stderr prints `meerkat: approved — commit proceeding.`
-   With comments, stderr prints the formatted feedback (so the
-   calling agent sees the approving feedback too).
+   comments, stderr prints `The user approved your commit.
+   Proceeding.` With comments, stderr prints the formatted feedback
+   (so the calling agent sees the approving feedback too).
 
 ## Auto-approve fast path
 

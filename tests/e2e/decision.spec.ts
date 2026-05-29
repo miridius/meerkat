@@ -114,6 +114,35 @@ test.describe("decision flow", () => {
 		}
 	});
 
+	test("Approve with a global comment → exits 0, stderr contains the comment body", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			const form = page.locator(".comment-form");
+			await expect(form).toBeVisible();
+			await form.locator("textarea").fill("consider extracting this into a helper");
+			await form.getByRole("button", { name: /^Issue$/ }).click();
+			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
+			await expect(form).toBeHidden();
+
+			// With a comment present, Approve becomes "Approve with feedback":
+			// the commit still proceeds (exit 0) AND the feedback reaches the
+			// calling agent — the fourth terminal decision the exit-code
+			// mapping covers.
+			await page.getByRole("button", { name: /^Approve with feedback$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr).toContain("consider extracting this into a helper");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("staged-diff with only linguist-generated files auto-approves", async () => {
 		// `*.lock linguist-generated=true` in a committed `.gitattributes`
 		// marks the staged lockfile as generated. The fast path treats

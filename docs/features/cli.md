@@ -63,9 +63,12 @@ supplied (no error, the highest-precedence one wins):
 
 ## Output
 
-- **stdout**: nothing in normal operation. Phoenix endpoint log
-  lines may appear because Logger defaults to `:info` in dev.
-- **stderr**: status messages (`meerkat: review UI at ...`,
-  auto-approve breadcrumbs, warnings) and — on approve-with-feedback
-  / reject — the rendered comment feedback (see
+- **stdout**: nothing in normal operation.
+- **stderr**: status messages (`human review UI at ...`, `debug logs
+  at: <path>`, auto-approve breadcrumbs, warnings), a plain
+  user-attributed verdict line on every terminal decision, and — on
+  approve-with-feedback / reject — the rendered comment feedback (see
   [decision-flow.md](decision-flow.md)).
+- **logfile**: Phoenix/Bandit/LiveView Logger output is redirected to
+  `<gitdir>/meerkat-precommit/meerkat.log` before the endpoint boots,
+  so the server logs stay out of the agent-facing stream.
