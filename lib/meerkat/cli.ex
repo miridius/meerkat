@@ -278,29 +278,7 @@ defmodule Meerkat.CLI do
             classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
           end)
 
-        cond do
-          Enum.all?(verdicts, &(&1 == :generated)) ->
-            {:auto,
-             "meerkat: all #{length(files)} staged file(s) are linguist-generated — auto-approving.\n"}
-
-          Enum.all?(verdicts, &(&1 in [:approved, :generated])) and
-              Enum.any?(verdicts, &(&1 == :approved)) ->
-            approved = Enum.count(verdicts, &(&1 == :approved))
-            generated = Enum.count(verdicts, &(&1 == :generated))
-            total = length(files)
-
-            msg =
-              if generated == 0 do
-                "meerkat: all #{total} staged file(s) already approved — auto-approving.\n"
-              else
-                "meerkat: all #{total} staged file(s) already approved (#{approved}) or linguist-generated (#{generated}) — auto-approving.\n"
-              end
-
-            {:auto, msg}
-
-          true ->
-            :live
-        end
+        decide_from_verdicts(verdicts, length(files))
 
       {:error, reason} ->
         IO.puts(
@@ -314,6 +292,34 @@ defmodule Meerkat.CLI do
   end
 
   defp auto_approve_decision(_target, _repo_path), do: :live
+
+  # Map per-file verdicts to the auto-approve decision. Split out of
+  # `auto_approve_decision/2` so the safety guard — never auto-approve
+  # when any file is `:neither` (still needs human review) — is
+  # unit-testable without standing up a staged git fixture.
+  defp decide_from_verdicts(verdicts, total) do
+    cond do
+      Enum.all?(verdicts, &(&1 == :generated)) ->
+        {:auto, "meerkat: all #{total} staged file(s) are linguist-generated — auto-approving.\n"}
+
+      Enum.all?(verdicts, &(&1 in [:approved, :generated])) and
+          Enum.any?(verdicts, &(&1 == :approved)) ->
+        approved = Enum.count(verdicts, &(&1 == :approved))
+        generated = Enum.count(verdicts, &(&1 == :generated))
+
+        msg =
+          if generated == 0 do
+            "meerkat: all #{total} staged file(s) already approved — auto-approving.\n"
+          else
+            "meerkat: all #{total} staged file(s) already approved (#{approved}) or linguist-generated (#{generated}) — auto-approving.\n"
+          end
+
+        {:auto, msg}
+
+      true ->
+        :live
+    end
+  end
 
   # `:approved` | `:generated` | `:neither`. `generated_map` is the
   # batched output of `Git.linguist_generated_many/2` — one git
@@ -367,6 +373,16 @@ defmodule Meerkat.CLI do
       _ -> false
     end
   end
+
+  # Test seams for the pure auto-approve logic — let cli_test.exs exercise
+  # the per-file classifier and the verdict decision without standing up
+  # a staged git fixture. Mirrors git.ex's `parse_multi_file_diff_for_test/1`.
+  @doc false
+  def classify_for_auto_approve_for_test(entry, cache, branch, generated_map, oid_map),
+    do: classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
+
+  @doc false
+  def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
 
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
