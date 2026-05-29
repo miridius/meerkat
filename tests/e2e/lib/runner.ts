@@ -25,7 +25,7 @@ export type Runner = {
 	kill: () => Promise<void>;
 };
 
-const URL_RE = /meerkat: review UI at (https?:\/\/[^\s]+)/;
+const URL_RE = /human review UI at (https?:\/\/[^\s]+)/;
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
 // a runner the test can drive. Tests should `await runner.awaitExit()`
