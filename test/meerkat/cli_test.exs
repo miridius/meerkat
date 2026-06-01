@@ -162,20 +162,29 @@ defmodule Meerkat.CLITest do
   end
 
   describe "feedback_banner/2" do
-    @path "/repo/.git/meerkat-precommit/last-feedback.txt"
+    @path "/repo/.git/meerkat-precommit/reviews/20260601-main-files3.txt"
+
+    test "attributes the count to the user, not the tool" do
+      banner = CLI.feedback_banner_for_test(2, {:ok, @path})
+      assert banner =~ "User left 2 comments total"
+      # No "meerkat:" tool label — it would read as a third-party verdict
+      # next to the first-party feedback framing. (The path legitimately
+      # contains "meerkat-precommit".)
+      refute banner =~ "meerkat:"
+    end
 
     test "single comment is singular, plural otherwise" do
       single = CLI.feedback_banner_for_test(1, {:ok, @path})
-      assert single =~ "1 comment total"
+      assert single =~ "User left 1 comment total"
       refute single =~ "comments total"
 
-      assert CLI.feedback_banner_for_test(3, {:ok, @path}) =~ "3 comments total"
+      assert CLI.feedback_banner_for_test(3, {:ok, @path}) =~ "User left 3 comments total"
     end
 
     test "nil count drops the number rather than printing a wrong 0" do
       banner = CLI.feedback_banner_for_test(nil, {:ok, @path})
-      assert banner =~ "feedback above"
-      refute banner =~ "0 comment"
+      assert banner =~ "User left comments"
+      refute banner =~ ~r/\d+ comment/
     end
 
     test "successful save names the recovery path" do
@@ -184,7 +193,7 @@ defmodule Meerkat.CLITest do
 
     test "failed save swaps in the couldn't-write wording and omits a path" do
       banner = CLI.feedback_banner_for_test(2, :error)
-      assert banner =~ "couldn't be written"
+      assert banner =~ "could not be written to disk"
       refute banner =~ "saved to"
     end
 
@@ -195,11 +204,11 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "write_feedback/2" do
+  describe "write_feedback/3" do
     test "empty payload writes nothing — no banner, no file lookup" do
       output =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test("", "any-review-id") == :ok
+          assert CLI.write_feedback_for_test("", "any-review-id", "/tmp/unused.txt") == :ok
         end)
 
       assert output == ""
