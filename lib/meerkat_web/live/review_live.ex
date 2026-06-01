@@ -461,20 +461,23 @@ defmodule MeerkatWeb.ReviewLive do
 
   def handle_event("file.toggle_rendered", %{"file_name" => file_name}, socket) do
     %{state: state, rendered_files: rendered, rendered_html: cache} = socket.assigns
-    turning_on? = not MapSet.member?(rendered, file_name)
 
-    cache =
-      if turning_on? and not Map.has_key?(cache, file_name) do
-        case Enum.find(state.files, &(&1.file_name == file_name)) do
-          nil -> cache
-          file -> Map.put(cache, file_name, render_markdown_sides(file))
-        end
-      else
-        cache
+    if MapSet.member?(rendered, file_name) do
+      {:noreply, assign(socket, rendered_files: MapSet.delete(rendered, file_name))}
+    else
+      # Unknown file_name no-ops: flipping it on would hide the diff and
+      # show an empty pane (no cached HTML to render).
+      case Enum.find(state.files, &(&1.file_name == file_name)) do
+        nil ->
+          {:noreply, socket}
+
+        file ->
+          cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
+
+          {:noreply,
+           assign(socket, rendered_files: MapSet.put(rendered, file_name), rendered_html: cache)}
       end
-
-    {:noreply,
-     assign(socket, rendered_files: toggle_member(rendered, file_name), rendered_html: cache)}
+    end
   end
 
   def handle_event("filter.toggle_extension", %{"ext" => ext}, socket) do
@@ -1259,7 +1262,8 @@ defmodule MeerkatWeb.ReviewLive do
             class="md-comments-hidden"
             title="Line comments aren't shown in rendered view"
           >
-            {length(Map.get(@inline_comments_by_file, idx, []))} comments — switch to Diff
+            <% n = length(Map.get(@inline_comments_by_file, idx, [])) %>
+            {n} {if n == 1, do: "comment", else: "comments"} — switch to Diff
           </span>
           <label class="approved-toggle">
             <input
@@ -1307,6 +1311,7 @@ defmodule MeerkatWeb.ReviewLive do
             ) and MapSet.member?(@rendered_files, file.file_name)
           }
           sides={Map.get(@rendered_html, file.file_name, %{old_html: nil, new_html: nil})}
+          read_errors={file.read_errors}
         />
         <ul
           :if={
@@ -1385,13 +1390,23 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   attr :sides, :map, required: true
+  attr :read_errors, :list, default: []
 
   # `@sides` HTML is server-sanitised by
   # `Meerkat.Markdown.render_diff_sides/3`, so `raw/1` is safe. A nil
-  # side (added/deleted file) collapses the grid to one pane.
+  # side (added/deleted file) collapses the grid to one pane. The
+  # read-errors banner mirrors DiffViewer's: rendered mode hides the
+  # diff, so without it a swallowed git error reads as a clean doc.
   defp markdown_preview(assigns) do
     ~H"""
     <section class="md-preview" aria-label="Rendered markdown">
+      <div :if={@read_errors != []} class="md-read-errors" role="alert" data-test="read-errors">
+        <strong>Could not fully read this file's diff:</strong>
+        <ul>
+          <li :for={err <- @read_errors}>{err}</li>
+        </ul>
+        The rendered document below may be incomplete or misleading — do not approve until resolved.
+      </div>
       <div class={["md-grid", (is_nil(@sides.old_html) or is_nil(@sides.new_html)) && "single"]}>
         <figure :if={not is_nil(@sides.old_html)} class="md-side">
           <figcaption class="md-side-head">Old</figcaption>

@@ -31,10 +31,12 @@ defmodule Meerkat.Markdown do
 
   Returns `%{old_html: ..., new_html: ...}`, each safe for
   `Phoenix.HTML.raw/1`. `status: :added` omits the old side
-  (`old_html: nil`); `:deleted` omits the new side. Blocks present on
-  one side only are wrapped in `<div class="md-del">` (old) /
-  `<div class="md-ins">` (new). Tinting is per markdown block, so a
-  one-word edit tints the whole paragraph.
+  (`old_html: nil`); `:deleted` omits the new side. Blocks that differ
+  between the sides are wrapped in `<div class="md-del">` on the old
+  side / `<div class="md-ins">` on the new — an in-place edit tints
+  both sides, since the block diff treats it as a delete plus an
+  insert. Tinting is per markdown block, so a one-word edit tints the
+  whole paragraph.
   """
   @spec render_diff_sides(String.t(), String.t(), atom()) ::
           %{old_html: String.t() | nil, new_html: String.t() | nil}

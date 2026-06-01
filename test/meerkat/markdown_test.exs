@@ -172,6 +172,16 @@ defmodule Meerkat.MarkdownTest do
       refute o =~ "Brand new."
       assert n =~ ~r/<div class="md-ins">.*Brand new\..*<\/div>/s
     end
+
+    test "deleted-only block is tinted on the old side and absent from the new" do
+      old = "Shared.\n\nGone forever.\n"
+      new = "Shared.\n"
+      %{old_html: o, new_html: n} = Markdown.render_diff_sides(old, new, :modified)
+
+      assert o =~ ~r/<div class="md-del">.*Gone forever\..*<\/div>/s
+      refute n =~ "Gone forever."
+      refute n =~ "md-del"
+    end
   end
 
   describe "render_diff_sides/3 — status drives which sides render" do

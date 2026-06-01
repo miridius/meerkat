@@ -1142,6 +1142,22 @@ main.review.done {
   background: var(--bg);
   padding: 8px 12px;
 }
+/* Mirrors DiffViewer's scoped `.read-errors` banner — the rendered
+   view replaces the diff body, so the swallowed-git-error warning has
+   to be reachable here too. */
+.md-read-errors {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: #2d0608;
+  color: #ffa198;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.md-read-errors ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
 .md-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

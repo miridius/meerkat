@@ -80,7 +80,9 @@ test.describe("markdown rendered view", () => {
 			// Switching to rendered hides the line comment; the badge says so.
 			await section.locator("button.md-view-toggle").click();
 			await expect(section.locator(".md-preview")).toBeVisible();
-			await expect(section.locator(".md-comments-hidden")).toContainText("switch to Diff");
+			await expect(section.locator(".md-comments-hidden")).toContainText(
+				"1 comment — switch to Diff",
+			);
 		} finally {
 			await meerkat.kill();
 		}

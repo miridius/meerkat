@@ -67,4 +67,37 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
     {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
     refute has_element?(view, "button.md-view-toggle")
   end
+
+  test "an added markdown file renders a single New pane", %{conn: conn} do
+    added = %{@md_file | status: :added, old_content: "", new_content: "# Fresh\n\nbody\n"}
+    Application.put_env(:meerkat, :review_state, %ReviewState{files: [added]})
+
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    view |> element("button.md-view-toggle") |> render_click()
+
+    assert has_element?(view, ".md-grid.single")
+    assert has_element?(view, "figcaption.md-side-head", "New")
+    refute has_element?(view, "figcaption.md-side-head", "Old")
+  end
+
+  test "read_errors surface as a banner in the rendered view", %{conn: conn} do
+    errs = %{@md_file | read_errors: ["git show HEAD:README.md failed: bad object"]}
+    Application.put_env(:meerkat, :review_state, %ReviewState{files: [errs]})
+
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    html = view |> element("button.md-view-toggle") |> render_click()
+
+    assert html =~ "md-read-errors"
+    assert html =~ "do not approve"
+    assert html =~ "bad object"
+  end
+
+  test "toggling an unknown file_name no-ops (no blank pane)", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    html = render_click(view, "file.toggle_rendered", %{"file_name" => "ghost.md"})
+
+    refute html =~ "md-preview"
+    assert has_element?(view, "#DiffViewer-0")
+  end
 end
