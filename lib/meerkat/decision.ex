@@ -56,6 +56,17 @@ defmodule Meerkat.Decision do
     GenServer.call(__MODULE__, :current)
   end
 
+  @doc """
+  Clear any submitted decision, returning to the pre-submit state.
+  Test-support only — production never un-makes a terminal decision.
+  Resetting in place (rather than restarting the process) keeps the
+  supervisor's restart budget intact across a test run.
+  """
+  @spec reset() :: :ok
+  def reset do
+    GenServer.call(__MODULE__, :reset)
+  end
+
   ## GenServer callbacks
 
   @impl true
@@ -85,5 +96,9 @@ defmodule Meerkat.Decision do
 
   def handle_call(:current, _from, %{decision: decision} = state) do
     {:reply, decision, state}
+  end
+
+  def handle_call(:reset, _from, _state) do
+    {:reply, :ok, %{decision: nil, waiters: []}}
   end
 end

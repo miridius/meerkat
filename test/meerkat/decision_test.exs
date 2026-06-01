@@ -1,19 +1,12 @@
 defmodule Meerkat.DecisionTest do
   # async: false — Decision is a singleton GenServer, mounted by the
-  # main supervisor. Tests reset its state between runs by stopping
-  # and restarting the named process.
+  # main supervisor. Tests clear its state between runs via reset/0.
   use ExUnit.Case, async: false
 
   alias Meerkat.Decision
 
   setup do
-    # Fresh GenServer state per test. The supervised one is fine to
-    # restart — nothing else relies on its identity within :test.
-    if Process.whereis(Decision) do
-      :ok = GenServer.stop(Decision)
-      :ok = wait_for_restart(Decision)
-    end
-
+    Decision.reset()
     :ok
   end
 
@@ -43,13 +36,16 @@ defmodule Meerkat.DecisionTest do
     end
   end
 
-  defp wait_for_restart(name, attempts \\ 50)
-  defp wait_for_restart(_name, 0), do: :timeout
+  describe "reset/0" do
+    test "clears a submitted decision back to nil" do
+      Decision.submit({:approve, []})
+      assert {:approve, []} = Decision.current()
 
-  defp wait_for_restart(name, attempts) do
-    case Process.whereis(name) do
-      pid when is_pid(pid) -> :ok
-      _ -> Process.sleep(10) && wait_for_restart(name, attempts - 1)
+      assert :ok = Decision.reset()
+      assert is_nil(Decision.current())
+      # A fresh decision can be submitted after reset.
+      Decision.submit({:reject, []})
+      assert {:reject, []} = Decision.current()
     end
   end
 end

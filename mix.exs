@@ -51,6 +51,7 @@ defmodule Meerkat.MixProject do
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
+      {:stream_data, "~> 1.0", only: :test},
       {:live_svelte, "~> 0.18"},
       {:phoenix_vite, "~> 0.4"},
       # Comment-body rendering. earmark parses Markdown (GFM
