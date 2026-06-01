@@ -96,6 +96,12 @@ defmodule MeerkatWeb.ReviewLive do
        # (and get expanded via `expanded_approved`); unapproved files
        # default to expanded (and get collapsed via this set).
        collapsed_unapproved: MapSet.new(),
+       # File names whose markdown diff is currently shown as the
+       # rendered side-by-side view instead of the source diff. Flipped
+       # by `file.toggle_rendered`; the rendered HTML is memoised in
+       # `rendered_html` (content is static for the review session).
+       rendered_files: MapSet.new(),
+       rendered_html: %{},
        # Cached at mount — drives the inline `.puml` preview's
        # available state. Component shows the diff preview when
        # true, an "install plantuml" hint when false.
@@ -129,6 +135,14 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp toggle_member(set, key) do
     if MapSet.member?(set, key), do: MapSet.delete(set, key), else: MapSet.put(set, key)
+  end
+
+  defp render_markdown_sides(file) do
+    Meerkat.Markdown.render_diff_sides(
+      file.old_content || "",
+      file.new_content || "",
+      file.status
+    )
   end
 
   defp push_settings(socket) do
@@ -443,6 +457,27 @@ defmodule MeerkatWeb.ReviewLive do
       end
 
     {:noreply, socket}
+  end
+
+  def handle_event("file.toggle_rendered", %{"file_name" => file_name}, socket) do
+    %{state: state, rendered_files: rendered, rendered_html: cache} = socket.assigns
+
+    if MapSet.member?(rendered, file_name) do
+      {:noreply, assign(socket, rendered_files: MapSet.delete(rendered, file_name))}
+    else
+      # Unknown file_name no-ops: flipping it on would hide the diff and
+      # show an empty pane (no cached HTML to render).
+      case Enum.find(state.files, &(&1.file_name == file_name)) do
+        nil ->
+          {:noreply, socket}
+
+        file ->
+          cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
+
+          {:noreply,
+           assign(socket, rendered_files: MapSet.put(rendered, file_name), rendered_html: cache)}
+      end
+    end
   end
 
   def handle_event("filter.toggle_extension", %{"ext" => ext}, socket) do
@@ -896,6 +931,8 @@ defmodule MeerkatWeb.ReviewLive do
           visible_indices={@visible_indices}
           expanded_approved={@expanded_approved}
           collapsed_unapproved={@collapsed_unapproved}
+          rendered_files={@rendered_files}
+          rendered_html={@rendered_html}
           inline_comments_by_file={@inline_comments_by_file}
           file_comments_by_file={@file_comments_by_file}
           plantuml_available={@plantuml_available}
@@ -1134,6 +1171,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :visible_indices, :any, required: true
   attr :expanded_approved, :any, required: true
   attr :collapsed_unapproved, :any, required: true
+  attr :rendered_files, :any, required: true
+  attr :rendered_html, :any, required: true
   attr :inline_comments_by_file, :any, required: true
   attr :file_comments_by_file, :any, required: true
   attr :plantuml_available, :boolean, required: true
@@ -1199,6 +1238,33 @@ defmodule MeerkatWeb.ReviewLive do
           >
             <span aria-hidden="true">↗</span>
           </a>
+          <button
+            :if={markdown_file?(file)}
+            type="button"
+            class="md-view-toggle"
+            phx-click="file.toggle_rendered"
+            phx-value-file_name={file.file_name}
+            title="Toggle rendered markdown view"
+            aria-pressed={to_string(MapSet.member?(@rendered_files, file.file_name))}
+          >
+            <span class={["seg", not MapSet.member?(@rendered_files, file.file_name) && "active"]}>
+              Diff
+            </span>
+            <span class={["seg", MapSet.member?(@rendered_files, file.file_name) && "active"]}>
+              Rendered
+            </span>
+          </button>
+          <span
+            :if={
+              markdown_file?(file) and MapSet.member?(@rendered_files, file.file_name) and
+                Map.get(@inline_comments_by_file, idx, []) != []
+            }
+            class="md-comments-hidden"
+            title="Line comments aren't shown in rendered view"
+          >
+            <% n = length(Map.get(@inline_comments_by_file, idx, [])) %>
+            {n} {if n == 1, do: "comment", else: "comments"} — switch to Diff
+          </span>
           <label class="approved-toggle">
             <input
               type="checkbox"
@@ -1216,7 +1282,7 @@ defmodule MeerkatWeb.ReviewLive do
               @expanded_approved,
               @collapsed_unapproved,
               file.file_name
-            )
+            ) and not MapSet.member?(@rendered_files, file.file_name)
           }
           id={"DiffViewer-#{idx}"}
           name="DiffViewer"
@@ -1234,6 +1300,18 @@ defmodule MeerkatWeb.ReviewLive do
             }
           }
           socket={@socket}
+        />
+        <.markdown_preview
+          :if={
+            not file_section_collapsed?(
+              @state,
+              @expanded_approved,
+              @collapsed_unapproved,
+              file.file_name
+            ) and MapSet.member?(@rendered_files, file.file_name)
+          }
+          sides={Map.get(@rendered_html, file.file_name, %{old_html: nil, new_html: nil})}
+          read_errors={file.read_errors}
         />
         <ul
           :if={
@@ -1310,6 +1388,40 @@ defmodule MeerkatWeb.ReviewLive do
     </section>
     """
   end
+
+  attr :sides, :map, required: true
+  attr :read_errors, :list, default: []
+
+  # `@sides` HTML is server-sanitised by
+  # `Meerkat.Markdown.render_diff_sides/3`, so `raw/1` is safe. A nil
+  # side (added/deleted file) collapses the grid to one pane. The
+  # read-errors banner mirrors DiffViewer's: rendered mode hides the
+  # diff, so without it a swallowed git error reads as a clean doc.
+  defp markdown_preview(assigns) do
+    ~H"""
+    <section class="md-preview" aria-label="Rendered markdown">
+      <div :if={@read_errors != []} class="md-read-errors" role="alert" data-test="read-errors">
+        <strong>Could not fully read this file's diff:</strong>
+        <ul>
+          <li :for={err <- @read_errors}>{err}</li>
+        </ul>
+        The rendered document below may be incomplete or misleading — do not approve until resolved.
+      </div>
+      <div class={["md-grid", (is_nil(@sides.old_html) or is_nil(@sides.new_html)) && "single"]}>
+        <figure :if={not is_nil(@sides.old_html)} class="md-side">
+          <figcaption class="md-side-head">Old</figcaption>
+          <div class="md-body">{Phoenix.HTML.raw(@sides.old_html)}</div>
+        </figure>
+        <figure :if={not is_nil(@sides.new_html)} class="md-side">
+          <figcaption class="md-side-head">New</figcaption>
+          <div class="md-body">{Phoenix.HTML.raw(@sides.new_html)}</div>
+        </figure>
+      </div>
+    </section>
+    """
+  end
+
+  defp markdown_file?(file), do: file.language == "markdown"
 
   attr :state, ReviewState, required: true
   attr :filter_input, :string, required: true
