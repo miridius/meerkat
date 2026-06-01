@@ -160,4 +160,49 @@ defmodule Meerkat.CLITest do
       assert CLI.args_error(["HEAD"], []) == nil
     end
   end
+
+  describe "feedback_banner/2" do
+    @path "/repo/.git/meerkat-precommit/last-feedback.txt"
+
+    test "single comment is singular, plural otherwise" do
+      single = CLI.feedback_banner_for_test(1, {:ok, @path})
+      assert single =~ "1 comment total"
+      refute single =~ "comments total"
+
+      assert CLI.feedback_banner_for_test(3, {:ok, @path}) =~ "3 comments total"
+    end
+
+    test "nil count drops the number rather than printing a wrong 0" do
+      banner = CLI.feedback_banner_for_test(nil, {:ok, @path})
+      assert banner =~ "feedback above"
+      refute banner =~ "0 comment"
+    end
+
+    test "successful save names the recovery path" do
+      assert CLI.feedback_banner_for_test(2, {:ok, @path}) =~ @path
+    end
+
+    test "failed save swaps in the couldn't-write wording and omits a path" do
+      banner = CLI.feedback_banner_for_test(2, :error)
+      assert banner =~ "couldn't be written"
+      refute banner =~ "saved to"
+    end
+
+    test "brackets with leading and trailing newlines so it survives at either truncation end" do
+      banner = CLI.feedback_banner_for_test(1, {:ok, @path})
+      assert String.starts_with?(banner, "\n")
+      assert String.ends_with?(banner, "\n")
+    end
+  end
+
+  describe "write_feedback/2" do
+    test "empty payload writes nothing — no banner, no file lookup" do
+      output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.write_feedback_for_test("", "any-review-id") == :ok
+        end)
+
+      assert output == ""
+    end
+  end
 end

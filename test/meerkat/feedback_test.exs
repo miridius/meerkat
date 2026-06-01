@@ -230,6 +230,31 @@ defmodule Meerkat.FeedbackTest do
     end
   end
 
+  describe "comment_count" do
+    test "empty state has zero comments" do
+      assert Feedback.comment_count(%ReviewState{}) == 0
+    end
+
+    test "sums comments across all four surfaces" do
+      state = %ReviewState{
+        comments: [inline_comment([]), inline_comment([])],
+        file_comments: [comment(file_index: 0)],
+        global_comments: [comment([]), comment([]), comment([])],
+        commit_message_comments: [comment(start_line: 1, end_line: 1)]
+      }
+
+      assert Feedback.comment_count(state) == 7
+    end
+
+    test "counts question comments alongside actionable ones" do
+      state = %ReviewState{
+        global_comments: [comment(finding_type: :question), comment(finding_type: :issue)]
+      }
+
+      assert Feedback.comment_count(state) == 2
+    end
+  end
+
   defp comment(overrides) do
     Enum.into(overrides, %{
       id: Comment.new_id(),

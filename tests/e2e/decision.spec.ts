@@ -223,6 +223,58 @@ test.describe("decision flow", () => {
 		}
 	});
 
+	test("feedback is bracketed with a count+path banner and saved to last-feedback.txt", async ({
+		page,
+	}) => {
+		// The agent commonly head/tail's meerkat's stderr and sees only a
+		// few comments. The banner (top and bottom, so either truncation
+		// end survives) reports the true count and a path to the full copy
+		// so the agent can recover everything it missed.
+		const meerkat = await startMeerkat({ keepFixture: true });
+		const feedbackPath = join(
+			meerkat.fixture.dir,
+			".git",
+			"meerkat-precommit",
+			"last-feedback.txt",
+		);
+		try {
+			await page.goto(meerkat.url);
+
+			// First global comment uses "+ Add global comment"; once one
+			// exists the control becomes "+ Add another".
+			const addButtons = [/^\+ Add global comment$/, /^\+ Add another$/];
+			for (const [i, body] of ["first finding here", "second finding here"].entries()) {
+				await page.getByRole("button", { name: addButtons[i] }).click();
+				const form = page.locator(".comment-form");
+				await expect(form).toBeVisible();
+				await form.locator("textarea").fill(body);
+				await form.getByRole("button", { name: /^Issue$/ }).click();
+				await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
+				await expect(form).toBeHidden();
+			}
+
+			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(1);
+
+			// Banner reports the true comment count and the recovery path.
+			expect(stderr).toContain("meerkat: 2 comments total");
+			expect(stderr).toContain("last-feedback.txt");
+			// Bracketed top and bottom — the banner appears twice.
+			expect(stderr.match(/meerkat: 2 comments total/g)?.length).toBe(2);
+
+			// The saved file holds the full feedback the banner points to.
+			expect(existsSync(feedbackPath)).toBe(true);
+			const saved = readFileSync(feedbackPath, "utf8");
+			expect(saved).toContain("first finding here");
+			expect(saved).toContain("second finding here");
+		} finally {
+			await meerkat.kill();
+			meerkat.fixture.cleanup?.();
+		}
+	});
+
 	test("server logs are redirected to meerkat.log, not the agent-facing stream", async ({
 		page,
 	}) => {

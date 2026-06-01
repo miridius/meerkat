@@ -83,9 +83,7 @@ defmodule Meerkat.Feedback do
   # what needs ANSWERING so a question doesn't get mistaken for a fix
   # request.
   defp action_summary(%ReviewState{} = state) do
-    all =
-      state.comments ++
-        state.file_comments ++ state.global_comments ++ state.commit_message_comments
+    all = all_comments(state)
 
     {questions, actionable} =
       Enum.split_with(all, &(&1.finding_type == :question))
@@ -145,11 +143,16 @@ defmodule Meerkat.Feedback do
   """
   @spec has_questions?(ReviewState.t()) :: boolean()
   def has_questions?(%ReviewState{} = state) do
-    Enum.any?(
-      state.comments ++
-        state.file_comments ++ state.global_comments ++ state.commit_message_comments,
-      &(&1.finding_type == :question)
-    )
+    Enum.any?(all_comments(state), &(&1.finding_type == :question))
+  end
+
+  @doc "Total number of comments across all four surfaces (inline, file, global, commit-message)."
+  @spec comment_count(ReviewState.t()) :: non_neg_integer()
+  def comment_count(%ReviewState{} = state), do: length(all_comments(state))
+
+  defp all_comments(%ReviewState{} = state) do
+    state.comments ++
+      state.file_comments ++ state.global_comments ++ state.commit_message_comments
   end
 
   # Directive prepended to feedback when at least one comment is
