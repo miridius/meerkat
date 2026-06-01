@@ -29,6 +29,8 @@ Thumbs.db
 /coverage
 /qa-runs
 .playwright-mcp/
+# ExUnit `@tag :tmp_dir` fixtures
+/tmp/
 
 # Elixir / Phoenix
 /deps

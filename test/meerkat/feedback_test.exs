@@ -167,6 +167,9 @@ defmodule Meerkat.FeedbackTest do
       out = Feedback.format(state, "/tmp/repo", :rejection)
       assert out =~ "(old)"
       assert out =~ "this was here"
+      # Old-side quote uses the `-` prefix; new-side would be `+`.
+      assert out =~ "- a"
+      refute out =~ "+ a"
     end
 
     test "commit_message_comments surface renders with the commit-msg line tag" do
@@ -189,6 +192,8 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "Commit message comments"
       assert out =~ "commit-message:1"
       assert out =~ "rewrite subject"
+      # The referenced commit-message line is quoted back under the tag.
+      assert out =~ "| subject"
     end
 
     test "inline comment carries file-index + line-range tag" do
@@ -205,6 +210,17 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "tighten"
     end
 
+    test "a comment with no finding_type renders its bare body, unlabelled" do
+      # Exercises label_body's defensive `ft_str == ""` branch (nil finding_type).
+      state = %ReviewState{
+        global_comments: [comment(body: "bare body text", finding_type: nil)]
+      }
+
+      out = Feedback.format(state, "/tmp/repo", :rejection)
+      assert out =~ "bare body text"
+      refute out =~ "**:**"
+    end
+
     test "revert with empty body renders the synthesised `restore from HEAD` label" do
       # Empty-body revert renders subject-less because the comment's
       # anchor above already names the line range. HEAD is staged-
@@ -217,6 +233,16 @@ defmodule Meerkat.FeedbackTest do
 
       out = Feedback.format(state, "/tmp/repo", :rejection)
       assert out =~ "restore from HEAD"
+    end
+
+    test "revert WITH a body renders the labelled body, not the synthesised label" do
+      state = %ReviewState{
+        global_comments: [comment(body: "undo this rename", finding_type: :revert)]
+      }
+
+      out = Feedback.format(state, "/tmp/repo", :rejection)
+      assert out =~ "**revert:** undo this rename"
+      refute out =~ "restore from HEAD"
     end
 
     test "learn_from_this prints the please-learn-from-this directive" do

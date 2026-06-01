@@ -399,6 +399,12 @@ defmodule Meerkat.CLI do
   def write_feedback_for_test(payload, review_id, feedback_path),
     do: write_feedback(payload, review_id, feedback_path)
 
+  @doc false
+  def feedback_file_path_for_test(log), do: feedback_file_path(log)
+
+  @doc false
+  def comment_count_for_test(review_id), do: comment_count(review_id)
+
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
   defp finalise_auto_approve(repo_path) do
