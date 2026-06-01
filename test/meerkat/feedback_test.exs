@@ -167,6 +167,9 @@ defmodule Meerkat.FeedbackTest do
       out = Feedback.format(state, "/tmp/repo", :rejection)
       assert out =~ "(old)"
       assert out =~ "this was here"
+      # Old-side quote uses the `-` prefix; new-side would be `+`.
+      assert out =~ "- a"
+      refute out =~ "+ a"
     end
 
     test "commit_message_comments surface renders with the commit-msg line tag" do
@@ -189,6 +192,8 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "Commit message comments"
       assert out =~ "commit-message:1"
       assert out =~ "rewrite subject"
+      # The referenced commit-message line is quoted back under the tag.
+      assert out =~ "| subject"
     end
 
     test "inline comment carries file-index + line-range tag" do
@@ -205,6 +210,17 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "tighten"
     end
 
+    test "a comment with no finding_type renders its bare body, unlabelled" do
+      # Exercises label_body's defensive `ft_str == ""` branch (nil finding_type).
+      state = %ReviewState{
+        global_comments: [comment(body: "bare body text", finding_type: nil)]
+      }
+
+      out = Feedback.format(state, "/tmp/repo", :rejection)
+      assert out =~ "bare body text"
+      refute out =~ "**:**"
+    end
+
     test "revert with empty body renders the synthesised `restore from HEAD` label" do
       # Empty-body revert renders subject-less because the comment's
       # anchor above already names the line range. HEAD is staged-
@@ -219,6 +235,16 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "restore from HEAD"
     end
 
+    test "revert WITH a body renders the labelled body, not the synthesised label" do
+      state = %ReviewState{
+        global_comments: [comment(body: "undo this rename", finding_type: :revert)]
+      }
+
+      out = Feedback.format(state, "/tmp/repo", :rejection)
+      assert out =~ "**revert:** undo this rename"
+      refute out =~ "restore from HEAD"
+    end
+
     test "learn_from_this prints the please-learn-from-this directive" do
       state = %ReviewState{
         global_comments: [comment(body: "fix", finding_type: :issue, learn_from_this: true)]
@@ -227,6 +253,31 @@ defmodule Meerkat.FeedbackTest do
       out = Feedback.format(state, "/tmp/repo", :rejection)
       assert out =~ "please-learn-from-this:"
       assert out =~ "internalising"
+    end
+  end
+
+  describe "comment_count" do
+    test "empty state has zero comments" do
+      assert Feedback.comment_count(%ReviewState{}) == 0
+    end
+
+    test "sums comments across all four surfaces" do
+      state = %ReviewState{
+        comments: [inline_comment([]), inline_comment([])],
+        file_comments: [comment(file_index: 0)],
+        global_comments: [comment([]), comment([]), comment([])],
+        commit_message_comments: [comment(start_line: 1, end_line: 1)]
+      }
+
+      assert Feedback.comment_count(state) == 7
+    end
+
+    test "counts question comments alongside actionable ones" do
+      state = %ReviewState{
+        global_comments: [comment(finding_type: :question), comment(finding_type: :issue)]
+      }
+
+      assert Feedback.comment_count(state) == 2
     end
   end
 

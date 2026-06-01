@@ -1,7 +1,9 @@
 defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
-  alias Meerkat.{ApprovalCache, CLI}
+  import Meerkat.TestHelpers
+
+  alias Meerkat.{ApprovalCache, CLI, ReviewLog}
 
   describe "parse_args/1" do
     test "defaults: no commit-msg / pr / positional, browser opens, port 0" do
@@ -158,6 +160,111 @@ defmodule Meerkat.CLITest do
     test "well-formed argv → nil" do
       assert CLI.args_error([], []) == nil
       assert CLI.args_error(["HEAD"], []) == nil
+    end
+  end
+
+  describe "feedback_banner/2" do
+    @path "/repo/.git/meerkat-precommit/reviews/20260601-main-files3.txt"
+
+    test "attributes the count to the user, not the tool" do
+      banner = CLI.feedback_banner_for_test(2, {:ok, @path})
+      assert banner =~ "User left 2 comments total"
+      # No "meerkat:" tool label — it would read as a third-party verdict
+      # next to the first-party feedback framing. (The path legitimately
+      # contains "meerkat-precommit".)
+      refute banner =~ "meerkat:"
+    end
+
+    test "single comment is singular, plural otherwise" do
+      single = CLI.feedback_banner_for_test(1, {:ok, @path})
+      assert single =~ "User left 1 comment total"
+      refute single =~ "comments total"
+
+      assert CLI.feedback_banner_for_test(3, {:ok, @path}) =~ "User left 3 comments total"
+    end
+
+    test "nil count drops the number rather than printing a wrong 0" do
+      banner = CLI.feedback_banner_for_test(nil, {:ok, @path})
+      assert banner =~ "User left comments"
+      refute banner =~ ~r/\d+ comment/
+    end
+
+    test "successful save names the recovery path" do
+      assert CLI.feedback_banner_for_test(2, {:ok, @path}) =~ @path
+    end
+
+    test "failed save swaps in the couldn't-write wording and omits a path" do
+      banner = CLI.feedback_banner_for_test(2, :error)
+      assert banner =~ "could not be written to disk"
+      refute banner =~ "saved to"
+    end
+
+    test "brackets with leading and trailing newlines so it survives at either truncation end" do
+      banner = CLI.feedback_banner_for_test(1, {:ok, @path})
+      assert String.starts_with?(banner, "\n")
+      assert String.ends_with?(banner, "\n")
+    end
+  end
+
+  describe "feedback_file_path/1" do
+    test "derives the .txt sibling of the review-log file, preserving the per-review stem" do
+      log = %ReviewLog{path: "/r/.git/meerkat-precommit/reviews/20260601120000-main-files3.json"}
+
+      assert CLI.feedback_file_path_for_test(log) ==
+               "/r/.git/meerkat-precommit/reviews/20260601120000-main-files3.txt"
+    end
+
+    test "distinct reviews get distinct feedback paths — no fixed-name clobber" do
+      a = %ReviewLog{path: "/r/reviews/20260601120000-main-files3.json"}
+      b = %ReviewLog{path: "/r/reviews/20260601120500-feature-x-files1.json"}
+
+      refute CLI.feedback_file_path_for_test(a) == CLI.feedback_file_path_for_test(b)
+    end
+  end
+
+  describe "comment_count/1" do
+    test "a missing/dead review server yields nil rather than raising" do
+      id = "no-live-review-#{System.unique_integer([:positive])}"
+      assert CLI.comment_count_for_test(id) == nil
+    end
+  end
+
+  describe "write_feedback/3" do
+    test "empty payload writes nothing — no banner, no file lookup" do
+      output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.write_feedback_for_test("", "any-review-id", "/tmp/unused.txt") == :ok
+        end)
+
+      assert output == ""
+    end
+
+    test "writes the recovery file and brackets the payload with the banner" do
+      path = Path.join(make_tmp_repo("meerkat-cli-fb"), "fb.txt")
+
+      out =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.write_feedback_for_test("PAYLOAD-BODY", "no-live-review", path) == :ok
+        end)
+
+      assert File.read!(path) == "PAYLOAD-BODY"
+      assert out =~ "PAYLOAD-BODY"
+      # Banner appears top and bottom so it survives a head/tail truncation.
+      assert length(Regex.scan(~r/full feedback saved to/, out)) == 2
+    end
+
+    test "an unwritable path breadcrumbs the reason, degrades the banner, stays non-fatal" do
+      bad = "/no-such-dir-#{System.unique_integer([:positive])}/fb.txt"
+
+      out =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.write_feedback_for_test("PAYLOAD-BODY", "no-live-review", bad) == :ok
+        end)
+
+      refute File.exists?(bad)
+      assert out =~ "couldn't save full feedback to #{bad}"
+      assert out =~ "full feedback could not be written to disk"
+      assert out =~ "PAYLOAD-BODY"
     end
   end
 end

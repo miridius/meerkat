@@ -22,11 +22,13 @@ defmodule Meerkat.CLI do
   alias Meerkat.{
     ApprovalCache,
     Decision,
+    Feedback,
     Git,
     PendingAnswers,
     Persistence,
     ReviewId,
     ReviewLog,
+    ReviewServer,
     ReviewState,
     ReviewTarget
   }
@@ -156,7 +158,7 @@ defmodule Meerkat.CLI do
         # start with an empty review, not replay stale comments from
         # a closed cycle.
         _ = Persistence.delete(repo_path(), review_id)
-        exit_code(decision)
+        exit_code(decision, review_id, feedback_file_path(log))
 
       {:error, reason} ->
         IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
@@ -390,6 +392,19 @@ defmodule Meerkat.CLI do
   @doc false
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
 
+  @doc false
+  def feedback_banner_for_test(count, save_result), do: feedback_banner(count, save_result)
+
+  @doc false
+  def write_feedback_for_test(payload, review_id, feedback_path),
+    do: write_feedback(payload, review_id, feedback_path)
+
+  @doc false
+  def feedback_file_path_for_test(log), do: feedback_file_path(log)
+
+  @doc false
+  def comment_count_for_test(review_id), do: comment_count(review_id)
+
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
   defp finalise_auto_approve(repo_path) do
@@ -606,22 +621,22 @@ defmodule Meerkat.CLI do
   # wiped its comments before submit (payload is ""), so its sentence is
   # all the agent gets — and now it gets one.
 
-  defp exit_code({:approve, _payload}) do
+  defp exit_code({:approve, _payload}, _review_id, _feedback_path) do
     IO.puts(:stderr, "The user approved your commit. Proceeding.")
     0
   end
 
-  defp exit_code({:approve_with_feedback, payload}) do
-    write_feedback(payload)
+  defp exit_code({:approve_with_feedback, payload}, review_id, feedback_path) do
+    write_feedback(payload, review_id, feedback_path)
     0
   end
 
-  defp exit_code({:reject, payload}) do
-    write_feedback(payload)
+  defp exit_code({:reject, payload}, review_id, feedback_path) do
+    write_feedback(payload, review_id, feedback_path)
     1
   end
 
-  defp exit_code({:cancel, _payload}) do
+  defp exit_code({:cancel, _payload}, _review_id, _feedback_path) do
     IO.puts(:stderr, "Review cancelled — commit aborted, no feedback to act on.")
     1
   end
@@ -629,12 +644,64 @@ defmodule Meerkat.CLI do
   defp decision_atom(:approve_with_feedback), do: :approve
   defp decision_atom(tag), do: tag
 
-  defp write_feedback(""), do: :ok
+  # Sibling of the review-log file — a fixed name would be clobbered by
+  # a concurrent review on the same gitdir.
+  defp feedback_file_path(%ReviewLog{path: log_path}), do: Path.rootname(log_path) <> ".txt"
 
-  # Forward review feedback to stderr unchanged; git's pre-commit
-  # context captures stderr and surfaces it to the calling agent.
-  defp write_feedback(payload) when is_binary(payload) do
+  defp write_feedback("", _review_id, _feedback_path), do: :ok
+
+  # Bracket the feedback top and bottom: the agent often head/tail's
+  # this stream, so whichever end survives still carries count + path.
+  defp write_feedback(payload, review_id, feedback_path) when is_binary(payload) do
+    banner = feedback_banner(comment_count(review_id), save_feedback_file(payload, feedback_path))
+    IO.write(:stderr, banner)
     IO.write(:stderr, payload)
+    IO.write(:stderr, banner)
     :ok
   end
+
+  # Best-effort: on failure yield nil so the banner omits the count
+  # rather than printing a wrong "0" or aborting an already-decided commit.
+  defp comment_count(review_id) do
+    Feedback.comment_count(ReviewServer.get_state(review_id))
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
+  end
+
+  # Best-effort: a failed write must never flip an already-decided exit code.
+  defp save_feedback_file(payload, path) do
+    case File.write(path, payload) do
+      :ok -> {:ok, path}
+      {:error, reason} -> feedback_file_unsaved(path, reason)
+    end
+  rescue
+    e -> feedback_file_unsaved(path, e)
+  end
+
+  # Surface the reason — swallowing it leaves the agent with no recovery
+  # copy and no clue why.
+  defp feedback_file_unsaved(path, reason) do
+    IO.puts(
+      :stderr,
+      "meerkat: warning — couldn't save full feedback to #{path} (#{inspect(reason)})."
+    )
+
+    :error
+  end
+
+  # User-attributed, not tool-attributed: a "meerkat:" label next to
+  # first-party feedback would read as a third-party verdict.
+  defp feedback_banner(count, save_result) do
+    "\n── #{count_phrase(count)} — #{file_phrase(save_result)} ──\n"
+  end
+
+  defp count_phrase(count) when is_integer(count),
+    do: "User left #{count} comment#{if count == 1, do: "", else: "s"} total"
+
+  defp count_phrase(_), do: "User left comments"
+
+  defp file_phrase({:ok, path}), do: "full feedback saved to #{path} in case truncated"
+  defp file_phrase(:error), do: "full feedback could not be written to disk"
 end
