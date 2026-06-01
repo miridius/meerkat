@@ -4,8 +4,11 @@
 # a launcher at ~/.local/bin/meerkat that forwards the user's cwd
 # via $MEERKAT_PWD.
 #
-# Invoked automatically by the lefthook post-merge hook when main
-# moves. Run by hand any time via `bash scripts/install.sh`.
+# Invoked automatically by the lefthook post-merge / post-checkout
+# hooks (via scripts/auto-install.sh) whenever local `main` advances.
+# Idempotent — skips the rebuild when the release is already built from
+# the current commit. Run by hand any time via `bash scripts/install.sh`
+# (or `--force` to rebuild even when unchanged).
 
 set -euo pipefail
 
@@ -15,6 +18,22 @@ DEST_SHARE="${MEERKAT_INSTALL_PREFIX:-$HOME/.local/share/meerkat-beam}"
 DEST_BIN="${MEERKAT_BIN_DIR:-$HOME/.local/bin}"
 RELEASE_DIR="$DEST_SHARE/release"
 WRAPPER="$DEST_BIN/meerkat"
+INSTALLED_STAMP="$RELEASE_DIR/INSTALLED_COMMIT"
+
+# Idempotency. The post-merge / post-checkout hooks fire this on every
+# `main` checkout, but a rebuild takes minutes — so skip it when the
+# installed release is already built from the current commit and the
+# tree is clean. `--force` always rebuilds (to pick up uncommitted
+# edits, or just to be sure). Substitutions use `|| true` so a non-repo
+# / detached state can't trip `set -e`.
+HEAD_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+DIRTY="$(git status --porcelain 2>/dev/null || true)"
+STAMPED="$(cat "$INSTALLED_STAMP" 2>/dev/null || true)"
+if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -x "$WRAPPER" \
+      && -z "$DIRTY" && "$STAMPED" == "$HEAD_COMMIT" ]]; then
+  echo "meerkat: release already built from ${HEAD_COMMIT:0:12} (clean tree) — skipping. Pass --force to rebuild."
+  exit 0
+fi
 
 echo "meerkat: building Mix release for $(uname -sm)..."
 
@@ -112,4 +131,10 @@ trap 'rm -rf "$SMOKE_DIR"' EXIT
   echo "msg" > MSG
   MEERKAT_PWD="$SMOKE_DIR" "$WRAPPER" --commit-msg MSG --no-open
 )
+# Stamp the installed commit so the next hook-triggered run can skip the
+# rebuild when nothing changed (see the idempotency guard at the top).
+if [[ -n "$HEAD_COMMIT" ]]; then
+  printf '%s\n' "$HEAD_COMMIT" > "$INSTALLED_STAMP"
+fi
+
 echo "meerkat: done."

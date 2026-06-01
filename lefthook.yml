@@ -10,28 +10,21 @@ pre-push:
     mix-test:
       run: mix test
 
+# Auto-install meerkat whenever local `main` advances, however it
+# advances. `post-merge` catches `git pull` / `git merge`;
+# `post-checkout` catches `git switch main` / `git checkout main` — the
+# path a GitHub `gh pr merge --squash` takes (it lands on origin/main and
+# local main is brought to it by switching/resetting, never a local
+# merge — which is why the old post-merge-only trigger silently missed
+# every squash-merged release). The shared guard acts only on `main`,
+# and install.sh skips the rebuild when the commit is unchanged, so
+# firing on every checkout is cheap.
 post-merge:
   commands:
-    # Auto-install meerkat whenever main moves locally — runs after
-    # `git pull` / `git merge` on main. Other branches skip; running
-    # an install for a feature-branch merge is just noise. Detached
-    # HEAD or missing-rev-parse → log + skip rather than silently
-    # no-op, so a misconfigured worktree leaves a trail.
     install:
-      run: |
-        branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
-        case "$branch" in
-          main)
-            bash scripts/install.sh
-            ;;
-          "")
-            echo "meerkat post-merge: couldn't resolve HEAD; skipping install." >&2
-            ;;
-          *)
-            echo "meerkat post-merge: HEAD=$branch (not main); skipping install." >&2
-            ;;
-        esac
+      run: bash scripts/auto-install.sh
 
-# `gh pr merge --squash` lands the squash on origin/main without
-# touching the local main. Run `git pull` on main afterwards to fire
-# the post-merge hook above and install the new binary.
+post-checkout:
+  commands:
+    install:
+      run: bash scripts/auto-install.sh
