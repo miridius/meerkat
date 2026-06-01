@@ -117,10 +117,14 @@ scripts/install.sh            # revert to prod release
 ```
 
 `dev-install.sh` refuses to run while HEAD is `main` — dev mode is
-for unmerged work. Merging a branch into `main` runs the lefthook
-post-merge hook which fires `scripts/install.sh`, replacing the
-dev launcher with the prod release automatically. There is no
-state marker file; the launcher script content IS the mode.
+for unmerged work. Bringing local `main` up to date — via `git pull`,
+or by `git switch`/`git checkout main` after a GitHub squash-merge —
+fires the lefthook `post-merge` / `post-checkout` hooks, which run
+`scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
+dev launcher with the prod release. install.sh is idempotent (it
+skips the rebuild when the release is already built from the current
+commit), so the hooks are cheap to fire on every `main` checkout.
+There is no state marker file; the launcher script content IS the mode.
 
 `bin/meerkat-beam` (the underlying launcher) is also runnable
 directly for ad-hoc dev — `MEERKAT_BIN=./bin/meerkat-beam bun run
