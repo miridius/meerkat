@@ -29,11 +29,13 @@
         "@nextjournal/lang-clojure": "^1.0.0",
         "@rose-pine/palette": "^4.0.1",
         "codemirror": "^6.0.2",
+        "linguist-languages": "^9.4.0",
         "live_svelte": "file:../deps/live_svelte",
         "phoenix": "file:../deps/phoenix",
         "phoenix_html": "file:../deps/phoenix_html",
         "phoenix_live_view": "file:../deps/phoenix_live_view",
         "phoenix_vite": "file:../deps/phoenix_vite",
+        "shiki": "^3.23.0",
       },
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^6.2.4",
@@ -1231,6 +1233,8 @@
     "levn": ["levn@0.4.1", "", { "dependencies": { "prelude-ls": "^1.2.1", "type-check": "~0.4.0" } }, "sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ=="],
 
     "lines-and-columns": ["lines-and-columns@1.2.4", "", {}, "sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg=="],
+
+    "linguist-languages": ["linguist-languages@9.4.0", "", {}, "sha512-mYnFVrsWg5Bex0Kl5EDcXhrjXZ5DqMlBDXo7EUWLMTLDpxbuHvgBb2aOvGWC5ZmMJ2HXEKJiuFie9NEs8NUMXg=="],
 
     "live_svelte": ["live_svelte@file:../deps/live_svelte", { "devDependencies": { "prettier": "^3.8.1", "prettier-plugin-svelte": "^3.5.1", "svelte": "^5.53.7" } }],
 

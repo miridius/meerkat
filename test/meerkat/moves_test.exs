@@ -7,7 +7,6 @@ defmodule Meerkat.MovesTest do
     %{
       file_name: name,
       old_file_name: nil,
-      language: "",
       old_content: "",
       new_content: "",
       hunks: hunks,

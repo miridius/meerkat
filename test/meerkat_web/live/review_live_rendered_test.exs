@@ -14,7 +14,6 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
     status: :modified,
     file_name: "README.md",
     old_file_name: nil,
-    language: "markdown",
     old_content: "# Title\n\nOld paragraph.\n",
     new_content: "# Title\n\nNew paragraph.\n",
     hunks: ["@@ -1,3 +1,3 @@\n # Title\n \n-Old paragraph.\n+New paragraph."],
@@ -61,7 +60,7 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
   end
 
   test "non-markdown files have no rendered toggle", %{conn: conn} do
-    code_file = %{@md_file | file_name: "main.rs", language: "rust"}
+    code_file = %{@md_file | file_name: "main.rs"}
     Application.put_env(:meerkat, :review_state, %ReviewState{files: [code_file]})
 
     {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)

@@ -54,9 +54,10 @@ When `finding_type === "suggestion"`:
 - The CodeMirror editor is seeded with the file content covered
   by the anchor's `(start_line, end_line, side)` — the user
   edits *toward* the proposed change rather than starting blank.
-- The editor's syntax-highlighting language is the file's
-  detected language (Python → python, TS → typescript, etc., via
-  `Meerkat.Git.language_for/1`).
+- The editor's syntax-highlighting language is derived from the
+  file's name in the frontend (`languageFor` in
+  `assets/ts/languageFor.ts`, backed by GitHub Linguist's dataset
+  and validated against shiki's bundled languages).
 - On submit, the body is composed as
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it

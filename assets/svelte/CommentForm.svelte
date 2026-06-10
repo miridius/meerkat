@@ -9,6 +9,7 @@
   import { onDestroy } from "svelte";
   import { createCmEditor } from "../ts/cmEditor";
   import { preloadLanguages } from "../ts/cmLang";
+  import { languageFor } from "../ts/languageFor";
   import type { EditorView } from "@codemirror/view";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
@@ -26,7 +27,7 @@
     initialFindingType = "issue",
     initialLearnFromThis = false,
     initialCode = "",
-    language = "plaintext",
+    fileName = "",
     draftKey,
     live,
   }: {
@@ -38,10 +39,14 @@
     initialFindingType?: FindingType;
     initialLearnFromThis?: boolean;
     initialCode?: string;
-    language?: string;
+    fileName?: string;
     draftKey?: string;
     live: LiveBridge;
   } = $props();
+
+  // Commit-message and global forms carry no file name; their
+  // suggestion editors stay plaintext.
+  const language = $derived(fileName ? languageFor(fileName) : "plaintext");
 
   // Hydrate from localStorage if a draft key was passed AND there's
   // something saved. Edit mode (initialBody non-empty) wins over the

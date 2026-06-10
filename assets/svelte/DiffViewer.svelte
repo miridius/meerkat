@@ -82,6 +82,7 @@
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
+  import { languageFor } from "../ts/languageFor";
 
   // Renders ONE file's diff body via `@git-diff-view`, the read-only
   // inline comment list, and the pointer-drag selection logic that
@@ -102,7 +103,6 @@
   type FileDiff = {
     file_name: string;
     old_file_name?: string | null;
-    language: string;
     old_content: string;
     new_content: string;
     hunks: string[];
@@ -213,8 +213,10 @@
   // cache so every DiffViewer instance shares one engine per lang.
   // Languages shiki doesn't bundle resolve to `null` quietly and
   // the diff falls through to the lowlight engine.
+  const fileLanguage = $derived(languageFor(file.file_name));
+
   $effect(() => {
-    const lang = file.language;
+    const lang = fileLanguage;
     if (!lang || lang === "plaintext" || lang === "text") {
       highlighter = null;
       return;
@@ -239,8 +241,8 @@
 
     try {
       const instance = DiffFile.createInstance({
-        oldFile: { fileName: oldName, fileLang: file.language, content: file.old_content },
-        newFile: { fileName: file.file_name, fileLang: file.language, content: file.new_content },
+        oldFile: { fileName: oldName, fileLang: fileLanguage, content: file.old_content },
+        newFile: { fileName: file.file_name, fileLang: fileLanguage, content: file.new_content },
         hunks: [unifiedDiff],
       });
       instance.init();

@@ -6,8 +6,8 @@ import { startMeerkat } from "./lib/runner";
 // 2000-line syntax cap. The DiffViewer raises that cap
 // (MAX_SYNTAX_LINES) — before the fix, files this long rendered
 // with no highlighting at all while their shorter siblings were
-// colourful. (Shiki resolves the `.clj` extension by itself via
-// its `clj` alias, so this spec needs no language-id mapping.)
+// colourful. Clojure also exercises the linguist-backed
+// `languageFor` resolution (`.clj` → `clojure`) end-to-end.
 function bigCljFile(lines: number): string {
 	let out = "(ns big.core)\n\n";
 	for (let i = 0; out.split("\n").length < lines; i++) {

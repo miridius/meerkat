@@ -62,7 +62,7 @@ wait_for_source_change() {
 build_assets_if_stale() {
   local manifest="priv/static/.vite/manifest.json"
   if [[ ! -f "$manifest" ]] || \
-     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
+     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json assets/bun.lock -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
     MIX_BUILD_PATH="$ROOT/_build/${MIX_ENV}" \
       bash -c 'cd assets && bunx vite build' >&2
   fi

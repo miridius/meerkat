@@ -30,11 +30,13 @@
     "@nextjournal/lang-clojure": "^1.0.0",
     "@rose-pine/palette": "^4.0.1",
     "codemirror": "^6.0.2",
+    "linguist-languages": "^9.4.0",
+    "live_svelte": "file:../deps/live_svelte",
     "phoenix": "file:../deps/phoenix",
     "phoenix_html": "file:../deps/phoenix_html",
     "phoenix_live_view": "file:../deps/phoenix_live_view",
     "phoenix_vite": "file:../deps/phoenix_vite",
-    "live_svelte": "file:../deps/live_svelte"
+    "shiki": "^3.23.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.4",

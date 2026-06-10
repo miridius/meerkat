@@ -1421,7 +1421,10 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
-  defp markdown_file?(file), do: file.language == "markdown"
+  defp markdown_file?(file) do
+    ext = file.file_name |> Path.extname() |> String.downcase()
+    ext in [".md", ".markdown"]
+  end
 
   attr :state, ReviewState, required: true
   attr :filter_input, :string, required: true
@@ -2199,12 +2202,11 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp file_form_props(form, file_index, state, review_id) do
     file = Enum.at(state.files, file_index)
-    language = Map.get(file || %{}, :language, "plaintext")
 
     base_form_props(form, %{
       submitLabel: if(Map.get(form, :edit_id), do: "Save", else: "Add File Comment"),
       extraPayload: %{file_index: file_index},
-      language: language,
+      fileName: Map.get(file || %{}, :file_name, ""),
       draftKey:
         draft_key_for(:file, %{file_index: file_index}, review_id, Map.get(form, :edit_id))
     })
@@ -2253,7 +2255,6 @@ defmodule MeerkatWeb.ReviewLive do
   defp inline_form_props(form, state, review_id) do
     %{anchor: anchor} = form
     file = Enum.at(state.files, anchor.file_index)
-    language = Map.get(file || %{}, :language, "plaintext")
     initial_code = extract_snippet(file, anchor.start_line, anchor.end_line, anchor.side)
 
     base_form_props(form, %{
@@ -2264,7 +2265,7 @@ defmodule MeerkatWeb.ReviewLive do
         end_line: anchor.end_line,
         side: anchor.side
       },
-      language: language,
+      fileName: Map.get(file || %{}, :file_name, ""),
       initialCode: initial_code,
       draftKey: draft_key_for(:inline, anchor, review_id, Map.get(form, :edit_id))
     })
