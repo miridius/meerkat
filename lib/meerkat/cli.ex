@@ -146,7 +146,7 @@ defmodule Meerkat.CLI do
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
         start_endpoint!(opts.port, state, review_id, repo_path())
-        announce_url()
+        announce_url(target)
         open_browser_unless_disabled(opts.no_open)
         decision = await_decision_or_reject()
         # Give the LiveView a moment to flush the done-view
@@ -396,6 +396,9 @@ defmodule Meerkat.CLI do
   def feedback_banner_for_test(count, save_result), do: feedback_banner(count, save_result)
 
   @doc false
+  def pause_banner_for_test(target, url), do: pause_banner(target, url)
+
+  @doc false
   def write_feedback_for_test(payload, review_id, feedback_path),
     do: write_feedback(payload, review_id, feedback_path)
 
@@ -508,8 +511,33 @@ defmodule Meerkat.CLI do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
   end
 
-  defp announce_url do
-    IO.puts(:stderr, "human review UI at #{review_url()}")
+  # The opening banner is written for the AGENT whose `git commit` (or
+  # ad-hoc `meerkat` invocation) is now blocked on a human: it has to
+  # say what the pause means, that waiting is the correct move, and how
+  # to read the outcome — otherwise agents poll, sleep, or give up on
+  # the "stuck" process. Wording is target-aware: only a staged review
+  # WITH a commit-msg path is the commit-msg hook flow where exit 0
+  # lands a commit; a bare `meerkat` staged run and the ad-hoc
+  # ref/range/PR modes land nothing on approve.
+  defp pause_banner(target, url) do
+    {process_desc, exit_zero} =
+      case target do
+        {:staged, path} when not is_nil(path) -> {"`git commit` process", "approved & landed"}
+        _ -> {"`meerkat` process", "approved"}
+      end
+
+    """
+    ⏸ Paused for human review at #{url} — may take minutes or hours.
+    Agents: this #{process_desc} blocks until the review completes, then exits
+    on its own — do NOT poll, sleep, or schedule wake-ups; just wait for the exit.
+    Exit 0 = #{exit_zero}, exit 1 = changes requested. In BOTH cases read the
+    full process output afterwards: approvals can still carry review comments, and
+    rejections include the feedback you must address.
+    """
+  end
+
+  defp announce_url(target) do
+    IO.write(:stderr, pause_banner(target, review_url()))
     IO.puts(:stderr, "debug logs at: #{Application.get_env(:meerkat, :log_path)}")
   end
 

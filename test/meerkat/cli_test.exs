@@ -206,6 +206,41 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "pause_banner/2" do
+    @url "http://127.0.0.1:54321/"
+
+    test "commit-msg hook flow gets git-commit wording and landed semantics" do
+      banner = CLI.pause_banner_for_test({:staged, "/tmp/COMMIT_MSG"}, @url)
+      assert banner =~ "Paused for human review at #{@url}"
+      assert banner =~ "this `git commit` process blocks"
+      assert banner =~ "Exit 0 = approved & landed"
+    end
+
+    test "ad-hoc targets get generic meerkat wording — nothing lands on approve" do
+      for target <- [
+            {:staged, nil},
+            {:single_ref, "HEAD"},
+            {:range, "a", "b", :two_dot},
+            {:pr, "1"}
+          ] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert banner =~ "this `meerkat` process blocks"
+        assert banner =~ "Exit 0 = approved,"
+        refute banner =~ "git commit"
+        refute banner =~ "landed"
+      end
+    end
+
+    test "core agent instructions survive in every variant" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert banner =~ "do NOT poll, sleep, or schedule wake-ups"
+        assert banner =~ "exit 1 = changes requested"
+        assert banner =~ "read the\nfull process output afterwards"
+      end
+    end
+  end
+
   describe "feedback_file_path/1" do
     test "derives the .txt sibling of the review-log file, preserving the per-review stem" do
       log = %ReviewLog{path: "/r/.git/meerkat-precommit/reviews/20260601120000-main-files3.json"}
