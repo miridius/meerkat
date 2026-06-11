@@ -22,10 +22,12 @@ remove commits a merged PR still references). Before committing:
   installs and script-running are split). `bun run` / `bunx` for
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
-- **Keep dependencies current.** `scripts/outdated.sh` reports stale
-  JS + Hex packages (also runs non-blocking on pre-push). Prefer
-  upgrading and fixing fallout over pinning old versions; the 24h
-  min-age floor is the only intentional lag.
+- **Keep dependencies current — enforced.** `scripts/outdated.sh`
+  runs on pre-push and FAILS while any JS or Hex package is behind
+  its latest release. Upgrade and fix the fallout rather than pin
+  old versions. A deliberate pin needs an exemption with a reason
+  in the script; latest releases younger than the 24h min-age floor
+  get an automatic grace pass.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 
