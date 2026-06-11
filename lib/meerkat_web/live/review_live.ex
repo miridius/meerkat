@@ -1537,7 +1537,9 @@ defmodule MeerkatWeb.ReviewLive do
           />
           <span class={"status-dot status-#{file.status}"} title={status_label(file.status)}></span>
           <a class="file-path" href={"#file-#{idx}"} title={file.file_name}>
-            <span class="dir">{file_path_dir(file.file_name)}</span><span class="base-name">{Path.basename(file.file_name)}</span>
+            <span class="dir">{file_path_dir(file.file_name)}</span><span class="base-name">{Path.basename(
+              file.file_name
+            )}</span>
           </a>
           <button
             type="button"
