@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
+import { makeFixture } from "./lib/fixture";
 
 // Pointer-event helpers — Playwright's high-level click/drag does
 // MouseEvent dispatch, but DiffViewer uses PointerEvent +
@@ -43,6 +46,35 @@ test.describe("diff line click + drag selection", () => {
 			const endLine = lines.nth(2);
 
 			await startLine.dragTo(endLine);
+
+			await expect(page.locator(".comment-form")).toBeVisible();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	// Split-mode number spans have `pointer-events: none` since
+	// @git-diff-view 0.1.4 — the td is the event target, a path the
+	// unified-mode tests above never exercise.
+	test("split-mode gutter drag across a two-sided diff opens a range form", async ({ page }) => {
+		const fixture = makeFixture({ files: { "src/lib.rs": "fn a() {}\nfn b() {}\nfn c() {}\n" } });
+		fixture.git("commit", "-q", "-m", "base");
+		writeFileSync(
+			join(fixture.dir, "src/lib.rs"),
+			"fn a() {}\nfn b2() {}\nfn c() {}\nfn d() {}\nfn e() {}\n",
+		);
+		fixture.git("add", "src/lib.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/lib.rs" });
+			const cell = (line: number) =>
+				fileSection.locator(`td.diff-line-new-num:has(span[data-line-num="${line}"])`);
+			await expect(cell(1)).toBeVisible();
+
+			await cell(1).dragTo(cell(4));
 
 			await expect(page.locator(".comment-form")).toBeVisible();
 		} finally {
