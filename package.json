@@ -2,6 +2,7 @@
   "name": "meerkat-e2e",
   "private": true,
   "version": "1.0.0",
+  "packageManager": "pnpm@10.29.2",
   "scripts": {
     "test:e2e": "MEERKAT_BIN=$PWD/bin/meerkat-beam playwright test --workers=1",
     "prepare": "lefthook install"

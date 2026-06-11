@@ -39,12 +39,15 @@ echo "meerkat: building Mix release for $(uname -sm)..."
 
 # Fetch Elixir deps first: assets/package.json pulls phoenix /
 # live_svelte / phoenix_vite JS out of deps/ via `file:` links, so
-# deps/ must exist before `bun install` runs.
+# deps/ must exist before `pnpm install` runs.
 MIX_ENV=prod mix deps.get --only prod
 
 # Phoenix assets need to be built before the release packages priv/.
+# pnpm installs (the workspace covers assets/ too); bun runs the
+# build — see pnpm-workspace.yaml for why the tools are split.
 if [[ -d assets ]]; then
-  (cd assets && bun install --frozen-lockfile && bun run build)
+  pnpm install --frozen-lockfile --ignore-scripts
+  (cd assets && bun run build)
 fi
 
 MIX_ENV=prod mix compile --warnings-as-errors

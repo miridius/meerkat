@@ -15,8 +15,17 @@ remove commits a merged PR still references). Before committing:
 
 ## Rules
 
-- **Elixir + Bun.** `mix …` for backend, `bun …` for the Playwright
-  e2e suite. Never npm/npx/node directly — bun owns JS tooling.
+- **Elixir + pnpm + Bun.** `mix …` for backend. JS dependencies are
+  installed ONLY with `pnpm install` (the workspace root covers
+  `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
+  age as a supply-chain guard — bun has no equivalent, which is why
+  installs and script-running are split). `bun run` / `bunx` for
+  running scripts and the Playwright e2e suite. Never npm/npx/node
+  directly, and never `bun install` — there must be no `bun.lock`.
+- **Keep dependencies current.** `scripts/outdated.sh` reports stale
+  JS + Hex packages (also runs non-blocking on pre-push). Prefer
+  upgrading and fixing fallout over pinning old versions; the 24h
+  min-age floor is the only intentional lag.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 

@@ -9,6 +9,8 @@ pre-push:
   commands:
     mix-test:
       run: mix test
+    outdated:
+      run: bash scripts/outdated.sh
 
 # Auto-install meerkat whenever local `main` advances, however it
 # advances. `post-merge` catches `git pull` / `git merge`;
