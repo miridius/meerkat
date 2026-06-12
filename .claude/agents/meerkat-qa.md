@@ -58,8 +58,8 @@ For each QA run:
    agent file is checked into). If running from another cwd, set it
    first: `MEERKAT_REPO="$(git -C <path-to-meerkat> rev-parse --show-toplevel)"`.
 
-   Wait for `human review UI at http://127.0.0.1:NNNN/` in the
-   log (poll up to 30s). Extract the URL.
+   Wait for `Paused for human review at http://127.0.0.1:NNNN/` in
+   the log (poll up to 30s). Extract the URL.
 
 4. **Generate the test plan.** For each affordance from step 1,
    write one Playwright `test(...)` block that exercises it

@@ -3,45 +3,6 @@ defmodule Meerkat.GitTest do
 
   alias Meerkat.Git
 
-  describe "language_for/1" do
-    test "maps common extensions to shiki ids" do
-      assert Git.language_for("foo.rs") == "rust"
-      assert Git.language_for("foo.ts") == "typescript"
-      assert Git.language_for("foo.tsx") == "tsx"
-      assert Git.language_for("foo.js") == "javascript"
-      assert Git.language_for("foo.jsx") == "jsx"
-      assert Git.language_for("foo.ex") == "elixir"
-      assert Git.language_for("foo.exs") == "elixir"
-      assert Git.language_for("foo.py") == "python"
-      assert Git.language_for("foo.go") == "go"
-      assert Git.language_for("foo.java") == "java"
-      assert Git.language_for("foo.rb") == "ruby"
-      assert Git.language_for("foo.css") == "css"
-      assert Git.language_for("foo.html") == "html"
-      assert Git.language_for("foo.json") == "json"
-      assert Git.language_for("foo.yaml") == "yaml"
-      assert Git.language_for("foo.yml") == "yaml"
-      assert Git.language_for("foo.md") == "markdown"
-      assert Git.language_for("foo.sh") == "bash"
-      assert Git.language_for("foo.svelte") == "svelte"
-    end
-
-    test "extension-less file → plaintext" do
-      assert Git.language_for("Makefile") == "plaintext"
-      assert Git.language_for("README") == "plaintext"
-    end
-
-    test "unknown extension falls through unchanged" do
-      assert Git.language_for("foo.clj") == "clj"
-      assert Git.language_for("foo.zig") == "zig"
-    end
-
-    test "extension lookup is case-insensitive" do
-      assert Git.language_for("Foo.RS") == "rust"
-      assert Git.language_for("README.MD") == "markdown"
-    end
-  end
-
   describe "parse_name_status/1" do
     test "empty output → empty list" do
       assert Git.parse_name_status("") == []

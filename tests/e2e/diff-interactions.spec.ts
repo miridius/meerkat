@@ -1,5 +1,8 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
+import { makeFixture } from "./lib/fixture";
 
 // Pointer-event helpers — Playwright's high-level click/drag does
 // MouseEvent dispatch, but DiffViewer uses PointerEvent +
@@ -45,6 +48,65 @@ test.describe("diff line click + drag selection", () => {
 			await startLine.dragTo(endLine);
 
 			await expect(page.locator(".comment-form")).toBeVisible();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	// Split-mode number spans have `pointer-events: none` since
+	// @git-diff-view 0.1.4 — the td is the event target, a path the
+	// unified-mode tests above never exercise.
+	test("split-mode gutter drag across a two-sided diff opens a range form", async ({ page }) => {
+		const fixture = makeFixture({ files: { "src/lib.rs": "fn a() {}\nfn b() {}\nfn c() {}\n" } });
+		fixture.git("commit", "-q", "-m", "base");
+		writeFileSync(
+			join(fixture.dir, "src/lib.rs"),
+			"fn a() {}\nfn b2() {}\nfn c() {}\nfn d() {}\nfn e() {}\n",
+		);
+		fixture.git("add", "src/lib.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/lib.rs" });
+			const cell = (line: number) =>
+				fileSection.locator(`td.diff-line-new-num:has(span[data-line-num="${line}"])`);
+			await expect(cell(1)).toBeVisible();
+
+			await cell(1).dragTo(cell(4));
+
+			await expect(page.locator(".comment-form")).toBeVisible();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	// Exercises Git.materialise_staged's :renamed clause: old content
+	// is read from the OLD path at HEAD, new content from the index.
+	test("staged rename renders the old name and both content sides", async ({ page }) => {
+		// Mostly-unchanged body so git's rename detection (similarity
+		// >= 50%) pairs the old and new paths instead of reporting
+		// delete + add.
+		const body = Array.from({ length: 9 }, (_, i) => `fn shared_${i}() {}`).join("\n");
+		const fixture = makeFixture({
+			files: { "src/old_name.rs": `fn original() {}\n${body}\n` },
+		});
+		fixture.git("commit", "-q", "-m", "base");
+		fixture.git("mv", "src/old_name.rs", "src/new_name.rs");
+		writeFileSync(join(fixture.dir, "src/new_name.rs"), `fn renamed_fn() {}\n${body}\n`);
+		fixture.git("add", "src/new_name.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/new_name.rs" });
+			await expect(fileSection.locator(".rename-from")).toContainText("(was src/old_name.rs)");
+			// Old-side content materialised from the old path at HEAD.
+			await expect(fileSection).toContainText("fn original() {}");
+			await expect(fileSection).toContainText("fn renamed_fn() {}");
+			await expect(fileSection.locator(".read-errors, .diff-error")).toHaveCount(0);
 		} finally {
 			await meerkat.kill();
 		}

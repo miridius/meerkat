@@ -62,7 +62,7 @@ wait_for_source_change() {
 build_assets_if_stale() {
   local manifest="priv/static/.vite/manifest.json"
   if [[ ! -f "$manifest" ]] || \
-     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
+     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json pnpm-lock.yaml -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
     MIX_BUILD_PATH="$ROOT/_build/${MIX_ENV}" \
       bash -c 'cd assets && bunx vite build' >&2
   fi
@@ -134,6 +134,38 @@ OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 trap 'rm -f "$OPEN_MARKER"' EXIT
 
+# Forward TERM/INT to the running BEAM. Bash never relays signals to
+# a foreground child, so without this a killed shepherd (e2e runner
+# teardown, Ctrl-C wrappers) orphans a BEAM that sits on its
+# deterministic port forever — enough accumulated orphans and fresh
+# reviews start dying with eaddrinuse. The BEAM runs as a background
+# job + `wait` below precisely so this trap fires immediately.
+beam_pid=""
+on_signal() {
+  # `jobs -p` fallback covers the window where the signal lands
+  # between the spawn and `beam_pid=$!` — without it that race
+  # orphans the just-forked BEAM on its deterministic port.
+  local pids="${beam_pid:-$(jobs -p)}"
+  if [[ -n "$pids" ]]; then
+    # SIGKILL, not SIGTERM: a TERM'd shepherd means the review is
+    # being abandoned, and graceful BEAM shutdown is all downside
+    # here — Bandit drains the still-connected LiveView socket (tens
+    # of seconds) and the logger's shutdown writes race whoever
+    # deletes the work dir next. State worth keeping is already on
+    # disk; persistence saves on every change.
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null
+    # Reap so the port is provably free before the shepherd exits.
+    # `kill -9` on an already-reaped pid returns 1, which would trip
+    # errexit inside this trap — but `beam_pid` is only ever
+    # non-empty inside the `set +e` window around the spawn/wait, so
+    # the trap body runs without errexit whenever pids is set.
+    wait $pids 2>/dev/null
+  fi
+  exit 143
+}
+trap on_signal TERM INT HUP
+
 # Crash-restart backoff. The shepherd already gates `wait_for_source_change`
 # on stale-build paths so user edits unblock the loop; this counter is
 # the safety net for a BEAM that crashes during boot before file-system
@@ -165,8 +197,11 @@ while true; do
   set +e
   mix run --no-start --no-compile \
     -e 'File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))' \
-    -- "${this_args[@]}"
+    -- "${this_args[@]}" &
+  beam_pid=$!
+  wait "$beam_pid"
   exit_code=$?
+  beam_pid=""
   set -e
 
   if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then

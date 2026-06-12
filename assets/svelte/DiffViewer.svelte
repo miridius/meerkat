@@ -38,11 +38,36 @@
     "diff",
   ];
 
+  // @git-diff-view skips syntax highlighting entirely for files longer
+  // than maxLineToIgnoreSyntax (a per-highlighter guard against shiki
+  // tokenize cost on huge files). The default is 2000 lines, which real
+  // hand-written files exceed — a 2.3k-line test file rendered with no
+  // highlighting at all. Raise it to a bound that still protects
+  // against generated monsters but never bites on code a human wrote.
+  const MAX_SYNTAX_LINES = 20_000;
+
   const sharedHighlighter: Promise<DiffHighlighter | null> = getDiffViewHighlighter(
     PRELOAD_LANGS as never[],
   )
-    .then((h) => h as DiffHighlighter)
-    .catch(() => null);
+    .then((h) => {
+      // Guarded separately from the engine-init catch below: a setter
+      // failure (adapter shape drift on a dependency bump) must not
+      // null out the whole highlighter — files under the library's
+      // 2000-line default would still highlight fine.
+      try {
+        h.setMaxLineToIgnoreSyntax(MAX_SYNTAX_LINES);
+      } catch (e) {
+        console.warn(
+          "DiffViewer: setMaxLineToIgnoreSyntax failed; files over the library's 2000-line default will render unhighlighted",
+          e,
+        );
+      }
+      return h as DiffHighlighter;
+    })
+    .catch((e) => {
+      console.warn("DiffViewer: shiki highlighter init failed; falling back to lowlight", e);
+      return null;
+    });
 
   function getCachedHighlighter(lang: string): Promise<DiffHighlighter | null> {
     if (!lang || lang === "plaintext" || lang === "text") return Promise.resolve(null);
@@ -57,6 +82,7 @@
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
+  import { languageFor } from "../ts/languageFor";
 
   // Renders ONE file's diff body via `@git-diff-view`, the read-only
   // inline comment list, and the pointer-drag selection logic that
@@ -77,7 +103,6 @@
   type FileDiff = {
     file_name: string;
     old_file_name?: string | null;
-    language: string;
     old_content: string;
     new_content: string;
     hunks: string[];
@@ -188,8 +213,10 @@
   // cache so every DiffViewer instance shares one engine per lang.
   // Languages shiki doesn't bundle resolve to `null` quietly and
   // the diff falls through to the lowlight engine.
+  const fileLanguage = $derived(languageFor(file.file_name));
+
   $effect(() => {
-    const lang = file.language;
+    const lang = fileLanguage;
     if (!lang || lang === "plaintext" || lang === "text") {
       highlighter = null;
       return;
@@ -214,8 +241,8 @@
 
     try {
       const instance = DiffFile.createInstance({
-        oldFile: { fileName: oldName, fileLang: file.language, content: file.old_content },
-        newFile: { fileName: file.file_name, fileLang: file.language, content: file.new_content },
+        oldFile: { fileName: oldName, fileLang: fileLanguage, content: file.old_content },
+        newFile: { fileName: file.file_name, fileLang: fileLanguage, content: file.new_content },
         hunks: [unifiedDiff],
       });
       instance.init();

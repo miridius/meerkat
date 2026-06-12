@@ -206,6 +206,92 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "pause_banner/2" do
+    @url "http://127.0.0.1:54321/"
+
+    test "commit-msg hook flow gets git-commit wording and landed semantics" do
+      banner = CLI.pause_banner_for_test({:staged, "/tmp/COMMIT_MSG"}, @url)
+      assert banner =~ "Paused for human review at #{@url}"
+      assert banner =~ "this `git commit` process blocks"
+      assert banner =~ "Exit 0 = approved & landed"
+    end
+
+    test "ad-hoc targets get generic meerkat wording — nothing lands on approve" do
+      for target <- [
+            {:staged, nil},
+            {:single_ref, "HEAD"},
+            {:range, "a", "b", :two_dot},
+            {:pr, "1"}
+          ] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert banner =~ "this `meerkat` process blocks"
+        assert banner =~ "Exit 0 = approved,"
+        refute banner =~ "git commit"
+        refute banner =~ "landed"
+      end
+    end
+
+    test "core agent instructions survive in every variant" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert banner =~ "do NOT poll, sleep, or schedule wake-ups"
+        assert banner =~ "exit 1 = changes requested"
+        assert String.replace(banner, ~r/\s+/, " ") =~ "read the full process output afterwards"
+      end
+    end
+  end
+
+  describe "repo_path/0" do
+    # async: true is safe — these are the only tests touching
+    # MEERKAT_PWD, and the var is restored before exit.
+    test "prefers MEERKAT_PWD over the BEAM's cwd" do
+      prev = System.get_env("MEERKAT_PWD")
+
+      try do
+        System.put_env("MEERKAT_PWD", "/somewhere/else")
+        assert CLI.repo_path_for_test() == "/somewhere/else"
+
+        System.delete_env("MEERKAT_PWD")
+        assert CLI.repo_path_for_test() == File.cwd!()
+      after
+        if prev, do: System.put_env("MEERKAT_PWD", prev), else: System.delete_env("MEERKAT_PWD")
+      end
+    end
+  end
+
+  describe "endpoint_config/1" do
+    test "non-dev builds force off the dev conveniences" do
+      # @env is :test, which takes the prod (non-dev) branch.
+      config = CLI.endpoint_config_for_test(4321)
+
+      assert config[:code_reloader] == false
+      assert config[:watchers] == []
+      assert config[:server] == true
+      assert config[:http] == [ip: {127, 0, 0, 1}, port: 4321]
+      assert is_binary(config[:secret_key_base])
+    end
+  end
+
+  describe "secret_key_base/0" do
+    test "uses SECRET_KEY_BASE when set, random bytes otherwise" do
+      prev = System.get_env("SECRET_KEY_BASE")
+
+      try do
+        System.put_env("SECRET_KEY_BASE", "from-env")
+        assert CLI.secret_key_base_for_test() == "from-env"
+
+        System.delete_env("SECRET_KEY_BASE")
+        generated = CLI.secret_key_base_for_test()
+        assert generated != "from-env"
+        assert byte_size(Base.decode64!(generated)) == 48
+      after
+        if prev,
+          do: System.put_env("SECRET_KEY_BASE", prev),
+          else: System.delete_env("SECRET_KEY_BASE")
+      end
+    end
+  end
+
   describe "feedback_file_path/1" do
     test "derives the .txt sibling of the review-log file, preserving the per-review stem" do
       log = %ReviewLog{path: "/r/.git/meerkat-precommit/reviews/20260601120000-main-files3.json"}

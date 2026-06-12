@@ -1,10 +1,10 @@
 import type { LanguageSupport } from "@codemirror/language";
 
 /** Dynamic-import factories for every CodeMirror 6 language pack we
- *  ship. Keyed by the language id the backend emits from
- *  `Meerkat.Git.language_for/1` (extension-keyed string lookup with
- *  an `other -> other` fallthrough, so e.g. `.rs` keys `"rust"`;
- *  extensions not in the table arrive as the raw extension string).
+ *  ship. Keyed by the canonical shiki language id that
+ *  `languageFor` (languageFor.ts) derives from the file name, so
+ *  e.g. `.rs` keys `"rust"`; ids without a pack here fall back to
+ *  plain text.
  *
  *  Factories are async so Vite can split each language pack into its
  *  own chunk — we only pay the download cost for languages actually

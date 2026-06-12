@@ -58,7 +58,7 @@ defmodule Meerkat.PersistenceTest do
         comments: [],
         # not persistable — should NOT appear on the loaded shape
         commit_message: "this is in-memory only",
-        files: [%{file_name: "a.rs", status: :added, language: "rust"}]
+        files: [%{file_name: "a.rs", status: :added}]
       }
 
       :ok = Persistence.save(repo, id, state)

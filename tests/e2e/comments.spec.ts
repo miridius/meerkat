@@ -105,6 +105,33 @@ test.describe("file comments", () => {
 			await teardown(meerkat);
 		}
 	});
+
+	// The language-rust class on the rendered fence is the observable
+	// end of the fileName → languageFor → fence-tag chain.
+	test("file-comment suggestion fence carries the file's language", async ({ page }) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/main.rs" });
+			await fileSection.getByRole("button", { name: /^\+ Add file comment$/ }).click();
+
+			const form = page.locator(".comment-form");
+			await form.getByRole("button", { name: /^Suggestion$/ }).click();
+			await form.locator("textarea.prose").fill("suggested rewrite");
+			const editor = form.locator(".code-host .cm-content");
+			await editor.click();
+			await page.keyboard.type("fn renamed() {}");
+			await form.getByRole("button", { name: /^Add File Comment$/ }).click();
+			await expect(form).toBeHidden();
+
+			const card = fileSection.locator(".note.file-note").first();
+			await expect(card).toContainText("suggested rewrite");
+			await expect(card.locator("pre code.rust")).toContainText("fn renamed() {}");
+		} finally {
+			await teardown(meerkat);
+		}
+	});
 });
 
 test.describe("commit-message comments", () => {

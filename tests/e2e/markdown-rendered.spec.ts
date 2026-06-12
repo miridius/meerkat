@@ -70,7 +70,10 @@ test.describe("markdown rendered view", () => {
 			const section = page.locator(".file-section").filter({ hasText: "README.md" });
 
 			// Add an inline comment on a new-side line in the diff.
-			await section.locator("td.diff-line-new-num span[data-line-num]").first().click();
+			// @git-diff-view ≥0.1.4 puts `pointer-events: none` on the
+			// split-mode number span, so the gutter td is the only
+			// clickable target.
+			await section.locator("td.diff-line-new-num:has(span[data-line-num])").first().click();
 			const form = page.locator(".comment-form");
 			await expect(form).toBeVisible();
 			await form.locator("textarea").fill("a line comment");

@@ -35,7 +35,6 @@ defmodule Meerkat.Git do
           status: status,
           file_name: String.t(),
           old_file_name: String.t() | nil,
-          language: String.t(),
           old_content: String.t(),
           new_content: String.t(),
           hunks: [String.t()],
@@ -646,7 +645,6 @@ defmodule Meerkat.Git do
       status: :deleted,
       file_name: name,
       old_file_name: nil,
-      language: language_for(name),
       old_content: old,
       new_content: "",
       hunks: hunks,
@@ -671,7 +669,6 @@ defmodule Meerkat.Git do
       status: :added,
       file_name: name,
       old_file_name: nil,
-      language: language_for(name),
       old_content: "",
       new_content: new,
       hunks: hunks,
@@ -697,7 +694,6 @@ defmodule Meerkat.Git do
       status: :renamed,
       file_name: name,
       old_file_name: old,
-      language: language_for(name),
       old_content: old_content,
       new_content: new_content,
       hunks: hunks,
@@ -723,7 +719,6 @@ defmodule Meerkat.Git do
       status: :modified,
       file_name: name,
       old_file_name: nil,
-      language: language_for(name),
       old_content: old,
       new_content: new,
       hunks: hunks,
@@ -756,7 +751,6 @@ defmodule Meerkat.Git do
       status: entry.status,
       file_name: name,
       old_file_name: entry.old_file_name,
-      language: language_for(name),
       old_content: old,
       new_content: new,
       hunks: hunks,
@@ -859,42 +853,6 @@ defmodule Meerkat.Git do
         msg = "couldn't compute diff (args: #{Enum.join(diff_args, " ")}): #{reason}"
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {[], [msg]}
-    end
-  end
-
-  @doc false
-  # Lightweight language detection for syntax-highlighter selection.
-  # Public-but-internal so unit tests can exercise the extension
-  # table without setting up a real git repo.
-  def language_for(file_name) do
-    ext =
-      file_name
-      |> Path.extname()
-      |> String.downcase()
-      |> String.trim_leading(".")
-
-    case ext do
-      "rs" -> "rust"
-      "ts" -> "typescript"
-      "tsx" -> "tsx"
-      "js" -> "javascript"
-      "jsx" -> "jsx"
-      "ex" -> "elixir"
-      "exs" -> "elixir"
-      "py" -> "python"
-      "go" -> "go"
-      "java" -> "java"
-      "rb" -> "ruby"
-      "css" -> "css"
-      "html" -> "html"
-      "json" -> "json"
-      "yaml" -> "yaml"
-      "yml" -> "yaml"
-      "md" -> "markdown"
-      "sh" -> "bash"
-      "svelte" -> "svelte"
-      "" -> "plaintext"
-      other -> other
     end
   end
 

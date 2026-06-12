@@ -9,11 +9,21 @@
     <.live_title default="meerkat">
       {assigns[:page_title]}
     </.live_title>
+    <%!-- to_url strips phoenix_vite's `?vsn=d` cache-buster: vite 8
+          (rolldown) hoists shared code into the entry chunk, so lazy
+          chunks import it WITHOUT the query while the script tag
+          loads it WITH — two URLs for one module, so the entry
+          executes twice and LiveSocket.connect() double-binds. File
+          names are content-hashed, so the query bought nothing.
+          (If a Vite dev-server watcher is ever enabled, this to_url
+          must also map paths to the dev-server origin — see the
+          phoenix_vite docs — or /@vite/client 404s against Phoenix
+          and the page loads with no JS.) --%>
     <PhoenixVite.Components.assets
       names={["js/app.js"]}
       manifest={{:meerkat, "priv/static/.vite/manifest.json"}}
       dev_server={PhoenixVite.Components.has_vite_watcher?(MeerkatWeb.Endpoint)}
-      to_url={fn p -> p end}
+      to_url={fn p -> String.replace_suffix(p, "?vsn=d", "") end}
     />
     <%!-- Imported CSS (live_svelte component imports of
           @git-diff-view/svelte/styles/diff-view.css) lands as a
