@@ -9,6 +9,8 @@ pre-push:
   commands:
     mix-test:
       run: mix test
+    bun-test:
+      run: cd assets && bun test
     outdated:
       run: bash scripts/outdated.sh
 

@@ -35,7 +35,8 @@ Known issues:
 ## Install
 
 macOS. Requires [Elixir](https://elixir-lang.org) 1.18+, Erlang/OTP 28+,
-and [`bun`](https://bun.sh) (for the asset build).
+[`pnpm`](https://pnpm.io) 10.16+ (installs JS dependencies), and
+[`bun`](https://bun.sh) (runs the asset build).
 
 ```bash
 git clone https://github.com/miridius/meerkat

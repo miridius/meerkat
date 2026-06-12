@@ -26,8 +26,9 @@ remove commits a merged PR still references). Before committing:
   runs on pre-push and FAILS while any JS or Hex package is behind
   its latest release. Upgrade and fix the fallout rather than pin
   old versions. A deliberate pin needs an exemption with a reason
-  in the script; latest releases younger than the 24h min-age floor
-  get an automatic grace pass.
+  in the script; JS releases younger than the 24h min-age floor get
+  an automatic grace pass (Hex has no floor, so no grace). The gate
+  fails closed on its own breakage.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 

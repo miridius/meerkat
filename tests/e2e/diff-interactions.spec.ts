@@ -81,6 +81,36 @@ test.describe("diff line click + drag selection", () => {
 			await meerkat.kill();
 		}
 	});
+
+	// Exercises Git.materialise_staged's :renamed clause: old content
+	// is read from the OLD path at HEAD, new content from the index.
+	test("staged rename renders the old name and both content sides", async ({ page }) => {
+		// Mostly-unchanged body so git's rename detection (similarity
+		// >= 50%) pairs the old and new paths instead of reporting
+		// delete + add.
+		const body = Array.from({ length: 9 }, (_, i) => `fn shared_${i}() {}`).join("\n");
+		const fixture = makeFixture({
+			files: { "src/old_name.rs": `fn original() {}\n${body}\n` },
+		});
+		fixture.git("commit", "-q", "-m", "base");
+		fixture.git("mv", "src/old_name.rs", "src/new_name.rs");
+		writeFileSync(join(fixture.dir, "src/new_name.rs"), `fn renamed_fn() {}\n${body}\n`);
+		fixture.git("add", "src/new_name.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/new_name.rs" });
+			await expect(fileSection.locator(".rename-from")).toContainText("(was src/old_name.rs)");
+			// Old-side content materialised from the old path at HEAD.
+			await expect(fileSection).toContainText("fn original() {}");
+			await expect(fileSection).toContainText("fn renamed_fn() {}");
+			await expect(fileSection.locator(".read-errors, .diff-error")).toHaveCount(0);
+		} finally {
+			await meerkat.kill();
+		}
+	});
 });
 
 test.describe("diff toolbar mode toggle", () => {

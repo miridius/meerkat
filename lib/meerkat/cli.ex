@@ -408,6 +408,15 @@ defmodule Meerkat.CLI do
   @doc false
   def comment_count_for_test(review_id), do: comment_count(review_id)
 
+  @doc false
+  def repo_path_for_test, do: repo_path()
+
+  @doc false
+  def endpoint_config_for_test(port), do: endpoint_config(port)
+
+  @doc false
+  def secret_key_base_for_test, do: secret_key_base()
+
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
   defp finalise_auto_approve(repo_path) do

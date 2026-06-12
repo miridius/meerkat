@@ -47,10 +47,12 @@ for (const lang of Object.values(linguist) as LinguistLanguage[]) {
 
 /** Meerkat-level choices the datasets can't make for us: cases where
  *  Linguist names a language shiki has no grammar for, but a closely
- *  related grammar highlights it well. */
-const OVERRIDES: Record<string, string> = {
+ *  related grammar highlights it well. Null prototype so a hostile
+ *  file name like `x.constructor` can't resolve to an inherited
+ *  Object member. */
+const OVERRIDES: Record<string, string> = Object.assign(Object.create(null), {
 	edn: "clojure",
-};
+});
 
 function shikiIdForLinguist(lang: LinguistLanguage): string | undefined {
 	for (const candidate of [lang.name.toLowerCase(), ...(lang.aliases ?? [])]) {
@@ -70,6 +72,10 @@ export function languageFor(fileName: string): string {
 	if (byName) {
 		const id = shikiIdForLinguist(byName);
 		if (id) return id;
+		// Linguist identified the file by NAME (go.mod → "Go Module");
+		// when no grammar exists for that language, plain text beats
+		// the extension fallback's wrong guess (.mod → XML).
+		return "plaintext";
 	}
 
 	const dot = base.lastIndexOf(".");

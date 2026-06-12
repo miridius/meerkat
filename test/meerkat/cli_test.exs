@@ -236,7 +236,58 @@ defmodule Meerkat.CLITest do
         banner = CLI.pause_banner_for_test(target, @url)
         assert banner =~ "do NOT poll, sleep, or schedule wake-ups"
         assert banner =~ "exit 1 = changes requested"
-        assert banner =~ "read the\nfull process output afterwards"
+        assert String.replace(banner, ~r/\s+/, " ") =~ "read the full process output afterwards"
+      end
+    end
+  end
+
+  describe "repo_path/0" do
+    # async: true is safe — these are the only tests touching
+    # MEERKAT_PWD, and the var is restored before exit.
+    test "prefers MEERKAT_PWD over the BEAM's cwd" do
+      prev = System.get_env("MEERKAT_PWD")
+
+      try do
+        System.put_env("MEERKAT_PWD", "/somewhere/else")
+        assert CLI.repo_path_for_test() == "/somewhere/else"
+
+        System.delete_env("MEERKAT_PWD")
+        assert CLI.repo_path_for_test() == File.cwd!()
+      after
+        if prev, do: System.put_env("MEERKAT_PWD", prev), else: System.delete_env("MEERKAT_PWD")
+      end
+    end
+  end
+
+  describe "endpoint_config/1" do
+    test "non-dev builds force off the dev conveniences" do
+      # @env is :test, which takes the prod (non-dev) branch.
+      config = CLI.endpoint_config_for_test(4321)
+
+      assert config[:code_reloader] == false
+      assert config[:watchers] == []
+      assert config[:server] == true
+      assert config[:http] == [ip: {127, 0, 0, 1}, port: 4321]
+      assert is_binary(config[:secret_key_base])
+    end
+  end
+
+  describe "secret_key_base/0" do
+    test "uses SECRET_KEY_BASE when set, random bytes otherwise" do
+      prev = System.get_env("SECRET_KEY_BASE")
+
+      try do
+        System.put_env("SECRET_KEY_BASE", "from-env")
+        assert CLI.secret_key_base_for_test() == "from-env"
+
+        System.delete_env("SECRET_KEY_BASE")
+        generated = CLI.secret_key_base_for_test()
+        assert generated != "from-env"
+        assert byte_size(Base.decode64!(generated)) == 48
+      after
+        if prev,
+          do: System.put_env("SECRET_KEY_BASE", prev),
+          else: System.delete_env("SECRET_KEY_BASE")
       end
     end
   end

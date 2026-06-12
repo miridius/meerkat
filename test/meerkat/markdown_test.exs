@@ -25,6 +25,14 @@ defmodule Meerkat.MarkdownTest do
       assert html =~ "<code"
     end
 
+    test "fence info string lands as a bare class, surviving sanitization" do
+      # Suggestion-mode comments fence their code with the file's
+      # language; the e2e suite selects rendered suggestions by this
+      # class shape (`code.rust`, no `language-` prefix).
+      html = Markdown.to_safe_html("```rust\nfn x() {}\n```")
+      assert html =~ ~s(<code class="rust">)
+    end
+
     test "renders list" do
       html = Markdown.to_safe_html("- one\n- two\n")
       assert html =~ "<ul>"
