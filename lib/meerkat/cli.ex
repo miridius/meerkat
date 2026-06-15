@@ -273,8 +273,9 @@ defmodule Meerkat.CLI do
         generated_map = Git.linguist_generated_many(repo_path, names)
         # Batched effective-OID lookup (index blob for present files,
         # HEAD pre-image for deletions). On failure we fall through to
-        # `:live` rather than auto-approving with stale-OID data — the
-        # warning is already logged by `effective_oids_many`.
+        # `:live` rather than auto-approving with stale-OID data.
+        # `effective_oids_many` only errors on an index-lookup failure,
+        # already logged by `staged_blob_oids_many`.
         oid_map =
           case Git.effective_oids_many(repo_path, files) do
             {:ok, map} -> map

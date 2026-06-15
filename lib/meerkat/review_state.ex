@@ -131,7 +131,7 @@ defmodule Meerkat.ReviewState do
          commit_message: msg,
          pr: compact_pr(pr_full),
          head_branch: ref,
-         base_branch: base_of(pr_full) || base
+         base_branch: base_branch(pr_full, base)
        )}
     end
   end
@@ -146,7 +146,7 @@ defmodule Meerkat.ReviewState do
          commit_message: "",
          pr: compact_pr(pr_full),
          head_branch: head,
-         base_branch: base_of(pr_full) || base
+         base_branch: base_branch(pr_full, base)
        )}
     end
   end
@@ -304,6 +304,11 @@ defmodule Meerkat.ReviewState do
 
   defp base_of(%{base_ref: base}) when is_binary(base) and base != "", do: base
   defp base_of(_), do: nil
+
+  defp base_branch(pr_full, fallback), do: base_of(pr_full) || fallback
+
+  @doc false
+  def base_branch_for_test(pr_full, fallback), do: base_branch(pr_full, fallback)
 
   defp build(opts) do
     msg = Keyword.fetch!(opts, :commit_message)

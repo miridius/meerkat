@@ -160,7 +160,11 @@ defmodule Meerkat.Git do
   def staged_blob_oids_many(_repo_path, []), do: {:ok, %{}}
 
   def staged_blob_oids_many(repo_path, paths) when is_list(paths) do
-    case run_git(repo_path, ["ls-files", "-s", "--"] ++ paths) do
+    # `core.quotePath=false` so a non-ASCII path comes back raw, matching
+    # the `file_name` keys (which come from `--name-status -z`, never
+    # quoted); the default C-quoting would never match and the approval
+    # would silently fail to persist.
+    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-files", "-s", "--"] ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -194,7 +198,9 @@ defmodule Meerkat.Git do
   def head_blob_oids_many(_repo_path, []), do: {:ok, %{}}
 
   def head_blob_oids_many(repo_path, paths) when is_list(paths) do
-    case run_git(repo_path, ["ls-tree", "HEAD", "--"] ++ paths) do
+    # `core.quotePath=false` for the same raw-path-matching reason as
+    # `staged_blob_oids_many`.
+    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-tree", "HEAD", "--"] ++ paths) do
       {:ok, output} ->
         map =
           output
