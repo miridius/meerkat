@@ -271,12 +271,12 @@ defmodule Meerkat.CLI do
         names = Enum.map(files, & &1.file_name)
 
         generated_map = Git.linguist_generated_many(repo_path, names)
-        # One batched `git ls-files -s` for all paths instead of N+1.
-        # On batched failure we fall through to `:live` (rather than
-        # silently auto-approving with stale-OID data) — the warning
-        # is already logged by `staged_blob_oids_many`.
+        # Batched effective-OID lookup (index blob for present files,
+        # HEAD pre-image for deletions). On failure we fall through to
+        # `:live` rather than auto-approving with stale-OID data — the
+        # warning is already logged by `effective_oids_many`.
         oid_map =
-          case Git.staged_blob_oids_many(repo_path, names) do
+          case Git.effective_oids_many(repo_path, files) do
             {:ok, map} -> map
             {:error, _} -> %{}
           end
@@ -334,24 +334,11 @@ defmodule Meerkat.CLI do
   # check-attr call for the whole staged set, error info preserved
   # per file so a transient git failure can't fake `:generated`.
   #
-  # `:approved` checks the current staged blob OID against the
-  # per-branch cache so a flip-flopping file keeps its tick. `nil`
-  # branch (detached HEAD) -> can't match an approval, but
-  # `:generated` is branch-independent and still fires.
-  defp classify_for_auto_approve(
-         %{file_name: name, status: :deleted},
-         _cache,
-         _branch,
-         generated_map,
-         _oid_map
-       ) do
-    # Deletion has no new blob to content-address against, so only
-    # the generated half applies — and you only care about
-    # generated-file deletions (regenerated lockfile removed from
-    # the tree).
-    if generated?(generated_map, name), do: :generated, else: :neither
-  end
-
+  # `:approved` checks the file's effective OID (index blob for present
+  # files, HEAD pre-image for deletions) against the per-branch cache so
+  # a flip-flopping file keeps its tick and a re-deletion of changed
+  # content is re-reviewed. `nil` branch (detached HEAD) -> can't match
+  # an approval, but `:generated` is branch-independent and still fires.
   defp classify_for_auto_approve(
          %{file_name: name},
          cache,

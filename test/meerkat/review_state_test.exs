@@ -108,4 +108,54 @@ defmodule Meerkat.ReviewStateTest do
              ] = ReviewState.blocks(msg)
     end
   end
+
+  describe "approved_from_cache/3 — re-tick on mount from the per-branch cache" do
+    alias Meerkat.ApprovalCache
+
+    defp file(name, oid, status \\ :modified),
+      do: %{file_name: name, effective_oid: oid, status: status}
+
+    test "a modified file approved at its current OID is re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("a.rs", "oid1")]) ==
+               MapSet.new(["a.rs"])
+    end
+
+    test "an OID that no longer matches the cached one is not re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("a.rs", "oid2")]) ==
+               MapSet.new()
+    end
+
+    test "an approved deletion is re-ticked across rounds (regression)" do
+      # Deletions once carried effective_oid "", which the cache gate
+      # `oid != ""` rejected on both store and hydrate, dropping the tick.
+      cache = ApprovalCache.approve(%{}, "main", "gone.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(
+               cache,
+               "main",
+               [file("gone.rs", "headoid1", :deleted)]
+             ) == MapSet.new(["gone.rs"])
+    end
+
+    test "a deletion whose pre-image OID changed is not re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "gone.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(
+               cache,
+               "main",
+               [file("gone.rs", "headoid2", :deleted)]
+             ) == MapSet.new()
+    end
+
+    test "an empty-OID file (failed staged-blob lookup) never matches a cached approval" do
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("x.rs", "")]) ==
+               MapSet.new()
+    end
+  end
 end

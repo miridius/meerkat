@@ -700,10 +700,10 @@ defmodule MeerkatWeb.ReviewLive do
   defp stale_oid_check(_repo_path, nil, true), do: :ok
   defp stale_oid_check(_repo_path, %{effective_oid: nil}, true), do: :ok
 
-  # Deletion: no blob to content-address against. Empty OID is the
-  # expected state and approving a deletion is well-defined ("yes,
-  # remove this file"). Pass through; don't block.
-  defp stale_oid_check(_repo_path, %{effective_oid: "", status: :deleted}, true), do: :ok
+  # Deletion: no staged blob to re-verify (the cache content-addresses
+  # it against the HEAD pre-image instead). Approving a deletion is
+  # well-defined ("yes, remove this file"). Pass through; don't block.
+  defp stale_oid_check(_repo_path, %{status: :deleted}, true), do: :ok
 
   defp stale_oid_check(_repo_path, %{effective_oid: "", file_name: file_name}, true) do
     {:stale,

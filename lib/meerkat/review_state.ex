@@ -331,16 +331,25 @@ defmodule Meerkat.ReviewState do
 
   defp hydrate_approved_from_cache(repo_path, branch, files) do
     cache = Meerkat.ApprovalCache.load_for(repo_path)
+    approved_from_cache(cache, branch, files)
+  end
 
+  # `effective_oid` is already on every file_diff (populated by
+  # materialise_staged at mount), so no per-file git shell-out is
+  # needed. Deletions carry their HEAD pre-image OID, so they re-hydrate
+  # like any other file; `""` is the failed-lookup case and matches
+  # nothing.
+  defp approved_from_cache(cache, branch, files) do
     files
     |> Enum.filter(fn %{file_name: name, effective_oid: oid} ->
-      # `effective_oid` is already on every file_diff (populated by
-      # materialise_staged at mount). No need to re-shell out per
-      # file.
       is_binary(oid) and oid != "" and
         Meerkat.ApprovalCache.approved?(cache, branch, name, oid)
     end)
     |> Enum.map(& &1.file_name)
     |> MapSet.new()
   end
+
+  @doc false
+  def approved_from_cache_for_test(cache, branch, files),
+    do: approved_from_cache(cache, branch, files)
 end
