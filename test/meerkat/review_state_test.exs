@@ -107,5 +107,95 @@ defmodule Meerkat.ReviewStateTest do
                %{start_line: 3, end_line: 5}
              ] = ReviewState.blocks(msg)
     end
+
+    test "a blank line inside a fence stays in the single code block" do
+      # An unrecognised fence would let the prose splitter break this on
+      # the blank line; one code block proves the fence held across it.
+      assert [%{start_line: 1, end_line: 5, text: "```\na\n\nb\n```"}] =
+               ReviewState.blocks("```\na\n\nb\n```")
+    end
+
+    test "a whitespace-only separator line produces no block of its own" do
+      # The separator is `" "`, not the empty string, so it is dropped by
+      # the all-blank check rather than the leading-empty-line check.
+      assert [
+               %{start_line: 1, end_line: 1, text: "Subject"},
+               %{start_line: 3, end_line: 3, text: "Body"}
+             ] = ReviewState.blocks("Subject\n \nBody")
+    end
+  end
+
+  describe "base_branch/2 — PR base wins, else the range fallback" do
+    test "a PR with a usable base_ref overrides the fallback" do
+      assert ReviewState.base_branch_for_test(%{base_ref: "origin/main"}, "HEAD~1") ==
+               "origin/main"
+    end
+
+    test "a blank base_ref falls back to the range base" do
+      assert ReviewState.base_branch_for_test(%{base_ref: ""}, "HEAD~1") == "HEAD~1"
+    end
+
+    test "no PR falls back to the range base" do
+      assert ReviewState.base_branch_for_test(nil, "HEAD~1") == "HEAD~1"
+    end
+  end
+
+  describe "approved_from_cache/3 — re-tick on mount from the per-branch cache" do
+    alias Meerkat.ApprovalCache
+
+    defp file(name, oid, status \\ :modified),
+      do: %{file_name: name, effective_oid: oid, status: status}
+
+    test "a modified file approved at its current OID is re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("a.rs", "oid1")]) ==
+               MapSet.new(["a.rs"])
+    end
+
+    test "an OID that no longer matches the cached one is not re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("a.rs", "oid2")]) ==
+               MapSet.new()
+    end
+
+    test "an approved deletion is re-ticked across rounds (regression)" do
+      # Deletions once carried effective_oid "", which the cache gate
+      # `oid != ""` rejected on both store and hydrate, dropping the tick.
+      cache = ApprovalCache.approve(%{}, "main", "gone.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(
+               cache,
+               "main",
+               [file("gone.rs", "headoid1", :deleted)]
+             ) == MapSet.new(["gone.rs"])
+    end
+
+    test "a deletion whose pre-image OID changed is not re-ticked" do
+      cache = ApprovalCache.approve(%{}, "main", "gone.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(
+               cache,
+               "main",
+               [file("gone.rs", "headoid2", :deleted)]
+             ) == MapSet.new()
+    end
+
+    test "an empty-OID file (failed staged-blob lookup) never matches a cached approval" do
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "headoid1")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("x.rs", "")]) ==
+               MapSet.new()
+    end
+
+    test "an empty OID is rejected even if the cache holds an approval AT \"\"" do
+      # A corrupt/hand-edited cache could hold an entry at "", so the
+      # `oid != ""` guard has to reject the sentinel on its own.
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "")
+
+      assert ReviewState.approved_from_cache_for_test(cache, "main", [file("x.rs", "")]) ==
+               MapSet.new()
+    end
   end
 end

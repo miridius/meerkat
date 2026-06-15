@@ -62,7 +62,7 @@ defmodule Meerkat.CLITest do
              ) == :generated
     end
 
-    test "deleted + not generated → :neither (a deleted source file still gets reviewed)" do
+    test "deleted + not generated + not approved → :neither (gets reviewed)" do
       gen = %{"x.rs" => {:generated, false}}
 
       assert CLI.classify_for_auto_approve_for_test(
@@ -71,6 +71,45 @@ defmodule Meerkat.CLITest do
                "main",
                gen,
                %{}
+             ) == :neither
+    end
+
+    test "deleted + approved at its HEAD pre-image OID → :approved" do
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "headoid1")
+      gen = %{"x.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "x.rs", status: :deleted},
+               cache,
+               "main",
+               gen,
+               %{"x.rs" => "headoid1"}
+             ) == :approved
+    end
+
+    test "deleted + approved at a different pre-image OID (deleted content changed) → :neither" do
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "headoid1")
+      gen = %{"x.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "x.rs", status: :deleted},
+               cache,
+               "main",
+               gen,
+               %{"x.rs" => "headoid2"}
+             ) == :neither
+    end
+
+    test "deleted + approved but detached HEAD (nil branch) → :neither" do
+      cache = ApprovalCache.approve(%{}, "main", "x.rs", "headoid1")
+      gen = %{"x.rs" => {:generated, false}}
+
+      assert CLI.classify_for_auto_approve_for_test(
+               %{file_name: "x.rs", status: :deleted},
+               cache,
+               nil,
+               gen,
+               %{"x.rs" => "headoid1"}
              ) == :neither
     end
 

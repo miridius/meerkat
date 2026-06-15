@@ -39,11 +39,12 @@ defmodule Meerkat.Git do
           new_content: String.t(),
           hunks: [String.t()],
           read_errors: [String.t()],
-          # `String.t()` blob OID for staged-mode files; `""` when
-          # the staged blob lookup failed (the LV approve guard
-          # treats this as "stale, refresh"); `nil` when the diff
-          # has no staging concept (range / PR mode), in which case
-          # the LV approve guard skips entirely.
+          # Blob OID the approval cache content-addresses against: the
+          # index blob for added/modified/renamed files, the HEAD
+          # pre-image blob for a deletion (the content being removed).
+          # `""` when that lookup failed (the LV approve guard treats it
+          # as "stale, refresh"); `nil` when the diff has no staging
+          # concept (range / PR mode), where the guard skips entirely.
           effective_oid: String.t() | nil,
           moved_lines: [Meerkat.Moves.moved_block()],
           is_generated: boolean()
@@ -159,7 +160,11 @@ defmodule Meerkat.Git do
   def staged_blob_oids_many(_repo_path, []), do: {:ok, %{}}
 
   def staged_blob_oids_many(repo_path, paths) when is_list(paths) do
-    case run_git(repo_path, ["ls-files", "-s", "--"] ++ paths) do
+    # `core.quotePath=false` so a non-ASCII path comes back raw, matching
+    # the `file_name` keys (which come from `--name-status -z`, never
+    # quoted); the default C-quoting would never match and the approval
+    # would silently fail to persist.
+    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-files", "-s", "--"] ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -181,6 +186,67 @@ defmodule Meerkat.Git do
 
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
+    end
+  end
+
+  @doc """
+  Batched HEAD (pre-image) blob-OID lookup. One `git ls-tree HEAD --
+  <paths>` shell-out; missing paths simply don't appear in the map.
+  """
+  @spec head_blob_oids_many(String.t(), [String.t()]) ::
+          {:ok, %{String.t() => String.t()}} | {:error, String.t()}
+  def head_blob_oids_many(_repo_path, []), do: {:ok, %{}}
+
+  def head_blob_oids_many(repo_path, paths) when is_list(paths) do
+    # `core.quotePath=false` for the same raw-path-matching reason as
+    # `staged_blob_oids_many`.
+    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-tree", "HEAD", "--"] ++ paths) do
+      {:ok, output} ->
+        map =
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.reduce(%{}, fn line, acc ->
+            # `<mode> <type> <oid>\t<path>`
+            case String.split(line, [" ", "\t"], parts: 4) do
+              [_mode, _type, oid, path] -> Map.put(acc, path, oid)
+              _ -> acc
+            end
+          end)
+
+        {:ok, map}
+
+      {:error, reason} ->
+        msg =
+          "couldn't compute batched HEAD-blob OIDs (#{reason}); deletion approvals may not persist"
+
+        IO.puts(:stderr, "meerkat: warning — #{msg}")
+        {:error, msg}
+    end
+  end
+
+  @doc """
+  Blob OID each staged file's approval is content-addressed against:
+  the index blob for added / modified / renamed files, the HEAD
+  pre-image blob for deletions (the content being removed). Missing
+  paths are absent from the map; callers use `Map.get(map, name, "")`.
+
+  Returns `{:error, _}` only on an index-lookup failure; a failed HEAD
+  lookup degrades the affected deletions to "".
+  """
+  @spec effective_oids_many(String.t(), [file_entry]) ::
+          {:ok, %{String.t() => String.t()}} | {:error, String.t()}
+  def effective_oids_many(repo_path, entries) when is_list(entries) do
+    {deleted, present} = Enum.split_with(entries, &(&1.status == :deleted))
+
+    with {:ok, index_oids} <-
+           staged_blob_oids_many(repo_path, Enum.map(present, & &1.file_name)) do
+      head_oids =
+        case head_blob_oids_many(repo_path, Enum.map(deleted, & &1.file_name)) do
+          {:ok, map} -> map
+          {:error, _} -> %{}
+        end
+
+      {:ok, Map.merge(index_oids, head_oids)}
     end
   end
 
@@ -373,7 +439,7 @@ defmodule Meerkat.Git do
       names = Enum.map(entries, & &1.file_name)
       generated_map = linguist_generated_many(repo_path, names)
       # One `git diff --cached -U3 -w -M` for ALL paths instead of
-      # one per file. Likewise for `git ls-files -s` (effective_oid).
+      # one per file. Likewise for the effective-OID lookup.
       # On batched-call failure we surface the error into every
       # file's `read_errors` (red banner) — silently empty hunks
       # would let a reviewer approve what looks like an empty diff.
@@ -384,7 +450,7 @@ defmodule Meerkat.Git do
         end
 
       {oid_map, batched_oids_error} =
-        case staged_blob_oids_many(repo_path, names) do
+        case effective_oids_many(repo_path, entries) do
           {:ok, map} -> {map, []}
           {:error, reason} -> {%{}, [reason]}
         end
@@ -635,7 +701,7 @@ defmodule Meerkat.Git do
          %{status: :deleted, file_name: name},
          generated_map,
          hunks_map,
-         _oid_map
+         oid_map
        ) do
     {old, errs1} = read_file_at(repo_path, "HEAD", name)
     {hunks, errs2} = Map.get(hunks_map, name, {[], []})
@@ -649,7 +715,7 @@ defmodule Meerkat.Git do
       new_content: "",
       hunks: hunks,
       read_errors: errs1 ++ errs2 ++ errs_gen,
-      effective_oid: "",
+      effective_oid: Map.get(oid_map, name, ""),
       is_generated: is_gen
     }
   end
