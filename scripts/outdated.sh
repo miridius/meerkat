@@ -15,7 +15,8 @@ cd "$(dirname "$0")/.."
 # package name → reason for lagging behind latest; applies to both
 # ecosystems.
 EXEMPT_JSON='{
-  "shiki": "pinned to @git-diff-view/shiki'\''s shiki major; remove when upstream moves to shiki 4"
+  "shiki": "pinned to @git-diff-view/shiki'\''s shiki major; remove when upstream moves to shiki 4",
+  "@playwright/test": "pinned to 1.60.0; 1.61.0 sync loader crashes under Node 24 where context.conditions arrives as a Set lacking Array.includes (microsoft/playwright#41311); unpin when fixed upstream"
 }'
 
 for tool in pnpm jq mix python3 curl; do
