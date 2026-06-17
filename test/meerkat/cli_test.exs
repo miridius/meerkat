@@ -375,15 +375,22 @@ defmodule Meerkat.CLITest do
 
   describe "write_feedback/4" do
     test "empty payload still announces the verdict, writes no file" do
+      # Unique path so a leftover file from another run can't fail the
+      # "writes no file" assertion below.
+      unwritten =
+        Path.join(
+          System.tmp_dir!(),
+          "meerkat-cli-unwritten-#{System.unique_integer([:positive])}.txt"
+        )
+
       out =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test(:reject, "", "no-live-review", "/tmp/unused.txt") ==
-                   :ok
+          assert CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten) == :ok
         end)
 
       assert out =~ "User requested changes"
       refute out =~ "saved to"
-      refute File.exists?("/tmp/unused.txt")
+      refute File.exists?(unwritten)
     end
 
     test "writes the recovery file and brackets the payload with the verdict banner" do

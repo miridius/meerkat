@@ -130,4 +130,32 @@ defmodule Meerkat.GitOidsTest do
       assert oid == git(dir, ["rev-parse", "HEAD:wëird.rs"])
     end
   end
+
+  describe "git/2 fixture helper" do
+    # The env strip otherwise only matters under a git hook, where GIT_DIR
+    # is exported; this poisons GIT_DIR explicitly so the guard fails under
+    # an ordinary `mix test` if the strip regresses.
+    test "strips an inherited GIT_DIR so fixtures build in dir, not the ambient gitdir",
+         %{dir: dir} do
+      poison =
+        Path.join(System.tmp_dir!(), "meerkat-oids-poison-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(poison)
+      System.cmd("git", ["init", "-q", poison])
+      prev = System.get_env("GIT_DIR")
+      System.put_env("GIT_DIR", Path.join(poison, ".git"))
+
+      on_exit(fn ->
+        if prev, do: System.put_env("GIT_DIR", prev), else: System.delete_env("GIT_DIR")
+        File.rm_rf!(poison)
+      end)
+
+      seed(dir, "x.rs", "fn x() {}\n")
+      git(dir, ["commit", "-qm", "seed"])
+
+      # The blob is in dir's HEAD only if the commit landed in dir's repo
+      # rather than the poison gitdir GIT_DIR points at.
+      assert {:ok, %{"x.rs" => _}} = Git.head_blob_oids_many(dir, ["x.rs"])
+    end
+  end
 end
