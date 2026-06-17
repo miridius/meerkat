@@ -18,8 +18,22 @@ defmodule Meerkat.GitOidsTest do
     {:ok, dir: dir}
   end
 
+  # Strip git's discovery env vars (same set as `Meerkat.Git`) before
+  # shelling out. Under a git hook — e.g. the pre-push `mix test` — git
+  # exports GIT_DIR / GIT_WORK_TREE pointing at meerkat's own gitdir; in
+  # a linked worktree that's an ABSOLUTE path, so it overrides `cd: dir`
+  # and `git init` would build the fixture repo in the wrong place.
+  @git_discovery_overrides Enum.map(
+                             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+                                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+                                GIT_NAMESPACE),
+                             &{&1, nil}
+                           )
+
   defp git(dir, args) do
-    {out, code} = System.cmd("git", args, cd: dir, stderr_to_stdout: true)
+    {out, code} =
+      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
+
     if code != 0, do: flunk("git #{Enum.join(args, " ")} failed: #{out}")
     String.trim(out)
   end
