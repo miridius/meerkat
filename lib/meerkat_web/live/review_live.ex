@@ -434,7 +434,16 @@ defmodule MeerkatWeb.ReviewLive do
   ## --- File filter ---
 
   def handle_event("toolbar.toggle_files_panel", _, socket) do
-    {:noreply, assign(socket, files_panel_open: not socket.assigns.files_panel_open)}
+    opening? = not socket.assigns.files_panel_open
+    socket = assign(socket, files_panel_open: opening?)
+
+    # The panel renders near the top of the page, above the file list,
+    # but the toolbar is sticky, so opening it while scrolled down
+    # leaves it out of view.
+    socket =
+      if opening?, do: push_event(socket, "scroll-into-view", %{id: "file-filter"}), else: socket
+
+    {:noreply, socket}
   end
 
   # Toggle whether a file's diff body is rendered. Approved files
@@ -1454,7 +1463,7 @@ defmodule MeerkatWeb.ReviewLive do
       )
 
     ~H"""
-    <aside class="file-filter">
+    <aside class="file-filter" id="file-filter">
       <header class="file-filter-header">
         <button
           type="button"

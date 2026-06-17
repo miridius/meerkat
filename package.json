@@ -8,7 +8,7 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
+    "@playwright/test": "1.60.0",
     "lefthook": "^2.1.4"
   }
 }
