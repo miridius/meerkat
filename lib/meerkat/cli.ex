@@ -381,14 +381,15 @@ defmodule Meerkat.CLI do
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
 
   @doc false
-  def feedback_banner_for_test(count, save_result), do: feedback_banner(count, save_result)
+  def feedback_banner_for_test(verdict, count, save_result),
+    do: feedback_banner(verdict, count, save_result)
 
   @doc false
   def pause_banner_for_test(target, url), do: pause_banner(target, url)
 
   @doc false
-  def write_feedback_for_test(payload, review_id, feedback_path),
-    do: write_feedback(payload, review_id, feedback_path)
+  def write_feedback_for_test(verdict, payload, review_id, feedback_path),
+    do: write_feedback(verdict, payload, review_id, feedback_path)
 
   @doc false
   def feedback_file_path_for_test(log), do: feedback_file_path(log)
@@ -508,28 +509,27 @@ defmodule Meerkat.CLI do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
   end
 
-  # The opening banner is written for the AGENT whose `git commit` (or
-  # ad-hoc `meerkat` invocation) is now blocked on a human: it has to
-  # say what the pause means, that waiting is the correct move, and how
-  # to read the outcome — otherwise agents poll, sleep, or give up on
-  # the "stuck" process. Wording is target-aware: only a staged review
-  # WITH a commit-msg path is the commit-msg hook flow where exit 0
-  # lands a commit; a bare `meerkat` staged run and the ad-hoc
-  # ref/range/PR modes land nothing on approve.
+  # Agent-facing banner for the `git commit` / `meerkat` process now
+  # blocked on a human. It avoids naming exit codes: an agent reading a
+  # `tail`/`head` of the log can't see the process's exit status, so the
+  # outcome is stated in the output instead (see `write_feedback/4`).
+  # The commit-msg hook flow blocks a `git commit`; ad-hoc modes block a
+  # bare `meerkat`.
   defp pause_banner(target, url) do
-    {process_desc, exit_zero} =
+    process_desc =
       case target do
-        {:staged, path} when not is_nil(path) -> {"`git commit` process", "approved & landed"}
-        _ -> {"`meerkat` process", "approved"}
+        {:staged, path} when not is_nil(path) -> "`git commit` process"
+        _ -> "`meerkat` process"
       end
 
     """
     ⏸ Paused for human review at #{url} — may take minutes or hours.
     Agents: this #{process_desc} blocks until the review completes, then exits
     on its own — do NOT poll, sleep, or schedule wake-ups; just wait for the exit.
-    Exit 0 = #{exit_zero}, exit 1 = changes requested. In BOTH cases read the
-    full process output afterwards: approvals can still carry review comments, and
-    rejections include the feedback you must address.
+    Then read the process output to learn the outcome: it says whether the user
+    approved or requested changes, and carries any comments to act on. Read the
+    whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
+    the feedback.
     """
   end
 
@@ -652,12 +652,12 @@ defmodule Meerkat.CLI do
   end
 
   defp exit_code({:approve_with_feedback, payload}, review_id, feedback_path) do
-    write_feedback(payload, review_id, feedback_path)
+    write_feedback(:approve_with_feedback, payload, review_id, feedback_path)
     0
   end
 
   defp exit_code({:reject, payload}, review_id, feedback_path) do
-    write_feedback(payload, review_id, feedback_path)
+    write_feedback(:reject, payload, review_id, feedback_path)
     1
   end
 
@@ -673,14 +673,15 @@ defmodule Meerkat.CLI do
   # a concurrent review on the same gitdir.
   defp feedback_file_path(%ReviewLog{path: log_path}), do: Path.rootname(log_path) <> ".txt"
 
-  defp write_feedback("", _review_id, _feedback_path), do: :ok
-
-  # Bracket the feedback top and bottom: the agent often head/tail's
-  # this stream, so whichever end survives still carries count + path.
-  defp write_feedback(payload, review_id, feedback_path) when is_binary(payload) do
-    banner = feedback_banner(comment_count(review_id), save_feedback_file(payload, feedback_path))
+  # Bracket the outcome top and bottom: the agent often head/tail's this
+  # stream, so whichever end survives still carries the verdict, count,
+  # and recovery path. Emitted even for an empty payload (a reject with
+  # no comments) so the verdict is never silent.
+  defp write_feedback(verdict, payload, review_id, feedback_path) when is_binary(payload) do
+    saved = if payload == "", do: :none, else: save_feedback_file(payload, feedback_path)
+    banner = feedback_banner(verdict, comment_count(review_id), saved)
     IO.write(:stderr, banner)
-    IO.write(:stderr, payload)
+    if payload != "", do: IO.write(:stderr, payload)
     IO.write(:stderr, banner)
     :ok
   end
@@ -718,15 +719,25 @@ defmodule Meerkat.CLI do
 
   # User-attributed, not tool-attributed: a "meerkat:" label next to
   # first-party feedback would read as a third-party verdict.
-  defp feedback_banner(count, save_result) do
-    "\n── #{count_phrase(count)} — #{file_phrase(save_result)} ──\n"
+  defp feedback_banner(verdict, count, save_result) do
+    parts =
+      Enum.reject(
+        [outcome_phrase(verdict), count_phrase(count), file_phrase(save_result)],
+        &is_nil/1
+      )
+
+    "\n── #{Enum.join(parts, " — ")} ──\n"
   end
 
-  defp count_phrase(count) when is_integer(count),
-    do: "User left #{count} comment#{if count == 1, do: "", else: "s"} total"
+  defp outcome_phrase(:approve_with_feedback), do: "User approved your commit"
+  defp outcome_phrase(:reject), do: "User requested changes"
 
-  defp count_phrase(_), do: "User left comments"
+  defp count_phrase(count) when is_integer(count) and count > 0,
+    do: "#{count} comment#{if count == 1, do: "", else: "s"}"
+
+  defp count_phrase(_), do: nil
 
   defp file_phrase({:ok, path}), do: "full feedback saved to #{path} in case truncated"
   defp file_phrase(:error), do: "full feedback could not be written to disk"
+  defp file_phrase(:none), do: nil
 end

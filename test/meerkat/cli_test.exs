@@ -202,12 +202,18 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "feedback_banner/2" do
+  describe "feedback_banner/3" do
     @path "/repo/.git/meerkat-precommit/reviews/20260601-main-files3.txt"
 
-    test "attributes the count to the user, not the tool" do
-      banner = CLI.feedback_banner_for_test(2, {:ok, @path})
-      assert banner =~ "User left 2 comments total"
+    test "states the verdict — approved vs requested changes" do
+      assert CLI.feedback_banner_for_test(:reject, 2, {:ok, @path}) =~ "User requested changes"
+
+      assert CLI.feedback_banner_for_test(:approve_with_feedback, 2, {:ok, @path}) =~
+               "User approved your commit"
+    end
+
+    test "is user-attributed, not tool-attributed" do
+      banner = CLI.feedback_banner_for_test(:reject, 2, {:ok, @path})
       # No "meerkat:" tool label — it would read as a third-party verdict
       # next to the first-party feedback framing. (The path legitimately
       # contains "meerkat-precommit".)
@@ -215,31 +221,39 @@ defmodule Meerkat.CLITest do
     end
 
     test "single comment is singular, plural otherwise" do
-      single = CLI.feedback_banner_for_test(1, {:ok, @path})
-      assert single =~ "User left 1 comment total"
-      refute single =~ "comments total"
+      single = CLI.feedback_banner_for_test(:reject, 1, {:ok, @path})
+      assert single =~ "1 comment "
+      refute single =~ "1 comments"
 
-      assert CLI.feedback_banner_for_test(3, {:ok, @path}) =~ "User left 3 comments total"
+      assert CLI.feedback_banner_for_test(:reject, 3, {:ok, @path}) =~ "3 comments"
     end
 
-    test "nil count drops the number rather than printing a wrong 0" do
-      banner = CLI.feedback_banner_for_test(nil, {:ok, @path})
-      assert banner =~ "User left comments"
-      refute banner =~ ~r/\d+ comment/
+    test "nil or zero count drops the number rather than printing a wrong 0" do
+      for count <- [nil, 0] do
+        banner = CLI.feedback_banner_for_test(:reject, count, {:ok, @path})
+        assert banner =~ "User requested changes"
+        refute banner =~ ~r/\d+ comment/
+      end
     end
 
     test "successful save names the recovery path" do
-      assert CLI.feedback_banner_for_test(2, {:ok, @path}) =~ @path
+      assert CLI.feedback_banner_for_test(:reject, 2, {:ok, @path}) =~ @path
     end
 
     test "failed save swaps in the couldn't-write wording and omits a path" do
-      banner = CLI.feedback_banner_for_test(2, :error)
+      banner = CLI.feedback_banner_for_test(:reject, 2, :error)
       assert banner =~ "could not be written to disk"
       refute banner =~ "saved to"
     end
 
+    test "no recovery file (empty payload) still states the verdict, omits the file clause" do
+      banner = CLI.feedback_banner_for_test(:reject, 0, :none)
+      assert banner =~ "User requested changes"
+      refute banner =~ "feedback"
+    end
+
     test "brackets with leading and trailing newlines so it survives at either truncation end" do
-      banner = CLI.feedback_banner_for_test(1, {:ok, @path})
+      banner = CLI.feedback_banner_for_test(:reject, 1, {:ok, @path})
       assert String.starts_with?(banner, "\n")
       assert String.ends_with?(banner, "\n")
     end
@@ -248,14 +262,13 @@ defmodule Meerkat.CLITest do
   describe "pause_banner/2" do
     @url "http://127.0.0.1:54321/"
 
-    test "commit-msg hook flow gets git-commit wording and landed semantics" do
+    test "commit-msg hook flow names the git-commit process" do
       banner = CLI.pause_banner_for_test({:staged, "/tmp/COMMIT_MSG"}, @url)
       assert banner =~ "Paused for human review at #{@url}"
       assert banner =~ "this `git commit` process blocks"
-      assert banner =~ "Exit 0 = approved & landed"
     end
 
-    test "ad-hoc targets get generic meerkat wording — nothing lands on approve" do
+    test "ad-hoc targets name the meerkat process" do
       for target <- [
             {:staged, nil},
             {:single_ref, "HEAD"},
@@ -264,18 +277,24 @@ defmodule Meerkat.CLITest do
           ] do
         banner = CLI.pause_banner_for_test(target, @url)
         assert banner =~ "this `meerkat` process blocks"
-        assert banner =~ "Exit 0 = approved,"
         refute banner =~ "git commit"
-        refute banner =~ "landed"
+      end
+    end
+
+    test "names no exit codes — a tailed log can't see the exit status" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        refute banner =~ ~r/exit \d/i
       end
     end
 
     test "core agent instructions survive in every variant" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         banner = CLI.pause_banner_for_test(target, @url)
-        assert banner =~ "do NOT poll, sleep, or schedule wake-ups"
-        assert banner =~ "exit 1 = changes requested"
-        assert String.replace(banner, ~r/\s+/, " ") =~ "read the full process output afterwards"
+        flat = String.replace(banner, ~r/\s+/, " ")
+        assert flat =~ "do NOT poll, sleep, or schedule wake-ups"
+        assert flat =~ "approved or requested changes"
+        assert flat =~ "not a `tail`/`head` of it"
       end
     end
   end
@@ -354,27 +373,32 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "write_feedback/3" do
-    test "empty payload writes nothing — no banner, no file lookup" do
-      output =
+  describe "write_feedback/4" do
+    test "empty payload still announces the verdict, writes no file" do
+      out =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test("", "any-review-id", "/tmp/unused.txt") == :ok
+          assert CLI.write_feedback_for_test(:reject, "", "no-live-review", "/tmp/unused.txt") ==
+                   :ok
         end)
 
-      assert output == ""
+      assert out =~ "User requested changes"
+      refute out =~ "saved to"
+      refute File.exists?("/tmp/unused.txt")
     end
 
-    test "writes the recovery file and brackets the payload with the banner" do
+    test "writes the recovery file and brackets the payload with the verdict banner" do
       path = Path.join(make_tmp_repo("meerkat-cli-fb"), "fb.txt")
 
       out =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test("PAYLOAD-BODY", "no-live-review", path) == :ok
+          assert CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", path) ==
+                   :ok
         end)
 
       assert File.read!(path) == "PAYLOAD-BODY"
       assert out =~ "PAYLOAD-BODY"
-      # Banner appears top and bottom so it survives a head/tail truncation.
+      # Verdict + path appear top and bottom so they survive a head/tail truncation.
+      assert length(Regex.scan(~r/User requested changes/, out)) == 2
       assert length(Regex.scan(~r/full feedback saved to/, out)) == 2
     end
 
@@ -383,7 +407,8 @@ defmodule Meerkat.CLITest do
 
       out =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test("PAYLOAD-BODY", "no-live-review", bad) == :ok
+          assert CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", bad) ==
+                   :ok
         end)
 
       refute File.exists?(bad)

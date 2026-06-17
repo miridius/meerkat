@@ -109,6 +109,8 @@ test.describe("decision flow", () => {
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(1);
 			expect(stderr).toContain("please rename this variable to something clearer");
+			// The outcome is stated in the output, not left to the exit code.
+			expect(stderr).toContain("User requested changes");
 		} finally {
 			await meerkat.kill();
 		}
@@ -138,6 +140,8 @@ test.describe("decision flow", () => {
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(0);
 			expect(stderr).toContain("consider extracting this into a helper");
+			// The outcome is stated in the output, not left to the exit code.
+			expect(stderr).toContain("User approved your commit");
 		} finally {
 			await meerkat.kill();
 		}
@@ -252,11 +256,11 @@ test.describe("decision flow", () => {
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(1);
 
-			// Banner is user-attributed (no "meerkat:" tool label) and reports
-			// the true count, bracketed top and bottom so it survives at either
-			// truncation end.
-			expect(stderr).toContain("User left 2 comments total");
-			expect(stderr.match(/User left 2 comments total/g)?.length).toBe(2);
+			// Banner states the verdict and the true count, bracketed top and
+			// bottom so it survives at either truncation end.
+			expect(stderr).toContain("User requested changes");
+			expect(stderr).toContain("2 comments");
+			expect(stderr.match(/User requested changes/g)?.length).toBe(2);
 
 			// The recovery file lives at the exact path the banner prints — a
 			// per-review name under reviews/, not a clobberable fixed name.
