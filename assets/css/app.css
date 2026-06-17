@@ -27,7 +27,8 @@
   --radius: 6px;
   --radius-sm: 4px;
   /* Gap left above a scroll target (file section or the file panel) so
-     it clears the sticky toolbar instead of landing behind it. */
+     it clears the sticky .diff-toolbar (~40px at the default font) and
+     isn't painted over. */
   --sticky-scroll-margin: 48px;
 }
 

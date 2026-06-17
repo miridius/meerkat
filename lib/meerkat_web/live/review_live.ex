@@ -437,8 +437,9 @@ defmodule MeerkatWeb.ReviewLive do
     opening? = not socket.assigns.files_panel_open
     socket = assign(socket, files_panel_open: opening?)
 
-    # The panel renders at the top of the document but the toolbar is
-    # sticky, so opening it while scrolled down leaves it out of view.
+    # The panel renders near the top of the page, above the file list,
+    # but the toolbar is sticky, so opening it while scrolled down
+    # leaves it out of view.
     socket =
       if opening?, do: push_event(socket, "scroll-into-view", %{id: "file-filter"}), else: socket
 
