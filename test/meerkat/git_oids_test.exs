@@ -18,8 +18,22 @@ defmodule Meerkat.GitOidsTest do
     {:ok, dir: dir}
   end
 
+  # Strip git's discovery env vars (same set as `Meerkat.Git`) before
+  # shelling out. Under a git hook — e.g. the pre-push `mix test` — git
+  # exports GIT_DIR / GIT_WORK_TREE pointing at meerkat's own gitdir; in
+  # a linked worktree that's an ABSOLUTE path, so it overrides `cd: dir`
+  # and `git init` would build the fixture repo in the wrong place.
+  @git_discovery_overrides Enum.map(
+                             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+                                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+                                GIT_NAMESPACE),
+                             &{&1, nil}
+                           )
+
   defp git(dir, args) do
-    {out, code} = System.cmd("git", args, cd: dir, stderr_to_stdout: true)
+    {out, code} =
+      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
+
     if code != 0, do: flunk("git #{Enum.join(args, " ")} failed: #{out}")
     String.trim(out)
   end
@@ -114,6 +128,34 @@ defmodule Meerkat.GitOidsTest do
                Git.effective_oids_many(dir, [entry("wëird.rs", :deleted)])
 
       assert oid == git(dir, ["rev-parse", "HEAD:wëird.rs"])
+    end
+  end
+
+  describe "git/2 fixture helper" do
+    # The env strip otherwise only matters under a git hook, where GIT_DIR
+    # is exported; this poisons GIT_DIR explicitly so the guard fails under
+    # an ordinary `mix test` if the strip regresses.
+    test "strips an inherited GIT_DIR so fixtures build in dir, not the ambient gitdir",
+         %{dir: dir} do
+      poison =
+        Path.join(System.tmp_dir!(), "meerkat-oids-poison-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(poison)
+      System.cmd("git", ["init", "-q", poison])
+      prev = System.get_env("GIT_DIR")
+      System.put_env("GIT_DIR", Path.join(poison, ".git"))
+
+      on_exit(fn ->
+        if prev, do: System.put_env("GIT_DIR", prev), else: System.delete_env("GIT_DIR")
+        File.rm_rf!(poison)
+      end)
+
+      seed(dir, "x.rs", "fn x() {}\n")
+      git(dir, ["commit", "-qm", "seed"])
+
+      # The blob is in dir's HEAD only if the commit landed in dir's repo
+      # rather than the poison gitdir GIT_DIR points at.
+      assert {:ok, %{"x.rs" => _}} = Git.head_blob_oids_many(dir, ["x.rs"])
     end
   end
 end
