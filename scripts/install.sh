@@ -44,16 +44,18 @@ else
   VERSION_ID="${HEAD_COMMIT:0:12}-wip.$(date +%s)"
 fi
 
-# True when any running process is reading $1 (a version dir) — its
-# path appears in the BEAM's `-root` argv. Keeps GC from deleting a dir
-# a live review still lazy-loads code/assets from. The `ps` output is
-# captured and matched with a bash builtin, not piped to `grep "$1"`:
-# a grep carrying the path matches its own command line in `ps` and
-# every dir would look in-use.
+# True when any running process is reading $1 (a version dir): the BEAM
+# references it as `<dir>/...` (bindir, boot_var RELEASE_LIB, …), so the
+# match is anchored on a trailing slash. Without it a clean-commit id is
+# a substring of its own `<id>-wip.<ts>` sibling and they cross-match.
+# Keeps GC from deleting a dir a live review still lazy-loads from. The
+# `ps` output is captured and matched with a bash builtin, not piped to
+# `grep "$1"`: a grep carrying the path matches its own command line in
+# `ps` and every dir would look in-use.
 dir_in_use() {
   local cmds
   cmds="$(ps -axo command= 2>/dev/null || true)"
-  [[ "$cmds" == *"$1"* ]]
+  [[ "$cmds" == *"$1/"* ]]
 }
 
 # Idempotency: the post-merge / post-checkout hooks fire this on every
@@ -109,21 +111,50 @@ if [[ -e "$FINAL_DIR" ]] && dir_in_use "$FINAL_DIR"; then
   VERSION_ID="$VERSION_ID-$(date +%s)"
   FINAL_DIR="$VERSIONS_DIR/$VERSION_ID"
 fi
-printf '%s\n' "$HEAD_COMMIT" > "$SRC_RELEASE/INSTALLED_COMMIT"
-
 STAGING_DIR="$VERSIONS_DIR/.staging.$$"
 rm -rf "$STAGING_DIR"
 cp -R "$SRC_RELEASE" "$STAGING_DIR"
 rm -rf "$FINAL_DIR"
 mv "$STAGING_DIR" "$FINAL_DIR"
-echo "meerkat: installed version $VERSION_ID to $FINAL_DIR"
+echo "meerkat: built version $VERSION_ID at $FINAL_DIR"
 
-# Flip `current` atomically: a same-dir rename(2) replaces the old
-# symlink in one step, so a launching wrapper never sees a missing
-# link. Absolute target so `readlink current` resolves standalone.
+# Smoke-test the new release BEFORE flipping `current` at it: an
+# empty-staged-no-commit-msg invocation hits the auto-approve fast path
+# (cli.ex auto_approve_decision/2 staged-empty branch), exits 0 without
+# binding a port, and proves the release boots end-to-end. Gating the
+# flip on it means a build that fails its smoke test leaves `current` on
+# the last good version and the next hook run rebuilds, instead of
+# activating a broken release that the idempotency check would then skip.
+echo "meerkat: smoke-testing the new release in a throwaway repo..."
+SMOKE_DIR="$(mktemp -d -t meerkat-smoke.XXXXXX)"
+trap 'rm -rf "$SMOKE_DIR"' EXIT
+(
+  # When this script is invoked from the lefthook post-merge hook,
+  # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE etc are set to the
+  # *parent* meerkat repo. Without unsetting them, the smoke test's
+  # `git init` re-initialises the parent repo, and `git commit
+  # --allow-empty -m init` lands a phantom "init" commit on the
+  # caller's local branch. Strip every `GIT_*` env var before
+  # touching the throwaway repo.
+  unset $(env | awk -F= '/^GIT_/ {print $1}')
+  cd "$SMOKE_DIR"
+  git init -q -b main
+  git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  echo "msg" > MSG
+  # Invoke the new version's launcher exactly as the wrapper does, but
+  # against $FINAL_DIR directly — `current` isn't pointed at it yet.
+  MEERKAT_PWD="$SMOKE_DIR" "$FINAL_DIR/bin/meerkat" \
+    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" --commit-msg MSG --no-open
+)
+
+# Flip `current` at the smoke-tested version. `mv -h` so the rename
+# replaces the `current` symlink itself; plain `mv` follows a
+# symlink-to-dir target and drops the temp link inside the old version
+# dir (BSD semantics), silently leaving `current` unchanged. Absolute
+# target so `readlink current` resolves standalone.
 TMP_LINK="$CURRENT_LINK.tmp.$$"
 ln -sfn "$FINAL_DIR" "$TMP_LINK"
-mv -f "$TMP_LINK" "$CURRENT_LINK"
+mv -hf "$TMP_LINK" "$CURRENT_LINK"
 
 # The launcher resolves `current` to a concrete version dir at launch
 # and execs that — so each running review is pinned to its version for
@@ -157,14 +188,15 @@ chmod +x "$WRAPPER"
 
 echo "meerkat: installed $WRAPPER -> $CURRENT_LINK"
 
-# GC old versions: keep the newest $KEEP_VERSIONS (by mtime) plus
-# `current` plus any dir a running review is still pinned to; delete
-# the rest. Also retire the pre-versioning `release/` dir once no live
-# BEAM is reading it (migration cleanup).
+# GC old versions: keep the newest $KEEP_VERSIONS (by mtime), the
+# `current` target, and any dir a running review is still pinned to;
+# delete the rest. Also retire the pre-versioning `release/` dir once no
+# live BEAM is reading it (migration cleanup).
+current_target="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 kept=0
 while IFS= read -r v; do
   v="${v%/}"
-  [[ -z "$v" || "$v" == "$FINAL_DIR" ]] && continue
+  [[ -z "$v" || "$v" == "$FINAL_DIR" || "$v" == "$current_target" ]] && continue
   kept=$((kept + 1))
   if [[ "$kept" -le "$KEEP_VERSIONS" ]]; then
     continue
@@ -179,29 +211,5 @@ LEGACY_RELEASE="$DEST_SHARE/release"
 if [[ -d "$LEGACY_RELEASE" ]] && ! dir_in_use "$LEGACY_RELEASE"; then
   rm -rf "$LEGACY_RELEASE"
 fi
-
-# Real smoke test: an empty-staged-no-commit-msg invocation hits the
-# `:auto, "no staged file changes — auto-approving"` fast path (cli.ex
-# auto_approve_decision/2 staged-empty branch). Exits 0 without
-# binding any port, proves the wrapper boots end-to-end. Stream
-# stdout/stderr so failures surface; non-zero exit aborts install.
-echo "meerkat: smoke-testing launcher in a throwaway repo..."
-SMOKE_DIR="$(mktemp -d -t meerkat-smoke.XXXXXX)"
-trap 'rm -rf "$SMOKE_DIR"' EXIT
-(
-  # When this script is invoked from the lefthook post-merge hook,
-  # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE etc are set to the
-  # *parent* meerkat repo. Without unsetting them, the smoke test's
-  # `git init` re-initialises the parent repo, and `git commit
-  # --allow-empty -m init` lands a phantom "init" commit on the
-  # caller's local branch. Strip every `GIT_*` env var before
-  # touching the throwaway repo.
-  unset $(env | awk -F= '/^GIT_/ {print $1}')
-  cd "$SMOKE_DIR"
-  git init -q -b main
-  git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-  echo "msg" > MSG
-  MEERKAT_PWD="$SMOKE_DIR" "$WRAPPER" --commit-msg MSG --no-open
-)
 
 echo "meerkat: done."
