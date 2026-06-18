@@ -35,9 +35,9 @@ KEEP_VERSIONS=5
 HEAD_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
 DIRTY="$(git status --porcelain 2>/dev/null || true)"
 
-# Version id: the commit for a clean build (so re-running the same
-# commit is a no-op), with a timestamp suffix for a dirty/forced build
-# so it can't collide with (or overwrite) the clean commit's dir.
+# Version id (a human-readable dir name; uniqueness is enforced later by
+# the build loop): the commit for a clean build, marked `-wip.<ts>` when
+# built from a dirty tree so it reads as "not a pristine commit build".
 if [[ -n "$HEAD_COMMIT" && -z "$DIRTY" ]]; then
   VERSION_ID="${HEAD_COMMIT:0:12}"
 else
@@ -60,10 +60,13 @@ dir_in_use() {
 
 # Idempotency: the post-merge / post-checkout hooks fire this on every
 # `main` checkout, but a rebuild takes minutes, so skip when `current`
-# already resolves to this commit's version and the tree is clean.
+# is already a clean build of this commit. Keyed on the commit stamp in
+# the current version dir, not its name, so a forced rebuild can land in
+# a fresh immutable dir without making every later run rebuild.
 CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
+CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
-      && "$(basename "$CURRENT_TARGET" 2>/dev/null)" == "$VERSION_ID" \
+      && "$CURRENT_STAMP" == "$HEAD_COMMIT" \
       && -x "$CURRENT_TARGET/bin/meerkat" ]]; then
   echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
   exit 0
@@ -102,19 +105,27 @@ fi
 
 mkdir -p "$VERSIONS_DIR" "$DEST_BIN"
 
-# Stage the new version beside its final home, then atomic-rename it
-# in. A version dir a running review is pinned to is immutable: if this
-# id already exists and is in use (a forced rebuild of the same
-# commit), pick a fresh suffixed id rather than clobber it.
+# A version dir is immutable once built: a running review lazy-loads
+# code/assets from it for its whole life. So never build over an
+# existing dir (a `--force` rebuild of a commit that's already `current`
+# would otherwise rm it out from under a review that resolved `current`
+# to it mid-rebuild); take the first free `<id>` / `<id>.N` instead.
 FINAL_DIR="$VERSIONS_DIR/$VERSION_ID"
-if [[ -e "$FINAL_DIR" ]] && dir_in_use "$FINAL_DIR"; then
-  VERSION_ID="$VERSION_ID-$(date +%s)"
-  FINAL_DIR="$VERSIONS_DIR/$VERSION_ID"
-fi
+n=1
+while [[ -e "$FINAL_DIR" ]]; do
+  FINAL_DIR="$VERSIONS_DIR/$VERSION_ID.$n"
+  n=$((n + 1))
+done
+VERSION_ID="$(basename "$FINAL_DIR")"
+
+# Stamp the source commit so the idempotency check can tell whether
+# `current` is already this commit, independent of the dir name.
+printf '%s\n' "$HEAD_COMMIT" > "$SRC_RELEASE/INSTALLED_COMMIT"
+
+# Stage beside the final home, then atomic-rename into place.
 STAGING_DIR="$VERSIONS_DIR/.staging.$$"
 rm -rf "$STAGING_DIR"
 cp -R "$SRC_RELEASE" "$STAGING_DIR"
-rm -rf "$FINAL_DIR"
 mv "$STAGING_DIR" "$FINAL_DIR"
 echo "meerkat: built version $VERSION_ID at $FINAL_DIR"
 
