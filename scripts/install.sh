@@ -14,7 +14,7 @@
 #
 # Invoked automatically by the lefthook post-merge / post-checkout
 # hooks (via scripts/auto-install.sh) whenever local `main` advances.
-# Idempotent — skips the rebuild when `current` already points at this
+# Idempotent: skips the rebuild when `current` already points at this
 # commit's version and the tree is clean. Run by hand any time via
 # `bash scripts/install.sh` (or `--force` to rebuild even when
 # unchanged).
@@ -37,7 +37,7 @@ DIRTY="$(git status --porcelain 2>/dev/null || true)"
 
 # Version id: the commit for a clean build (so re-running the same
 # commit is a no-op), with a timestamp suffix for a dirty/forced build
-# so it can't collide with — or overwrite — the clean commit's dir.
+# so it can't collide with (or overwrite) the clean commit's dir.
 if [[ -n "$HEAD_COMMIT" && -z "$DIRTY" ]]; then
   VERSION_ID="${HEAD_COMMIT:0:12}"
 else
@@ -59,13 +59,13 @@ dir_in_use() {
 }
 
 # Idempotency: the post-merge / post-checkout hooks fire this on every
-# `main` checkout, but a rebuild takes minutes — so skip when `current`
+# `main` checkout, but a rebuild takes minutes, so skip when `current`
 # already resolves to this commit's version and the tree is clean.
 CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
       && "$(basename "$CURRENT_TARGET" 2>/dev/null)" == "$VERSION_ID" \
       && -x "$CURRENT_TARGET/bin/meerkat" ]]; then
-  echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree) — skipping. Pass --force to rebuild."
+  echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
   exit 0
 fi
 
@@ -78,14 +78,14 @@ MIX_ENV=prod mix deps.get --only prod
 
 # Phoenix assets need to be built before the release packages priv/.
 # pnpm installs (the workspace covers assets/ too); bun runs the
-# build — see pnpm-workspace.yaml for why the tools are split.
+# build; see pnpm-workspace.yaml for why the tools are split.
 if [[ -d assets ]]; then
   pnpm install --frozen-lockfile --ignore-scripts
   (cd assets && bun run build)
 fi
 
 MIX_ENV=prod mix compile --warnings-as-errors
-# Asset digest is mandatory for LiveView in prod — missing manifests
+# Asset digest is mandatory for LiveView in prod: missing manifests
 # = broken UI at runtime. Run loud + fail loud.
 MIX_ENV=prod mix phx.digest
 # Nuke the release dir before re-assembling so stale erts subdirs
@@ -142,7 +142,7 @@ trap 'rm -rf "$SMOKE_DIR"' EXIT
   git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   echo "msg" > MSG
   # Invoke the new version's launcher exactly as the wrapper does, but
-  # against $FINAL_DIR directly — `current` isn't pointed at it yet.
+  # against $FINAL_DIR directly, since `current` isn't pointed at it yet.
   MEERKAT_PWD="$SMOKE_DIR" "$FINAL_DIR/bin/meerkat" \
     eval "Meerkat.CLI.main(System.argv()) |> System.halt()" --commit-msg MSG --no-open
 )
@@ -157,7 +157,7 @@ ln -sfn "$FINAL_DIR" "$TMP_LINK"
 mv -hf "$TMP_LINK" "$CURRENT_LINK"
 
 # The launcher resolves `current` to a concrete version dir at launch
-# and execs that — so each running review is pinned to its version for
+# and execs that, so each running review is pinned to its version for
 # code + assets, and a later flip of `current` can't pull them out from
 # under it. RELEASE_DIR is baked in (not hardcoded to $HOME) so a custom
 # MEERKAT_INSTALL_PREFIX is honored end-to-end; printf %q keeps paths
@@ -178,7 +178,7 @@ WRAPPER_EOF
   cat <<'WRAPPER_EOF'
 RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 if [[ -z "$RELEASE_DIR" || ! -x "$RELEASE_DIR/bin/meerkat" ]]; then
-  echo "meerkat: no current release at $CURRENT_LINK — re-run scripts/install.sh from the meerkat repo." >&2
+  echo "meerkat: no current release at $CURRENT_LINK; re-run scripts/install.sh from the meerkat repo." >&2
   exit 127
 fi
 exec "$RELEASE_DIR/bin/meerkat" eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
