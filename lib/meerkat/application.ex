@@ -18,9 +18,12 @@ defmodule Meerkat.Application do
         # one coordinator GenServer per review_id, started lazily on
         # first mount. Single-writer guarantee for review state.
         {Registry, keys: :unique, name: Meerkat.ReviewRegistry},
+        # Connected review LiveViews register here so Meerkat.VersionWatcher
+        # can tell whether anyone is watching before it live-restarts.
+        {Registry, keys: :duplicate, name: Meerkat.ViewerRegistry},
         {DynamicSupervisor, name: Meerkat.ReviewServerSup, strategy: :one_for_one},
         Meerkat.Decision
-      ] ++ dev_watcher_child() ++ endpoint_child()
+      ] ++ dev_watcher_child() ++ version_watcher_child() ++ endpoint_child()
 
     opts = [strategy: :one_for_one, name: Meerkat.Supervisor]
     Supervisor.start_link(children, opts)
@@ -34,6 +37,18 @@ defmodule Meerkat.Application do
   defp dev_watcher_child do
     if @env == :dev and Application.get_env(:meerkat, :start_endpoint, false) do
       [Meerkat.DevWatcher]
+    else
+      []
+    end
+  end
+
+  # Prod analogue: watch the install's `current` symlink and live-restart
+  # onto a newly-installed version. Gated on MEERKAT_CURRENT_LINK (set by
+  # the shepherd), so it only starts under a versioned prod install.
+  defp version_watcher_child do
+    if Application.get_env(:meerkat, :start_endpoint, false) and
+         System.get_env("MEERKAT_CURRENT_LINK") do
+      [Meerkat.VersionWatcher]
     else
       []
     end

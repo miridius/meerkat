@@ -50,6 +50,13 @@ defmodule MeerkatWeb.ReviewLive do
         ReviewServer.get_state(review_id)
       end
 
+    if connected?(socket) do
+      # Track this tab as a connected viewer and watch for a newly
+      # installed version, so VersionWatcher live-restarts at a safe point.
+      Meerkat.Viewers.register()
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
+    end
+
     # Refresh-during-shutdown: if the CLI has already submitted a
     # decision (Decision.current/0 returns non-nil), seed the
     # `:done` assign so the LiveView mounts straight onto the done
@@ -80,6 +87,9 @@ defmodule MeerkatWeb.ReviewLive do
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
        open_form: Map.get(state, :open_form, nil),
+       # Set when VersionWatcher signals a newer install; the live-restart
+       # is deferred until no comment form is open (the @dirty? gate).
+       update_pending: false,
        filter_input: "",
        only_file_index: nil,
        # File-filter sidebar is closed by default so the diff body
@@ -130,7 +140,20 @@ defmodule MeerkatWeb.ReviewLive do
   defp set_open_form(socket, form) do
     rid = socket.assigns.review_id
     if rid != "unbound", do: ReviewServer.set_open_form(rid, form)
-    assign(socket, open_form: form)
+    socket |> assign(open_form: form) |> maybe_apply_update()
+  end
+
+  # Apply a pending live-restart once it's safe (no comment form open).
+  # Called wherever `open_form` changes; a no-op until VersionWatcher
+  # signals an update. `Meerkat.Restart.request/0` halts the BEAM, so in
+  # prod this never returns; the returned socket covers the deferred and
+  # no-update cases (and tests, which capture the restart).
+  defp maybe_apply_update(socket) do
+    if socket.assigns[:update_pending] and socket.assigns.open_form == nil do
+      Meerkat.Restart.request()
+    end
+
+    socket
   end
 
   defp toggle_member(set, key) do
@@ -821,7 +844,15 @@ defmodule MeerkatWeb.ReviewLive do
 
   @impl true
   def handle_info({:state_changed, %ReviewState{} = state}, socket) do
-    {:noreply, assign(socket, state: state, open_form: Map.get(state, :open_form, nil))}
+    socket = assign(socket, state: state, open_form: Map.get(state, :open_form, nil))
+    {:noreply, maybe_apply_update(socket)}
+  end
+
+  # A newer version is installed. Defer the live-restart until no comment
+  # form is open (the @dirty? gate); if one's open now, maybe_apply_update
+  # fires the moment it closes (see set_open_form/2).
+  def handle_info({:meerkat_version_available, _target}, socket) do
+    {:noreply, maybe_apply_update(assign(socket, update_pending: true))}
   end
 
   def handle_info({:persistence_failed, reason}, socket) do
