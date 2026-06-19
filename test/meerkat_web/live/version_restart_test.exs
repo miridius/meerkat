@@ -1,5 +1,5 @@
 defmodule MeerkatWeb.VersionRestartTest do
-  # async: false — mount reads the global `:meerkat, :review_state` and
+  # async: false: mount reads the global `:meerkat, :review_state` and
   # the live-restart hook is captured via the global `:restart_fun`.
   use MeerkatWeb.ConnCase, async: false
 

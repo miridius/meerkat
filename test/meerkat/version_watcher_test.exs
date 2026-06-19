@@ -1,5 +1,5 @@
 defmodule Meerkat.VersionWatcherTest do
-  # async: false — :restart_fun is global application env.
+  # async: false: :restart_fun is global application env.
   use ExUnit.Case, async: false
 
   alias Meerkat.VersionWatcher

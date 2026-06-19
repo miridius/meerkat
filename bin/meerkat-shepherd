@@ -25,8 +25,8 @@ export MEERKAT_CURRENT_LINK="$CURRENT_LINK"
 
 RESTART_EXIT_CODE=75
 
-# Deterministic port from (cwd, args) so a respawn — and a fresh
-# git-commit re-invocation of the same review — reuse the same port and
+# Deterministic port from (cwd, args) so a respawn, and a fresh
+# git-commit re-invocation of the same review, reuse the same port and
 # the browser tab reconnects without re-navigation. Same formula and
 # 40000-59999 range as bin/meerkat-beam.
 if [[ -n "${MEERKAT_PORT:-}" ]]; then
