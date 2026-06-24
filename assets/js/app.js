@@ -310,5 +310,45 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
 });
 
+// Scroll preservation across a live-restart full reload. When a new
+// version changes assets, phx-track-static reloads the page on socket
+// reconnect; without this the reviewer is thrown back to the top.
+// sessionStorage is scoped per tab and per origin, and a live-restart
+// keeps the same port (so the same origin), so the position stashed
+// before the reload is read back after it; a fresh review opens a new
+// tab with empty storage and starts at the top.
+const SCROLL_KEY = "meerkat:scrollY";
+let scrollStashTimer = null;
+window.addEventListener(
+  "scroll",
+  () => {
+    if (scrollStashTimer) return;
+    scrollStashTimer = setTimeout(() => {
+      scrollStashTimer = null;
+      sessionStorage.setItem(SCROLL_KEY, String(Math.round(window.scrollY)));
+    }, 200);
+  },
+  { passive: true },
+);
+
+const stashedScrollY = parseInt(sessionStorage.getItem(SCROLL_KEY) || "0", 10);
+if (stashedScrollY > 0) {
+  // The diff only renders once the LiveView reconnects (a few hundred ms
+  // after a hard reload), so the document is too short to scroll at first.
+  // Poll each frame until it's tall enough to reach the stashed position,
+  // then restore once; give up after a few seconds (a shorter new diff
+  // clamps to its own bottom).
+  const deadline = Date.now() + 5000;
+  const tryRestore = () => {
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    if (maxY >= stashedScrollY || Date.now() >= deadline) {
+      window.scrollTo(0, stashedScrollY);
+    } else {
+      requestAnimationFrame(tryRestore);
+    }
+  };
+  requestAnimationFrame(tryRestore);
+}
+
 liveSocket.connect();
 window.liveSocket = liveSocket;
