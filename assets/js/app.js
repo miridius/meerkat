@@ -291,13 +291,21 @@ const hooks = {
       const btn = wrap.querySelector(".version-chip-btn");
       const popover = wrap.querySelector(".version-popover");
       const badge = wrap.querySelector(".version-badge");
-      const nums = (wrap.dataset.prNumbers || "")
-        .split(",")
-        .map(Number)
-        .filter((n) => Number.isFinite(n) && n > 0);
-      const maxPr = nums.length ? Math.max(...nums) : 0;
       const KEY = "meerkat:lastSeenPr";
 
+      // Read fresh from the element each time: a server-only upgrade (no
+      // asset change, so no full reload) live-restarts via a socket patch
+      // that updates data-pr-numbers in place and fires updated(), not a
+      // re-mount.
+      const nums = () =>
+        (wrap.dataset.prNumbers || "")
+          .split(",")
+          .map(Number)
+          .filter((n) => Number.isFinite(n) && n > 0);
+      const maxPr = () => {
+        const ns = nums();
+        return ns.length ? Math.max(...ns) : 0;
+      };
       const lastSeen = () => {
         try {
           return parseInt(localStorage.getItem(KEY) || "0", 10) || 0;
@@ -312,8 +320,8 @@ const hooks = {
           /* storage disabled; the badge just won't persist */
         }
       };
-      const refreshBadge = () => {
-        const count = nums.filter((n) => n > lastSeen()).length;
+      this._refreshBadge = () => {
+        const count = nums().filter((n) => n > lastSeen()).length;
         badge.textContent = String(count);
         badge.hidden = count === 0;
       };
@@ -321,19 +329,19 @@ const hooks = {
       // First sight of this review's origin: treat the current version as
       // seen so the badge fires only after a later live-restart.
       try {
-        if (localStorage.getItem(KEY) === null) setSeen(maxPr);
+        if (localStorage.getItem(KEY) === null) setSeen(maxPr());
       } catch (_e) {
         /* storage disabled */
       }
-      refreshBadge();
+      this._refreshBadge();
 
       this._onClick = () => {
         if (btn.disabled) return;
         const opening = popover.hidden;
         popover.hidden = !opening;
         if (opening) {
-          setSeen(maxPr);
-          refreshBadge();
+          setSeen(maxPr());
+          this._refreshBadge();
         }
       };
       btn.addEventListener("click", this._onClick);
@@ -346,6 +354,9 @@ const hooks = {
       };
       document.addEventListener("click", this._onDocClick, true);
       document.addEventListener("keydown", this._onEsc);
+    },
+    updated() {
+      this._refreshBadge?.();
     },
     destroyed() {
       document.removeEventListener("click", this._onDocClick, true);

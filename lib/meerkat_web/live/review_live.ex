@@ -150,7 +150,12 @@ defmodule MeerkatWeb.ReviewLive do
   # prod this never returns; the returned socket covers the deferred and
   # no-update cases (and tests, which capture the restart).
   defp maybe_apply_update(socket) do
-    if socket.assigns[:update_pending] and socket.assigns.open_form == nil do
+    # Don't restart once a decision is in flight: the CLI holds the BEAM
+    # alive briefly after Decision.submit/1 to flush state before halting
+    # with the decision's exit code (0/1), and a restart (75) here would
+    # preempt that code and lose the reviewer's approve/reject.
+    if socket.assigns[:update_pending] and socket.assigns.open_form == nil and
+         is_nil(Decision.current()) do
       Meerkat.Restart.request()
     end
 
@@ -412,7 +417,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       rid == "unbound" ->
-        {:noreply, assign(socket, open_form: nil)}
+        {:noreply, set_open_form(socket, nil)}
 
       Map.get(form, :edit_id) ->
         # Edit = remove old + add new (no `edit_comment` server call).

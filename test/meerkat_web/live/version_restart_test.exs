@@ -62,4 +62,17 @@ defmodule MeerkatWeb.VersionRestartTest do
     render_hook(view, "comment_form.hide", %{})
     assert_receive {:restart, 75}, 1000
   end
+
+  test "does not live-restart once a decision has been submitted", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    # Reviewer approves; the CLI is now in its post-decision halt window
+    # (Decision.current() is set, the BEAM about to exit 0). A version
+    # landing now must not preempt that exit code with a restart (75).
+    render_hook(view, "decision.approve", %{})
+    send(view.pid, {:meerkat_version_available, "versions/v2"})
+    _ = render(view)
+
+    refute_receive {:restart, _}, 300
+  end
 end

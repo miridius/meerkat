@@ -75,8 +75,10 @@ defmodule Meerkat.VersionWatcher do
     # An update is live and broadcast. Connected LiveViews reload
     # themselves once they're at a safe point; only restart from here when
     # none are connected (or once they've all disconnected without
-    # reloading), so a reviewer mid-comment is never interrupted.
-    if state.viewers.() == 0 do
+    # reloading), so a reviewer mid-comment is never interrupted. Skip it
+    # too once a decision is in flight: the CLI is about to halt with the
+    # decision's exit code and a restart (75) would preempt and lose it.
+    if state.viewers.() == 0 and is_nil(Meerkat.Decision.current()) do
       Logger.info("Meerkat.VersionWatcher: no viewers connected; restarting onto new version")
       Meerkat.Restart.request()
       {:noreply, state}

@@ -5,6 +5,11 @@ defmodule Meerkat.VersionWatcherTest do
   alias Meerkat.VersionWatcher
 
   setup do
+    # The :pending no-viewer restart is gated on no decision being in
+    # flight; reset the global singleton so a prior test's decision can't
+    # block it.
+    Meerkat.Decision.reset()
+
     dir = Path.join(System.tmp_dir!(), "meerkat-vw-#{System.unique_integer([:positive])}")
     File.mkdir_p!(Path.join(dir, "v1"))
     File.mkdir_p!(Path.join(dir, "v2"))

@@ -87,7 +87,7 @@ CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
       && "$CURRENT_STAMP" == "$HEAD_COMMIT" \
-      && -x "$CURRENT_TARGET/bin/meerkat" ]]; then
+      && -x "$CURRENT_TARGET/bin/meerkat" && -x "$SHEPHERD_DEST" ]]; then
   echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
   exit 0
 fi
