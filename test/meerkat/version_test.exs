@@ -50,6 +50,12 @@ defmodule Meerkat.VersionTest do
            ]
   end
 
+  test "drops the PR link when no origin remote is baked in" do
+    with_manifest(["abc1234", "", "Some change (#5)"])
+
+    assert [%{number: 5, title: "Some change", url: nil}] = Version.info().changelog
+  end
+
   test "falls back to dev info without a release root" do
     System.delete_env("RELEASE_ROOT")
 

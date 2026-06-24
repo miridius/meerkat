@@ -50,7 +50,7 @@ defmodule Meerkat.VersionWatcher do
            poll_ms: poll_ms,
            pubsub: Keyword.get(opts, :pubsub, Meerkat.PubSub),
            viewers: Keyword.get(opts, :viewers_fun, &Meerkat.Viewers.count/0),
-           phase: :watching
+           notified: nil
          }}
 
       _ ->
@@ -59,31 +59,42 @@ defmodule Meerkat.VersionWatcher do
   end
 
   @impl true
-  def handle_info(:poll, %{phase: :watching} = state) do
+  def handle_info(:poll, state) do
     case File.read_link(state.link) do
       {:ok, target} when target != state.boot ->
-        Logger.info("Meerkat.VersionWatcher: new version live (#{Path.basename(target)})")
-        Phoenix.PubSub.broadcast(state.pubsub, @topic, {:meerkat_version_available, target})
-        {:noreply, schedule(%{state | phase: :pending})}
+        {:noreply, handle_update(broadcast(state, target))}
 
       _ ->
         {:noreply, schedule(state)}
     end
   end
 
-  def handle_info(:poll, %{phase: :pending} = state) do
-    # An update is live and broadcast. Connected LiveViews reload
-    # themselves once they're at a safe point; only restart from here when
-    # none are connected (or once they've all disconnected without
-    # reloading), so a reviewer mid-comment is never interrupted. Skip it
-    # too once a decision is in flight: the CLI is about to halt with the
-    # decision's exit code and a restart (75) would preempt and lose it.
+  # Re-broadcast every poll while an update is outstanding (not just once
+  # on first detection) so a tab that connects after the flip, and a
+  # further flip, both get signalled; the LiveView treats repeats as
+  # idempotent. Only log on a target change to avoid per-poll spam.
+  defp broadcast(state, target) do
+    if state.notified != target do
+      Logger.info("Meerkat.VersionWatcher: new version live (#{Path.basename(target)})")
+    end
+
+    Phoenix.PubSub.broadcast(state.pubsub, @topic, {:meerkat_version_available, target})
+    %{state | notified: target}
+  end
+
+  # Connected LiveViews reload themselves once they're at a safe point;
+  # only restart from here when none are connected (or once they've all
+  # disconnected without reloading), so a reviewer mid-comment is never
+  # interrupted. Skip it too once a decision is in flight: the CLI is about
+  # to halt with the decision's exit code and a restart (75) would preempt
+  # and lose it.
+  defp handle_update(state) do
     if state.viewers.() == 0 and is_nil(Meerkat.Decision.current()) do
       Logger.info("Meerkat.VersionWatcher: no viewers connected; restarting onto new version")
       Meerkat.Restart.request()
-      {:noreply, state}
+      state
     else
-      {:noreply, schedule(state)}
+      schedule(state)
     end
   end
 

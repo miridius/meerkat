@@ -336,7 +336,6 @@ const hooks = {
       this._refreshBadge();
 
       this._onClick = () => {
-        if (btn.disabled) return;
         const opening = popover.hidden;
         popover.hidden = !opening;
         if (opening) {

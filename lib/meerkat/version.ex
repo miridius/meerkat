@@ -46,7 +46,8 @@ defmodule Meerkat.Version do
     end)
   end
 
-  defp pr_url("", number), do: "##{number}"
+  # No origin remote baked in: list the entry without a (dead) link.
+  defp pr_url("", _number), do: nil
   defp pr_url(repo_url, number), do: "#{repo_url}/pull/#{number}"
 
   defp short(commit), do: String.slice(commit, 0, 7)
@@ -55,13 +56,16 @@ defmodule Meerkat.Version do
     root = Path.expand("../..", __DIR__)
 
     case System.cmd("git", ["-C", root, "branch", "--show-current"], stderr_to_stdout: true) do
-      {out, 0} -> blank_to(String.trim(out), "unknown")
-      _ -> "unknown"
+      {out, 0} ->
+        case String.trim(out) do
+          "" -> "unknown"
+          branch -> branch
+        end
+
+      _ ->
+        "unknown"
     end
   rescue
     _ -> "unknown"
   end
-
-  defp blank_to("", fallback), do: fallback
-  defp blank_to(value, _fallback), do: value
 end
