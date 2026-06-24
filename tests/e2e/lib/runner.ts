@@ -13,6 +13,9 @@ export type RunnerOpts = {
 	fixture?: { dir: string; cleanup?: () => void } & Partial<Fixture>;
 	// Extra paths to PREPEND to PATH (e.g. a stub `gh` binary directory).
 	pathPrefixes?: string[];
+	// Extra env vars for the meerkat process (e.g. RELEASE_ROOT to point
+	// Meerkat.Version at a baked manifest).
+	env?: Record<string, string>;
 	// If true, the fixture's `cleanup()` is NOT invoked on exit (debugging).
 	keepFixture?: boolean;
 };
@@ -43,7 +46,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 					throw new Error("startMeerkat: fixture has no commitMsgPath; pass `args` explicitly");
 				})());
 
-	const env = { ...process.env };
+	const env = { ...process.env, ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}

@@ -269,6 +269,97 @@ a.chip-link:hover .chip-value {
   color: var(--text);
 }
 
+.version-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.version-chip-btn {
+  cursor: pointer;
+}
+.version-chip-btn[disabled] {
+  cursor: default;
+}
+.version-chip-btn:not([disabled]):hover {
+  border-color: var(--accent);
+}
+.version-chip-btn:not([disabled]):hover .chip-value {
+  color: var(--accent);
+}
+
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.version-badge[hidden] {
+  display: none;
+}
+
+.version-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 280px;
+  max-width: 380px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius);
+  padding: 8px;
+  box-shadow: var(--shadow);
+}
+.version-popover[hidden] {
+  display: none;
+}
+
+.version-popover-title {
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 2px 6px 6px;
+}
+
+.version-changelog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.version-changelog li a {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--text);
+}
+.version-changelog li a:hover {
+  background: var(--chip-bg);
+}
+.version-changelog .changelog-num {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: var(--accent);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+.version-changelog .changelog-title {
+  font-size: 0.85rem;
+}
+
 .chip-title {
   font-weight: 600;
 }

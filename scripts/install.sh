@@ -61,6 +61,23 @@ dir_in_use() {
   [[ "$cmds" == *"$1/"* ]]
 }
 
+# Bake a version manifest into the release so the toolbar chip can show
+# what version is running and the recent changelog. Plain newline format
+# (commit, repo URL, then the last 15 first-parent subjects verbatim) so
+# no JSON escaping is needed in bash; Meerkat.Version parses the `(#N)`
+# out of each subject. First-parent on `main` is one squashed commit per
+# merged PR.
+write_version_manifest() {
+  local out="$1" repo_url
+  repo_url="$(git config --get remote.origin.url 2>/dev/null |
+    sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##' || true)"
+  {
+    printf '%s\n' "$HEAD_COMMIT"
+    printf '%s\n' "$repo_url"
+    git log --first-parent --format='%s' -n 15 "$HEAD_COMMIT" 2>/dev/null || true
+  } > "$out"
+}
+
 # Idempotency: the post-merge / post-checkout hooks fire this on every
 # `main` checkout, but a rebuild takes minutes, so skip when `current`
 # is already a clean build of this commit. Keyed on the commit stamp in
@@ -124,6 +141,7 @@ VERSION_ID="$(basename "$FINAL_DIR")"
 # Stamp the source commit so the idempotency check can tell whether
 # `current` is already this commit, independent of the dir name.
 printf '%s\n' "$HEAD_COMMIT" > "$SRC_RELEASE/INSTALLED_COMMIT"
+write_version_manifest "$SRC_RELEASE/meerkat_version"
 
 # Stage beside the final home, then atomic-rename into place.
 STAGING_DIR="$VERSIONS_DIR/.staging.$$"

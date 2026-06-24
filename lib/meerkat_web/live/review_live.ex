@@ -84,6 +84,7 @@ defmodule MeerkatWeb.ReviewLive do
        tab_size: 2,
        review_id: review_id,
        repo_path: repo_path,
+       version: Meerkat.Version.info(),
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
        open_form: Map.get(state, :open_form, nil),
@@ -883,6 +884,7 @@ defmodule MeerkatWeb.ReviewLive do
     assigns =
       assigns
       |> assign_new(:plantuml_available, fn -> Meerkat.PlantUML.available?() end)
+      |> assign_new(:version, fn -> Meerkat.Version.info() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)
       |> assign_new(:collapsed_unapproved, fn -> MapSet.new() end)
       # Compute once per render and thread into both children.
@@ -918,6 +920,7 @@ defmodule MeerkatWeb.ReviewLive do
         state={@state}
         repo_path={@repo_path}
         open_form={@open_form}
+        version={@version}
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
       <.pending_answers_banner :if={@pending_answers} pending_answers={@pending_answers} />
@@ -1051,6 +1054,42 @@ defmodule MeerkatWeb.ReviewLive do
   # `.phx-client-error` on a wrapper above the LV. CSS targets
   # those ancestor classes to flip the dot colour + label without
   # any LV-side JS hook.
+  attr :version, :map, required: true
+
+  defp version_chip(assigns) do
+    ~H"""
+    <div
+      id="version-chip"
+      class="version-chip-wrap"
+      phx-hook="VersionChip"
+      data-pr-numbers={Enum.map_join(@version.changelog, ",", & &1.number)}
+    >
+      <button
+        type="button"
+        class="chip version-chip-btn"
+        title="meerkat version"
+        aria-haspopup="true"
+        disabled={@version.changelog == []}
+      >
+        <span class="chip-label">ver</span>
+        <code class="chip-value">{@version.label}</code>
+        <span class="version-badge" hidden></span>
+      </button>
+      <div class="version-popover" hidden role="menu">
+        <div class="version-popover-title">recent changes</div>
+        <ul class="version-changelog">
+          <li :for={entry <- @version.changelog}>
+            <a href={entry.url} target="_blank" rel="noopener">
+              <code class="changelog-num">#{entry.number}</code>
+              <span class="changelog-title">{entry.title}</span>
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+    """
+  end
+
   defp connection_indicator(assigns) do
     ~H"""
     <span class="conn-indicator" title="Connection to meerkat server" aria-live="polite">
@@ -1613,6 +1652,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :state, ReviewState, required: true
   attr :repo_path, :string, required: true
   attr :open_form, :any, required: true
+  attr :version, :map, required: true
 
   defp diff_toolbar(assigns) do
     ~H"""
@@ -1660,6 +1700,8 @@ defmodule MeerkatWeb.ReviewLive do
       >
         <code class="chip-value">{@state.head_branch}</code>
       </span>
+
+      <.version_chip version={@version} />
 
       <.connection_indicator />
 
