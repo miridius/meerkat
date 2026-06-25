@@ -25,10 +25,6 @@ if Mix.env() == :dev do
     require Logger
 
     @debounce_ms 150
-    # Exit code shepherd loop reads as "restart on same port". Outside
-    # the normal CLI exit codes (0 / 1 / 2), so a real decision never
-    # collides with it.
-    @restart_exit_code 75
 
     @doc "Start under the application supervisor (dev only)."
     @spec start_link(keyword()) :: GenServer.on_start()
@@ -82,13 +78,16 @@ if Mix.env() == :dev do
     end
 
     def handle_info(:restart_now, state) do
-      Logger.info(
-        "Meerkat.DevWatcher: halting with exit code #{@restart_exit_code} — " <>
-          "shepherd will restart on the same port."
-      )
-
-      System.halt(@restart_exit_code)
-      {:noreply, state}
+      # Hold off while a decision is in flight, like the prod restart paths,
+      # so the BEAM halts with the decision's exit code instead of a restart
+      # (75). Clear the timer so a later change re-arms.
+      if is_nil(Meerkat.Decision.current()) do
+        Logger.info("Meerkat.DevWatcher: change detected; restarting on the same port.")
+        Meerkat.Restart.request()
+        {:noreply, state}
+      else
+        {:noreply, %{state | restart_timer: nil}}
+      end
     end
 
     ## Internals

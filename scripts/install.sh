@@ -28,6 +28,9 @@ DEST_BIN="${MEERKAT_BIN_DIR:-$HOME/.local/bin}"
 VERSIONS_DIR="$DEST_SHARE/versions"
 CURRENT_LINK="$DEST_SHARE/current"
 WRAPPER="$DEST_BIN/meerkat"
+# The prod shepherd lives outside the version dirs (it re-resolves
+# `current` every spawn, so it's version-agnostic and survives GC).
+SHEPHERD_DEST="$DEST_SHARE/meerkat-shepherd"
 # How many version dirs to retain for rollback/history. A version a
 # running review is still pinned to is always kept, even past this.
 KEEP_VERSIONS=5
@@ -58,6 +61,23 @@ dir_in_use() {
   [[ "$cmds" == *"$1/"* ]]
 }
 
+# Bake a version manifest into the release so the toolbar chip can show
+# what version is running and the recent changelog. Plain newline format
+# (commit, repo URL, then the last 15 first-parent subjects verbatim) so
+# no JSON escaping is needed in bash; Meerkat.Version parses the `(#N)`
+# out of each subject. First-parent on `main` is one squashed commit per
+# merged PR.
+write_version_manifest() {
+  local out="$1" repo_url
+  repo_url="$(git config --get remote.origin.url 2>/dev/null |
+    sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##' || true)"
+  {
+    printf '%s\n' "$HEAD_COMMIT"
+    printf '%s\n' "$repo_url"
+    git log --first-parent --format='%s' -n 15 "$HEAD_COMMIT" 2>/dev/null || true
+  } > "$out"
+}
+
 # Idempotency: the post-merge / post-checkout hooks fire this on every
 # `main` checkout, but a rebuild takes minutes, so skip when `current`
 # is already a clean build of this commit. Keyed on the commit stamp in
@@ -67,7 +87,7 @@ CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
       && "$CURRENT_STAMP" == "$HEAD_COMMIT" \
-      && -x "$CURRENT_TARGET/bin/meerkat" ]]; then
+      && -x "$CURRENT_TARGET/bin/meerkat" && -x "$SHEPHERD_DEST" ]]; then
   echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
   exit 0
 fi
@@ -121,6 +141,7 @@ VERSION_ID="$(basename "$FINAL_DIR")"
 # Stamp the source commit so the idempotency check can tell whether
 # `current` is already this commit, independent of the dir name.
 printf '%s\n' "$HEAD_COMMIT" > "$SRC_RELEASE/INSTALLED_COMMIT"
+write_version_manifest "$SRC_RELEASE/meerkat_version"
 
 # Stage beside the final home, then atomic-rename into place.
 STAGING_DIR="$VERSIONS_DIR/.staging.$$"
@@ -167,37 +188,39 @@ TMP_LINK="$CURRENT_LINK.tmp.$$"
 ln -sfn "$FINAL_DIR" "$TMP_LINK"
 mv -hf "$TMP_LINK" "$CURRENT_LINK"
 
-# The launcher resolves `current` to a concrete version dir at launch
-# and execs that, so each running review is pinned to its version for
-# code + assets, and a later flip of `current` can't pull them out from
-# under it. RELEASE_DIR is baked in (not hardcoded to $HOME) so a custom
-# MEERKAT_INSTALL_PREFIX is honored end-to-end; printf %q keeps paths
-# safe if they contain spaces.
+# Install the shepherd via temp + atomic rename: a shepherd a review is
+# already running keeps its old inode (bash reads the script by offset
+# as it loops), so replacing the path can't corrupt it mid-review.
+cp bin/meerkat-shepherd "$SHEPHERD_DEST.tmp.$$"
+chmod +x "$SHEPHERD_DEST.tmp.$$"
+mv -f "$SHEPHERD_DEST.tmp.$$" "$SHEPHERD_DEST"
+
+# The launcher is thin: it execs the shepherd, which loops the release
+# BEAM, resolving `current` to a concrete version dir on each spawn so a
+# review can live-restart onto a new version. The paths are baked in
+# rather than hardcoded to $HOME, so a custom MEERKAT_INSTALL_PREFIX is
+# honored end-to-end; printf %q keeps them safe if they contain spaces.
 {
   echo '#!/usr/bin/env bash'
   cat <<'WRAPPER_EOF'
-# meerkat launcher (installed by scripts/install.sh).
-# Forwards the user's cwd as $MEERKAT_PWD so the release can target
-# the right git repo regardless of where the release was built.
-# `bin/meerkat eval EXPR ARGS…` passes ARGS verbatim as System.argv
-# inside the eval'd expression; do NOT use `--` separator (the
-# release passes that through to argv as a literal "--" entry).
+# meerkat launcher (installed by scripts/install.sh). Forwards the
+# user's cwd as $MEERKAT_PWD and hands off to the shepherd.
 set -euo pipefail
 export MEERKAT_PWD="${MEERKAT_PWD:-$PWD}"
 WRAPPER_EOF
-  printf 'CURRENT_LINK=%q\n' "$CURRENT_LINK"
+  printf 'export MEERKAT_CURRENT_LINK=%q\n' "$CURRENT_LINK"
+  printf 'SHEPHERD=%q\n' "$SHEPHERD_DEST"
   cat <<'WRAPPER_EOF'
-RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
-if [[ -z "$RELEASE_DIR" || ! -x "$RELEASE_DIR/bin/meerkat" ]]; then
-  echo "meerkat: no current release at $CURRENT_LINK; re-run scripts/install.sh from the meerkat repo." >&2
+if [[ ! -x "$SHEPHERD" ]]; then
+  echo "meerkat: shepherd missing at $SHEPHERD; re-run scripts/install.sh from the meerkat repo." >&2
   exit 127
 fi
-exec "$RELEASE_DIR/bin/meerkat" eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
+exec "$SHEPHERD" "$@"
 WRAPPER_EOF
 } > "$WRAPPER"
 chmod +x "$WRAPPER"
 
-echo "meerkat: installed $WRAPPER -> $CURRENT_LINK"
+echo "meerkat: installed $WRAPPER -> $SHEPHERD_DEST -> $CURRENT_LINK"
 
 # GC old versions: keep the newest $KEEP_VERSIONS (by mtime), the
 # `current` target, and any dir a running review is still pinned to;

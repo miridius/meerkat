@@ -50,6 +50,13 @@ defmodule MeerkatWeb.ReviewLive do
         ReviewServer.get_state(review_id)
       end
 
+    if connected?(socket) do
+      # Track this tab as a connected viewer and watch for a newly
+      # installed version, so VersionWatcher live-restarts at a safe point.
+      Meerkat.Viewers.register()
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
+    end
+
     # Refresh-during-shutdown: if the CLI has already submitted a
     # decision (Decision.current/0 returns non-nil), seed the
     # `:done` assign so the LiveView mounts straight onto the done
@@ -77,9 +84,13 @@ defmodule MeerkatWeb.ReviewLive do
        tab_size: 2,
        review_id: review_id,
        repo_path: repo_path,
+       version: Meerkat.Version.info(),
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
        open_form: Map.get(state, :open_form, nil),
+       # Set when VersionWatcher signals a newer install; the live-restart
+       # is deferred until no comment form is open (the @dirty? gate).
+       update_pending: false,
        filter_input: "",
        only_file_index: nil,
        # File-filter sidebar is closed by default so the diff body
@@ -130,7 +141,25 @@ defmodule MeerkatWeb.ReviewLive do
   defp set_open_form(socket, form) do
     rid = socket.assigns.review_id
     if rid != "unbound", do: ReviewServer.set_open_form(rid, form)
-    assign(socket, open_form: form)
+    socket |> assign(open_form: form) |> maybe_apply_update()
+  end
+
+  # Apply a pending live-restart once it's safe (no comment form open).
+  # Called wherever `open_form` changes; a no-op until VersionWatcher
+  # signals an update. `Meerkat.Restart.request/0` halts the BEAM, so in
+  # prod this never returns; the returned socket covers the deferred and
+  # no-update cases (and tests, which capture the restart).
+  defp maybe_apply_update(socket) do
+    # Don't restart once a decision is in flight: the CLI holds the BEAM
+    # alive briefly after Decision.submit/1 to flush state before halting
+    # with the decision's exit code (0/1), and a restart (75) here would
+    # preempt that code and lose the reviewer's approve/reject.
+    if socket.assigns[:update_pending] and socket.assigns.open_form == nil and
+         is_nil(Decision.current()) do
+      Meerkat.Restart.request()
+    end
+
+    socket
   end
 
   defp toggle_member(set, key) do
@@ -388,7 +417,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       rid == "unbound" ->
-        {:noreply, assign(socket, open_form: nil)}
+        {:noreply, set_open_form(socket, nil)}
 
       Map.get(form, :edit_id) ->
         # Edit = remove old + add new (no `edit_comment` server call).
@@ -821,7 +850,15 @@ defmodule MeerkatWeb.ReviewLive do
 
   @impl true
   def handle_info({:state_changed, %ReviewState{} = state}, socket) do
-    {:noreply, assign(socket, state: state, open_form: Map.get(state, :open_form, nil))}
+    socket = assign(socket, state: state, open_form: Map.get(state, :open_form, nil))
+    {:noreply, maybe_apply_update(socket)}
+  end
+
+  # A newer version is installed. Defer the live-restart until no comment
+  # form is open (the @dirty? gate); if one's open now, maybe_apply_update
+  # fires the moment it closes (see set_open_form/2).
+  def handle_info({:meerkat_version_available, _target}, socket) do
+    {:noreply, maybe_apply_update(assign(socket, update_pending: true))}
   end
 
   def handle_info({:persistence_failed, reason}, socket) do
@@ -852,6 +889,7 @@ defmodule MeerkatWeb.ReviewLive do
     assigns =
       assigns
       |> assign_new(:plantuml_available, fn -> Meerkat.PlantUML.available?() end)
+      |> assign_new(:version, fn -> Meerkat.Version.info() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)
       |> assign_new(:collapsed_unapproved, fn -> MapSet.new() end)
       # Compute once per render and thread into both children.
@@ -887,6 +925,7 @@ defmodule MeerkatWeb.ReviewLive do
         state={@state}
         repo_path={@repo_path}
         open_form={@open_form}
+        version={@version}
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
       <.pending_answers_banner :if={@pending_answers} pending_answers={@pending_answers} />
@@ -1020,6 +1059,42 @@ defmodule MeerkatWeb.ReviewLive do
   # `.phx-client-error` on a wrapper above the LV. CSS targets
   # those ancestor classes to flip the dot colour + label without
   # any LV-side JS hook.
+  attr :version, :map, required: true
+
+  defp version_chip(assigns) do
+    ~H"""
+    <div
+      id="version-chip"
+      class="version-chip-wrap"
+      phx-hook="VersionChip"
+      data-pr-numbers={Enum.map_join(@version.changelog, ",", & &1.number)}
+    >
+      <button
+        type="button"
+        class="chip version-chip-btn"
+        title="meerkat version"
+        aria-haspopup="true"
+        disabled={@version.changelog == []}
+      >
+        <span class="chip-label">ver</span>
+        <code class="chip-value">{@version.label}</code>
+        <span class="version-badge" hidden></span>
+      </button>
+      <div class="version-popover" hidden role="menu">
+        <div class="version-popover-title">recent changes</div>
+        <ul class="version-changelog">
+          <li :for={entry <- @version.changelog}>
+            <a href={entry.url} target="_blank" rel="noopener">
+              <code class="changelog-num">#{entry.number}</code>
+              <span class="changelog-title">{entry.title}</span>
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+    """
+  end
+
   defp connection_indicator(assigns) do
     ~H"""
     <span class="conn-indicator" title="Connection to meerkat server" aria-live="polite">
@@ -1582,6 +1657,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :state, ReviewState, required: true
   attr :repo_path, :string, required: true
   attr :open_form, :any, required: true
+  attr :version, :map, required: true
 
   defp diff_toolbar(assigns) do
     ~H"""
@@ -1629,6 +1705,8 @@ defmodule MeerkatWeb.ReviewLive do
       >
         <code class="chip-value">{@state.head_branch}</code>
       </span>
+
+      <.version_chip version={@version} />
 
       <.connection_indicator />
 

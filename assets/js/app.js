@@ -280,6 +280,88 @@ const hooks = {
       this.el.removeEventListener("click", this._onClickCapture, { capture: true });
     },
   },
+  // Version chip popover + "new version" badge. data-pr-numbers lists the
+  // changelog PR numbers; lastSeenPr (per origin, so per review port)
+  // records the newest PR the reviewer has acknowledged. A live-restart
+  // onto a newer version brings higher PR numbers, so the badge counts
+  // those and clears when the popover opens.
+  VersionChip: {
+    mounted() {
+      const wrap = this.el;
+      const btn = wrap.querySelector(".version-chip-btn");
+      const popover = wrap.querySelector(".version-popover");
+      const badge = wrap.querySelector(".version-badge");
+      const KEY = "meerkat:lastSeenPr";
+
+      // Read fresh from the element each time: a server-only upgrade (no
+      // asset change, so no full reload) live-restarts via a socket patch
+      // that updates data-pr-numbers in place and fires updated(), not a
+      // re-mount.
+      const nums = () =>
+        (wrap.dataset.prNumbers || "")
+          .split(",")
+          .map(Number)
+          .filter((n) => Number.isFinite(n) && n > 0);
+      const maxPr = () => {
+        const ns = nums();
+        return ns.length ? Math.max(...ns) : 0;
+      };
+      const lastSeen = () => {
+        try {
+          return parseInt(localStorage.getItem(KEY) || "0", 10) || 0;
+        } catch (_e) {
+          return 0;
+        }
+      };
+      const setSeen = (n) => {
+        try {
+          localStorage.setItem(KEY, String(n));
+        } catch (_e) {
+          /* storage disabled; the badge just won't persist */
+        }
+      };
+      this._refreshBadge = () => {
+        const count = nums().filter((n) => n > lastSeen()).length;
+        badge.textContent = String(count);
+        badge.hidden = count === 0;
+      };
+
+      // First sight of this review's origin: treat the current version as
+      // seen so the badge fires only after a later live-restart.
+      try {
+        if (localStorage.getItem(KEY) === null) setSeen(maxPr());
+      } catch (_e) {
+        /* storage disabled */
+      }
+      this._refreshBadge();
+
+      this._onClick = () => {
+        const opening = popover.hidden;
+        popover.hidden = !opening;
+        if (opening) {
+          setSeen(maxPr());
+          this._refreshBadge();
+        }
+      };
+      btn.addEventListener("click", this._onClick);
+
+      this._onDocClick = (e) => {
+        if (!wrap.contains(e.target)) popover.hidden = true;
+      };
+      this._onEsc = (e) => {
+        if (e.key === "Escape") popover.hidden = true;
+      };
+      document.addEventListener("click", this._onDocClick, true);
+      document.addEventListener("keydown", this._onEsc);
+    },
+    updated() {
+      this._refreshBadge?.();
+    },
+    destroyed() {
+      document.removeEventListener("click", this._onDocClick, true);
+      document.removeEventListener("keydown", this._onEsc);
+    },
+  },
 };
 
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -309,6 +391,46 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   const el = document.getElementById(id);
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
 });
+
+// Scroll preservation across a live-restart full reload. When a new
+// version changes assets, phx-track-static reloads the page on socket
+// reconnect; without this the reviewer is thrown back to the top.
+// sessionStorage is scoped per tab and per origin, and a live-restart
+// keeps the same port (so the same origin), so the position stashed
+// before the reload is read back after it; a fresh review opens a new
+// tab with empty storage and starts at the top.
+const SCROLL_KEY = "meerkat:scrollY";
+let scrollStashTimer = null;
+window.addEventListener(
+  "scroll",
+  () => {
+    if (scrollStashTimer) return;
+    scrollStashTimer = setTimeout(() => {
+      scrollStashTimer = null;
+      sessionStorage.setItem(SCROLL_KEY, String(Math.round(window.scrollY)));
+    }, 200);
+  },
+  { passive: true },
+);
+
+const stashedScrollY = parseInt(sessionStorage.getItem(SCROLL_KEY) || "0", 10);
+if (stashedScrollY > 0) {
+  // The diff only renders once the LiveView reconnects (a few hundred ms
+  // after a hard reload), so the document is too short to scroll at first.
+  // Poll each frame until it's tall enough to reach the stashed position,
+  // then restore once; give up after a few seconds (a shorter new diff
+  // clamps to its own bottom).
+  const deadline = Date.now() + 5000;
+  const tryRestore = () => {
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    if (maxY >= stashedScrollY || Date.now() >= deadline) {
+      window.scrollTo(0, stashedScrollY);
+    } else {
+      requestAnimationFrame(tryRestore);
+    }
+  };
+  requestAnimationFrame(tryRestore);
+}
 
 liveSocket.connect();
 window.liveSocket = liveSocket;
