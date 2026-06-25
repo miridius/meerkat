@@ -75,4 +75,24 @@ defmodule MeerkatWeb.VersionRestartTest do
 
     refute_receive {:restart, _}, 300
   end
+
+  test "applies a deferred update when a state push clears the open form", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    send(view.pid, {:meerkat_version_available, "versions/v2"})
+    _ = render(view)
+    refute_receive {:restart, _}, 200
+
+    # A cross-tab state push that carries no open form should apply the
+    # deferred restart (set_open_form is not the only path into the gate).
+    send(view.pid, {:state_changed, %ReviewState{files: [@rs_file]}})
+    assert_receive {:restart, 75}, 1000
+  end
+
+  test "a connected mount registers the LiveView as a viewer", %{conn: conn} do
+    before = Meerkat.Viewers.count()
+    {:ok, _view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    assert Meerkat.Viewers.count() == before + 1
+  end
 end

@@ -6,6 +6,8 @@ defmodule Meerkat.Version do
   a dev source tree reports the checkout's branch with no changelog.
   """
 
+  require Logger
+
   @manifest_name "meerkat_version"
 
   @type entry :: %{number: pos_integer(), title: String.t(), url: String.t()}
@@ -18,15 +20,31 @@ defmodule Meerkat.Version do
       {:ok, [commit, repo_url | subjects]} ->
         %{label: short(commit), dev?: false, changelog: changelog(subjects, repo_url)}
 
-      _ ->
-        %{label: "dev: #{dev_branch()}", dev?: true, changelog: []}
+      :dev ->
+        dev_info()
+
+      broken ->
+        # A prod release whose manifest is missing/short/unreadable would
+        # otherwise show itself as a dev build with no signal.
+        Logger.warning("Meerkat.Version: unreadable version manifest (#{inspect(broken)})")
+        dev_info()
     end
   end
 
+  defp dev_info, do: %{label: "dev: #{dev_branch()}", dev?: true, changelog: []}
+
+  # :dev when not a release (no manifest expected); {:ok, lines} or
+  # {:error, reason} when RELEASE_ROOT is set, so info/0 can tell a genuine
+  # dev tree from a broken install.
   defp read_manifest do
-    with root when is_binary(root) <- System.get_env("RELEASE_ROOT"),
-         {:ok, contents} <- File.read(Path.join(root, @manifest_name)) do
-      {:ok, contents |> String.split("\n") |> Enum.map(&String.trim/1)}
+    case System.get_env("RELEASE_ROOT") do
+      nil ->
+        :dev
+
+      root ->
+        with {:ok, contents} <- File.read(Path.join(root, @manifest_name)) do
+          {:ok, contents |> String.split("\n") |> Enum.map(&String.trim/1)}
+        end
     end
   end
 

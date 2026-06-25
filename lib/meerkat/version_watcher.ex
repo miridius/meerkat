@@ -69,8 +69,8 @@ defmodule Meerkat.VersionWatcher do
     end
   end
 
-  # Re-broadcast every poll while an update is outstanding (not just once
-  # on first detection) so a tab that connects after the flip, and a
+  # Re-broadcast every poll while an update is outstanding, rather than
+  # only on first detection, so a tab that connects after the flip, and a
   # further flip, both get signalled; the LiveView treats repeats as
   # idempotent. Only log on a target change to avoid per-poll spam.
   defp broadcast(state, target) do

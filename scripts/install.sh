@@ -198,8 +198,8 @@ mv -f "$SHEPHERD_DEST.tmp.$$" "$SHEPHERD_DEST"
 # The launcher is thin: it execs the shepherd, which loops the release
 # BEAM, resolving `current` to a concrete version dir on each spawn so a
 # review can live-restart onto a new version. The paths are baked in
-# (not hardcoded to $HOME) so a custom MEERKAT_INSTALL_PREFIX is honored
-# end-to-end; printf %q keeps them safe if they contain spaces.
+# rather than hardcoded to $HOME, so a custom MEERKAT_INSTALL_PREFIX is
+# honored end-to-end; printf %q keeps them safe if they contain spaces.
 {
   echo '#!/usr/bin/env bash'
   cat <<'WRAPPER_EOF'

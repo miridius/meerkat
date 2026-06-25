@@ -78,9 +78,16 @@ if Mix.env() == :dev do
     end
 
     def handle_info(:restart_now, state) do
-      Logger.info("Meerkat.DevWatcher: change detected; restarting on the same port.")
-      Meerkat.Restart.request()
-      {:noreply, state}
+      # Hold off while a decision is in flight, like the prod restart paths,
+      # so the BEAM halts with the decision's exit code instead of a restart
+      # (75). Clear the timer so a later change re-arms.
+      if is_nil(Meerkat.Decision.current()) do
+        Logger.info("Meerkat.DevWatcher: change detected; restarting on the same port.")
+        Meerkat.Restart.request()
+        {:noreply, state}
+      else
+        {:noreply, %{state | restart_timer: nil}}
+      end
     end
 
     ## Internals

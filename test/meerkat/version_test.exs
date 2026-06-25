@@ -2,6 +2,8 @@ defmodule Meerkat.VersionTest do
   # async: false: RELEASE_ROOT is process-global env.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Meerkat.Version
 
   setup do
@@ -64,5 +66,15 @@ defmodule Meerkat.VersionTest do
     assert info.dev?
     assert info.changelog == []
     assert String.starts_with?(info.label, "dev: ")
+  end
+
+  test "warns and falls back to dev when a release manifest is unreadable" do
+    dir = Path.join(System.tmp_dir!(), "meerkat-rr-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    System.put_env("RELEASE_ROOT", dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    log = capture_log(fn -> assert Version.info().dev? end)
+    assert log =~ "unreadable version manifest"
   end
 end
