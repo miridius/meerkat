@@ -314,8 +314,6 @@ defmodule Meerkat.Persistence do
     end)
   end
 
-  defp deserialise(:open_form, nil), do: nil
-
   defp deserialise(:open_form, form) when is_map(form) do
     surface = surface_atom(Map.get(form, "surface") || Map.get(form, :surface))
     anchor = atomise_anchor(Map.get(form, "anchor") || Map.get(form, :anchor) || %{})

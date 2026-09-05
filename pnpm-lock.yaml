@@ -80,6 +80,9 @@ importers:
       '@git-diff-view/svelte':
         specifier: ^0.1.6
         version: 0.1.6(svelte@5.56.4)
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.3
       '@nextjournal/lang-clojure':
         specifier: ^1.0.0
         version: 1.0.0
