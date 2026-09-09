@@ -65,6 +65,7 @@ defmodule MeerkatWeb.ReviewLive do
       case Decision.current() do
         {:approve, _} -> :approve
         {:approve_with_feedback, _} -> :approve
+        {:timeout, _} -> :approve
         {:reject, _} -> :reject
         {:cancel, _} -> :cancel
         nil -> nil
