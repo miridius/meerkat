@@ -2,21 +2,25 @@ defmodule Meerkat.Decision do
   @moduledoc """
   Single source of truth for the review's terminal decision.
 
-  The CLI starts and blocks on `await/0`. `ReviewLive` calls `submit/1`
-  from the user's button click. `current/0` returns the decision if
-  it's already been made — used by `ReviewLive.mount/3` on a
-  refresh-during-shutdown F5 to seed the done view.
+  The CLI starts and blocks on `await/0`. Two things end that wait:
+  `ReviewLive` calling `submit/1` from the user's button click, and the
+  review's deadline passing with nobody having clicked. `current/0`
+  returns the decision if it's already been made — used by
+  `ReviewLive.mount/3` on a refresh-during-shutdown F5 to seed the done
+  view.
 
   Decision shape:
-  `{:approve | :approve_with_feedback | :reject | :cancel, payload}`,
+  `{:approve | :approve_with_feedback | :reject | :cancel | :timeout, payload}`,
   where `payload` is the formatted feedback string for approve-with-
-  feedback / reject and the empty string otherwise.
+  feedback, reject and timeout, and the empty string otherwise.
   """
 
   use GenServer
 
+  require Logger
+
   @typedoc "Tag identifying the user's choice."
-  @type tag :: :approve | :approve_with_feedback | :reject | :cancel
+  @type tag :: :approve | :approve_with_feedback | :reject | :cancel | :timeout
 
   @typedoc "Decision tuple stored when submit/1 fires."
   @type decision :: {tag, term()}
@@ -40,9 +44,9 @@ defmodule Meerkat.Decision do
   Submit a terminal decision. Wakes any pending `await/0` callers.
   Subsequent submits are ignored.
   """
-  @spec submit(decision) :: :ok
+  @spec submit(decision) :: {:ok, decision} | {:already_decided, decision}
   def submit({tag, _payload} = decision)
-      when tag in [:approve, :approve_with_feedback, :reject, :cancel] do
+      when tag in [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
     GenServer.call(__MODULE__, {:submit, decision})
   end
 
@@ -71,6 +75,7 @@ defmodule Meerkat.Decision do
 
   @impl true
   def init(:no_decision) do
+    schedule_deadline_check()
     {:ok, %{decision: nil, waiters: []}}
   end
 
@@ -83,15 +88,12 @@ defmodule Meerkat.Decision do
     {:reply, decision, state}
   end
 
-  def handle_call({:submit, decision}, _from, %{decision: nil, waiters: waiters} = state) do
-    Enum.each(waiters, &GenServer.reply(&1, decision))
-    {:reply, :ok, %{state | decision: decision, waiters: []}}
+  def handle_call({:submit, decision}, _from, %{decision: nil} = state) do
+    {:reply, {:ok, decision}, put_decision(state, decision)}
   end
 
-  def handle_call({:submit, _new}, _from, %{decision: _existing} = state) do
-    # First submit wins. Subsequent submits are silently ignored —
-    # the CLI has already exited or is about to.
-    {:reply, :ok, state}
+  def handle_call({:submit, _new}, _from, %{decision: existing} = state) do
+    {:reply, {:already_decided, existing}, state}
   end
 
   def handle_call(:current, _from, %{decision: decision} = state) do
@@ -99,6 +101,50 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call(:reset, _from, _state) do
+    schedule_deadline_check()
     {:reply, :ok, %{decision: nil, waiters: []}}
+  end
+
+  @impl true
+  def handle_info(:check_deadline, %{decision: nil} = state) do
+    deadline = Application.get_env(:meerkat, :review_deadline_ms)
+
+    if is_integer(deadline) and Meerkat.Timeout.expired?(deadline) do
+      {:noreply, put_decision(state, timed_out_decision())}
+    else
+      schedule_deadline_check()
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(:check_deadline, state), do: {:noreply, state}
+
+  def handle_info(msg, state) do
+    Logger.warning("Meerkat.Decision: unexpected message #{inspect(msg)}")
+    {:noreply, state}
+  end
+
+  ## Internals
+
+  defp put_decision(%{waiters: waiters} = state, decision) do
+    Enum.each(waiters, &GenServer.reply(&1, decision))
+    %{state | decision: decision, waiters: []}
+  end
+
+  # One timer armed for the whole window would be measured on the monotonic
+  # clock, which does not advance while the machine is suspended. The tick
+  # compares two wall-clock times instead, so a night asleep burns the
+  # review's time.
+  defp schedule_deadline_check do
+    if Application.get_env(:meerkat, :review_deadline_ms) do
+      Process.send_after(self(), :check_deadline, Meerkat.Timeout.check_interval_ms())
+    end
+  end
+
+  defp timed_out_decision do
+    Meerkat.Timeout.decision(
+      Application.get_env(:meerkat, :repo_path),
+      Application.get_env(:meerkat, :review_id)
+    )
   end
 end

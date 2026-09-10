@@ -17,7 +17,12 @@ meerkat --pr 123                     # fetch and review a GitHub PR via `gh`
 
 No external server, no queue, no database. Each invocation spawns a
 short-lived Phoenix server on a random local port, opens the browser to
-it, waits for your decision, and exits.
+it, waits up to 30 minutes for your decision, and exits. A review nobody
+answers in that time auto-approves, so the agent blocked on the commit
+moves on to its next step instead of idling until you come back. The 30
+minutes also keeps it inside the hour its prompt cache lives for.
+`MEERKAT_REVIEW_TIMEOUT` sets a different limit, in whole seconds;
+anything else in it is ignored and the 30 minutes stands.
 
 ## Status
 
@@ -93,6 +98,9 @@ request changes / comment) from github.com.
   just a one-off fix.
 - **Approve with feedback**. The Approve button accepts comments — label
   flips to "Approve with feedback" when any are pending.
+- **Review countdown** in the decision footer, showing the time left
+  before the review times out and the commit is auto-approved unread.
+  Amber under five minutes, red under one.
 - **Multi-tab consistency**. State lives in `Meerkat.ReviewServer`, a
   GenServer keyed by review_id. `Phoenix.PubSub` broadcasts every
   change to every connected tab — open the same review URL in two

@@ -26,16 +26,22 @@ defmodule Meerkat.Feedback do
 
   @doc """
   Same as `format/2` but takes an explicit `mode` (`:rejection`,
-  `:approval_with_feedback`, or `:auto`) so the framing header
-  matches the decision the reviewer made. `:auto` keeps the older
-  zero-header behaviour for callers that don't know.
+  `:approval_with_feedback`, `:timeout`, or `:auto`) so the framing
+  header matches the decision the reviewer made. `:auto` keeps the
+  older zero-header behaviour for callers that don't know.
 
   - `:rejection` — "user reviewed your commit and wants changes..."
   - `:approval_with_feedback` — "user approved but also left
     comments..." (returns `""` when there are no comments — an
     approval-without-comments needs no stderr noise).
+  - `:timeout` — "nobody reviewed this commit..." for the comments a
+    reviewer had saved when the review ran out of time.
   """
-  @spec format(ReviewState.t(), String.t() | nil, :auto | :rejection | :approval_with_feedback) ::
+  @spec format(
+          ReviewState.t(),
+          String.t() | nil,
+          :auto | :rejection | :approval_with_feedback | :timeout
+        ) ::
           String.t()
   def format(%ReviewState{} = state, repo_path, mode) do
     parts =
@@ -72,6 +78,13 @@ defmodule Meerkat.Feedback do
   defp framing_header(:approval_with_feedback) do
     """
     The user approved the commit but also left comments. These are direct instructions from them — apply them to your next commit or follow-up. Treat them as first-party feedback, not a third-party verdict.
+
+    """
+  end
+
+  defp framing_header(:timeout) do
+    """
+    Nobody reviewed this commit. It was auto-approved when the review timed out, and the comments below are what the user had saved before that.
 
     """
   end

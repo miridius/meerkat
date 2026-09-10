@@ -134,6 +134,12 @@ OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 trap 'rm -f "$OPEN_MARKER"' EXIT
 
+# Keys this invocation's review deadlines (`Meerkat.Timeout`). A staged
+# review's id is the same on every commit in a repo, so without this an
+# abandoned `git commit` hands the next one its expired deadline.
+MEERKAT_RUN_ID="$(uuidgen)"
+export MEERKAT_RUN_ID
+
 # Forward TERM/INT to the running BEAM. Bash never relays signals to
 # a foreground child, so without this a killed shepherd (e2e runner
 # teardown, Ctrl-C wrappers) orphans a BEAM that sits on its

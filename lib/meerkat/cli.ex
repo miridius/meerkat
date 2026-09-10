@@ -30,7 +30,8 @@ defmodule Meerkat.CLI do
     ReviewLog,
     ReviewServer,
     ReviewState,
-    ReviewTarget
+    ReviewTarget,
+    Timeout
   }
 
   # Compile-time env so release builds don't need `Mix` at runtime.
@@ -51,10 +52,11 @@ defmodule Meerkat.CLI do
 
   ## Safety invariant: default-deny on crash
 
-  The only path to exit-0 is an explicit `{:approve, _}` /
-  `{:approve_with_feedback, _}` from a button click — or the
-  auto-approve fast path with its visible "auto-approving" stderr
-  breadcrumb. Anything else (Decision GenServer crash, ReviewServer
+  Exit-0 has three paths: an explicit `{:approve, _}` /
+  `{:approve_with_feedback, _}` from a button click, the auto-approve
+  fast path with its visible "auto-approving" stderr breadcrumb, and
+  `{:timeout, _}` once the review has run out of time, which says so on
+  stderr. Anything else (Decision GenServer crash, ReviewServer
   crash, unhandled exception, endpoint failure, supervisor restart)
   must bubble out as a non-zero exit so the git hook ABORTS the
   commit. Two layers of `try / rescue / catch` enforce that: any
@@ -143,8 +145,19 @@ defmodule Meerkat.CLI do
     case ReviewState.from_target(target, repo_path()) do
       {:ok, state} ->
         prune_approval_cache(repo_path())
+        _ = Timeout.prune_stale(repo_path())
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
+
+        # Set before `start_endpoint!` starts the application:
+        # `Meerkat.Decision` arms its first deadline tick as it boots, and
+        # arms none at all when this is unset.
+        Application.put_env(
+          :meerkat,
+          :review_deadline_ms,
+          Timeout.deadline_ms(repo_path(), review_id)
+        )
+
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target)
         open_browser_unless_disabled(opts.no_open)
@@ -158,6 +171,7 @@ defmodule Meerkat.CLI do
         # start with an empty review, not replay stale comments from
         # a closed cycle.
         _ = Persistence.delete(repo_path(), review_id)
+        _ = Timeout.clear(repo_path(), review_id)
         exit_code(decision, review_id, feedback_file_path(log))
 
       {:error, reason} ->
@@ -383,6 +397,9 @@ defmodule Meerkat.CLI do
   @doc false
   def feedback_banner_for_test(verdict, count, save_result),
     do: feedback_banner(verdict, count, save_result)
+
+  @doc false
+  def limit_phrase_for_test(ms), do: limit_phrase(ms)
 
   @doc false
   def pause_banner_for_test(target, url), do: pause_banner(target, url)
@@ -656,6 +673,17 @@ defmodule Meerkat.CLI do
     0
   end
 
+  defp exit_code({:timeout, payload}, review_id, feedback_path) do
+    IO.puts(
+      :stderr,
+      "No review within #{limit_phrase(Timeout.limit_ms())}: commit auto-approved. " <>
+        "Nobody read this diff."
+    )
+
+    if payload != "", do: write_feedback(:timeout, payload, review_id, feedback_path)
+    0
+  end
+
   defp exit_code({:reject, payload}, review_id, feedback_path) do
     write_feedback(:reject, payload, review_id, feedback_path)
     1
@@ -730,12 +758,24 @@ defmodule Meerkat.CLI do
   end
 
   defp outcome_phrase(:approve_with_feedback), do: "User approved your commit"
+  defp outcome_phrase(:timeout), do: "Review timed out, commit auto-approved unread"
   defp outcome_phrase(:reject), do: "User requested changes"
 
+  defp limit_phrase(ms) do
+    if ms >= 60_000 and rem(ms, 60_000) == 0 do
+      unit_phrase(div(ms, 60_000), "minute")
+    else
+      unit_phrase(div(ms, 1000), "second")
+    end
+  end
+
   defp count_phrase(count) when is_integer(count) and count > 0,
-    do: "#{count} comment#{if count == 1, do: "", else: "s"}"
+    do: unit_phrase(count, "comment")
 
   defp count_phrase(_), do: nil
+
+  defp unit_phrase(1, unit), do: "1 #{unit}"
+  defp unit_phrase(count, unit), do: "#{count} #{unit}s"
 
   defp file_phrase({:ok, path}), do: "full feedback saved to #{path} in case truncated"
   defp file_phrase(:error), do: "full feedback could not be written to disk"
