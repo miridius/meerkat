@@ -21,7 +21,8 @@ it, waits up to 30 minutes for your decision, and exits. A review nobody
 answers in that time auto-approves, so the agent blocked on the commit
 moves on to its next step instead of idling until you come back. The 30
 minutes also keeps it inside the hour its prompt cache lives for.
-`MEERKAT_REVIEW_TIMEOUT` sets a different limit, in seconds.
+`MEERKAT_REVIEW_TIMEOUT` sets a different limit, in whole seconds;
+anything else in it is ignored and the 30 minutes stands.
 
 ## Status
 

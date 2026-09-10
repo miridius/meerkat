@@ -149,8 +149,9 @@ defmodule Meerkat.CLI do
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
 
-        # Before `start_endpoint!`, which is where the application starts:
-        # `Meerkat.Decision` reads this as it boots and never looks again.
+        # Set before `start_endpoint!` starts the application:
+        # `Meerkat.Decision` arms its first deadline tick as it boots, and
+        # arms none at all when this is unset.
         Application.put_env(
           :meerkat,
           :review_deadline_ms,

@@ -85,8 +85,8 @@ const hooks = {
     },
   },
   // Ticks in the browser from an absolute deadline rather than from a
-  // server push: the alternative re-renders the footer once a second in
-  // every connected tab.
+  // server push: the alternative sends every connected tab a diff once a
+  // second, for the whole half hour.
   Countdown: {
     mounted() {
       this._tick = () => {

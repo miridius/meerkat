@@ -131,10 +131,10 @@ defmodule Meerkat.Decision do
     %{state | decision: decision, waiters: []}
   end
 
-  # Re-check on a repeating tick rather than arming one timer for the whole
-  # window: Erlang timers run on the monotonic clock, which macOS stops
-  # advancing while the machine sleeps, so a lid closed for two hours would
-  # burn none of the review's time.
+  # One timer armed for the whole window would be measured on the monotonic
+  # clock, which does not advance while the machine is suspended. The tick
+  # compares two wall-clock times instead, so a night asleep burns the
+  # review's time.
   defp schedule_deadline_check do
     if Application.get_env(:meerkat, :review_deadline_ms) do
       Process.send_after(self(), :check_deadline, Meerkat.Timeout.check_interval_ms())

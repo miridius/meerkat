@@ -3,9 +3,10 @@ defmodule Meerkat.Timeout do
   The cap on how long one review may block the commit that asked for it.
 
   The clock starts when a review is first requested and is anchored on
-  disk at `<gitdir>/meerkat-precommit/deadlines/<review_id>`, so a BEAM
-  respawned by the shepherd resumes the remaining time rather than
-  granting another full window.
+  disk under `<gitdir>/meerkat-precommit/deadlines/<run>/<review_id>`,
+  where `<run>` is the launcher's `MEERKAT_RUN_ID`. A BEAM respawned by
+  the shepherd is the same run and resumes the remaining time; a later
+  `git commit` is a new one and gets a full window.
 
   An agent's `git commit` blocks on this, and the agent sits idle until
   someone answers. Its prompt cache lives an hour, so a review answered
@@ -40,9 +41,8 @@ defmodule Meerkat.Timeout do
   end
 
   @doc """
-  Returns the epoch millisecond at which `review_id` runs out. Writes the
-  anchor on the first call for that id and reads it back on every later
-  one, so the answer is stable across a respawn.
+  Returns the epoch millisecond at which `review_id` runs out. Stable
+  across every call within one launcher run, and fresh in the next one.
   """
   @spec deadline_ms(String.t(), String.t()) :: integer()
   def deadline_ms(repo_path, review_id) do
@@ -53,8 +53,8 @@ defmodule Meerkat.Timeout do
   def expired?(deadline_ms), do: System.system_time(:millisecond) >= deadline_ms
 
   @doc """
-  Deletes `review_id`'s anchor, so the next review under that id starts a
-  fresh clock. Call it once the review has reached a decision.
+  Deletes `review_id`'s anchor, and this run's deadline directory once it
+  holds nothing else.
   """
   @spec clear(String.t(), String.t()) :: :ok
   def clear(repo_path, review_id) do
@@ -65,8 +65,7 @@ defmodule Meerkat.Timeout do
 
   @doc """
   Deletes the deadline directory of every run but this one, once it is
-  older than `limit_ms/0`. A directory that old cannot belong to a
-  review still waiting, because that review would have run out of time.
+  older than `limit_ms/0`.
   """
   @spec prune_stale(String.t()) :: :ok
   def prune_stale(repo_path) do
@@ -98,9 +97,8 @@ defmodule Meerkat.Timeout do
 
   @doc """
   Returns the decision for a review that ran out of time, carrying whatever
-  comments were saved before it did. Never raises: it is called from the
-  `Meerkat.Decision` process, and an exception there would reach the CLI as
-  a crash and abort the commit.
+  comments were saved before it did. Never raises: a snapshot it cannot
+  read yields no comments instead.
   """
   @spec decision(String.t(), String.t()) :: {:timeout, String.t()}
   def decision(repo_path, review_id) do
@@ -123,9 +121,9 @@ defmodule Meerkat.Timeout do
       ""
   end
 
-  # `ReviewServer` only exists once a browser has mounted the review, and
-  # comments typed into a tab that was then closed live on in the snapshot.
-  # Read that directly rather than losing them to the timeout.
+  # `ReviewServer` is started by the first LiveView mount, so a review
+  # nobody has opened, or one whose BEAM respawned with nobody
+  # reconnected, has none. Its comments are still on disk.
   defp review_state(repo_path, review_id) do
     ReviewServer.get_state(review_id)
   catch
@@ -166,6 +164,8 @@ defmodule Meerkat.Timeout do
   defp run_id do
     with raw when is_binary(raw) <- System.get_env("MEERKAT_RUN_ID"),
          trimmed when trimmed != "" <- String.trim(raw) do
+      # `basename` so a run id carrying slashes cannot put the anchor
+      # outside the deadlines directory.
       Path.basename(trimmed)
     else
       _ -> @unkeyed_run
