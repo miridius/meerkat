@@ -1126,6 +1126,17 @@ a.chip-link:hover .chip-value {
   font-size: 0.9rem;
 }
 
+.review-countdown {
+  font-variant-numeric: tabular-nums;
+}
+.review-countdown.warn {
+  color: var(--warn);
+}
+.review-countdown.urgent {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .dirty-marker {
   color: var(--warn);
   font-style: italic;

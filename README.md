@@ -97,6 +97,9 @@ request changes / comment) from github.com.
   just a one-off fix.
 - **Approve with feedback**. The Approve button accepts comments — label
   flips to "Approve with feedback" when any are pending.
+- **Review countdown** in the decision footer, showing the time left
+  before the review times out and the commit is auto-approved unread.
+  Amber under five minutes, red under one.
 - **Multi-tab consistency**. State lives in `Meerkat.ReviewServer`, a
   GenServer keyed by review_id. `Phoenix.PubSub` broadcasts every
   change to every connected tab — open the same review URL in two

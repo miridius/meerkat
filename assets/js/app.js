@@ -84,6 +84,29 @@ const hooks = {
       });
     },
   },
+  // Ticks in the browser from an absolute deadline rather than from a
+  // server push: the alternative re-renders the footer once a second in
+  // every connected tab.
+  Countdown: {
+    mounted() {
+      this._tick = () => {
+        const secs = Math.max(
+          0,
+          Math.ceil((Number(this.el.dataset.deadline) - Date.now()) / 1000),
+        );
+        const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+        const ss = String(secs % 60).padStart(2, "0");
+        this.el.textContent = `${mm}:${ss} left`;
+        this.el.classList.toggle("urgent", secs <= 60);
+        this.el.classList.toggle("warn", secs > 60 && secs <= 300);
+      };
+      this._tick();
+      this._timer = setInterval(this._tick, 1000);
+    },
+    destroyed() {
+      clearInterval(this._timer);
+    },
+  },
   // Generic "copy this element's data-copy attribute to clipboard"
   // hook. Used on per-file copy-name buttons in the file-section
   // header; flashes the .copied class for 1s so the click registers

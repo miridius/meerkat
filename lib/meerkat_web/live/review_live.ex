@@ -86,6 +86,7 @@ defmodule MeerkatWeb.ReviewLive do
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
+       deadline_ms: Application.get_env(:meerkat, :review_deadline_ms),
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
        open_form: Map.get(state, :open_form, nil),
@@ -988,7 +989,11 @@ defmodule MeerkatWeb.ReviewLive do
           review_id={@review_id}
         />
       </div>
-      <.decision_footer state={@state} open_form={@open_form} />
+      <.decision_footer
+        state={@state}
+        open_form={@open_form}
+        deadline_ms={@deadline_ms}
+      />
     </main>
     """
   end
@@ -1796,6 +1801,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   attr :state, ReviewState, required: true
   attr :open_form, :any, required: true
+  attr :deadline_ms, :any, required: true
 
   defp decision_footer(assigns) do
     assigns =
@@ -1811,6 +1817,15 @@ defmodule MeerkatWeb.ReviewLive do
         <span class="comment-count">
           {@comment_count} {if @comment_count == 1, do: "comment", else: "comments"}
         </span>
+        <span
+          :if={is_integer(@deadline_ms)}
+          class="review-countdown"
+          id="review-countdown"
+          phx-hook="Countdown"
+          phx-update="ignore"
+          data-deadline={@deadline_ms}
+          title="Time left before the review times out and the commit is auto-approved unread"
+        ></span>
         <%= if @dirty? do %>
           <span class="dirty-marker" title="Close the open comment form first">
             unsaved form open
