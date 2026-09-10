@@ -99,6 +99,7 @@ const hooks = {
         this.el.textContent = `${mm}:${ss} left`;
         this.el.classList.toggle("urgent", secs <= 60);
         this.el.classList.toggle("warn", secs > 60 && secs <= 300);
+        if (secs === 0) clearInterval(this._timer);
       };
       this._tick();
       this._timer = setInterval(this._tick, 1000);

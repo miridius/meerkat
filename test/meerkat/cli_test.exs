@@ -212,6 +212,12 @@ defmodule Meerkat.CLITest do
                "User approved your commit"
     end
 
+    test "a timed-out review says the commit went in unread" do
+      banner = CLI.feedback_banner_for_test(:timeout, 2, {:ok, @path})
+      assert banner =~ "Review timed out, commit auto-approved unread"
+      refute banner =~ "User approved"
+    end
+
     test "is user-attributed, not tool-attributed" do
       banner = CLI.feedback_banner_for_test(:reject, 2, {:ok, @path})
       # No "meerkat:" tool label — it would read as a third-party verdict
@@ -256,6 +262,19 @@ defmodule Meerkat.CLITest do
       banner = CLI.feedback_banner_for_test(:reject, 1, {:ok, @path})
       assert String.starts_with?(banner, "\n")
       assert String.ends_with?(banner, "\n")
+    end
+  end
+
+  describe "limit_phrase/1" do
+    test "a whole number of minutes reads as minutes" do
+      assert CLI.limit_phrase_for_test(30 * 60 * 1000) == "30 minutes"
+      assert CLI.limit_phrase_for_test(60_000) == "1 minute"
+    end
+
+    test "a limit that is not a whole number of minutes reads as seconds" do
+      assert CLI.limit_phrase_for_test(90_000) == "90 seconds"
+      assert CLI.limit_phrase_for_test(45_000) == "45 seconds"
+      assert CLI.limit_phrase_for_test(1000) == "1 second"
     end
   end
 
@@ -422,6 +441,21 @@ defmodule Meerkat.CLITest do
       assert out =~ "couldn't save full feedback to #{bad}"
       assert out =~ "full feedback could not be written to disk"
       assert out =~ "PAYLOAD-BODY"
+    end
+
+    test "a timed-out review's comments reach the agent under the unread banner" do
+      path = Path.join(make_tmp_repo("meerkat-cli-timeout-fb"), "fb.txt")
+
+      out =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.write_feedback_for_test(:timeout, "PAYLOAD-BODY", "no-live-review", path) ==
+                   :ok
+        end)
+
+      assert File.read!(path) == "PAYLOAD-BODY"
+      assert out =~ "PAYLOAD-BODY"
+      assert length(Regex.scan(~r/Review timed out, commit auto-approved unread/, out)) == 2
+      refute out =~ "User approved"
     end
   end
 end

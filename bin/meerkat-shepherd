@@ -69,6 +69,9 @@ OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 trap 'rm -f "$OPEN_MARKER"' EXIT
 
+MEERKAT_RUN_ID="$(uuidgen)"
+export MEERKAT_RUN_ID
+
 # Forward TERM/INT/HUP to the running BEAM. Bash never relays signals to
 # a foreground child, so without this a killed shepherd orphans a BEAM
 # that sits on the deterministic port forever. The BEAM runs as a

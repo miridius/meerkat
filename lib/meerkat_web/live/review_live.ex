@@ -61,15 +61,7 @@ defmodule MeerkatWeb.ReviewLive do
     # decision (Decision.current/0 returns non-nil), seed the
     # `:done` assign so the LiveView mounts straight onto the done
     # view rather than the live review.
-    done =
-      case Decision.current() do
-        {:approve, _} -> :approve
-        {:approve_with_feedback, _} -> :approve
-        {:timeout, _} -> :approve
-        {:reject, _} -> :reject
-        {:cancel, _} -> :cancel
-        nil -> nil
-      end
+    done = done_view(Decision.current())
 
     {:ok,
      assign(socket,
@@ -650,30 +642,31 @@ defmodule MeerkatWeb.ReviewLive do
     # exits ~750ms later — a slow bulk write could be cut short.
     bulk_persist_approval_cache(repo_path, state)
 
-    if comments?(state) do
-      payload = Feedback.format(state, repo_path, :approval_with_feedback)
-      Decision.submit({:approve_with_feedback, payload})
-    else
-      Decision.submit({:approve, ""})
-    end
+    submitted =
+      if comments?(state) do
+        payload = Feedback.format(state, repo_path, :approval_with_feedback)
+        Decision.submit({:approve_with_feedback, payload})
+      else
+        Decision.submit({:approve, ""})
+      end
 
     clear_pending_answers()
 
     {:noreply,
      socket
-     |> assign(done: :approve, pending_answers: nil)
+     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
      |> wipe_drafts()}
   end
 
   def handle_event("decision.reject", _, socket) do
     %{state: state, repo_path: repo_path} = socket.assigns
     payload = Feedback.format(state, repo_path, :rejection)
-    Decision.submit({:reject, payload})
+    submitted = Decision.submit({:reject, payload})
     clear_pending_answers()
 
     {:noreply,
      socket
-     |> assign(done: :reject, pending_answers: nil)
+     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
      |> wipe_drafts()}
   end
 
@@ -715,14 +708,24 @@ defmodule MeerkatWeb.ReviewLive do
       _ = ReviewServer.clear_all_comments(rid)
     end
 
-    Decision.submit({:cancel, ""})
+    submitted = Decision.submit({:cancel, ""})
     clear_pending_answers()
 
     {:noreply,
      socket
-     |> assign(done: :cancel, pending_answers: nil)
+     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
      |> wipe_drafts()}
   end
+
+  defp settled({:ok, decision}), do: decision
+  defp settled({:already_decided, decision}), do: decision
+
+  defp done_view(nil), do: nil
+  defp done_view({:approve, _}), do: :approve
+  defp done_view({:approve_with_feedback, _}), do: :approve
+  defp done_view({:timeout, _}), do: :approve
+  defp done_view({:reject, _}), do: :reject
+  defp done_view({:cancel, _}), do: :cancel
 
   # Reject an Approve transition if the index blob OID has changed
   # since the UI rendered the file. Un-approve always proceeds —

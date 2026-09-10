@@ -17,6 +17,8 @@ defmodule Meerkat.Decision do
 
   use GenServer
 
+  require Logger
+
   @typedoc "Tag identifying the user's choice."
   @type tag :: :approve | :approve_with_feedback | :reject | :cancel | :timeout
 
@@ -42,7 +44,7 @@ defmodule Meerkat.Decision do
   Submit a terminal decision. Wakes any pending `await/0` callers.
   Subsequent submits are ignored.
   """
-  @spec submit(decision) :: :ok
+  @spec submit(decision) :: {:ok, decision} | {:already_decided, decision}
   def submit({tag, _payload} = decision)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
     GenServer.call(__MODULE__, {:submit, decision})
@@ -87,13 +89,11 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call({:submit, decision}, _from, %{decision: nil} = state) do
-    {:reply, :ok, put_decision(state, decision)}
+    {:reply, {:ok, decision}, put_decision(state, decision)}
   end
 
-  def handle_call({:submit, _new}, _from, %{decision: _existing} = state) do
-    # First submit wins. Subsequent submits are silently ignored —
-    # the CLI has already exited or is about to.
-    {:reply, :ok, state}
+  def handle_call({:submit, _new}, _from, %{decision: existing} = state) do
+    {:reply, {:already_decided, existing}, state}
   end
 
   def handle_call(:current, _from, %{decision: decision} = state) do
@@ -119,7 +119,10 @@ defmodule Meerkat.Decision do
 
   def handle_info(:check_deadline, state), do: {:noreply, state}
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  def handle_info(msg, state) do
+    Logger.warning("Meerkat.Decision: unexpected message #{inspect(msg)}")
+    {:noreply, state}
+  end
 
   ## Internals
 

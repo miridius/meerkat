@@ -145,6 +145,7 @@ defmodule Meerkat.CLI do
     case ReviewState.from_target(target, repo_path()) do
       {:ok, state} ->
         prune_approval_cache(repo_path())
+        _ = Timeout.prune_stale(repo_path())
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
 
@@ -395,6 +396,9 @@ defmodule Meerkat.CLI do
   @doc false
   def feedback_banner_for_test(verdict, count, save_result),
     do: feedback_banner(verdict, count, save_result)
+
+  @doc false
+  def limit_phrase_for_test(ms), do: limit_phrase(ms)
 
   @doc false
   def pause_banner_for_test(target, url), do: pause_banner(target, url)
@@ -671,7 +675,8 @@ defmodule Meerkat.CLI do
   defp exit_code({:timeout, payload}, review_id, feedback_path) do
     IO.puts(
       :stderr,
-      "No review within #{limit_phrase()}: commit auto-approved. Nobody read this diff."
+      "No review within #{limit_phrase(Timeout.limit_ms())}: commit auto-approved. " <>
+        "Nobody read this diff."
     )
 
     if payload != "", do: write_feedback(:timeout, payload, review_id, feedback_path)
@@ -755,20 +760,21 @@ defmodule Meerkat.CLI do
   defp outcome_phrase(:timeout), do: "Review timed out, commit auto-approved unread"
   defp outcome_phrase(:reject), do: "User requested changes"
 
-  defp limit_phrase do
-    ms = Timeout.limit_ms()
-
-    cond do
-      ms < 60_000 -> "#{div(ms, 1000)} seconds"
-      ms < 120_000 -> "1 minute"
-      true -> "#{div(ms, 60_000)} minutes"
+  defp limit_phrase(ms) do
+    if ms >= 60_000 and rem(ms, 60_000) == 0 do
+      unit_phrase(div(ms, 60_000), "minute")
+    else
+      unit_phrase(div(ms, 1000), "second")
     end
   end
 
   defp count_phrase(count) when is_integer(count) and count > 0,
-    do: "#{count} comment#{if count == 1, do: "", else: "s"}"
+    do: unit_phrase(count, "comment")
 
   defp count_phrase(_), do: nil
+
+  defp unit_phrase(1, unit), do: "1 #{unit}"
+  defp unit_phrase(count, unit), do: "#{count} #{unit}s"
 
   defp file_phrase({:ok, path}), do: "full feedback saved to #{path} in case truncated"
   defp file_phrase(:error), do: "full feedback could not be written to disk"

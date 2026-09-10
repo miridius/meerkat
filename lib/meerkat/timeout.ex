@@ -17,6 +17,7 @@ defmodule Meerkat.Timeout do
 
   @default_limit_ms 30 * 60 * 1000
   @check_interval_ms 15_000
+  @unkeyed_run "unkeyed"
 
   @doc """
   Returns how long a review may run, in milliseconds. `MEERKAT_REVIEW_TIMEOUT`
@@ -58,7 +59,41 @@ defmodule Meerkat.Timeout do
   @spec clear(String.t(), String.t()) :: :ok
   def clear(repo_path, review_id) do
     _ = File.rm(path_for(repo_path, review_id))
+    _ = File.rmdir(run_dir(repo_path))
     :ok
+  end
+
+  @doc """
+  Deletes the deadline directory of every run but this one, once it is
+  older than `limit_ms/0`. A directory that old cannot belong to a
+  review still waiting, because that review would have run out of time.
+  """
+  @spec prune_stale(String.t()) :: :ok
+  def prune_stale(repo_path) do
+    parent = Path.dirname(run_dir(repo_path))
+    keep = run_id()
+    cutoff_s = System.system_time(:second) - div(limit_ms(), 1000)
+
+    case File.ls(parent) do
+      {:ok, entries} ->
+        for entry <- entries, entry != keep, older_than?(Path.join(parent, entry), cutoff_s) do
+          _ = File.rm_rf(Path.join(parent, entry))
+        end
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp older_than?(path, cutoff_s) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} -> mtime < cutoff_s
+      _ -> false
+    end
   end
 
   @doc """
@@ -77,6 +112,15 @@ defmodule Meerkat.Timeout do
       %ReviewState{} = state -> Feedback.format(state, repo_path, :timeout)
       nil -> ""
     end
+  catch
+    kind, reason ->
+      IO.puts(
+        :stderr,
+        "meerkat: warning — couldn't read the comments saved for #{review_id}: " <>
+          "#{inspect(kind)} #{inspect(reason)}. Auto-approving without them."
+      )
+
+      ""
   end
 
   # `ReviewServer` only exists once a browser has mounted the review, and
@@ -112,6 +156,19 @@ defmodule Meerkat.Timeout do
   end
 
   defp path_for(repo_path, review_id) do
-    Path.join([Git.meerkat_dir(repo_path), "deadlines", review_id])
+    Path.join([run_dir(repo_path), review_id])
+  end
+
+  defp run_dir(repo_path) do
+    Path.join([Git.meerkat_dir(repo_path), "deadlines", run_id()])
+  end
+
+  defp run_id do
+    with raw when is_binary(raw) <- System.get_env("MEERKAT_RUN_ID"),
+         trimmed when trimmed != "" <- String.trim(raw) do
+      Path.basename(trimmed)
+    else
+      _ -> @unkeyed_run
+    end
   end
 end
