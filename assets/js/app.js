@@ -108,6 +108,23 @@ const hooks = {
       clearInterval(this._timer);
     },
   },
+  // The toolbar wraps onto more rows as the window narrows, so
+  // `.file-section-header` cannot pin itself below it at a fixed offset.
+  ToolbarHeight: {
+    mounted() {
+      this._publish = () => {
+        const h = Math.round(this.el.getBoundingClientRect().height);
+        document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
+      };
+      this._observer = new ResizeObserver(this._publish);
+      this._observer.observe(this.el);
+      this._publish();
+    },
+    destroyed() {
+      this._observer?.disconnect();
+      document.documentElement.style.removeProperty("--toolbar-h");
+    },
+  },
   // Generic "copy this element's data-copy attribute to clipboard"
   // hook. Used on per-file copy-name buttons in the file-section
   // header; flashes the .copied class for 1s so the click registers

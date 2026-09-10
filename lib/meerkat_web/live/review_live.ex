@@ -1670,7 +1670,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp diff_toolbar(assigns) do
     ~H"""
-    <div class="diff-toolbar">
+    <div class="diff-toolbar" id="diff-toolbar" phx-hook="ToolbarHeight">
       <button
         type="button"
         class="toolbar-icon-btn"

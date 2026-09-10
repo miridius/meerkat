@@ -26,10 +26,13 @@
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 0 0 1px rgba(0, 0, 0, 0.25);
   --radius: 6px;
   --radius-sm: 4px;
-  /* Gap left above a scroll target (file section or the file panel) so
-     it clears the sticky .diff-toolbar (~40px at the default font) and
-     isn't painted over. */
-  --sticky-scroll-margin: 48px;
+  /* Overwritten with the .diff-toolbar's measured height by the script
+     at the end of <body> and by the ToolbarHeight hook. The literal
+     applies only where neither ran. */
+  --toolbar-h: 40px;
+  /* Gap left above a scroll target so the sticky .diff-toolbar does not
+     paint over it. */
+  --sticky-scroll-margin: calc(var(--toolbar-h) + 8px);
 }
 
 * { box-sizing: border-box; }
@@ -1054,7 +1057,7 @@ a.chip-link:hover .chip-value {
      with z-index: 5). Use a slightly lower z-index so the toolbar
      wins on overlap. */
   position: sticky;
-  top: 40px;
+  top: var(--toolbar-h);
   z-index: 4;
 }
 
