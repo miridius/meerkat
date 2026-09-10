@@ -32,5 +32,20 @@
   </head>
   <body>
     {@inner_content}
+    <%!-- The ToolbarHeight hook mounts only once LiveSocket connects,
+          and app.js restores the scroll position across a reload, so
+          without this a reload deep inside a file paints the header
+          behind the toolbar. --%>
+    <script>
+      (function () {
+        var toolbar = document.querySelector(".diff-toolbar");
+        if (toolbar) {
+          document.documentElement.style.setProperty(
+            "--toolbar-h",
+            Math.round(toolbar.getBoundingClientRect().height) + "px"
+          );
+        }
+      })();
+    </script>
   </body>
 </html>
