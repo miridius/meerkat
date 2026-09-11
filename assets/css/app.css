@@ -272,6 +272,14 @@ a.chip-link:hover .chip-value {
   color: var(--text);
 }
 
+.branch-chip .chip-value {
+  max-width: 22ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .version-chip-wrap {
   position: relative;
   display: inline-flex;
