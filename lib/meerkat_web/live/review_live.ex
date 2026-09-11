@@ -1702,9 +1702,9 @@ defmodule MeerkatWeb.ReviewLive do
         class="chip branch-chip"
         title={@repo_path}
       >
-        <code class="chip-value">{@state.base_branch}</code>
+        <code class="chip-value" title={@state.base_branch}>{@state.base_branch}</code>
         <span class="chip-arrow">←</span>
-        <code class="chip-value">{@state.head_branch}</code>
+        <code class="chip-value" title={@state.head_branch}>{@state.head_branch}</code>
       </span>
 
       <span
@@ -1712,7 +1712,7 @@ defmodule MeerkatWeb.ReviewLive do
         class="chip branch-chip"
         title={@repo_path}
       >
-        <code class="chip-value">{@state.head_branch}</code>
+        <code class="chip-value" title={@state.head_branch}>{@state.head_branch}</code>
       </span>
 
       <.version_chip version={@version} />

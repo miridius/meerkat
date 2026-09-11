@@ -8,12 +8,12 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 
 const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
-const WRAPPED_WIDTHS = [1400, 900, 600];
+const WRAPPED_WIDTHS = [1150, 900, 600];
 
 // A branch name and commit subject long enough that the toolbar wraps
 // at 1400px, and short enough that it still fits one row at 1500px.
 function stickyFixture() {
-	const fixture = makeFixture({
+	return makeFixture({
 		commitMsg:
 			"Auto-approve a review nobody answers within 30 minutes\n\nBody paragraph.\n",
 		files: { "lib/tall.ex": TALL_FILE, "lib/second.ex": TALL_FILE },
