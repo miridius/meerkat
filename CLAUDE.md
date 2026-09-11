@@ -12,6 +12,7 @@ remove commits a merged PR still references). Before committing:
 
 - No secrets, no internal or company references, no local absolute
   paths (`/Users/…`, `~/.claude/…`), no work email addresses.
+- No Claude Code session URLs.
 
 ## Rules
 
@@ -23,8 +24,8 @@ remove commits a merged PR still references). Before committing:
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh`
-  runs on pre-push and FAILS while any JS or Hex package is behind
-  its latest release. Upgrade and fix the fallout rather than pin
+  FAILS while any JS or Hex package is behind its latest
+  release. Upgrade and fix the fallout rather than pin
   old versions. A deliberate pin needs an exemption with a reason
   in the script; JS releases younger than the 24h min-age floor get
   an automatic grace pass (Hex has no floor, so no grace). The gate
@@ -63,11 +64,12 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 ## Quality gates
 
-Pre-commit hook (`bash scripts/check.sh`):
+Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
 - `mix format --check-formatted`
 - `mix compile --warnings-as-errors`
 
-Pre-push hook: `mix test` (ExUnit + LiveViewTest).
+Pre-push hook: `scripts/no-private-refs.sh`, `mix test`, `cd assets &&
+bun test`, `scripts/outdated.sh`.
 
 You can run them yourself any time:
 
