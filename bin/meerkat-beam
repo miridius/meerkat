@@ -68,6 +68,19 @@ build_assets_if_stale() {
   fi
 }
 
+CLI_EVAL='File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))'
+
+# `--answers` reads the answers from stdin, and the loop below starts
+# the BEAM as a background job, which bash gives /dev/null as stdin.
+# So it runs once, in the foreground, with no restart to re-read a
+# stdin already consumed.
+for arg in "$@"; do
+  if [[ "$arg" == "--answers" ]]; then
+    precompile_if_stale
+    exec mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@"
+  fi
+done
+
 # Deterministic port derived from (cwd, args). Same review session
 # from the SAME repo + SAME target = same port across:
 #   * DevWatcher-triggered restarts in this shepherd
@@ -201,9 +214,7 @@ while true; do
   fi
 
   set +e
-  mix run --no-start --no-compile \
-    -e 'File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))' \
-    -- "${this_args[@]}" &
+  mix run --no-start --no-compile -e "$CLI_EVAL" -- "${this_args[@]}" &
   beam_pid=$!
   wait "$beam_pid"
   exit_code=$?

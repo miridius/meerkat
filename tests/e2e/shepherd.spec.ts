@@ -17,9 +17,13 @@ const SHEPHERD = join(dirname(process.env.MEERKAT_BIN ?? "bin/meerkat-beam"), "m
 
 // Run the prod shepherd against a fake release BEAM whose per-iteration exit
 // codes are scripted via a counter file, and report the shepherd's own exit
-// code plus how many times the BEAM ran. This pins the exit-code contract the
-// whole feature rests on, which no mix/Playwright gate otherwise touches.
-function runShepherd(exitCodes: number[]): { code: number; iterations: number } {
+// code plus how many times the BEAM ran, and what the BEAM read on stdin when
+// `input` is given. This pins the exit-code contract the whole feature rests
+// on, which no mix/Playwright gate otherwise touches.
+function runShepherd(
+	exitCodes: number[],
+	opts: { args?: string[]; input?: string } = {},
+): { code: number; iterations: number; stdin?: string } {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-shep-"));
 	try {
 		const rel = join(dir, "rel");
@@ -27,11 +31,13 @@ function runShepherd(exitCodes: number[]): { code: number; iterations: number } 
 		symlinkSync(rel, join(dir, "current"));
 		writeFileSync(join(dir, "seq"), exitCodes.join(" "));
 		writeFileSync(join(dir, "i"), "0");
+		writeFileSync(join(dir, "stdin"), "");
 		writeFileSync(
 			join(rel, "bin", "meerkat"),
 			`#!/usr/bin/env bash
 i=$(cat "$I_FILE"); codes=($(cat "$SEQ_FILE"))
 echo $((i + 1)) > "$I_FILE"
+if [[ -n "\${STDIN_FILE:-}" ]]; then cat >> "$STDIN_FILE"; fi
 exit "\${codes[$i]:-0}"
 `,
 		);
@@ -39,22 +45,26 @@ exit "\${codes[$i]:-0}"
 
 		let code = 0;
 		try {
-			execFileSync(SHEPHERD, ["--commit-msg", "/tmp/msg", "--no-open"], {
+			execFileSync(SHEPHERD, opts.args ?? ["--commit-msg", "/tmp/msg", "--no-open"], {
 				env: {
 					...process.env,
 					MEERKAT_CURRENT_LINK: join(dir, "current"),
 					MEERKAT_PORT: "44444",
 					I_FILE: join(dir, "i"),
 					SEQ_FILE: join(dir, "seq"),
+					...(opts.input === undefined ? {} : { STDIN_FILE: join(dir, "stdin") }),
 				},
-				stdio: "ignore",
+				input: opts.input,
+				stdio: [opts.input === undefined ? "ignore" : "pipe", "ignore", "ignore"],
 				timeout: 10_000,
 			});
 		} catch (e) {
 			code = (e as { status?: number }).status ?? -1;
 		}
 
-		return { code, iterations: Number(readFileSync(join(dir, "i"), "utf8").trim()) };
+		const iterations = Number(readFileSync(join(dir, "i"), "utf8").trim());
+		if (opts.input === undefined) return { code, iterations };
+		return { code, iterations, stdin: readFileSync(join(dir, "stdin"), "utf8") };
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -79,5 +89,22 @@ test.describe("prod shepherd loop", () => {
 
 	test("a 75 restart resets the crash budget", () => {
 		expect(runShepherd([2, 75, 2, 0])).toEqual({ code: 0, iterations: 4 });
+	});
+
+	test("--answers runs the BEAM once in the foreground with the caller's stdin", () => {
+		const input = '{"answers":[{"location":"global","question":"q","answer":"a"}]}\n';
+		expect(runShepherd([0], { args: ["--answers"], input })).toEqual({
+			code: 0,
+			iterations: 1,
+			stdin: input,
+		});
+	});
+
+	test("--answers propagates a crash (exit 2) without a retry", () => {
+		expect(runShepherd([2, 0], { args: ["--answers"], input: "nope" })).toEqual({
+			code: 2,
+			iterations: 1,
+			stdin: "nope",
+		});
 	});
 });

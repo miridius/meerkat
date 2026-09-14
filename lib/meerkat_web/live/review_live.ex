@@ -644,7 +644,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     submitted =
       if comments?(state) do
-        payload = Feedback.format(state, repo_path, :approval_with_feedback)
+        payload = Feedback.format(state, :approval_with_feedback)
         Decision.submit({:approve_with_feedback, payload})
       else
         Decision.submit({:approve, ""})
@@ -659,8 +659,8 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("decision.reject", _, socket) do
-    %{state: state, repo_path: repo_path} = socket.assigns
-    payload = Feedback.format(state, repo_path, :rejection)
+    %{state: state} = socket.assigns
+    payload = Feedback.format(state, :rejection)
     submitted = Decision.submit({:reject, payload})
     clear_pending_answers()
 
