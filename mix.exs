@@ -53,7 +53,7 @@ defmodule Meerkat.MixProject do
       {:lazy_html, ">= 0.1.0", only: :test},
       {:stream_data, "~> 1.0", only: :test},
       {:live_svelte, "~> 0.18"},
-      {:phoenix_vite, "~> 0.5"},
+      {:phoenix_vite, "~> 0.6"},
       # Comment-body rendering. earmark parses Markdown (GFM
       # tables/fences/lists); html_sanitize_ex strips `<script>` /
       # event handlers / javascript: URLs from the result so a
@@ -69,7 +69,7 @@ defmodule Meerkat.MixProject do
       # in `lib/` and runs the test suite against each rewrite. A
       # mutation that ALL tests pass against = a test gap. See
       # `scripts/mutate.sh` for the entry point.
-      {:muex, "~> 0.9", only: [:dev, :test], runtime: false}
+      {:muex, "~> 0.11", only: [:dev, :test], runtime: false}
     ]
   end
 
