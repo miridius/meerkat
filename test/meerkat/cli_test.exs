@@ -11,9 +11,17 @@ defmodule Meerkat.CLITest do
                commit_msg_path: nil,
                positional: nil,
                pr: nil,
+               answers: false,
                no_open: false,
                port: 0
              }
+    end
+
+    test "--answers is a boolean flag" do
+      assert %{answers: true} = CLI.parse_args(["--answers"])
+
+      assert %{answers: true, no_open: true, port: 4321} =
+               CLI.parse_args(["--answers", "--no-open", "--port", "4321"])
     end
 
     test "--commit-msg threads through" do
@@ -43,6 +51,7 @@ defmodule Meerkat.CLITest do
                commit_msg_path: "/tmp/x",
                positional: nil,
                pr: nil,
+               answers: false,
                no_open: true,
                port: 0
              }
@@ -187,18 +196,75 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "args_error/2" do
+  describe "args_error/3" do
     test "unrecognised options → rejection message" do
-      assert CLI.args_error([], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
+      assert CLI.args_error([], [], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
     end
 
     test "more than one positional → rejection message" do
-      assert CLI.args_error(["a", "b"], []) =~ "at most one positional"
+      assert CLI.args_error([], ["a", "b"], []) =~ "at most one positional"
     end
 
     test "well-formed argv → nil" do
-      assert CLI.args_error([], []) == nil
-      assert CLI.args_error(["HEAD"], []) == nil
+      assert CLI.args_error([], [], []) == nil
+      assert CLI.args_error([], ["HEAD"], []) == nil
+      assert CLI.args_error([answers: true], [], []) == nil
+      assert CLI.args_error([answers: true, no_open: true, port: 1], [], []) == nil
+      assert CLI.args_error([pr: "1"], [], []) == nil
+      assert CLI.args_error([commit_msg: "/tmp/m"], ["HEAD"], []) == nil
+    end
+
+    test "--answers with a review target → rejection message" do
+      assert CLI.args_error([answers: true], ["HEAD"], []) =~ "--answers takes no review target"
+
+      assert CLI.args_error([answers: true, pr: "1"], [], []) =~
+               "--answers takes no review target"
+
+      assert CLI.args_error([answers: true, commit_msg: "/tmp/m"], [], []) =~
+               "--answers takes no review target"
+    end
+
+    test "--answers false is not a conflict" do
+      assert CLI.args_error([answers: false, pr: "1"], [], []) == nil
+    end
+  end
+
+  describe "save_answers/2" do
+    setup do
+      repo = make_git_repo("meerkat-cli-answers")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    end
+
+    test "valid input → exit 0, stored line, file present", %{repo: repo} do
+      input = ~s({"answers": [{"location": "global", "question": "q", "answer": "a"}]})
+
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, input) end)
+
+      assert code == 0
+      assert stderr =~ "meerkat: stored 1 answer.\n"
+      assert %{answers: [%{question: "q"}]} = Meerkat.PendingAnswers.load(repo)
+    end
+
+    test "plural count in the stored line", %{repo: repo} do
+      input =
+        ~s({"answers": [{"location": "a", "question": "q1", "answer": "a1"}, {"location": "b", "question": "q2", "answer": "a2"}]})
+
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, input) end)
+
+      assert code == 0
+      assert stderr =~ "meerkat: stored 2 answers.\n"
+    end
+
+    test "bad input → exit 1, rejection line, no file", %{repo: repo} do
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, "") end)
+
+      assert code == 1
+      assert stderr =~ "meerkat: --answers rejected: invalid JSON"
+      refute File.exists?(Meerkat.PendingAnswers.path_for(repo))
     end
   end
 

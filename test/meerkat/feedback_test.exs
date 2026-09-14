@@ -18,23 +18,23 @@ defmodule Meerkat.FeedbackTest do
   end
 
   test "rejection framing leads with reviewer wants changes" do
-    out = Feedback.format(state_with_global_comment(), "/tmp/repo", :rejection)
+    out = Feedback.format(state_with_global_comment(), :rejection)
     assert out =~ "user reviewed your commit and wants changes before it lands"
     assert out =~ "needs work"
   end
 
   test "approval-with-feedback framing leads with reviewer approved but commented" do
-    out = Feedback.format(state_with_global_comment(), "/tmp/repo", :approval_with_feedback)
+    out = Feedback.format(state_with_global_comment(), :approval_with_feedback)
     assert out =~ "user approved the commit but also left comments"
     assert out =~ "needs work"
   end
 
   test "approval-with-feedback with no comments returns empty" do
-    assert Feedback.format(%ReviewState{}, "/tmp/repo", :approval_with_feedback) == ""
+    assert Feedback.format(%ReviewState{}, :approval_with_feedback) == ""
   end
 
   test "auto mode has no framing header" do
-    out = Feedback.format(state_with_global_comment(), "/tmp/repo", :auto)
+    out = Feedback.format(state_with_global_comment(), :auto)
     refute out =~ "user reviewed your commit"
     refute out =~ "user approved the commit"
     assert out =~ "needs work"
@@ -53,7 +53,7 @@ defmodule Meerkat.FeedbackTest do
         ]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       refute out =~ "ACTION:"
       assert out =~ "fix this"
       assert out =~ "consider this"
@@ -64,7 +64,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "why?", finding_type: :question)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "answer 1 question"
       refute out =~ "Address"
     end
@@ -77,7 +77,7 @@ defmodule Meerkat.FeedbackTest do
         ]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "Answer 1 question"
       assert out =~ "Address 1 feedback comment"
     end
@@ -94,8 +94,8 @@ defmodule Meerkat.FeedbackTest do
         ]
       }
 
-      assert Feedback.format(one, "/tmp/repo", :rejection) =~ "answer 1 question "
-      assert Feedback.format(many, "/tmp/repo", :rejection) =~ "answer 2 questions"
+      assert Feedback.format(one, :rejection) =~ "answer 1 question "
+      assert Feedback.format(many, :rejection) =~ "answer 2 questions"
     end
   end
 
@@ -122,30 +122,26 @@ defmodule Meerkat.FeedbackTest do
   end
 
   describe "question_directive" do
-    test "fires when any comment is :question — includes the JSON schema" do
+    test "fires when any comment is :question — tells the agent to run meerkat --answers" do
       state = %ReviewState{
         global_comments: [comment(body: "why?", finding_type: :question)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "question"
-      assert out =~ "pending-answers.json"
-      assert out =~ ~s("version": 1)
-      assert out =~ "answers"
-    end
-
-    test "does NOT fire when no question is present" do
-      out = Feedback.format(state_with_global_comment(), "/tmp/repo", :rejection)
+      assert out =~ "meerkat --answers <<'JSON'"
+      assert out =~ ~s("answers": [)
+      assert out =~ ~s("location")
+      assert out =~ ~s("question")
+      assert out =~ ~s("answer")
+      refute out =~ "version"
+      refute out =~ "createdAt"
       refute out =~ "pending-answers.json"
     end
 
-    test "renders <gitdir> placeholder when repo_path is nil" do
-      state = %ReviewState{
-        global_comments: [comment(body: "why?", finding_type: :question)]
-      }
-
-      out = Feedback.format(state, nil, :rejection)
-      assert out =~ "<gitdir>/meerkat-precommit/pending-answers.json"
+    test "does NOT fire when no question is present" do
+      out = Feedback.format(state_with_global_comment(), :rejection)
+      refute out =~ "meerkat --answers"
     end
   end
 
@@ -164,7 +160,7 @@ defmodule Meerkat.FeedbackTest do
         files: [%{file_name: "x.rs", old_content: "a\nb\nc", new_content: "A\nb\nc"}]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "(old)"
       assert out =~ "this was here"
       # Old-side quote uses the `-` prefix; new-side would be `+`.
@@ -188,7 +184,7 @@ defmodule Meerkat.FeedbackTest do
         ]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "Commit message comments"
       assert out =~ "commit-message:1"
       assert out =~ "rewrite subject"
@@ -204,7 +200,7 @@ defmodule Meerkat.FeedbackTest do
         files: [%{}, %{}, %{}, %{file_name: "src/x.rs", new_content: "a\nb\nc\nd\ne\nf"}]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "src/x.rs:10-12"
       assert out =~ "(new)"
       assert out =~ "tighten"
@@ -216,7 +212,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "bare body text", finding_type: nil)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "bare body text"
       refute out =~ "**:**"
     end
@@ -231,7 +227,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "", finding_type: :revert)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "restore from HEAD"
     end
 
@@ -240,7 +236,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "undo this rename", finding_type: :revert)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "**revert:** undo this rename"
       refute out =~ "restore from HEAD"
     end
@@ -250,7 +246,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "fix", finding_type: :issue, learn_from_this: true)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
       assert out =~ "please-learn-from-this:"
       assert out =~ "internalising"
     end
