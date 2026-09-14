@@ -378,6 +378,19 @@ defmodule Meerkat.Git do
   end
 
   @doc """
+  Resolve the worktree root holding `path` via `git rev-parse
+  --show-toplevel`. Unlike `git_dir/1` it walks upward without a
+  ceiling, so `meerkat --answers` works from any subdirectory.
+  """
+  @spec toplevel(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def toplevel(path) do
+    case run_git(path, ["rev-parse", "--show-toplevel"]) do
+      {:ok, output} -> {:ok, String.trim(output)}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
   Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`.
   Falls back to `<repo_path>/.git/meerkat-precommit` if `git_dir/1`
   fails — keeps the rest of meerkat working in a half-busted repo
