@@ -107,7 +107,7 @@ defmodule Meerkat.Timeout do
 
   defp pending_feedback(repo_path, review_id) do
     case review_state(repo_path, review_id) do
-      %ReviewState{} = state -> Feedback.format(state, repo_path, :timeout)
+      %ReviewState{} = state -> Feedback.format(state, :timeout)
       nil -> ""
     end
   catch

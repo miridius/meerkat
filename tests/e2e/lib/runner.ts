@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { delimiter } from "node:path";
 import { type Fixture, makeFixture } from "./fixture.js";
 
-const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
+export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
 
 export type RunnerOpts = {
 	// Args to pass to meerkat (default: --commit-msg <fixture.commitMsgPath>).
