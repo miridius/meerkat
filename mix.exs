@@ -69,7 +69,7 @@ defmodule Meerkat.MixProject do
       # in `lib/` and runs the test suite against each rewrite. A
       # mutation that ALL tests pass against = a test gap. See
       # `scripts/mutate.sh` for the entry point.
-      {:muex, "~> 0.9", only: [:dev, :test], runtime: false}
+      {:muex, "~> 0.11", only: [:dev, :test], runtime: false}
     ]
   end
 
