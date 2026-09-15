@@ -5,14 +5,9 @@ import { expect, test } from "./lib/test";
 import { makeFixture } from "./lib/fixture";
 import { MEERKAT_BIN, startMeerkat } from "./lib/runner";
 
-// `bin/meerkat-beam` under MIX_ENV=dev meets an exit 2 by waiting for a
-// source change, so these run it under MIX_ENV=test, where it passes the
-// exit code through. The release ignores MIX_ENV; its shepherd retries an
-// exit 2 once, then passes it through.
 function runMeerkat(cwd: string, args: string[]): { code: number | null; stderr: string } {
 	const result = spawnSync(MEERKAT_BIN, [...args, "--no-open"], {
 		cwd,
-		env: { ...process.env, MIX_ENV: "test" },
 		stdio: ["ignore", "ignore", "pipe"],
 		timeout: 60_000,
 		encoding: "utf8",
@@ -23,22 +18,22 @@ function runMeerkat(cwd: string, args: string[]): { code: number | null; stderr:
 // Each message is matched as a whole line: a crash's stack trace can
 // quote the same text inside `no case clause matching: "..."`.
 test.describe("rejected invocations", () => {
-	test("an unrecognised option exits 2 and names the option", () => {
+	test("an unrecognised option exits 64 and names the option", () => {
 		const fixture = makeFixture();
 		try {
 			const result = runMeerkat(fixture.dir, ["--bogus"]);
-			expect(result.code).toBe(2);
+			expect(result.code).toBe(64);
 			expect(result.stderr).toMatch(/^meerkat: unrecognised options: --bogus$/m);
 		} finally {
 			fixture.cleanup();
 		}
 	});
 
-	test("a ref that does not resolve exits 2 and says the target could not be resolved", () => {
+	test("a ref that does not resolve exits 64 and says the target could not be resolved", () => {
 		const fixture = makeFixture();
 		try {
 			const result = runMeerkat(fixture.dir, ["no-such-ref"]);
-			expect(result.code).toBe(2);
+			expect(result.code).toBe(64);
 			expect(result.stderr).toMatch(/^meerkat: error resolving review target: /m);
 		} finally {
 			fixture.cleanup();
