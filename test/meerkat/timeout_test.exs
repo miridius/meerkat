@@ -200,6 +200,18 @@ defmodule Meerkat.TimeoutTest do
       assert {:timeout, ""} = Timeout.decision(repo, "abc123")
     end
 
+    test "with no review state to read, no comments are reported lost", %{repo: repo} do
+      Application.delete_env(:meerkat, :review_state)
+
+      warning =
+        capture_io(:stderr, fn ->
+          send(self(), {:decision, Timeout.decision(repo, "abc123")})
+        end)
+
+      assert_received {:decision, {:timeout, ""}}
+      assert warning == ""
+    end
+
     test "comments saved with no browser connected still reach the agent", %{repo: repo} do
       :ok = Persistence.save(repo, "abc123", state_with_comment("tighten this"))
       Application.put_env(:meerkat, :review_state, %ReviewState{})

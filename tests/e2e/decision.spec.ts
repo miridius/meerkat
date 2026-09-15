@@ -77,7 +77,7 @@ test.describe("decision flow", () => {
 			});
 
 			expect(exitCode).toBe(0);
-			expect(stderrBuf).toContain("auto-approving");
+			expect(stderrBuf).toContain("no staged file changes — auto-approving");
 			// No URL was ever printed — meerkat short-circuits before binding.
 			expect(stderrBuf).not.toMatch(/Paused for human review at http/);
 		} finally {

@@ -33,6 +33,13 @@ defmodule Meerkat.FeedbackTest do
     assert Feedback.format(%ReviewState{}, :approval_with_feedback) == ""
   end
 
+  test "no comments renders nothing, whatever the decision" do
+    for mode <- [:rejection, :timeout, :auto] do
+      assert Feedback.format(%ReviewState{}, mode) == "",
+             "#{mode} with no comments renders no framing header"
+    end
+  end
+
   test "auto mode has no framing header" do
     out = Feedback.format(state_with_global_comment(), :auto)
     refute out =~ "user reviewed your commit"
@@ -229,6 +236,16 @@ defmodule Meerkat.FeedbackTest do
 
       out = Feedback.format(state, :rejection)
       assert out =~ "restore from HEAD"
+    end
+
+    test "revert with a whitespace-only body counts as empty" do
+      state = %ReviewState{
+        global_comments: [comment(body: "  \n ", finding_type: :revert)]
+      }
+
+      out = Feedback.format(state, :rejection)
+      assert out =~ "restore from HEAD"
+      refute out =~ "**revert:**"
     end
 
     test "revert WITH a body renders the labelled body, not the synthesised label" do
