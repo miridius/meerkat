@@ -3,7 +3,53 @@ defmodule Meerkat.CLITest do
 
   import Meerkat.TestHelpers
 
+  require Logger
+
   alias Meerkat.{ApprovalCache, CLI, ReviewLog}
+
+  # Env vars are process-global; async: true is safe only because each
+  # var set here is read by the CLI alone and restored before exit.
+  defp with_env(name, value, fun) do
+    previous = System.get_env(name)
+    if value, do: System.put_env(name, value), else: System.delete_env(name)
+
+    try do
+      fun.()
+    after
+      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+    end
+  end
+
+  describe "flush_logs/0" do
+    test "waits until the log file handler has written out what was logged" do
+      path = Path.join(make_tmp_repo("meerkat-cli-log"), "meerkat.log")
+
+      :ok =
+        :logger.add_handler(:meerkat_file, :logger_std_h, %{
+          config: %{type: {:file, String.to_charlist(path)}},
+          formatter: {:logger_formatter, %{}}
+        })
+
+      on_exit(fn -> :logger.remove_handler(:meerkat_file) end)
+
+      # The handler also writes out on its own once idle, so it is held
+      # suspended: only a flush that waits on it can still be running.
+      handler = Process.whereis(:logger_std_h_meerkat_file)
+      :sys.suspend(handler)
+      line = "meerkat-cli-flush-#{System.unique_integer([:positive])}"
+      ExUnit.CaptureLog.capture_log(fn -> Logger.error(line) end)
+      flush = Task.async(&CLI.flush_logs_for_test/0)
+
+      try do
+        assert Task.yield(flush, 200) == nil, "flush_logs waits on the log file handler"
+      after
+        :sys.resume(handler)
+      end
+
+      assert Task.await(flush) == :ok
+      assert File.read!(path) =~ line
+    end
+  end
 
   describe "parse_args/1" do
     test "defaults: no commit-msg / pr / positional, browser opens, port 0" do
@@ -155,6 +201,13 @@ defmodule Meerkat.CLITest do
              ) == :neither
     end
 
+    test "a failed or missing linguist lookup never counts as generated → :neither" do
+      for gen <- [%{"a.rs" => {:error, "check-attr failed"}}, %{}] do
+        assert CLI.classify_for_auto_approve_for_test(%{file_name: "a.rs"}, %{}, "main", gen, %{}) ==
+                 :neither
+      end
+    end
+
     test "detached HEAD (nil branch) never matches an approval → :neither" do
       cache = ApprovalCache.approve(%{}, "main", "a.rs", "oid1")
       gen = %{"a.rs" => {:generated, false}}
@@ -226,6 +279,19 @@ defmodule Meerkat.CLITest do
 
     test "--answers false is not a conflict" do
       assert CLI.args_error([answers: false, pr: "1"], [], []) == nil
+    end
+  end
+
+  describe "read_stdin/0" do
+    test "reads stdin to EOF, and an empty stdin as empty input" do
+      ExUnit.CaptureIO.capture_io("line one\nline two\n", fn ->
+        send(self(), {:read, CLI.read_stdin_for_test()})
+      end)
+
+      assert_received {:read, "line one\nline two\n"}
+
+      ExUnit.CaptureIO.capture_io("", fn -> send(self(), {:read, CLI.read_stdin_for_test()}) end)
+      assert_received {:read, ""}
     end
   end
 
@@ -435,6 +501,157 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "open_browser_unless_disabled/2" do
+    defp recording_open(url) do
+      send(self(), {:opened, url})
+      :ok
+    end
+
+    test "--no-open never opens a tab" do
+      assert CLI.open_browser_unless_disabled_for_test(true, &flunk("opened #{&1}")) == :ok
+    end
+
+    test "with no shepherd marker, opens the review URL" do
+      with_env("MEERKAT_OPEN_MARKER", nil, fn ->
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+        end)
+      end)
+
+      assert_received {:opened, "http://127.0.0.1:" <> _}
+    end
+
+    test "the first open stamps the shepherd marker, so a respawn opens no second tab" do
+      marker = Path.join(make_tmp_repo("meerkat-cli-marker"), "marker")
+      File.write!(marker, "")
+
+      with_env("MEERKAT_OPEN_MARKER", marker, fn ->
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+        end)
+
+        assert_received {:opened, _}
+        assert File.read!(marker) == "1\n"
+
+        assert CLI.open_browser_unless_disabled_for_test(false, &flunk("reopened #{&1}")) == :ok
+      end)
+    end
+
+    test "a failed open says so, leaves the marker unstamped, and is not fatal" do
+      marker = Path.join(make_tmp_repo("meerkat-cli-marker"), "marker")
+      File.write!(marker, "")
+
+      err =
+        with_env("MEERKAT_OPEN_MARKER", marker, fn ->
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert CLI.open_browser_unless_disabled_for_test(false, fn _ ->
+                     {:error, "no opener here"}
+                   end) == :ok
+          end)
+        end)
+
+      assert err =~ "couldn't auto-open browser (no opener here)"
+      assert File.read!(marker) == ""
+    end
+
+    test "a marker that cannot be stamped is reported, and is not fatal" do
+      # A directory reads as "not yet opened" and refuses the write.
+      marker = make_tmp_repo("meerkat-cli-marker")
+
+      err =
+        with_env("MEERKAT_OPEN_MARKER", marker, fn ->
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+          end)
+        end)
+
+      assert_received {:opened, _}
+      assert err =~ "couldn't stamp browser-open marker at #{marker}"
+    end
+  end
+
+  describe "review_url/0" do
+    test "falls back to the configured port when the endpoint reports no bound one" do
+      # Under test the endpoint runs with `server: false`, so it has no
+      # bound port to report.
+      port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port]
+      assert is_integer(port) and port > 0, "the test config names a real port"
+
+      err =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          send(self(), {:url, CLI.review_url_for_test()})
+        end)
+
+      assert_received {:url, url}
+      assert url == "http://127.0.0.1:#{port}/"
+      assert err =~ "unable to read bound port"
+    end
+  end
+
+  describe "exit_code/3" do
+    setup do
+      %{path: Path.join(make_tmp_repo("meerkat-cli-exit"), "fb.txt")}
+    end
+
+    defp exit_code(decision, path) do
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        CLI.exit_code_for_test(decision, "no-live-review", path)
+      end)
+    end
+
+    test "approve exits 0 and says the commit proceeds", %{path: path} do
+      {code, err} = exit_code({:approve, ""}, path)
+      assert code == 0
+      assert err =~ "The user approved your commit. Proceeding."
+    end
+
+    test "approve-with-feedback exits 0 and carries the comments", %{path: path} do
+      {code, err} = exit_code({:approve_with_feedback, "PAYLOAD-BODY"}, path)
+      assert code == 0
+      assert err =~ "User approved your commit"
+      assert err =~ "PAYLOAD-BODY"
+    end
+
+    test "a timeout exits 0, says nobody read the diff, and carries the saved comments",
+         %{path: path} do
+      {code, err} = exit_code({:timeout, "PAYLOAD-BODY"}, path)
+      assert code == 0
+      assert err =~ "Nobody read this diff."
+      assert err =~ "Review timed out, commit auto-approved unread"
+      assert err =~ "PAYLOAD-BODY"
+    end
+
+    test "a timeout with no saved comments prints no feedback banner", %{path: path} do
+      {code, err} = exit_code({:timeout, ""}, path)
+      assert code == 0
+      assert err =~ "Nobody read this diff."
+      refute err =~ "Review timed out, commit auto-approved unread"
+    end
+
+    test "reject exits 1 and carries the comments", %{path: path} do
+      {code, err} = exit_code({:reject, "PAYLOAD-BODY"}, path)
+      assert code == 1
+      assert err =~ "User requested changes"
+      assert err =~ "PAYLOAD-BODY"
+    end
+
+    test "cancel exits 1 and says there is no feedback", %{path: path} do
+      {code, err} = exit_code({:cancel, ""}, path)
+      assert code == 1
+      assert err =~ "Review cancelled — commit aborted, no feedback to act on."
+    end
+  end
+
+  describe "decision_atom/1" do
+    test "the review log records approve-with-feedback as an approval, every other decision as itself" do
+      assert CLI.decision_atom_for_test(:approve_with_feedback) == :approve
+
+      for tag <- [:approve, :reject, :cancel, :timeout] do
+        assert CLI.decision_atom_for_test(tag) == tag
+      end
+    end
+  end
+
   describe "feedback_file_path/1" do
     test "derives the .txt sibling of the review-log file, preserving the per-review stem" do
       log = %ReviewLog{path: "/r/.git/meerkat-precommit/reviews/20260601120000-main-files3.json"}
@@ -504,7 +721,7 @@ defmodule Meerkat.CLITest do
         end)
 
       refute File.exists?(bad)
-      assert out =~ "couldn't save full feedback to #{bad}"
+      assert out =~ "couldn't save full feedback to #{bad} (:enoent)"
       assert out =~ "full feedback could not be written to disk"
       assert out =~ "PAYLOAD-BODY"
     end

@@ -168,7 +168,7 @@ defmodule Meerkat.CLI do
 
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target)
-        open_browser_unless_disabled(opts.no_open)
+        open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
@@ -454,6 +454,9 @@ defmodule Meerkat.CLI do
   def repo_path_for_test, do: repo_path()
 
   @doc false
+  def read_stdin_for_test, do: read_stdin()
+
+  @doc false
   def save_answers_for_test(repo_path, input), do: save_answers(repo_path, input)
 
   @doc false
@@ -461,6 +464,23 @@ defmodule Meerkat.CLI do
 
   @doc false
   def secret_key_base_for_test, do: secret_key_base()
+
+  @doc false
+  def open_browser_unless_disabled_for_test(no_open, open),
+    do: open_browser_unless_disabled(no_open, open)
+
+  @doc false
+  def review_url_for_test, do: review_url()
+
+  @doc false
+  def exit_code_for_test(decision, review_id, feedback_path),
+    do: exit_code(decision, review_id, feedback_path)
+
+  @doc false
+  def decision_atom_for_test(tag), do: decision_atom(tag)
+
+  @doc false
+  def flush_logs_for_test, do: flush_logs()
 
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
@@ -594,9 +614,9 @@ defmodule Meerkat.CLI do
     IO.puts(:stderr, "debug logs at: #{Application.get_env(:meerkat, :log_path)}")
   end
 
-  defp open_browser_unless_disabled(true), do: :ok
+  defp open_browser_unless_disabled(true, _open), do: :ok
 
-  defp open_browser_unless_disabled(false) do
+  defp open_browser_unless_disabled(false, open) do
     # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
     # duplicate tab. The shepherd creates the file empty; we check
     # for non-empty contents on every call and only open + stamp it
@@ -607,7 +627,7 @@ defmodule Meerkat.CLI do
         :ok
 
       :first_open ->
-        do_open_browser()
+        do_open_browser(open)
     end
   end
 
@@ -651,10 +671,10 @@ defmodule Meerkat.CLI do
     end
   end
 
-  defp do_open_browser do
+  defp do_open_browser(open) do
     url = review_url()
 
-    case Meerkat.Browser.open(url) do
+    case open.(url) do
       :ok ->
         stamp_marker()
         :ok
