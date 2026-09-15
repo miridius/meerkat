@@ -184,7 +184,7 @@ defmodule Meerkat.CLI do
 
       {:error, reason} ->
         IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
-        2
+        64
     end
   end
 
@@ -251,7 +251,7 @@ defmodule Meerkat.CLI do
 
       message ->
         IO.puts(:stderr, message)
-        System.halt(2)
+        System.halt(64)
     end
   end
 
