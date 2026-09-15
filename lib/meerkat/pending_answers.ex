@@ -26,14 +26,15 @@ defmodule Meerkat.PendingAnswers do
 
   @doc """
   Store `input`, the agent's answers as JSON of the shape
-  `{"answers": [{"location", "question", "answer"}, ...]}`, as this
-  repo's pending-answers file, replacing any earlier one. Returns
+  `{"answers": [{"location", "question", "answer"}, ...]}`, as the
+  pending-answers file of the repo holding `path`, replacing any
+  earlier one. Returns
   `{:ok, count}` with the number of answers stored, or
   `{:error, message}` having written nothing.
   """
   @spec save(String.t(), binary()) :: {:ok, pos_integer()} | {:error, String.t()}
-  def save(repo_path, input) do
-    with :ok <- require_git_repo(repo_path),
+  def save(path, input) do
+    with {:ok, repo_path} <- toplevel(path),
          {:ok, answers} <- parse_input(input),
          :ok <- write(repo_path, answers) do
       {:ok, length(answers)}
@@ -118,9 +119,9 @@ defmodule Meerkat.PendingAnswers do
   # `Meerkat.Git.meerkat_dir/1` falls back to `<repo_path>/.git` when
   # this fails, and a write there would plant a `.git/` in a directory
   # that isn't a repo.
-  defp require_git_repo(repo_path) do
-    case Meerkat.Git.git_dir(repo_path) do
-      {:ok, _} -> :ok
+  defp toplevel(path) do
+    case Meerkat.Git.toplevel(path) do
+      {:ok, _} = ok -> ok
       {:error, reason} -> {:error, "not a git repository: #{reason}"}
     end
   end

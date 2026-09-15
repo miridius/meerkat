@@ -33,6 +33,15 @@ defmodule Meerkat.PendingAnswersTest do
                repo |> PendingAnswers.path_for() |> File.read!() |> Jason.decode!()
     end
 
+    test "a save from a subdirectory stores the repo's file", %{git_repo: repo} do
+      subdir = Path.join(repo, "lib/nested")
+      File.mkdir_p!(subdir)
+
+      assert {:ok, 1} = PendingAnswers.save(subdir, @valid_input)
+      assert %{answers: [%{question: "why?"}]} = PendingAnswers.load(repo)
+      refute File.exists?(Path.join(subdir, ".git"))
+    end
+
     test "counts every answer and keeps their order", %{git_repo: repo} do
       input =
         Jason.encode!(%{
