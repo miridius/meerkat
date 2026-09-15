@@ -61,11 +61,13 @@ supplied (no error, the highest-precedence one wins):
   with the commit. Under `--answers`: the answers were stored.
 - `1` — rejected, or cancelled. The git hook aborts. Under
   `--answers`: the input was rejected and nothing was written.
-- `2` — argument parsing error (unknown flag, conflicting
-  positional, etc.) OR an unhandled crash downstream of
-  `Meerkat.CLI.main/1`. The outer `try/rescue` defaults to REJECT
-  + exit 2 so a crash never silently lands a commit; see
-  [decision-flow.md](decision-flow.md).
+- `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
+  outer `try/rescue` defaults to REJECT + exit 2 so a crash never
+  silently lands a commit; see [decision-flow.md](decision-flow.md).
+  The launchers restart or retry on it.
+- `64` — the arguments were rejected (unknown flag, conflicting
+  positional, etc.) or the review target didn't resolve (a bad ref,
+  a failed `--pr` fetch). The launchers pass it straight through.
 - `75` — DevWatcher restart sentinel. Internal to
   `bin/meerkat-beam`'s shepherd loop — never reaches the git hook.
 
