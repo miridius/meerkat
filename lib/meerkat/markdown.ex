@@ -3,26 +3,21 @@ defmodule Meerkat.Markdown do
   Render markdown to safe HTML — comment bodies and, for the per-file
   rendered view, whole `.md` files as a side-by-side Old/New diff.
 
-  Pipeline: earmark parses GFM, html_sanitize_ex strips `<script>` /
+  Pipeline: MDEx parses GFM, html_sanitize_ex strips `<script>` /
   event handlers / `javascript:` URLs / other XSS vectors.
   """
 
   @doc """
   Render a comment `body` to HTML safe for `Phoenix.HTML.raw/1`. Empty
-  input returns an empty string (no `<p></p>` wrapper). On a recoverable
-  parse error (`{:error, html, warnings}` from earmark — unclosed
-  fence, malformed table, bad reference link), the best-effort HTML
-  is prefixed with a small `.md-warn` block listing the warnings so
-  the author isn't left wondering why their text renders weird. A lone
-  newline renders as a line break (`breaks: true`).
+  input returns an empty string (no `<p></p>` wrapper). A lone
+  newline renders as a line break.
   """
   @spec to_safe_html(String.t() | nil) :: String.t()
   def to_safe_html(nil), do: ""
   def to_safe_html(""), do: ""
 
   def to_safe_html(body) do
-    {warn, html} = render_fragment(body, breaks: true)
-    warn <> html
+    render_fragment(body, hardbreaks: true, escape: true)
   end
 
   @doc """
@@ -70,31 +65,21 @@ defmodule Meerkat.Markdown do
       {_other_op, _blocks} -> []
     end)
     |> Enum.map_join("\n", fn
-      {:eq, block} -> render_block(block)
-      {:changed, block} -> ~s(<div class="#{changed_class}">) <> render_block(block) <> "</div>"
+      {:eq, block} ->
+        render_fragment(block, unsafe: true)
+
+      {:changed, block} ->
+        ~s(<div class="#{changed_class}">) <> render_fragment(block, unsafe: true) <> "</div>"
     end)
   end
 
-  # Render a single block of markdown source to sanitized HTML, dropping
-  # the parse-warning prefix (a whole-file render surfaces nothing
-  # actionable per-block, and the source is the diff itself).
-  defp render_block(block) do
-    {_warn, html} = render_fragment(block, breaks: false)
-    html
-  end
-
-  # Shared earmark → sanitize step. Returns `{warn_block, html}` so the
-  # comment path can prepend parse warnings and the file path can drop
-  # them. `breaks` selects comment (true) vs document (false) newline
-  # handling.
-  defp render_fragment(source, breaks: breaks) do
-    case Earmark.as_html(source, %Earmark.Options{gfm: true, breaks: breaks}) do
-      {:ok, html, _warnings} ->
-        {"", HtmlSanitizeEx.markdown_html(html)}
-
-      {:error, html, warnings} ->
-        {warn_block(warnings), HtmlSanitizeEx.markdown_html(html)}
-    end
+  defp render_fragment(source, render) do
+    source
+    |> MDEx.to_html!(
+      extension: [table: true, strikethrough: true, autolink: true],
+      render: render
+    )
+    |> HtmlSanitizeEx.markdown_html()
   end
 
   # Split markdown source into top-level blocks on blank lines, but
@@ -161,22 +146,5 @@ defmodule Meerkat.Markdown do
       _ ->
         false
     end
-  end
-
-  defp warn_block([]), do: ""
-
-  defp warn_block(warnings) do
-    items =
-      warnings
-      |> Enum.map(fn
-        {_line, _type, msg} when is_binary(msg) -> msg
-        {_line, msg} when is_binary(msg) -> msg
-        msg when is_binary(msg) -> msg
-        other -> inspect(other)
-      end)
-      |> Enum.map_join("", fn msg -> "<li>" <> HtmlSanitizeEx.basic_html(msg) <> "</li>" end)
-
-    ~s(<div class="md-warn" role="note"><strong>Markdown parse warnings:</strong><ul>) <>
-      items <> "</ul></div>"
   end
 end

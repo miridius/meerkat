@@ -54,11 +54,11 @@ defmodule Meerkat.MixProject do
       {:stream_data, "~> 1.0", only: :test},
       {:live_svelte, "~> 0.18"},
       {:phoenix_vite, "~> 0.6"},
-      # Comment-body rendering. earmark parses Markdown (GFM
+      # Comment-body rendering. MDEx parses Markdown (GFM
       # tables/fences/lists); html_sanitize_ex strips `<script>` /
       # event handlers / javascript: URLs from the result so a
       # hostile comment body can't fire JS in the local review tab.
-      {:earmark, "~> 1.4"},
+      {:mdex, "~> 0.13.5"},
       {:html_sanitize_ex, "~> 1.4"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

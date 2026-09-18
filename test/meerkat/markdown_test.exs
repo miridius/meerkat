@@ -25,12 +25,10 @@ defmodule Meerkat.MarkdownTest do
       assert html =~ "<code"
     end
 
-    test "fence info string lands as a bare class, surviving sanitization" do
-      # Suggestion-mode comments fence their code with the file's
-      # language; the e2e suite selects rendered suggestions by this
-      # class shape (`code.rust`, no `language-` prefix).
+    test "fence info string lands as a language-* class, surviving sanitization" do
+      # The e2e suite selects rendered suggestions by this class.
       html = Markdown.to_safe_html("```rust\nfn x() {}\n```")
-      assert html =~ ~s(<code class="rust">)
+      assert html =~ ~s(<code class="language-rust">)
     end
 
     test "renders list" do
@@ -40,27 +38,36 @@ defmodule Meerkat.MarkdownTest do
       assert html =~ "one"
       assert html =~ "two"
     end
+
+    test "raw HTML shows as the text typed" do
+      assert Markdown.to_safe_html(~s|Vec<String> and <img src="x" onerror="alert(1)">|) ==
+               ~s|<p>Vec&lt;String&gt; and &lt;img src="x" onerror="alert(1)"&gt;</p>|
+    end
   end
 
-  # XSS coverage. Markdown.to_safe_html/1 is the sole sanitiser
+  # XSS coverage. Meerkat.Markdown is the sole sanitiser
   # between agent-typed markdown and rendered HTML in the browser,
   # so every common vector that reaches a render path needs a
   # regression pin. A vector is "neutralised" iff its executable
   # form (an inline `<script>` element, a `javascript:` URL, an
   # `on*=` event-handler attribute) does NOT appear in the output.
-  describe "to_safe_html/1 — XSS vectors" do
+  describe "XSS vectors" do
+    # Comment rendering escapes raw HTML, so raw HTML reaches the
+    # sanitiser only through render_diff_sides/3.
+    defp render_file(source), do: Markdown.render_diff_sides("", source, :added).new_html
+
     test "strips inline <script>" do
-      html = Markdown.to_safe_html("<script>alert(1)</script>")
+      html = render_file("<script>alert(1)</script>")
       refute html =~ ~r/<script/i
     end
 
     test "strips <script> with mixed casing" do
-      html = Markdown.to_safe_html("<ScRiPt>alert(1)</ScRiPt>")
+      html = render_file("<ScRiPt>alert(1)</ScRiPt>")
       refute html =~ ~r/<script/i
     end
 
     test "strips <iframe>" do
-      html = Markdown.to_safe_html("<iframe src=\"javascript:alert(1)\"></iframe>")
+      html = render_file("<iframe src=\"javascript:alert(1)\"></iframe>")
       refute html =~ ~r/<iframe/i
       refute html =~ ~r/javascript:/i
     end
@@ -70,81 +77,92 @@ defmodule Meerkat.MarkdownTest do
       refute html =~ ~r/javascript:/i
     end
 
+    defp elements_with_attribute(html, attribute) do
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[#{attribute}]")
+      |> LazyHTML.tag()
+    end
+
+    test "CVE-2026-48591: a quote in a link URL does not inject an attribute" do
+      html = Markdown.to_safe_html(~S|[click](http://example.com/?a=x" onerror="alert(1))|)
+      assert elements_with_attribute(html, "onerror") == []
+    end
+
+    test "CVE-2026-48591: a quote in a link title does not inject an attribute" do
+      html = Markdown.to_safe_html(~S|[click](http://example.com/ "t\" onmouseover=\"alert(1))|)
+      assert elements_with_attribute(html, "onmouseover") == []
+    end
+
+    test "CVE-2026-48591: a quote in an image URL does not inject an attribute" do
+      html = Markdown.to_safe_html(~S|![i](x" onerror="alert(1))|)
+      assert elements_with_attribute(html, "onerror") == []
+    end
+
     test "strips javascript: in raw <a> href" do
-      html = Markdown.to_safe_html("<a href=\"javascript:alert(1)\">x</a>")
+      html = render_file("<a href=\"javascript:alert(1)\">x</a>")
       refute html =~ ~r/javascript:/i
     end
 
     test "strips onerror on <img>" do
-      html = Markdown.to_safe_html("<img src=x onerror=\"alert(1)\">")
+      html = render_file("<img src=x onerror=\"alert(1)\">")
       refute html =~ ~r/onerror/i
     end
 
     test "strips onmouseover on inline element" do
-      html = Markdown.to_safe_html("<span onmouseover=\"alert(1)\">x</span>")
+      html = render_file("<span onmouseover=\"alert(1)\">x</span>")
       refute html =~ ~r/onmouseover/i
     end
 
     test "strips onload on <body> in raw HTML" do
-      html = Markdown.to_safe_html("<body onload=\"alert(1)\"></body>")
+      html = render_file("<body onload=\"alert(1)\"></body>")
       refute html =~ ~r/onload/i
     end
 
     test "strips inline SVG with onload" do
-      html = Markdown.to_safe_html("<svg onload=\"alert(1)\"></svg>")
+      html = render_file("<svg onload=\"alert(1)\"></svg>")
       refute html =~ ~r/onload/i
     end
 
     test "strips <object data=javascript:>" do
-      html = Markdown.to_safe_html("<object data=\"javascript:alert(1)\"></object>")
+      html = render_file("<object data=\"javascript:alert(1)\"></object>")
       refute html =~ ~r/javascript:/i
     end
 
     test "strips <embed src=javascript:>" do
-      html = Markdown.to_safe_html("<embed src=\"javascript:alert(1)\">")
+      html = render_file("<embed src=\"javascript:alert(1)\">")
       refute html =~ ~r/javascript:/i
     end
 
     test "strips data: URLs that point at scriptable types" do
-      html = Markdown.to_safe_html("<a href=\"data:text/html,<script>alert(1)</script>\">x</a>")
+      html = render_file("<a href=\"data:text/html,<script>alert(1)</script>\">x</a>")
       refute html =~ ~r/<script/i
     end
 
     test "strips <style> blocks" do
-      html = Markdown.to_safe_html("<style>body{}</style>plain")
+      html = render_file("<style>body{}</style>plain")
       refute html =~ ~r/<style/i
     end
 
     test "strips inline style with expression / url(javascript:)" do
       input = "<div style=\"background:url(javascript:alert(1))\">x</div>"
-      html = Markdown.to_safe_html(input)
+      html = render_file(input)
       refute html =~ ~r/javascript:/i
     end
 
     test "preserves plain text adjacent to stripped tags" do
-      html = Markdown.to_safe_html("safe text <script>alert(1)</script> more text")
+      html = render_file("safe text <script>alert(1)</script> more text")
       assert html =~ "safe text"
       assert html =~ "more text"
       refute html =~ ~r/<script/i
     end
   end
 
-  describe "to_safe_html/1 warning block" do
-    test "unclosed code fence still renders best-effort html" do
-      # Drive Earmark's `{:error, html, warnings}` branch with an
-      # unclosed code fence — the path that exists to render
-      # best-effort html plus a `.md-warn` summary so the author
-      # isn't left wondering why their text looks weird.
-      html = Markdown.to_safe_html("```elixir\nno closing fence\n")
-      assert is_binary(html)
-      assert html =~ "no closing fence"
-
-      # `.md-warn` block is the contract when warnings fire; some
-      # earmark versions don't warn here, but if it DOES warn, the
-      # block must contain the canonical summary header.
-      if html =~ "md-warn" do
-        assert html =~ "Markdown parse warnings"
-      end
+  describe "to_safe_html/1 — unclosed code fence" do
+    test "the code runs to the end of the comment" do
+      html = Markdown.to_safe_html("before\n\n```elixir\nx = 1\n\nafter\n")
+      assert html =~ "<p>before</p>"
+      assert html =~ ~s(<pre><code class="language-elixir">x = 1\n\nafter\n</code></pre>)
     end
   end
 
@@ -213,7 +231,6 @@ defmodule Meerkat.MarkdownTest do
       src = "line one\nline two\n"
       %{new_html: n} = Markdown.render_diff_sides("", src, :added)
       refute n =~ "<br"
-      # The comment path keeps breaks:true, so it WOULD insert a <br>.
       assert Markdown.to_safe_html(src) =~ "<br"
     end
 
@@ -240,6 +257,13 @@ defmodule Meerkat.MarkdownTest do
       assert Regex.scan(~r/<pre>/, n) |> length() == 1
       assert n =~ "before"
       assert n =~ "after"
+    end
+
+    test "renders a raw HTML block" do
+      src = ~s(<p align="center"><img src="https://example.com/logo.png"></p>)
+      %{new_html: n} = Markdown.render_diff_sides("", src, :added)
+
+      assert n =~ ~s(<img src="https://example.com/logo.png")
     end
   end
 

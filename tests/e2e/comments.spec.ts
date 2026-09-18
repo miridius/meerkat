@@ -127,7 +127,7 @@ test.describe("file comments", () => {
 
 			const card = fileSection.locator(".note.file-note").first();
 			await expect(card).toContainText("suggested rewrite");
-			await expect(card.locator("pre code.rust")).toContainText("fn renamed() {}");
+			await expect(card.locator("pre code.language-rust")).toContainText("fn renamed() {}");
 		} finally {
 			await teardown(meerkat);
 		}
