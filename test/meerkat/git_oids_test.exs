@@ -27,6 +27,19 @@ defmodule Meerkat.GitOidsTest do
 
   defp entry(name, status), do: %{file_name: name, status: status, old_file_name: nil}
 
+  describe "fetch_staged_blob_oid/2" do
+    test "a staged path yields its index blob OID", %{dir: dir} do
+      seed(dir, "staged.rs", "fn s() {}\n")
+
+      assert Git.fetch_staged_blob_oid(dir, "staged.rs") ==
+               {:ok, git(dir, ["rev-parse", ":staged.rs"])}
+    end
+
+    test "a path not in the index is :not_staged", %{dir: dir} do
+      assert Git.fetch_staged_blob_oid(dir, "never-added.rs") == :not_staged
+    end
+  end
+
   describe "head_blob_oids_many/2" do
     test "maps each path to its HEAD pre-image blob OID", %{dir: dir} do
       seed(dir, "gone.rs", "fn gone() {}\n")
@@ -62,6 +75,17 @@ defmodule Meerkat.GitOidsTest do
 
     test "empty path list short-circuits without shelling out", %{dir: dir} do
       assert Git.head_blob_oids_many(dir, []) == {:ok, %{}}
+    end
+
+    test "a repo with no commits yet is an error, since there is no HEAD tree", %{dir: dir} do
+      {result, _stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Git.head_blob_oids_many(dir, ["a.rs"]) end)
+
+      assert result ==
+               {:error,
+                "couldn't compute batched HEAD-blob OIDs (git -c core.quotePath=false ls-tree " <>
+                  "HEAD -- a.rs exited 128: fatal: Not a valid object name HEAD); deletion " <>
+                  "approvals may not persist"}
     end
   end
 
