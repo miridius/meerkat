@@ -691,7 +691,7 @@ defmodule Meerkat.Git do
 
   ## Body materialisation
   #
-  # `git show :path` reads from the index (staged); `git show HEAD:path`
+  # `git show :0:path` reads from the index (staged); `git show HEAD:path`
   # reads from the last commit. For a fresh repo (no HEAD) the HEAD
   # read fails → empty old_content + an error recorded in :read_errors
   # for the reviewer to see. Added files have no old_content; deleted
@@ -894,10 +894,11 @@ defmodule Meerkat.Git do
     end
   end
 
-  # Read the staged (index) version of a file. Bare `:path` selects
-  # the index; identical to `git diff --cached`'s "after" side.
+  # Read the staged (index) version of a file. `:0:path` selects the
+  # index; identical to `git diff --cached`'s "after" side. The stage is
+  # explicit so a path like `0:foo` is not taken for a stage number.
   defp read_index(repo_path, path) do
-    case run_git(repo_path, ["show", ":#{path}"]) do
+    case run_git(repo_path, ["show", ":0:#{path}"]) do
       {:ok, content} ->
         {content, []}
 
