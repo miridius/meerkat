@@ -32,6 +32,7 @@ defmodule Meerkat.Git do
   what looks like an empty diff that's really a swallowed git error.
   """
   @type file_diff :: %{
+          optional(:is_binary) => boolean(),
           status: status,
           file_name: String.t(),
           old_file_name: String.t() | nil,
@@ -57,9 +58,9 @@ defmodule Meerkat.Git do
   @spec staged_files(String.t()) :: {:ok, [file_entry]} | {:error, String.t()}
   def staged_files(repo_path) do
     # `-z` produces NUL-separated output so file names with spaces work
-    # without shell quoting. Rename detection is git's default and we
-    # let it stand — copies are coalesced into renames downstream.
-    case run_git(repo_path, ["diff", "--cached", "--name-status", "-z"]) do
+    # without shell quoting. Match the rename policy used by the patch
+    # and binary classification, even when diff.renames is disabled.
+    case run_git(repo_path, ["diff", "--cached", "--name-status", "-z", "-M"], false) do
       {:ok, output} -> {:ok, parse_name_status(output)}
       {:error, _} = err -> err
     end
@@ -435,7 +436,9 @@ defmodule Meerkat.Git do
   """
   @spec staged_file_diffs(String.t()) :: {:ok, [file_diff]} | {:error, String.t()}
   def staged_file_diffs(repo_path) do
-    with {:ok, entries} <- staged_files(repo_path) do
+    with {:ok, initial_index} <- run_git(repo_path, ["ls-files", "--stage", "-z"], false),
+         {:ok, entries} <- staged_files(repo_path),
+         {:ok, binary_paths} <- staged_binary_paths(repo_path) do
       names = Enum.map(entries, & &1.file_name)
       generated_map = linguist_generated_many(repo_path, names)
       # One `git diff --cached -U3 -w -M` for ALL paths instead of
@@ -446,6 +449,7 @@ defmodule Meerkat.Git do
       {hunks_map, batched_hunks_error} =
         case staged_hunks_many(repo_path) do
           {:ok, map} -> {map, []}
+          {:partial, map, reason} -> {map, [reason]}
           {:error, reason} -> {%{}, [reason]}
         end
 
@@ -460,15 +464,77 @@ defmodule Meerkat.Git do
       diffs =
         entries
         |> Enum.map(fn entry ->
+          entry = Map.put(entry, :is_binary, MapSet.member?(binary_paths, entry.file_name))
           file = materialise_staged(repo_path, entry, generated_map, hunks_map, oid_map)
-          %{file | read_errors: file.read_errors ++ global_read_errors}
+
+          file
+          |> Map.put(:is_binary, entry.is_binary)
+          |> Map.put(:read_errors, file.read_errors ++ global_read_errors)
         end)
         |> Enum.reject(&whitespace_only?/1)
         |> Meerkat.Moves.detect()
 
-      {:ok, diffs}
+      case run_git(repo_path, ["ls-files", "--stage", "-z"], false) do
+        {:ok, ^initial_index} -> {:ok, diffs}
+        {:ok, _} -> {:error, "staged files changed while loading; reload the review"}
+        {:error, _} = error -> error
+      end
     end
   end
+
+  # Numstat's NUL-delimited paths identify binary changes without trying
+  # to split the ambiguous `Binary files a/<old> and b/<new> differ` line.
+  # Unlike the patch, it also describes binary-only renames. Disable
+  # textconv/external diff in both commands: hunks must match index bytes.
+  defp staged_binary_paths(repo_path) do
+    case run_git(
+           repo_path,
+           [
+             "diff",
+             "--cached",
+             "--numstat",
+             "-z",
+             "-w",
+             "-M",
+             "--no-textconv",
+             "--no-ext-diff"
+           ],
+           false
+         ) do
+      {:ok, output} ->
+        parse_binary_paths(String.split(output, <<0>>, trim: false), MapSet.new())
+
+      {:error, reason} ->
+        {:error, "couldn't identify staged binary files: #{reason}"}
+    end
+  end
+
+  defp parse_binary_paths([""], paths), do: {:ok, paths}
+
+  defp parse_binary_paths([stat | rest], paths) do
+    case String.split(stat, "\t", parts: 3) do
+      [added, deleted, ""] ->
+        case rest do
+          [_old, name | tail] ->
+            parse_binary_paths(tail, put_binary_path(paths, name, added, deleted))
+
+          _ ->
+            {:error, "couldn't parse staged binary file statistics"}
+        end
+
+      [added, deleted, name] ->
+        parse_binary_paths(rest, put_binary_path(paths, name, added, deleted))
+
+      _ ->
+        {:error, "couldn't parse staged binary file statistics"}
+    end
+  end
+
+  defp parse_binary_paths([], _paths),
+    do: {:error, "couldn't parse staged binary file statistics"}
+
+  defp put_binary_path(paths, name, "-", "-"), do: MapSet.put(paths, name)
+  defp put_binary_path(paths, _name, _added, _deleted), do: paths
 
   # Batched `git diff --cached -U3 -w -M` for the whole staged set.
   # Returns `{:ok, %{file_name => {hunks, errors}}} | {:error, reason}`.
@@ -483,13 +549,23 @@ defmodule Meerkat.Git do
   # `diff --git a/<old> b/<new>` header is ambiguous when paths contain
   # a literal ` b/` because git uses spaces to separate old/new.
   @spec staged_hunks_many(String.t()) ::
-          {:ok, %{String.t() => {[String.t()], [String.t()]}}} | {:error, String.t()}
+          {:ok, map()} | {:partial, map(), String.t()} | {:error, String.t()}
   defp staged_hunks_many(repo_path) do
-    args = ["-c", "core.quotePath=false", "diff", "--cached", "-U3", "-w", "-M"]
+    args = [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--cached",
+      "-U3",
+      "-w",
+      "-M",
+      "--no-textconv",
+      "--no-ext-diff"
+    ]
 
     case run_git(repo_path, args) do
       {:ok, output} ->
-        {:ok, parse_multi_file_diff(output)}
+        parse_multi_file_diff(output)
 
       {:error, reason} ->
         msg =
@@ -506,52 +582,65 @@ defmodule Meerkat.Git do
   # inside `staged_hunks_many`.
   def parse_multi_file_diff_for_test(output), do: parse_multi_file_diff(output)
 
-  defp parse_multi_file_diff(""), do: %{}
+  defp parse_multi_file_diff(""), do: {:ok, %{}}
 
   defp parse_multi_file_diff(output) do
     output
     |> String.split(~r/^(?=diff --git )/m, trim: true)
-    |> Enum.reduce(%{}, fn block, acc ->
+    |> Enum.reduce({%{}, []}, fn block, {acc, errors} ->
       case parse_diff_block(block) do
         {:ok, name, hunks} ->
-          Map.put(acc, name, {hunks, []})
+          {Map.put(acc, name, {hunks, []}), errors}
+
+        :no_hunks ->
+          {acc, errors}
 
         :error ->
-          # Unparseable block — log so the DiffViewer's red banner +
-          # this stderr breadcrumb together tell the user something's
-          # wrong. The materialise_staged caller can't attribute the
-          # parse failure to a specific file (the block's own header
-          # is what failed to parse), so the warning is global.
-          IO.puts(
-            :stderr,
-            "meerkat: warning — couldn't parse staged-diff block; " <>
-              "one file's hunks may render empty (first line: " <>
+          # Attribution is unsafe when the header itself is malformed.
+          # Propagate the error to every file rather than silently dropping it.
+          msg =
+            "couldn't parse staged-diff block (first line: " <>
               "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)})"
-          )
 
-          acc
+          IO.puts(:stderr, "meerkat: warning — #{msg}")
+          {acc, errors ++ [msg]}
       end
     end)
+    |> case do
+      {map, []} -> {:ok, map}
+      {map, errors} when map_size(map) == 0 -> {:error, Enum.join(errors, "; ")}
+      {map, errors} -> {:partial, map, Enum.join(errors, "; ")}
+    end
   end
 
   # Extract the post-image path from `+++ b/<path>` (always on its own
   # line, so whitespace-unambiguous). For deletions (`+++ /dev/null`)
   # there's no post-image path; fall through to the `--- a/<path>`
-  # pre-image. Returns `{:ok, name, hunks}` or `:error` if the block
-  # has neither marker (malformed git output).
+  # pre-image. Binary and metadata-only blocks legitimately lack these
+  # markers; numstat and the staged file list carry their identity instead.
+  # Unexpected blocks return :error so they cannot look whitespace-only.
   defp parse_diff_block(block) do
     name = extract_diff_block_path(block)
 
-    if name == nil do
-      :error
-    else
-      hunks =
-        block
-        |> String.split(~r/^(?=@@ )/m, trim: true)
-        |> Enum.filter(&String.starts_with?(&1, "@@"))
-        |> Meerkat.Intraline.split()
+    cond do
+      name != nil ->
+        hunks =
+          block
+          |> String.split(~r/^(?=@@ )/m, trim: true)
+          |> Enum.filter(&String.starts_with?(&1, "@@"))
+          |> Meerkat.Intraline.split()
 
-      {:ok, name, hunks}
+        {:ok, name, hunks}
+
+      Regex.match?(~r/^Binary files .* differ$/m, block) ->
+        :no_hunks
+
+      not Regex.match?(~r/^@@ /m, block) and
+          Regex.match?(~r/^(rename from |old mode |new file mode |deleted file mode )/m, block) ->
+        :no_hunks
+
+      true ->
+        :error
     end
   end
 
@@ -580,6 +669,8 @@ defmodule Meerkat.Git do
   # Drop modified files with no remaining hunks under `-w`. Added /
   # deleted / renamed still surface even with empty hunks, because the
   # file existence change itself is information the reviewer wants.
+  defp whitespace_only?(%{is_binary: true}), do: false
+  defp whitespace_only?(%{read_errors: [_ | _]}), do: false
   defp whitespace_only?(%{status: :modified, hunks: []}), do: true
   defp whitespace_only?(_), do: false
 
@@ -650,10 +741,10 @@ defmodule Meerkat.Git do
                                  &{&1, nil}
                                )
 
-  defp run_git(repo_path, args) do
+  defp run_git(repo_path, args, merge_stderr \\ true) do
     case System.cmd("git", args,
            cd: repo_path,
-           stderr_to_stdout: true,
+           stderr_to_stdout: merge_stderr,
            env: @git_discovery_env_overrides
          ) do
       {output, 0} ->
@@ -695,6 +786,24 @@ defmodule Meerkat.Git do
   #
   # Staged diff hunks pass `-w` so whitespace-only changes don't show
   # up as noise on reformat commits (see `whitespace_only?/1`).
+
+  # Binary blobs may be large or invalid UTF-8. Never load them into the
+  # text representation merely to discard them before JSON encoding.
+  defp materialise_staged(_repo_path, %{is_binary: true} = entry, generated_map, _hunks, oid_map) do
+    {is_gen, errors} = lookup_generated(generated_map, entry.file_name)
+
+    %{
+      status: entry.status,
+      file_name: entry.file_name,
+      old_file_name: entry.old_file_name,
+      old_content: "",
+      new_content: "",
+      hunks: [],
+      read_errors: errors,
+      effective_oid: Map.get(oid_map, entry.file_name, ""),
+      is_generated: is_gen
+    }
+  end
 
   defp materialise_staged(
          repo_path,

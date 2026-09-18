@@ -86,7 +86,7 @@ defmodule Meerkat.GitTest do
 
   describe "parse_multi_file_diff (via test seam)" do
     test "empty output → empty map" do
-      assert Git.parse_multi_file_diff_for_test("") == %{}
+      assert Git.parse_multi_file_diff_for_test("") == {:ok, %{}}
     end
 
     test "single-file modified diff is keyed by post-image path" do
@@ -102,7 +102,7 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["foo.rs"]
       {hunks, errors} = result["foo.rs"]
       assert errors == []
@@ -126,7 +126,7 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["new/path.rs"]
     end
 
@@ -145,7 +145,7 @@ defmodule Meerkat.GitTest do
       +b
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["foo b/bar.txt"]
     end
 
@@ -162,7 +162,7 @@ defmodule Meerkat.GitTest do
       -c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["gone.rs"]
     end
 
@@ -182,11 +182,36 @@ defmodule Meerkat.GitTest do
       +Y
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) |> Enum.sort() == ["a.rs", "b.rs"]
     end
 
-    test "block with no +++ or --- marker is dropped (and produces a warning)" do
+    test "binary and metadata-only blocks need no text markers" do
+      for body <- [
+            "Binary files a/BUILD.bazel and b/BUILD.bazel differ\n",
+            "similarity index 100%\nrename from old.bin\nrename to new.bin\n",
+            "old mode 100644\nnew mode 100755\n"
+          ] do
+        assert Git.parse_multi_file_diff_for_test("diff --git a/file b/file\n" <> body) ==
+                 {:ok, %{}}
+      end
+    end
+
+    test "missing path markers are errors unless the block is metadata-only" do
+      for body <- [
+            "index abc..def 100644\n",
+            "old mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-old\n+new\n"
+          ] do
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:error, reason} =
+                   Git.parse_multi_file_diff_for_test("diff --git a/file b/file\n" <> body)
+
+          assert reason =~ "couldn't parse staged-diff block"
+        end)
+      end
+    end
+
+    test "malformed blocks return an error as well as a warning" do
       # Capture stderr to confirm the unparseable-block warning fires
       # without polluting the test output.
       capture =
@@ -199,8 +224,9 @@ defmodule Meerkat.GitTest do
         end)
 
       assert_received {:result, result}
-      assert result == %{}
-      assert capture =~ "couldn't parse staged-diff block"
+      assert {:error, reason} = result
+      assert reason =~ "couldn't parse staged-diff block"
+      assert capture =~ reason
     end
   end
 end
