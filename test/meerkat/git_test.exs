@@ -206,6 +206,71 @@ defmodule Meerkat.GitTest do
     end
   end
 
+  describe "staged_file_diffs/1" do
+    setup do
+      dir = make_git_repo("meerkat-git-staged")
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    test "a modified file stays listed, with the error, when the batched staged diff fails",
+         %{dir: dir} do
+      File.write!(Path.join(dir, "mod.rs"), "one\n")
+      git(dir, ["add", "mod.rs"])
+      git(dir, ["commit", "-qm", "seed"])
+      File.write!(Path.join(dir, "mod.rs"), "two\n")
+      File.write!(Path.join(dir, "added.rs"), "new\n")
+      git(dir, ["add", "mod.rs", "added.rs"])
+      File.write!(Path.join(dir, "added.rs"), "edited after staging\n")
+      added_oid = git(dir, ["rev-parse", ":added.rs"])
+      <<fanout::binary-size(2), rest::binary>> = added_oid
+      File.rm!(Path.join([dir, ".git", "objects", fanout, rest]))
+
+      {result, _stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(dir) end)
+
+      diff_error =
+        "couldn't compute batched staged diff (git -c core.quotePath=false diff --cached " <>
+          "-U3 -w -M exited 128: fatal: unable to read #{added_oid}); per-file content may " <>
+          "render empty"
+
+      assert result ==
+               {:ok,
+                [
+                  %{
+                    status: :added,
+                    file_name: "added.rs",
+                    old_file_name: nil,
+                    old_content: "",
+                    new_content: "",
+                    hunks: [],
+                    read_errors: [
+                      "couldn't read staged content for added.rs: git show :added.rs exited " <>
+                        "128: fatal: bad object :added.rs",
+                      diff_error
+                    ],
+                    effective_oid: added_oid,
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :modified,
+                    file_name: "mod.rs",
+                    old_file_name: nil,
+                    old_content: "one\n",
+                    new_content: "two\n",
+                    hunks: [],
+                    read_errors: [diff_error],
+                    effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
+                    moved_lines: [],
+                    is_generated: false
+                  }
+                ]}
+    end
+  end
+
   describe "linguist_generated_many/2" do
     setup do
       dir = make_git_repo("meerkat-git-attr")

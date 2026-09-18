@@ -580,7 +580,7 @@ defmodule Meerkat.Git do
   # Drop modified files with no remaining hunks under `-w`. Added /
   # deleted / renamed still surface even with empty hunks, because the
   # file existence change itself is information the reviewer wants.
-  defp whitespace_only?(%{status: :modified, hunks: []}), do: true
+  defp whitespace_only?(%{status: :modified, hunks: [], read_errors: []}), do: true
   defp whitespace_only?(_), do: false
 
   @doc """

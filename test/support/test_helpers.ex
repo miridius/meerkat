@@ -40,6 +40,15 @@ defmodule Meerkat.TestHelpers do
                              &{&1, nil}
                            )
 
+  @spec git(String.t(), [String.t()]) :: String.t()
+  def git(dir, args) do
+    {out, code} =
+      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
+
+    if code != 0, do: ExUnit.Assertions.flunk("git #{Enum.join(args, " ")} failed: #{out}")
+    String.trim(out)
+  end
+
   @doc """
   Like `make_tmp_repo/1`, but the `.git` is a real `git init` so
   `Meerkat.Git` calls that shell out to git succeed.
@@ -49,12 +58,7 @@ defmodule Meerkat.TestHelpers do
     dir = make_tmp_repo(prefix)
     File.rm_rf!(Path.join(dir, ".git"))
 
-    {_, 0} =
-      System.cmd("git", ["init", "-q"],
-        cd: dir,
-        stderr_to_stdout: true,
-        env: @git_discovery_overrides
-      )
+    git(dir, ["init", "-q"])
 
     dir
   end
