@@ -117,7 +117,7 @@ defmodule Meerkat.Git do
   @spec fetch_staged_blob_oid(String.t(), String.t()) ::
           {:ok, String.t()} | :not_staged | {:error, String.t()}
   def fetch_staged_blob_oid(repo_path, path) do
-    case run_git(repo_path, ["ls-files", "-s", "--", path]) do
+    case run_git(repo_path, ["--literal-pathspecs", "ls-files", "-s", "--", path]) do
       {:ok, ""} ->
         :not_staged
 
@@ -164,7 +164,9 @@ defmodule Meerkat.Git do
     # the `file_name` keys (which come from `--name-status -z`, never
     # quoted); the default C-quoting would never match and the approval
     # would silently fail to persist.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-files", "-s", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-files", "-s", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -200,7 +202,9 @@ defmodule Meerkat.Git do
   def head_blob_oids_many(repo_path, paths) when is_list(paths) do
     # `core.quotePath=false` for the same raw-path-matching reason as
     # `staged_blob_oids_many`.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-tree", "HEAD", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-tree", "HEAD", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -268,24 +272,25 @@ defmodule Meerkat.Git do
 
   def linguist_generated_many(repo_path, paths) when is_list(paths) do
     # `git check-attr <attr> -- <paths>` takes paths positionally and
-    # emits `<path>: <attr>: <value>` per line. One shell-out for the
+    # answers every path in a single shell-out, so running it for the
     # whole list keeps cost flat. Passing the paths via `--stdin`
     # would have a smaller argv, but `System.cmd` can't write to a
     # spawned process's stdin without falling back to a Port +
     # close-after-write that races the child's read; positional args
     # avoid that race entirely.
-    args = ["check-attr", "linguist-generated", "--"] ++ paths
+    args = ["check-attr", "-z", "linguist-generated", "--"] ++ paths
 
     case run_git(repo_path, args) do
       {:ok, output} ->
-        parsed = parse_check_attr_output(output)
+        values =
+          output
+          |> String.split(<<0>>)
+          |> Enum.chunk_every(3, 3, :discard)
+          |> Enum.map(fn [_path, _attr, value] -> value end)
 
-        Map.new(paths, fn p ->
-          case Map.fetch(parsed, p) do
-            {:ok, value} -> {p, {:generated, value in ["true", "set"]}}
-            :error -> {p, {:error, "no `linguist-generated` line for #{p} in check-attr output"}}
-          end
-        end)
+        paths
+        |> Enum.zip(values)
+        |> Map.new(fn {p, value} -> {p, {:generated, value in ["true", "set"]}} end)
 
       {:error, reason} ->
         msg =
@@ -311,20 +316,6 @@ defmodule Meerkat.Git do
       {:error, _} -> false
       nil -> false
     end
-  end
-
-  defp parse_check_attr_output(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.reduce(%{}, fn line, acc ->
-      # `<path>: linguist-generated: <value>` — value may contain
-      # whitespace if attribute set to a string, but for
-      # linguist-generated it's `true`/`false`/`set`/`unset`/`unspecified`.
-      case String.split(line, ": ", parts: 3) do
-        [path, "linguist-generated", value] -> Map.put(acc, path, value)
-        _ -> acc
-      end
-    end)
   end
 
   @doc """
@@ -373,6 +364,19 @@ defmodule Meerkat.Git do
   def git_common_dir(repo_path) do
     case run_git_ceilinged(repo_path, ["rev-parse", "--git-common-dir"]) do
       {:ok, output} -> {:ok, output |> String.trim() |> Path.expand(repo_path)}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Resolve the worktree root holding `path` via `git rev-parse
+  --show-toplevel`. Unlike `git_dir/1` it walks upward without a
+  ceiling, so `meerkat --answers` works from any subdirectory.
+  """
+  @spec toplevel(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def toplevel(path) do
+    case run_git(path, ["rev-parse", "--show-toplevel"]) do
+      {:ok, output} -> {:ok, String.trim(output)}
       {:error, _} = err -> err
     end
   end
@@ -580,7 +584,7 @@ defmodule Meerkat.Git do
   # Drop modified files with no remaining hunks under `-w`. Added /
   # deleted / renamed still surface even with empty hunks, because the
   # file existence change itself is information the reviewer wants.
-  defp whitespace_only?(%{status: :modified, hunks: []}), do: true
+  defp whitespace_only?(%{status: :modified, hunks: [], read_errors: []}), do: true
   defp whitespace_only?(_), do: false
 
   @doc """
@@ -687,7 +691,7 @@ defmodule Meerkat.Git do
 
   ## Body materialisation
   #
-  # `git show :path` reads from the index (staged); `git show HEAD:path`
+  # `git show :0:path` reads from the index (staged); `git show HEAD:path`
   # reads from the last commit. For a fresh repo (no HEAD) the HEAD
   # read fails → empty old_content + an error recorded in :read_errors
   # for the reviewer to see. Added files have no old_content; deleted
@@ -800,8 +804,20 @@ defmodule Meerkat.Git do
 
     diff_args =
       case entry.status do
-        :renamed -> ["diff", "-U3", "-M", "#{base_ref}..#{head_ref}", "--", old_name, name]
-        _ -> ["diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
+        :renamed ->
+          [
+            "--literal-pathspecs",
+            "diff",
+            "-U3",
+            "-M",
+            "#{base_ref}..#{head_ref}",
+            "--",
+            old_name,
+            name
+          ]
+
+        _ ->
+          ["--literal-pathspecs", "diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
       end
 
     {old, errs_old} =
@@ -878,10 +894,11 @@ defmodule Meerkat.Git do
     end
   end
 
-  # Read the staged (index) version of a file. Bare `:path` selects
-  # the index; identical to `git diff --cached`'s "after" side.
+  # Read the staged (index) version of a file. `:0:path` selects the
+  # index; identical to `git diff --cached`'s "after" side. The stage is
+  # explicit so a path like `0:foo` is not taken for a stage number.
   defp read_index(repo_path, path) do
-    case run_git(repo_path, ["show", ":#{path}"]) do
+    case run_git(repo_path, ["show", ":0:#{path}"]) do
       {:ok, content} ->
         {content, []}
 

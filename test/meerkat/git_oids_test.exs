@@ -6,6 +6,8 @@ defmodule Meerkat.GitOidsTest do
   # non-ASCII filename's approval survive.
   use ExUnit.Case, async: false
 
+  import Meerkat.TestHelpers, only: [git: 2]
+
   alias Meerkat.Git
 
   setup do
@@ -18,32 +20,32 @@ defmodule Meerkat.GitOidsTest do
     {:ok, dir: dir}
   end
 
-  # Strip git's discovery env vars (same set as `Meerkat.Git`) before
-  # shelling out. Under a git hook — e.g. the pre-push `mix test` — git
-  # exports GIT_DIR / GIT_WORK_TREE pointing at meerkat's own gitdir; in
-  # a linked worktree that's an ABSOLUTE path, so it overrides `cd: dir`
-  # and `git init` would build the fixture repo in the wrong place.
-  @git_discovery_overrides Enum.map(
-                             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-                                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-                                GIT_NAMESPACE),
-                             &{&1, nil}
-                           )
-
-  defp git(dir, args) do
-    {out, code} =
-      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
-
-    if code != 0, do: flunk("git #{Enum.join(args, " ")} failed: #{out}")
-    String.trim(out)
-  end
-
   defp seed(dir, name, content) do
     File.write!(Path.join(dir, name), content)
     git(dir, ["add", name])
   end
 
   defp entry(name, status), do: %{file_name: name, status: status, old_file_name: nil}
+
+  describe "fetch_staged_blob_oid/2" do
+    test "a staged path yields its index blob OID", %{dir: dir} do
+      seed(dir, "staged.rs", "fn s() {}\n")
+
+      assert Git.fetch_staged_blob_oid(dir, "staged.rs") ==
+               {:ok, git(dir, ["rev-parse", ":staged.rs"])}
+    end
+
+    test "a path not in the index is :not_staged", %{dir: dir} do
+      assert Git.fetch_staged_blob_oid(dir, "never-added.rs") == :not_staged
+    end
+
+    test "a staged path git would read as pathspec magic yields its blob OID", %{dir: dir} do
+      File.write!(Path.join(dir, ":x.rs"), "fn colon() {}\n")
+      git(dir, ["add", "."])
+
+      assert Git.fetch_staged_blob_oid(dir, ":x.rs") == {:ok, git(dir, ["rev-parse", "::x.rs"])}
+    end
+  end
 
   describe "head_blob_oids_many/2" do
     test "maps each path to its HEAD pre-image blob OID", %{dir: dir} do
@@ -80,6 +82,17 @@ defmodule Meerkat.GitOidsTest do
 
     test "empty path list short-circuits without shelling out", %{dir: dir} do
       assert Git.head_blob_oids_many(dir, []) == {:ok, %{}}
+    end
+
+    test "a repo with no commits yet is an error, since there is no HEAD tree", %{dir: dir} do
+      {result, _stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Git.head_blob_oids_many(dir, ["a.rs"]) end)
+
+      assert result ==
+               {:error,
+                "couldn't compute batched HEAD-blob OIDs (git --literal-pathspecs -c " <>
+                  "core.quotePath=false ls-tree HEAD -- a.rs exited 128: fatal: Not a valid " <>
+                  "object name HEAD); deletion approvals may not persist"}
     end
   end
 

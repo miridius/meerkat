@@ -6,26 +6,24 @@ defmodule Meerkat.Feedback do
   stderr as first-party feedback to the agent that drove the commit.
 
   When any comment is `:question`, the formatted output is prefixed
-  with a directive block telling the agent how to write
-  `pending-answers.json` — the file meerkat reads on the next
-  invocation to surface a banner above the diff so the human reviewer
-  sees the answers in context.
+  with a directive block telling the agent to hand its answers to
+  `meerkat --answers`, which stores them for the next invocation to
+  surface as a banner above the diff so the human reviewer sees the
+  answers in context.
   """
 
-  alias Meerkat.{PendingAnswers, ReviewState}
+  alias Meerkat.ReviewState
 
   @doc """
-  Build the feedback string. `repo_path` is used to resolve the
-  pending-answers file path included in the question directive (only
-  emitted when at least one comment is `:question`). Returns `""`
-  when there's nothing to surface — the CLI's empty-string branch
-  prints the bare success message instead.
+  Build the feedback string. Returns `""` when there's nothing to
+  surface — the CLI's empty-string branch prints the bare success
+  message instead.
   """
-  @spec format(ReviewState.t(), String.t() | nil) :: String.t()
-  def format(state, repo_path \\ nil), do: format(state, repo_path, :auto)
+  @spec format(ReviewState.t()) :: String.t()
+  def format(state), do: format(state, :auto)
 
   @doc """
-  Same as `format/2` but takes an explicit `mode` (`:rejection`,
+  Same as `format/1` but takes an explicit `mode` (`:rejection`,
   `:approval_with_feedback`, `:timeout`, or `:auto`) so the framing
   header matches the decision the reviewer made. `:auto` keeps the
   older zero-header behaviour for callers that don't know.
@@ -37,13 +35,9 @@ defmodule Meerkat.Feedback do
   - `:timeout` — "nobody reviewed this commit..." for the comments a
     reviewer had saved when the review ran out of time.
   """
-  @spec format(
-          ReviewState.t(),
-          String.t() | nil,
-          :auto | :rejection | :approval_with_feedback | :timeout
-        ) ::
+  @spec format(ReviewState.t(), :auto | :rejection | :approval_with_feedback | :timeout) ::
           String.t()
-  def format(%ReviewState{} = state, repo_path, mode) do
+  def format(%ReviewState{} = state, mode) do
     parts =
       [
         render_inline(state),
@@ -63,7 +57,7 @@ defmodule Meerkat.Feedback do
       {blocks, _} ->
         framing = framing_header(mode)
         action_summary = action_summary(state)
-        directive = if has_questions?(state), do: question_directive(repo_path), else: ""
+        directive = if has_questions?(state), do: question_directive(), else: ""
         framing <> action_summary <> directive <> Enum.join(blocks, "") <> "\n"
     end
   end
@@ -170,30 +164,20 @@ defmodule Meerkat.Feedback do
 
   # Directive prepended to feedback when at least one comment is
   # :question. Tells the agent to answer with analysis (not code) and
-  # where to write the JSON answers file so meerkat can pin them on
-  # the next review.
-  defp question_directive(repo_path) do
-    path =
-      case repo_path do
-        nil -> "<gitdir>/meerkat-precommit/pending-answers.json"
-        rp -> PendingAnswers.path_for(rp)
-      end
-
-    version = PendingAnswers.version()
-
+  # to hand the answers to `meerkat --answers` so meerkat can pin them
+  # on the next review.
+  defp question_directive do
     """
 
     ⚠ This feedback contains **question**-type comments. Answer them with analysis — \
     do NOT modify code in response. (Non-question comments — issue / suggestion / revert / \
     follow-up — still apply, change code for those as usual.)
 
-    Write your answers as JSON to:
-      #{path}
-
-    Schema (overwrite the file if it already exists):
+    Hand your answers to meerkat by running this from the repo. It validates and stores them \
+    itself (exit 0 on success, exit 1 with a message on bad input); do NOT write the answers \
+    file yourself. Running it again replaces any earlier answers.
+      meerkat --answers <<'JSON'
       {
-        "version": #{version},
-        "createdAt": "<ISO-8601 UTC, e.g. 2026-04-25T12:34:56Z>",
         "answers": [
           {
             "location": "<human-readable origin of the question — we suggest 'src/foo.rs:42 (new)' for a line comment, 'file: src/foo.rs' for a file-level comment, or 'global' — rendered as-is in the UI>",
@@ -202,8 +186,9 @@ defmodule Meerkat.Feedback do
           }
         ]
       }
+      JSON
 
-    Trigger a new meerkat review so the reviewer sees your answers:
+    Then trigger a new meerkat review so the reviewer sees your answers:
       • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
       • If there are no code changes to make, run `meerkat` (no args) from this repo — it reopens the review on the current staged diff with your answers pinned above it.
 

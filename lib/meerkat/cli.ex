@@ -10,6 +10,7 @@ defmodule Meerkat.CLI do
       meerkat A..B                         # two-dot range
       meerkat A...B                        # three-dot range (merge-base)
       meerkat --pr <N>                     # GitHub PR via `gh`
+      meerkat --answers < answers.json     # store answers to question comments, no review
 
   Flags: `--no-open`, `--port <N>`.
 
@@ -41,6 +42,7 @@ defmodule Meerkat.CLI do
           commit_msg_path: String.t() | nil,
           positional: String.t() | nil,
           pr: String.t() | nil,
+          answers: boolean(),
           no_open: boolean(),
           port: non_neg_integer()
         }
@@ -52,11 +54,12 @@ defmodule Meerkat.CLI do
 
   ## Safety invariant: default-deny on crash
 
-  Exit-0 has three paths: an explicit `{:approve, _}` /
+  Exit-0 has four paths: an explicit `{:approve, _}` /
   `{:approve_with_feedback, _}` from a button click, the auto-approve
-  fast path with its visible "auto-approving" stderr breadcrumb, and
+  fast path with its visible "auto-approving" stderr breadcrumb,
   `{:timeout, _}` once the review has run out of time, which says so on
-  stderr. Anything else (Decision GenServer crash, ReviewServer
+  stderr, and a stored `--answers` payload, which runs no review at
+  all. Anything else (Decision GenServer crash, ReviewServer
   crash, unhandled exception, endpoint failure, supervisor restart)
   must bubble out as a non-zero exit so the git hook ABORTS the
   commit. Two layers of `try / rescue / catch` enforce that: any
@@ -66,16 +69,21 @@ defmodule Meerkat.CLI do
   @spec main([String.t()]) :: non_neg_integer()
   def main(argv) do
     opts = parse_args(argv)
-    target = ReviewTarget.from_opts(opts)
 
-    case auto_approve_decision(target, repo_path()) do
-      {:auto, message} ->
-        IO.write(:stderr, message)
-        finalise_auto_approve(repo_path())
-        0
+    if opts.answers do
+      save_answers(repo_path(), read_stdin())
+    else
+      target = ReviewTarget.from_opts(opts)
 
-      :live ->
-        run_live_review_safe(target, opts)
+      case auto_approve_decision(target, repo_path()) do
+        {:auto, message} ->
+          IO.write(:stderr, message)
+          finalise_auto_approve(repo_path())
+          0
+
+        :live ->
+          run_live_review_safe(target, opts)
+      end
     end
   rescue
     e ->
@@ -160,7 +168,7 @@ defmodule Meerkat.CLI do
 
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target)
-        open_browser_unless_disabled(opts.no_open)
+        open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
@@ -176,7 +184,7 @@ defmodule Meerkat.CLI do
 
       {:error, reason} ->
         IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
-        2
+        64
     end
   end
 
@@ -220,6 +228,7 @@ defmodule Meerkat.CLI do
   @switches [
     commit_msg: :string,
     pr: :string,
+    answers: :boolean,
     no_open: :boolean,
     port: :integer
   ]
@@ -229,19 +238,20 @@ defmodule Meerkat.CLI do
     {parsed, positional, invalid} =
       OptionParser.parse(argv, strict: @switches, aliases: [])
 
-    case args_error(positional, invalid) do
+    case args_error(parsed, positional, invalid) do
       nil ->
         %{
           commit_msg_path: Keyword.get(parsed, :commit_msg),
           positional: List.first(positional),
           pr: Keyword.get(parsed, :pr),
+          answers: Keyword.get(parsed, :answers, false),
           no_open: Keyword.get(parsed, :no_open, false),
           port: Keyword.get(parsed, :port, 0)
         }
 
       message ->
         IO.puts(:stderr, message)
-        System.halt(2)
+        System.halt(64)
     end
   end
 
@@ -249,7 +259,7 @@ defmodule Meerkat.CLI do
   # message explaining the rejection. Pure, so the rejection rules are
   # unit-testable without `parse_args/1`'s `System.halt/1`.
   @doc false
-  def args_error(positional, invalid) do
+  def args_error(parsed, positional, invalid) do
     cond do
       invalid != [] ->
         "meerkat: unrecognised options: " <>
@@ -258,8 +268,34 @@ defmodule Meerkat.CLI do
       length(positional) > 1 ->
         "meerkat: at most one positional ref-or-range argument; got: #{Enum.join(positional, " ")}"
 
+      Keyword.get(parsed, :answers, false) and
+          (positional != [] or Keyword.has_key?(parsed, :pr) or
+             Keyword.has_key?(parsed, :commit_msg)) ->
+        "meerkat: --answers takes no review target; drop the ref/range, --pr or --commit-msg"
+
       true ->
         nil
+    end
+  end
+
+  ## Answers via stdin
+
+  defp read_stdin do
+    case IO.read(:stdio, :eof) do
+      data when is_binary(data) -> data
+      _ -> ""
+    end
+  end
+
+  defp save_answers(repo_path, input) do
+    case PendingAnswers.save(repo_path, input) do
+      {:ok, count} ->
+        IO.puts(:stderr, "meerkat: stored #{count} answer#{if count == 1, do: "", else: "s"}.")
+        0
+
+      {:error, message} ->
+        IO.puts(:stderr, "meerkat: --answers rejected: #{message}")
+        1
     end
   end
 
@@ -418,10 +454,33 @@ defmodule Meerkat.CLI do
   def repo_path_for_test, do: repo_path()
 
   @doc false
+  def read_stdin_for_test, do: read_stdin()
+
+  @doc false
+  def save_answers_for_test(repo_path, input), do: save_answers(repo_path, input)
+
+  @doc false
   def endpoint_config_for_test(port), do: endpoint_config(port)
 
   @doc false
   def secret_key_base_for_test, do: secret_key_base()
+
+  @doc false
+  def open_browser_unless_disabled_for_test(no_open, open),
+    do: open_browser_unless_disabled(no_open, open)
+
+  @doc false
+  def review_url_for_test, do: review_url()
+
+  @doc false
+  def exit_code_for_test(decision, review_id, feedback_path),
+    do: exit_code(decision, review_id, feedback_path)
+
+  @doc false
+  def decision_atom_for_test(tag), do: decision_atom(tag)
+
+  @doc false
+  def flush_logs_for_test, do: flush_logs()
 
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round.
@@ -555,9 +614,9 @@ defmodule Meerkat.CLI do
     IO.puts(:stderr, "debug logs at: #{Application.get_env(:meerkat, :log_path)}")
   end
 
-  defp open_browser_unless_disabled(true), do: :ok
+  defp open_browser_unless_disabled(true, _open), do: :ok
 
-  defp open_browser_unless_disabled(false) do
+  defp open_browser_unless_disabled(false, open) do
     # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
     # duplicate tab. The shepherd creates the file empty; we check
     # for non-empty contents on every call and only open + stamp it
@@ -568,7 +627,7 @@ defmodule Meerkat.CLI do
         :ok
 
       :first_open ->
-        do_open_browser()
+        do_open_browser(open)
     end
   end
 
@@ -612,10 +671,10 @@ defmodule Meerkat.CLI do
     end
   end
 
-  defp do_open_browser do
+  defp do_open_browser(open) do
     url = review_url()
 
-    case Meerkat.Browser.open(url) do
+    case open.(url) do
       :ok ->
         stamp_marker()
         :ok
