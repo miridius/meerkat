@@ -108,6 +108,7 @@
     hunks: string[];
     status?: string | null;
     read_errors?: string[] | null;
+    is_binary?: boolean;
     moved_lines?: MovedBlock[] | null;
   };
 
@@ -217,7 +218,7 @@
 
   $effect(() => {
     const lang = fileLanguage;
-    if (!lang || lang === "plaintext" || lang === "text") {
+    if (file.is_binary || !lang || lang === "plaintext" || lang === "text") {
       highlighter = null;
       return;
     }
@@ -231,6 +232,11 @@
   });
 
   $effect(() => {
+    if (file.is_binary) {
+      diffInstance = null;
+      renderError = null;
+      return;
+    }
     const oldName = file.old_file_name ?? file.file_name;
     const unifiedDiff = [
       `diff --git a/${oldName} b/${file.file_name}`,
@@ -872,7 +878,12 @@
   </div>
 {/if}
 
-{#if diffInstance}
+{#if file.is_binary}
+  <div class="binary-notice" role="note" data-test="binary-notice">
+    <strong>Binary file — content not displayed.</strong>
+    Git treats this file as binary (by content or attributes). Review its contents outside Meerkat before approving.
+  </div>
+{:else if diffInstance}
   <div
     class="diff-content"
     role="presentation"
@@ -897,7 +908,7 @@
   </div>
 {/if}
 
-{#if isPlantUml && file.status !== "deleted"}
+{#if !file.is_binary && isPlantUml && file.status !== "deleted"}
   <PlantUmlPreview
     oldSource={file.old_content ?? ""}
     newSource={file.new_content ?? ""}
@@ -907,6 +918,13 @@
 {/if}
 
 <style>
+  .binary-notice {
+    padding: 16px;
+    border: 1px solid #30363d;
+    border-radius: 0 0 6px 6px;
+    background: #161b22;
+  }
+
   .diff-content {
     border: 1px solid #30363d;
     border-radius: 0 0 6px 6px;
