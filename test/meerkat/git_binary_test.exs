@@ -3,13 +3,10 @@ defmodule Meerkat.GitBinaryTest do
 
   alias Meerkat.Git
 
-  @git_env Enum.map(
-             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE),
-             &{&1, nil}
-           )
+  import Meerkat.TestHelpers, only: [stage: 3, intercept_git: 3, git: 2]
 
   setup do
+    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-binary")
     git(dir, ["init", "-q"])
     git(dir, ["config", "user.email", "t@t.t"])
@@ -139,12 +136,11 @@ defmodule Meerkat.GitBinaryTest do
     stage(dir, "file.txt", "old\n")
     git(dir, ["commit", "-qm", "base"])
     stage(dir, "file.txt", "new\n")
-    real_git = System.find_executable("git")
 
     intercept_git(
       dir,
       "--numstat",
-      "printf 'changed again\\n' > file.txt; '#{real_git}' add file.txt"
+      "printf 'changed again\\n' > file.txt; \"$real_git\" add file.txt"
     )
 
     assert {:error, reason} = Git.staged_file_diffs(dir)
@@ -159,39 +155,5 @@ defmodule Meerkat.GitBinaryTest do
     assert file.hunks == []
     assert file.read_errors == []
     assert file.effective_oid != ""
-  end
-
-  defp stage(dir, name, content) do
-    path = Path.join(dir, name)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, content)
-    git(dir, ["add", "--", name])
-  end
-
-  defp git(dir, args) do
-    {out, code} = System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_env)
-    assert code == 0, out
-    out
-  end
-
-  defp intercept_git(dir, arg, action) do
-    real_git = System.find_executable("git")
-    old_path = System.fetch_env!("PATH")
-    bin = Path.join(dir, "bin")
-    File.mkdir_p!(bin)
-
-    File.write!(Path.join(bin, "git"), """
-    #!/bin/sh
-    for arg in "$@"; do
-      if [ "$arg" = '#{arg}' ]; then
-        #{action}
-      fi
-    done
-    exec '#{real_git}' "$@"
-    """)
-
-    File.chmod!(Path.join(bin, "git"), 0o755)
-    System.put_env("PATH", bin <> ":" <> old_path)
-    on_exit(fn -> System.put_env("PATH", old_path) end)
   end
 end

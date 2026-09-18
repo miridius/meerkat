@@ -288,6 +288,20 @@ defmodule Meerkat.GitTest do
       assert Map.keys(result) == ["y.txt"]
     end
 
+    test "missing path markers are errors unless the block is metadata-only" do
+      for body <- [
+            "index abc..def 100644\n",
+            "old mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-old\n+new\n"
+          ] do
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:error, reason} =
+                   Git.parse_multi_file_diff_for_test("diff --git a/file b/file\n" <> body)
+
+          assert reason =~ "couldn't parse staged-diff block"
+        end)
+      end
+    end
+
     test "malformed blocks return an error as well as a warning" do
       # Capture stderr to confirm the unparseable-block warning fires
       # without polluting the test output.
