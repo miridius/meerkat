@@ -268,24 +268,25 @@ defmodule Meerkat.Git do
 
   def linguist_generated_many(repo_path, paths) when is_list(paths) do
     # `git check-attr <attr> -- <paths>` takes paths positionally and
-    # emits `<path>: <attr>: <value>` per line. One shell-out for the
+    # answers every path in a single shell-out, so running it for the
     # whole list keeps cost flat. Passing the paths via `--stdin`
     # would have a smaller argv, but `System.cmd` can't write to a
     # spawned process's stdin without falling back to a Port +
     # close-after-write that races the child's read; positional args
     # avoid that race entirely.
-    args = ["check-attr", "linguist-generated", "--"] ++ paths
+    args = ["check-attr", "-z", "linguist-generated", "--"] ++ paths
 
     case run_git(repo_path, args) do
       {:ok, output} ->
-        parsed = parse_check_attr_output(output)
+        values =
+          output
+          |> String.split(<<0>>)
+          |> Enum.chunk_every(3, 3, :discard)
+          |> Enum.map(fn [_path, _attr, value] -> value end)
 
-        Map.new(paths, fn p ->
-          case Map.fetch(parsed, p) do
-            {:ok, value} -> {p, {:generated, value in ["true", "set"]}}
-            :error -> {p, {:error, "no `linguist-generated` line for #{p} in check-attr output"}}
-          end
-        end)
+        paths
+        |> Enum.zip(values)
+        |> Map.new(fn {p, value} -> {p, {:generated, value in ["true", "set"]}} end)
 
       {:error, reason} ->
         msg =
@@ -311,20 +312,6 @@ defmodule Meerkat.Git do
       {:error, _} -> false
       nil -> false
     end
-  end
-
-  defp parse_check_attr_output(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.reduce(%{}, fn line, acc ->
-      # `<path>: linguist-generated: <value>` — value may contain
-      # whitespace if attribute set to a string, but for
-      # linguist-generated it's `true`/`false`/`set`/`unset`/`unspecified`.
-      case String.split(line, ": ", parts: 3) do
-        [path, "linguist-generated", value] -> Map.put(acc, path, value)
-        _ -> acc
-      end
-    end)
   end
 
   @doc """

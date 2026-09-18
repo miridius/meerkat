@@ -1,6 +1,8 @@
 defmodule Meerkat.GitTest do
   use ExUnit.Case, async: true
 
+  import Meerkat.TestHelpers
+
   alias Meerkat.Git
 
   describe "parse_name_status/1" do
@@ -201,6 +203,37 @@ defmodule Meerkat.GitTest do
       assert_received {:result, result}
       assert result == %{}
       assert capture =~ "couldn't parse staged-diff block"
+    end
+  end
+
+  describe "linguist_generated_many/2" do
+    setup do
+      dir = make_git_repo("meerkat-git-attr")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    test "answers for a non-ASCII path and a path containing `: `", %{dir: dir} do
+      File.write!(Path.join(dir, ".gitattributes"), "*.rs linguist-generated\n")
+
+      assert Git.linguist_generated_many(dir, ["wëird.rs", "a: b.rs", "plain.txt"]) == %{
+               "wëird.rs" => {:generated, true},
+               "a: b.rs" => {:generated, true},
+               "plain.txt" => {:generated, false}
+             }
+    end
+
+    test "a warning git prints about .gitattributes leaves every path's answer intact",
+         %{dir: dir} do
+      File.write!(
+        Path.join(dir, ".gitattributes"),
+        "!*.lock linguist-generated\n*.rs linguist-generated\n"
+      )
+
+      assert Git.linguist_generated_many(dir, ["a.rs", "b.txt"]) == %{
+               "a.rs" => {:generated, true},
+               "b.txt" => {:generated, false}
+             }
     end
   end
 end
