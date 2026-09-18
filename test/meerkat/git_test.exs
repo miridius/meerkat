@@ -347,8 +347,8 @@ defmodule Meerkat.GitTest do
                     new_content: "",
                     hunks: [],
                     read_errors: [
-                      "couldn't read staged content for added.rs: git show :added.rs exited " <>
-                        "128: fatal: bad object :added.rs",
+                      "couldn't read staged content for added.rs: git show :0:added.rs exited " <>
+                        "128: fatal: bad object :0:added.rs",
                       diff_error
                     ],
                     effective_oid: added_oid,
@@ -364,6 +364,47 @@ defmodule Meerkat.GitTest do
                     hunks: [],
                     read_errors: [diff_error],
                     effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
+                    moved_lines: [],
+                    is_generated: false
+                  }
+                ]}
+    end
+
+    test "file names that start like an index stage number read their own old and new content",
+         %{dir: dir} do
+      File.write!(Path.join(dir, "0:foo.txt"), "old zero\n")
+      File.write!(Path.join(dir, "1:bar.txt"), "old one\n")
+      File.write!(Path.join(dir, "foo.txt"), "unchanged foo\n")
+      git(dir, ["add", "."])
+      git(dir, ["commit", "-qm", "seed"])
+      File.write!(Path.join(dir, "0:foo.txt"), "new zero\n")
+      File.write!(Path.join(dir, "1:bar.txt"), "new one\n")
+      git(dir, ["add", "."])
+
+      assert Git.staged_file_diffs(dir) ==
+               {:ok,
+                [
+                  %{
+                    status: :modified,
+                    file_name: "0:foo.txt",
+                    old_file_name: nil,
+                    old_content: "old zero\n",
+                    new_content: "new zero\n",
+                    hunks: ["@@ -1,1 +1,1 @@\n-old zero\n+new zero\n"],
+                    read_errors: [],
+                    effective_oid: git(dir, ["rev-parse", ":0:0:foo.txt"]),
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :modified,
+                    file_name: "1:bar.txt",
+                    old_file_name: nil,
+                    old_content: "old one\n",
+                    new_content: "new one\n",
+                    hunks: ["@@ -1,1 +1,1 @@\n-old one\n+new one\n"],
+                    read_errors: [],
+                    effective_oid: git(dir, ["rev-parse", ":0:1:bar.txt"]),
                     moved_lines: [],
                     is_generated: false
                   }
