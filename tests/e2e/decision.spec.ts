@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { makeFixture } from "./lib/fixture";
@@ -82,6 +82,67 @@ test.describe("decision flow", () => {
 			expect(stderrBuf).not.toMatch(/Paused for human review at http/);
 		} finally {
 			fixture.cleanup();
+		}
+	});
+
+	test("pending answers on a clean staged tree reopen the review instead of auto-approving", async ({
+		page,
+	}) => {
+		// The reviewer approved the last commit but also left a
+		// **question:** comment. The agent writes pending-answers.json,
+		// then runs `meerkat` (no args) AFTER the commit consumed the
+		// staged diff — the normal state for a question left on the last
+		// commit of a branch. That must reopen the review with the
+		// answers pinned (over an empty diff), NOT auto-approve and
+		// delete the file, silently discarding the answers.
+		const fixture = makeFixture({ files: {} });
+		const pendingPath = join(
+			fixture.dir,
+			".git",
+			"meerkat-precommit",
+			"pending-answers.json",
+		);
+		mkdirSync(join(pendingPath, ".."), { recursive: true });
+		writeFileSync(
+			pendingPath,
+			JSON.stringify({
+				version: 1,
+				createdAt: "2026-05-14T00:00:00Z",
+				answers: [
+					{
+						location: "src/main.rs:1",
+						question: "why did you do that?",
+						answer: "because it is correct",
+					},
+				],
+			}),
+		);
+
+		const meerkat = await startMeerkat({ fixture, args: [] });
+		try {
+			await page.goto(meerkat.url);
+
+			// A live review came up (no auto-approve): the answers are
+			// pinned above the empty diff.
+			await expect(
+				page.getByRole("heading", { name: /Pending answers \(1\)/ }),
+			).toBeVisible();
+			await expect(page.getByText("why did you do that?")).toBeVisible();
+			await expect(page.getByText("because it is correct")).toBeVisible();
+
+			// The reviewer sees the answers and approves. Approval with no
+			// comments is a plain approve (exit 0).
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr).toContain("The user approved your commit");
+			// A terminal decision clears the pending-answers file — the
+			// answers reached the reviewer, so the file must not linger
+			// and re-pin on the next review.
+			expect(existsSync(pendingPath)).toBe(false);
+		} finally {
+			await meerkat.kill();
 		}
 	});
 

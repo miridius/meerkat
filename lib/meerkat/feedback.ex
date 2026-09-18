@@ -189,7 +189,7 @@ defmodule Meerkat.Feedback do
 
     Then trigger a new meerkat review so the reviewer sees your answers:
       • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
-      • If there are no code changes to make, run `meerkat` (no args) from this repo — it reopens the review on the current staged diff with your answers pinned above it.
+      • If there are no code changes to make, run `meerkat` (no args) from this repo. It reopens the review with your answers pinned above the diff, and blocks until the reviewer decides — even when the commit already consumed everything you staged, in which case the answers appear above an empty diff. Meerkat will not auto-approve while answers are pending, so it cannot silently discard them.
 
     """
   end
