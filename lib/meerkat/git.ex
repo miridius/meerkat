@@ -117,7 +117,7 @@ defmodule Meerkat.Git do
   @spec fetch_staged_blob_oid(String.t(), String.t()) ::
           {:ok, String.t()} | :not_staged | {:error, String.t()}
   def fetch_staged_blob_oid(repo_path, path) do
-    case run_git(repo_path, ["ls-files", "-s", "--", path]) do
+    case run_git(repo_path, ["--literal-pathspecs", "ls-files", "-s", "--", path]) do
       {:ok, ""} ->
         :not_staged
 
@@ -164,7 +164,9 @@ defmodule Meerkat.Git do
     # the `file_name` keys (which come from `--name-status -z`, never
     # quoted); the default C-quoting would never match and the approval
     # would silently fail to persist.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-files", "-s", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-files", "-s", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -200,7 +202,9 @@ defmodule Meerkat.Git do
   def head_blob_oids_many(repo_path, paths) when is_list(paths) do
     # `core.quotePath=false` for the same raw-path-matching reason as
     # `staged_blob_oids_many`.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-tree", "HEAD", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-tree", "HEAD", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -800,8 +804,20 @@ defmodule Meerkat.Git do
 
     diff_args =
       case entry.status do
-        :renamed -> ["diff", "-U3", "-M", "#{base_ref}..#{head_ref}", "--", old_name, name]
-        _ -> ["diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
+        :renamed ->
+          [
+            "--literal-pathspecs",
+            "diff",
+            "-U3",
+            "-M",
+            "#{base_ref}..#{head_ref}",
+            "--",
+            old_name,
+            name
+          ]
+
+        _ ->
+          ["--literal-pathspecs", "diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
       end
 
     {old, errs_old} =

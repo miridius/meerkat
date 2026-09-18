@@ -369,6 +369,59 @@ defmodule Meerkat.GitTest do
                   }
                 ]}
     end
+
+    test "file names git would read as pathspec magic carry their own staged blob OID and " <>
+           "no read errors",
+         %{dir: dir} do
+      File.write!(Path.join(dir, ":(bogus)gone.rs"), "gone\n")
+      git(dir, ["add", "."])
+      git(dir, ["commit", "-qm", "seed"])
+      File.rm!(Path.join(dir, ":(bogus)gone.rs"))
+      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus\n")
+      File.write!(Path.join(dir, "plain.rs"), "plain\n")
+      git(dir, ["add", "-A"])
+
+      assert Git.staged_file_diffs(dir) ==
+               {:ok,
+                [
+                  %{
+                    status: :deleted,
+                    file_name: ":(bogus)gone.rs",
+                    old_file_name: nil,
+                    old_content: "gone\n",
+                    new_content: "",
+                    hunks: ["@@ -1,1 +0,0 @@\n-gone\n"],
+                    read_errors: [],
+                    effective_oid: git(dir, ["rev-parse", "HEAD::(bogus)gone.rs"]),
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :added,
+                    file_name: ":(bogus)x.rs",
+                    old_file_name: nil,
+                    old_content: "",
+                    new_content: "bogus\n",
+                    hunks: ["@@ -0,0 +1,1 @@\n+bogus\n"],
+                    read_errors: [],
+                    effective_oid: git(dir, ["rev-parse", "::(bogus)x.rs"]),
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :added,
+                    file_name: "plain.rs",
+                    old_file_name: nil,
+                    old_content: "",
+                    new_content: "plain\n",
+                    hunks: ["@@ -0,0 +1,1 @@\n+plain\n"],
+                    read_errors: [],
+                    effective_oid: git(dir, ["rev-parse", ":plain.rs"]),
+                    moved_lines: [],
+                    is_generated: false
+                  }
+                ]}
+    end
   end
 
   describe "range_file_diffs/4" do
@@ -382,6 +435,63 @@ defmodule Meerkat.GitTest do
 
       assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
                {:ok, one_of_each_diffs(%{})}
+    end
+
+    test "file names git would read as pathspec magic carry their own hunks and no read errors",
+         %{dir: dir} do
+      File.write!(Path.join(dir, ":(bogus)old.rs"), "alpha\nbeta\ngamma\ndelta\n")
+      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus one\n")
+      File.write!(Path.join(dir, ":x.rs"), "colon one\n")
+      File.write!(Path.join(dir, "x.rs"), "unchanged\n")
+      git(dir, ["add", "."])
+      git(dir, ["commit", "-qm", "base"])
+      File.rm!(Path.join(dir, ":(bogus)old.rs"))
+      File.write!(Path.join(dir, ":(bogus)new.rs"), "alpha\nbeta\ngamma\nDELTA\n")
+      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus two\n")
+      File.write!(Path.join(dir, ":x.rs"), "colon two\n")
+      git(dir, ["add", "-A"])
+      git(dir, ["commit", "-qm", "head"])
+
+      assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
+               {:ok,
+                [
+                  %{
+                    status: :renamed,
+                    file_name: ":(bogus)new.rs",
+                    old_file_name: ":(bogus)old.rs",
+                    old_content: "alpha\nbeta\ngamma\ndelta\n",
+                    new_content: "alpha\nbeta\ngamma\nDELTA\n",
+                    hunks: ["@@ -1,4 +1,4 @@\n alpha\n beta\n gamma\n-delta\n+DELTA\n"],
+                    read_errors: [],
+                    effective_oid: nil,
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :modified,
+                    file_name: ":(bogus)x.rs",
+                    old_file_name: nil,
+                    old_content: "bogus one\n",
+                    new_content: "bogus two\n",
+                    hunks: ["@@ -1,1 +1,1 @@\n-bogus one\n+bogus two\n"],
+                    read_errors: [],
+                    effective_oid: nil,
+                    moved_lines: [],
+                    is_generated: false
+                  },
+                  %{
+                    status: :modified,
+                    file_name: ":x.rs",
+                    old_file_name: nil,
+                    old_content: "colon one\n",
+                    new_content: "colon two\n",
+                    hunks: ["@@ -1,1 +1,1 @@\n-colon one\n+colon two\n"],
+                    read_errors: [],
+                    effective_oid: nil,
+                    moved_lines: [],
+                    is_generated: false
+                  }
+                ]}
     end
 
     test "a head blob git cannot read leaves the file's content empty and lists both errors",
@@ -413,8 +523,9 @@ defmodule Meerkat.GitTest do
                     read_errors: [
                       "couldn't read mod.rs at HEAD: git show HEAD:mod.rs exited 128: " <>
                         "fatal: bad object HEAD:mod.rs",
-                      "couldn't compute diff (args: diff -U3 HEAD~1..HEAD -- mod.rs): git diff " <>
-                        "-U3 HEAD~1..HEAD -- mod.rs exited 128: fatal: unable to read #{head_oid}"
+                      "couldn't compute diff (args: --literal-pathspecs diff -U3 HEAD~1..HEAD " <>
+                        "-- mod.rs): git --literal-pathspecs diff -U3 HEAD~1..HEAD -- mod.rs " <>
+                        "exited 128: fatal: unable to read #{head_oid}"
                     ],
                     effective_oid: nil,
                     moved_lines: [],
@@ -532,9 +643,10 @@ defmodule Meerkat.GitTest do
 
       assert result ==
                {:error,
-                "couldn't compute batched staged-blob OIDs (git -c core.quotePath=false " <>
-                  "ls-files -s -- a.rs exited 128: fatal: not a git repository (or any of the " <>
-                  "parent directories): .git); approve guard may flag files as stale"}
+                "couldn't compute batched staged-blob OIDs (git --literal-pathspecs -c " <>
+                  "core.quotePath=false ls-files -s -- a.rs exited 128: fatal: not a git " <>
+                  "repository (or any of the parent directories): .git); approve guard may " <>
+                  "flag files as stale"}
     end
 
     test "linguist_generated_many/2 maps every path to the lookup error", %{dir: dir} do

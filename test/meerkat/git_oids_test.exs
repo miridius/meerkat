@@ -38,6 +38,13 @@ defmodule Meerkat.GitOidsTest do
     test "a path not in the index is :not_staged", %{dir: dir} do
       assert Git.fetch_staged_blob_oid(dir, "never-added.rs") == :not_staged
     end
+
+    test "a staged path git would read as pathspec magic yields its blob OID", %{dir: dir} do
+      File.write!(Path.join(dir, ":x.rs"), "fn colon() {}\n")
+      git(dir, ["add", "."])
+
+      assert Git.fetch_staged_blob_oid(dir, ":x.rs") == {:ok, git(dir, ["rev-parse", "::x.rs"])}
+    end
   end
 
   describe "head_blob_oids_many/2" do
@@ -83,9 +90,9 @@ defmodule Meerkat.GitOidsTest do
 
       assert result ==
                {:error,
-                "couldn't compute batched HEAD-blob OIDs (git -c core.quotePath=false ls-tree " <>
-                  "HEAD -- a.rs exited 128: fatal: Not a valid object name HEAD); deletion " <>
-                  "approvals may not persist"}
+                "couldn't compute batched HEAD-blob OIDs (git --literal-pathspecs -c " <>
+                  "core.quotePath=false ls-tree HEAD -- a.rs exited 128: fatal: Not a valid " <>
+                  "object name HEAD); deletion approvals may not persist"}
     end
   end
 
