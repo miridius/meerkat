@@ -253,6 +253,15 @@ exit 1
 	};
 }
 
+// Point Meerkat.Version at a baked manifest by setting RELEASE_ROOT (a
+// dev BEAM reads the same file a prod release would), so the chip renders
+// a real version + changelog without needing an installed release.
+export function manifestRoot(lines: string[]): string {
+	const root = mkdtempSync(join(tmpdir(), "meerkat-rr-"));
+	writeFileSync(join(root, "meerkat_version"), `${lines.join("\n")}\n`);
+	return root;
+}
+
 function sanitisedGitEnv(): NodeJS.ProcessEnv {
 	return {
 		...process.env,

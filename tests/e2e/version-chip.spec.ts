@@ -1,17 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
+import { manifestRoot } from "./lib/fixture";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
-
-// Point Meerkat.Version at a baked manifest by setting RELEASE_ROOT (a
-// dev BEAM reads the same file a prod release would), so the chip renders
-// a real version + changelog without needing an installed release.
-function manifestRoot(lines: string[]): string {
-	const root = mkdtempSync(join(tmpdir(), "meerkat-rr-"));
-	writeFileSync(join(root, "meerkat_version"), `${lines.join("\n")}\n`);
-	return root;
-}
 
 const PROD_MANIFEST = [
 	"abc1234567890",
