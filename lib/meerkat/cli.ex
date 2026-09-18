@@ -275,6 +275,29 @@ defmodule Meerkat.CLI do
 
   @spec auto_approve_decision(ReviewTarget.t(), String.t()) :: :live | {:auto, String.t()}
   defp auto_approve_decision({:staged, _}, repo_path) do
+    # A prior review's **question**-type comments are answered on disk
+    # (pending-answers.json) but not yet shown to the reviewer. The
+    # auto-approve fast path exists to skip the UI when there's nothing
+    # meaningful to review; with answers pending that is exactly
+    # backwards — the reviewer must see them, even over an empty diff.
+    # Auto-approving here would also silently delete the file and
+    # discard the agent's answers, which is precisely the failure this
+    # guard exists to prevent (common after the committing review
+    # consumed the staged diff). So any pending answers force a live
+    # review; the reviewer's terminal decision clears the file.
+    if PendingAnswers.load(repo_path) != nil do
+      :live
+    else
+      auto_approve_staged(repo_path)
+    end
+  end
+
+  defp auto_approve_decision(_target, _repo_path), do: :live
+
+  # The staged-diff auto-approve fast path. Unreachable while pending
+  # answers are present (see `auto_approve_decision/2`), so it can never
+  # clobber the file out from under an unanswered review.
+  defp auto_approve_staged(repo_path) do
     case Git.staged_files(repo_path) do
       {:ok, []} ->
         {:auto, "meerkat: no staged file changes — auto-approving.\n"}
@@ -313,8 +336,6 @@ defmodule Meerkat.CLI do
         :live
     end
   end
-
-  defp auto_approve_decision(_target, _repo_path), do: :live
 
   # Map per-file verdicts to the auto-approve decision. Split out of
   # `auto_approve_decision/2` so the safety guard — never auto-approve
@@ -392,6 +413,10 @@ defmodule Meerkat.CLI do
     do: classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
 
   @doc false
+  def auto_approve_decision_for_test(repo_path),
+    do: auto_approve_decision({:staged, nil}, repo_path)
+
+  @doc false
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
 
   @doc false
@@ -424,7 +449,11 @@ defmodule Meerkat.CLI do
   def secret_key_base_for_test, do: secret_key_base()
 
   # On a successful auto-approve, clear the pending-answers banner the
-  # next live review would otherwise pin from a stale prior round.
+  # next live review would otherwise pin from a stale prior round. The
+  # pending-answers gate in `auto_approve_decision/2` makes this a
+  # no-op today (staged auto-approve never runs while answers pend), but
+  # keep it so any future auto-approve path can't silently inherit a
+  # stale banner.
   defp finalise_auto_approve(repo_path) do
     PendingAnswers.clear(repo_path)
     :ok
