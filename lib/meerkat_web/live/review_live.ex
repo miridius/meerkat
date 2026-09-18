@@ -503,6 +503,9 @@ defmodule MeerkatWeb.ReviewLive do
         nil ->
           {:noreply, socket}
 
+        %{is_binary: true} ->
+          {:noreply, socket}
+
         file ->
           cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
 
@@ -1321,7 +1324,7 @@ defmodule MeerkatWeb.ReviewLive do
             <span aria-hidden="true">⧉</span>
           </button>
           <a
-            :if={file.status != :deleted}
+            :if={file.status != :deleted and not Map.get(file, :is_binary, false)}
             class="file-action view-file"
             href={"/api/file?review_id=#{@review_id}&file_index=#{idx}&side=new"}
             target="_blank"
@@ -1516,7 +1519,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp markdown_file?(file) do
     ext = file.file_name |> Path.extname() |> String.downcase()
-    ext in [".md", ".markdown"]
+    not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
   end
 
   attr :state, ReviewState, required: true
