@@ -75,8 +75,18 @@ CLI_EVAL='File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CL
 # So it runs once, in the foreground, with no restart to re-read a
 # stdin already consumed.
 for arg in "$@"; do
-  if [[ "$arg" == "--answers" ]]; then
-    precompile_if_stale
+  if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
+    if [[ -t 0 ]]; then
+      echo "meerkat: --answers reads the answers as JSON on stdin; pipe them in, e.g. meerkat --answers < answers.json" >&2
+      exit 64
+    fi
+    # Without this guard `set -e` kills the script on the compile
+    # failure's own status, 1, which is what meerkat exits when it
+    # rejects the answers themselves.
+    if ! precompile_if_stale; then
+      echo "meerkat: the build is broken, so the answers were not stored; fix the compile error above and re-run." >&2
+      exit 2
+    fi
     exec mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@"
   fi
 done

@@ -146,6 +146,18 @@ defmodule Meerkat.FeedbackTest do
       refute out =~ "pending-answers.json"
     end
 
+    test "the printed heredoc is one a shell accepts, terminator at the start of its line" do
+      state = %ReviewState{
+        global_comments: [comment(body: "why?", finding_type: :question)]
+      }
+
+      lines = state |> Feedback.format(:rejection) |> String.split("\n")
+
+      assert Enum.any?(lines, &(&1 == "meerkat --answers <<'JSON'"))
+      assert Enum.any?(lines, &(&1 == "JSON"))
+      refute Enum.any?(lines, &(String.trim(&1) == "JSON" and &1 != "JSON"))
+    end
+
     test "does NOT fire when no question is present" do
       out = Feedback.format(state_with_global_comment(), :rejection)
       refute out =~ "meerkat --answers"

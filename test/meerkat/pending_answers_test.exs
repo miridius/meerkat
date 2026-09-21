@@ -85,7 +85,7 @@ defmodule Meerkat.PendingAnswersTest do
           {"an answer that is not an object", ~s({"answers": ["a"]})}
         ] do
       test "rejects #{label} and writes nothing", %{git_repo: repo} do
-        assert {:error, message} = PendingAnswers.save(repo, unquote(input))
+        assert {:error, :invalid_input, message} = PendingAnswers.save(repo, unquote(input))
         assert is_binary(message) and message != ""
         refute File.exists?(PendingAnswers.path_for(repo))
       end
@@ -95,19 +95,19 @@ defmodule Meerkat.PendingAnswersTest do
       assert {:ok, 1} = PendingAnswers.save(repo, @valid_input)
       before = File.read!(PendingAnswers.path_for(repo))
 
-      assert {:error, _} = PendingAnswers.save(repo, ~s({"answers": []}))
+      assert {:error, :invalid_input, _} = PendingAnswers.save(repo, ~s({"answers": []}))
       assert File.read!(PendingAnswers.path_for(repo)) == before
     end
 
     test "reports a write failure instead of raising", %{git_repo: repo} do
       File.write!(Path.dirname(PendingAnswers.path_for(repo)), "a file, not a directory")
 
-      assert {:error, message} = PendingAnswers.save(repo, @valid_input)
+      assert {:error, :write_failed, message} = PendingAnswers.save(repo, @valid_input)
       assert message =~ "couldn't write"
     end
 
     test "refuses a directory that is not a git repository", %{repo: not_a_repo} do
-      assert {:error, message} = PendingAnswers.save(not_a_repo, @valid_input)
+      assert {:error, :not_a_repo, message} = PendingAnswers.save(not_a_repo, @valid_input)
       assert message =~ "not a git repository"
       refute File.exists?(PendingAnswers.path_for(not_a_repo))
     end

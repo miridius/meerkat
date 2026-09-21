@@ -28,11 +28,14 @@ defmodule Meerkat.PendingAnswers do
   Store `input`, the agent's answers as JSON of the shape
   `{"answers": [{"location", "question", "answer"}, ...]}`, as the
   pending-answers file of the repo holding `path`, replacing any
-  earlier one. Returns
-  `{:ok, count}` with the number of answers stored, or
-  `{:error, message}` having written nothing.
+  earlier one. Returns `{:ok, count}` with the number of answers
+  stored, or, having written nothing, `{:error, kind, message}` with
+  the kind naming who has to act: `:not_a_repo` and `:invalid_input`
+  are the caller's to fix, `:write_failed` the machine's.
   """
-  @spec save(String.t(), binary()) :: {:ok, pos_integer()} | {:error, String.t()}
+  @spec save(String.t(), binary()) ::
+          {:ok, pos_integer()}
+          | {:error, :not_a_repo | :invalid_input | :write_failed, String.t()}
   def save(path, input) do
     with {:ok, repo_path} <- toplevel(path),
          {:ok, answers} <- parse_input(input),
@@ -122,7 +125,7 @@ defmodule Meerkat.PendingAnswers do
   defp toplevel(path) do
     case Meerkat.Git.toplevel(path) do
       {:ok, _} = ok -> ok
-      {:error, reason} -> {:error, "not a git repository: #{reason}"}
+      {:error, reason} -> {:error, :not_a_repo, "not a git repository: #{reason}"}
     end
   end
 
@@ -132,19 +135,19 @@ defmodule Meerkat.PendingAnswers do
         validate_answers(answers)
 
       {:ok, %{"answers" => []}} ->
-        {:error, ~s("answers" must not be empty)}
+        {:error, :invalid_input, ~s("answers" must not be empty)}
 
       {:ok, %{"answers" => _}} ->
-        {:error, ~s("answers" must be a list)}
+        {:error, :invalid_input, ~s("answers" must be a list)}
 
       {:ok, %{}} ->
-        {:error, ~s(missing "answers" list)}
+        {:error, :invalid_input, ~s(missing "answers" list)}
 
       {:ok, _} ->
-        {:error, ~s(expected a JSON object with an "answers" list)}
+        {:error, :invalid_input, ~s(expected a JSON object with an "answers" list)}
 
       {:error, %Jason.DecodeError{} = err} ->
-        {:error, "invalid JSON: #{Exception.message(err)}"}
+        {:error, :invalid_input, "invalid JSON: #{Exception.message(err)}"}
     end
   end
 
@@ -158,7 +161,8 @@ defmodule Meerkat.PendingAnswers do
 
       {_, idx}, _ ->
         {:halt,
-         {:error, ~s(answers[#{idx}] must have string "location", "question" and "answer")}}
+         {:error, :invalid_input,
+          ~s(answers[#{idx}] must have string "location", "question" and "answer")}}
     end)
     |> case do
       {:ok, acc} -> {:ok, Enum.reverse(acc)}
@@ -173,7 +177,7 @@ defmodule Meerkat.PendingAnswers do
 
     case Meerkat.AtomicFile.write(path, Jason.encode!(payload)) do
       :ok -> :ok
-      {:error, reason} -> {:error, "couldn't write #{path}: #{inspect(reason)}"}
+      {:error, reason} -> {:error, :write_failed, "couldn't write #{path}: #{inspect(reason)}"}
     end
   end
 

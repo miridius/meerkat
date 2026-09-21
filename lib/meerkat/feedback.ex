@@ -175,18 +175,20 @@ defmodule Meerkat.Feedback do
 
     Hand your answers to meerkat by running this from the repo. It validates and stores them \
     itself (exit 0 on success, exit 1 with a message on bad input); do NOT write the answers \
-    file yourself. Running it again replaces any earlier answers.
-      meerkat --answers <<'JSON'
-      {
-        "answers": [
-          {
-            "location": "<human-readable origin of the question — we suggest 'src/foo.rs:42 (new)' for a line comment, 'file: src/foo.rs' for a file-level comment, or 'global' — rendered as-is in the UI>",
-            "question": "<verbatim body of the **question:** comment>",
-            "answer": "<your answer, markdown OK>"
-          }
-        ]
-      }
-      JSON
+    file yourself. Running it again replaces any earlier answers. The heredoc's closing JSON \
+    must stay at the start of its line, so run it exactly as printed:
+
+    meerkat --answers <<'JSON'
+    {
+      "answers": [
+        {
+          "location": "<human-readable origin of the question — we suggest 'src/foo.rs:42 (new)' for a line comment, 'file: src/foo.rs' for a file-level comment, or 'global' — rendered as-is in the UI>",
+          "question": "<verbatim body of the **question:** comment>",
+          "answer": "<your answer, markdown OK>"
+        }
+      ]
+    }
+    JSON
 
     Then trigger a new meerkat review so the reviewer sees your answers:
       • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.

@@ -38,7 +38,11 @@ resolve_release() {
 # So it runs once, in the foreground, with no retry to re-read a
 # stdin already consumed.
 for arg in "$@"; do
-  if [[ "$arg" == "--answers" ]]; then
+  if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
+    if [[ -t 0 ]]; then
+      echo "meerkat: --answers reads the answers as JSON on stdin; pipe them in, e.g. meerkat --answers < answers.json" >&2
+      exit 64
+    fi
     resolve_release
     exec "$RELEASE_DIR/bin/meerkat" \
       eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"

@@ -282,16 +282,20 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "read_stdin/0" do
-    test "reads stdin to EOF, and an empty stdin as empty input" do
-      ExUnit.CaptureIO.capture_io("line one\nline two\n", fn ->
-        send(self(), {:read, CLI.read_stdin_for_test()})
-      end)
+  describe "read_stdin/1" do
+    test "reads to EOF, and an empty stdin as empty input" do
+      {:ok, device} = StringIO.open("line one\nline two\n")
+      assert CLI.read_stdin_for_test(device) == {:ok, "line one\nline two\n"}
 
-      assert_received {:read, "line one\nline two\n"}
+      {:ok, empty} = StringIO.open("")
+      assert CLI.read_stdin_for_test(empty) == {:ok, ""}
+    end
 
-      ExUnit.CaptureIO.capture_io("", fn -> send(self(), {:read, CLI.read_stdin_for_test()}) end)
-      assert_received {:read, ""}
+    test "hands over the bytes as sent, not as the locale decodes them" do
+      {:ok, device} = StringIO.open(<<"caf", 0xC3, 0xA9, "\n">>)
+
+      assert {:ok, read} = CLI.read_stdin_for_test(device)
+      assert :binary.bin_to_list(read) == [?c, ?a, ?f, 0xC3, 0xA9, ?\n]
     end
   end
 
@@ -306,7 +310,7 @@ defmodule Meerkat.CLITest do
       input = ~s({"answers": [{"location": "global", "question": "q", "answer": "a"}]})
 
       {code, stderr} =
-        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, input) end)
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, {:ok, input}) end)
 
       assert code == 0
       assert stderr =~ "meerkat: stored 1 answer.\n"
@@ -318,7 +322,7 @@ defmodule Meerkat.CLITest do
         ~s({"answers": [{"location": "a", "question": "q1", "answer": "a1"}, {"location": "b", "question": "q2", "answer": "a2"}]})
 
       {code, stderr} =
-        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, input) end)
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, {:ok, input}) end)
 
       assert code == 0
       assert stderr =~ "meerkat: stored 2 answers.\n"
@@ -326,10 +330,47 @@ defmodule Meerkat.CLITest do
 
     test "bad input → exit 1, rejection line, no file", %{repo: repo} do
       {code, stderr} =
-        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, "") end)
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, {:ok, ""}) end)
 
       assert code == 1
       assert stderr =~ "meerkat: --answers rejected: invalid JSON"
+      refute File.exists?(Meerkat.PendingAnswers.path_for(repo))
+    end
+
+    test "outside a repository → exit 64, not the code for bad input" do
+      not_a_repo = make_tmp_repo("meerkat-cli-answers-no-repo")
+      on_exit(fn -> File.rm_rf!(not_a_repo) end)
+
+      input = ~s({"answers": [{"location": "global", "question": "q", "answer": "a"}]})
+
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn ->
+          CLI.save_answers_for_test(not_a_repo, {:ok, input})
+        end)
+
+      assert code == 64
+      assert stderr =~ "needs a git repository"
+    end
+
+    test "a refused write → exit 74, not the code for bad input", %{repo: repo} do
+      File.write!(Path.dirname(Meerkat.PendingAnswers.path_for(repo)), "a file, not a directory")
+      input = ~s({"answers": [{"location": "global", "question": "q", "answer": "a"}]})
+
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.save_answers_for_test(repo, {:ok, input}) end)
+
+      assert code == 74
+      assert stderr =~ "couldn't write"
+    end
+
+    test "an unreadable stdin → exit 74, storing nothing", %{repo: repo} do
+      {code, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn ->
+          CLI.save_answers_for_test(repo, {:error, "couldn't read stdin: :ebadf"})
+        end)
+
+      assert code == 74
+      assert stderr =~ "couldn't read stdin"
       refute File.exists?(Meerkat.PendingAnswers.path_for(repo))
     end
   end

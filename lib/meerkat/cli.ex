@@ -280,22 +280,43 @@ defmodule Meerkat.CLI do
 
   ## Answers via stdin
 
-  defp read_stdin do
-    case IO.read(:stdio, :eof) do
-      data when is_binary(data) -> data
-      _ -> ""
+  # `IO.binread` takes the bytes as sent. `IO.read` decodes them
+  # against the locale, so under `LANG=C` an answer holding any
+  # non-ASCII character is stored mojibaked.
+  defp read_stdin(device \\ :stdio) do
+    case IO.binread(device, :eof) do
+      data when is_binary(data) -> {:ok, data}
+      :eof -> {:ok, ""}
+      {:error, reason} -> {:error, "couldn't read stdin: #{inspect(reason)}"}
     end
   end
 
-  defp save_answers(repo_path, input) do
+  defp save_answers(_repo_path, {:error, message}) do
+    IO.puts(:stderr, "meerkat: --answers failed: #{message}")
+    74
+  end
+
+  defp save_answers(repo_path, {:ok, input}) do
     case PendingAnswers.save(repo_path, input) do
       {:ok, count} ->
         IO.puts(:stderr, "meerkat: stored #{count} answer#{if count == 1, do: "", else: "s"}.")
         0
 
-      {:error, message} ->
+      # Exit 1 is the agent's cue to fix the JSON and send it again, so
+      # a failure it can't fix that way gets a code of its own: 64 for
+      # running meerkat somewhere it can't store anything, 74 for a
+      # write this machine refused.
+      {:error, :invalid_input, message} ->
         IO.puts(:stderr, "meerkat: --answers rejected: #{message}")
         1
+
+      {:error, :not_a_repo, message} ->
+        IO.puts(:stderr, "meerkat: --answers needs a git repository: #{message}")
+        64
+
+      {:error, :write_failed, message} ->
+        IO.puts(:stderr, "meerkat: --answers failed: #{message}")
+        74
     end
   end
 
@@ -454,7 +475,7 @@ defmodule Meerkat.CLI do
   def repo_path_for_test, do: repo_path()
 
   @doc false
-  def read_stdin_for_test, do: read_stdin()
+  def read_stdin_for_test(device), do: read_stdin(device)
 
   @doc false
   def save_answers_for_test(repo_path, input), do: save_answers(repo_path, input)
