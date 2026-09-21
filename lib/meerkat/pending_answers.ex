@@ -111,8 +111,9 @@ defmodule Meerkat.PendingAnswers do
   @doc """
   Path the pending-answers file lives at for this repo's worktree.
 
-  Resolved via `git rev-parse --git-dir` so secondary worktrees get
-  `.git/worktrees/<name>/meerkat-precommit/pending-answers.json`.
+  Resolved via `Meerkat.Git.meerkat_dir/1`, so a secondary worktree
+  gets `.git/worktrees/<name>/meerkat-precommit/pending-answers.json`
+  and a subdirectory gets the same path as the worktree root.
   """
   @spec path_for(String.t()) :: String.t()
   def path_for(repo_path) do

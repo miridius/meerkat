@@ -64,10 +64,15 @@ supplied (no error, the highest-precedence one wins):
 - `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
   outer `try/rescue` defaults to REJECT + exit 2 so a crash never
   silently lands a commit; see [decision-flow.md](decision-flow.md).
-  The launchers restart or retry on it.
+  The launchers restart or retry on it. Under `--answers`: the dev
+  launcher could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.) or the review target didn't resolve (a bad ref,
   a failed `--pr` fetch). The launchers pass it straight through.
+  Under `--answers`: a terminal on stdin, or a directory that is no
+  git repository.
+- `74` — `--answers` could not read stdin, or could not write the
+  answers file. Nothing was stored, and the input itself was fine.
 - `75` — DevWatcher restart sentinel. Internal to
   `bin/meerkat-beam`'s shepherd loop — never reaches the git hook.
 

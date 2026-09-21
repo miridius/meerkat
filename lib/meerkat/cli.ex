@@ -303,9 +303,8 @@ defmodule Meerkat.CLI do
         0
 
       # Exit 1 is the agent's cue to fix the JSON and send it again, so
-      # a failure it can't fix that way gets a code of its own: 64 for
-      # running meerkat somewhere it can't store anything, 74 for a
-      # write this machine refused.
+      # a failure that sending better JSON cannot fix takes a code of
+      # its own.
       {:error, :invalid_input, message} ->
         IO.puts(:stderr, "meerkat: --answers rejected: #{message}")
         1
@@ -738,7 +737,7 @@ defmodule Meerkat.CLI do
   # Every terminal decision prints a plain, user-attributed sentence to
   # stderr — no path is silent, because a silent exit reads as a crash
   # to the calling agent. Approve-with-feedback / Reject surface the
-  # payload (Feedback.format/3's output), which already opens with its
+  # payload (Feedback.format/2's output), which already opens with its
   # own user-attributed framing, so they add no extra line here. Cancel
   # wiped its comments before submit (payload is ""), so its sentence is
   # all the agent gets — and now it gets one.

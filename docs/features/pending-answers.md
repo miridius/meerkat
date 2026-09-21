@@ -36,9 +36,11 @@ JSON
 non-empty `answers` list whose entries each have string `location`,
 `question` and `answer`), stamps `version` and `createdAt`, and
 writes the file atomically. Exit `0` on success; exit `1` with the
-reason on stderr, and no file written, on bad input. A repeat run
-replaces the earlier answers. The agent never writes the file
-itself.
+reason on stderr, and no file written, on bad input. A failure the
+agent cannot fix by sending better JSON exits `64`, `74` or `2`
+instead, so it knows to stop retrying: see
+[cli.md](cli.md#exit-codes). A repeat run replaces the earlier
+answers. The agent never writes the file itself.
 
 ## Schema
 

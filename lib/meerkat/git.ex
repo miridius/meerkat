@@ -255,9 +255,10 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Batched `linguist-generated` lookup — one `git check-attr --stdin`
+  Batched `linguist-generated` lookup — one `git check-attr`
   shell-out for every path supplied. Returns a map of `path =>
-  {:generated, boolean} | {:error, reason}`.
+  {:generated, boolean} | {:error, reason}`, holding an entry for
+  every path passed in.
 
   Materialise + auto-approve both consume the same map so we don't
   spawn `git check-attr` per file twice. Failure cases are explicit
@@ -282,10 +283,9 @@ defmodule Meerkat.Git do
 
     case run_git_unmerged(repo_path, args) do
       {:ok, output} ->
-        # Key on the path git echoes, not on position: `-z` echoes it
-        # back exactly as passed, and a row count that ever drifts from
-        # the argument list would otherwise hand one file's answer to
-        # another and hide its diff behind the generated banner.
+        # Key on the path git echoes, which `-z` gives back exactly as
+        # passed. Zipping the values onto the argument list by position
+        # hands one file's answer to another whenever the rows drift.
         answered =
           output
           |> String.split(<<0>>)
@@ -388,12 +388,14 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`.
-  Falls back to `<repo_path>/.git/meerkat-precommit` if `git_dir/1`
-  fails — keeps the rest of meerkat working in a half-busted repo
-  where the rev-parse misbehaves. Use this as the base for any
-  per-worktree path (in-progress snapshots, review logs,
-  pending-answers).
+  Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`,
+  for the worktree holding `repo_path`. A subdirectory of the
+  worktree resolves to the same directory as its root, so state
+  stored by one call is found by the next whatever directory it runs
+  in. Falls back to `<repo_path>/.git/meerkat-precommit` where
+  `repo_path` is in no repo, or the rev-parse misbehaves. Use this as
+  the base for any per-worktree path (in-progress snapshots, review
+  logs, pending-answers).
 
   Reads the cached value from `Application.get_env(:meerkat,
   :meerkat_dir)` when present so the LV's per-mutation save path
