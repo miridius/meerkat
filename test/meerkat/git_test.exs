@@ -217,6 +217,87 @@ defmodule Meerkat.GitTest do
       assert Map.keys(result) == ["café.txt"]
     end
 
+    test "a quoted path's escapes stand for the bytes git escaped" do
+      diff =
+        ~s(diff --git "a/tab\\there\\r\\nlf.txt" "b/tab\\there\\r\\nlf.txt"\n) <>
+          ~s(--- "a/tab\\there\\r\\nlf.txt"\n) <>
+          ~s(+++ "b/tab\\there\\r\\nlf.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["tab\there\r\nlf.txt"]
+    end
+
+    test "a backslash short of three octal digits stands for itself" do
+      diff =
+        ~s(diff --git "a/a\\00n.txt" "b/a\\00n.txt"\n) <>
+          ~s(--- "a/a\\00n.txt"\n) <>
+          ~s(+++ "b/a\\00n.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["a00n.txt"]
+    end
+
+    test "one octal digit after the backslash is not an octal escape" do
+      diff =
+        ~s(diff --git "a/a\\0n0.txt" "b/a\\0n0.txt"\n) <>
+          ~s(--- "a/a\\0n0.txt"\n) <>
+          ~s(+++ "b/a\\0n0.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["a0n0.txt"]
+    end
+
+    test "a header whose quote is never closed decodes to the end of the header" do
+      diff = ~s(diff --git "a/x.txt "b/x.txt\nBinary files "a/x.txt and "b/x.txt differ\n)
+
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
+      assert Map.keys(result) == ["x.txt"]
+    end
+
+    test "a binary block with no header of its own is reported, not crashed on" do
+      diff = """
+      Binary files a/x.png and b/x.png differ
+      diff --git a/y.txt b/y.txt
+      --- a/y.txt
+      +++ b/y.txt
+      @@ -1 +1 @@
+      -a
+      +b
+      """
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        send(self(), {:parsed, Git.parse_multi_file_diff_for_test(diff)})
+      end)
+
+      assert_received {:parsed, {result, parse_errors}}
+      assert Map.keys(result) == ["y.txt"]
+      assert [error] = parse_errors
+      assert error =~ "couldn't parse staged-diff block"
+    end
+
+    test "a renamed binary names neither side, so it is a parse failure" do
+      diff = """
+      diff --git a/old.png b/new.png
+      similarity index 90%
+      rename from old.png
+      rename to new.png
+      Binary files a/old.png and b/new.png differ
+      """
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        send(self(), {:parsed, Git.parse_multi_file_diff_for_test(diff)})
+      end)
+
+      assert_received {:parsed, {result, parse_errors}}
+      assert result == %{}
+      assert [error] = parse_errors
+      assert error =~ "couldn't parse staged-diff block"
+    end
+
     test "a binary file is listed, carrying the reason it has no hunks" do
       diff = """
       diff --git a/img.png b/img.png
@@ -679,6 +760,37 @@ defmodule Meerkat.GitTest do
                "a.rs" => {:generated, true},
                "b.txt" => {:generated, false}
              }
+    end
+  end
+
+  describe "lookup_generated/2 (via test seam)" do
+    test "a generated answer is used as given, with nothing to report" do
+      assert Git.lookup_generated_for_test(%{"a.rs" => {:generated, true}}, "a.rs") == {true, []}
+
+      assert Git.lookup_generated_for_test(%{"a.rs" => {:generated, false}}, "a.rs") ==
+               {false, []}
+    end
+
+    test "a failed check reads as not-generated and reports the failure" do
+      map = %{"a.rs" => {:error, "git blew up"}}
+
+      assert Git.lookup_generated_for_test(map, "a.rs") ==
+               {false, ["linguist-generated check failed for a.rs: git blew up"]}
+    end
+
+    test "a path git answered nothing for reads as not-generated, silently" do
+      assert Git.lookup_generated_for_test(%{}, "a.rs") == {false, []}
+    end
+  end
+
+  describe "batched lookups with no paths" do
+    setup :git_repo
+
+    test "answer without shelling out to git", %{dir: dir} do
+      File.rm_rf!(Path.join(dir, ".git"))
+
+      assert Git.linguist_generated_many(dir, []) == %{}
+      assert Git.staged_blob_oids_many(dir, []) == {:ok, %{}}
     end
   end
 

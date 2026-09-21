@@ -160,6 +160,12 @@ defmodule Meerkat.TimeoutTest do
       assert File.exists?(run_dir(repo, "recent"))
     end
 
+    test "a repo that has never held an anchor is pruned without error", %{repo: repo} do
+      repo |> run_dir("any") |> Path.dirname() |> File.rm_rf!()
+
+      assert with_run_id("current", fn -> Timeout.prune_stale(repo) end) == :ok
+    end
+
     test "this run's own anchors survive however old they are", %{repo: repo} do
       with_run_id("current", fn -> Timeout.deadline_ms(repo, "abc123") end)
       backdate(run_dir(repo, "current"), Timeout.limit_ms() + 60_000)

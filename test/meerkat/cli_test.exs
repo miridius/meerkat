@@ -291,6 +291,14 @@ defmodule Meerkat.CLITest do
       assert CLI.read_stdin_for_test(empty) == {:ok, ""}
     end
 
+    test "a device that cannot be read reports the reason instead of raising" do
+      {:ok, device} = StringIO.open("x")
+      StringIO.close(device)
+
+      assert {:error, message} = CLI.read_stdin_for_test(device)
+      assert message =~ "couldn't read stdin"
+    end
+
     test "hands over the bytes as sent, not as the locale decodes them" do
       {:ok, device} = StringIO.open(<<"caf", 0xC3, 0xA9, "\n">>)
 

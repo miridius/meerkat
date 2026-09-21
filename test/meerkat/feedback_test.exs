@@ -164,7 +164,7 @@ defmodule Meerkat.FeedbackTest do
     end
   end
 
-  describe "section renderers (via format/3)" do
+  describe "section renderers (via format/2)" do
     test "inline comment on the OLD side renders with `-` quote prefix tag" do
       state = %ReviewState{
         comments: [

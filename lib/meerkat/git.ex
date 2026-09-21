@@ -954,6 +954,11 @@ defmodule Meerkat.Git do
     }
   end
 
+  @doc false
+  # Test seam for `lookup_generated/2` — the batched map's error and
+  # missing entries are what a caller never produces on demand.
+  def lookup_generated_for_test(generated_map, name), do: lookup_generated(generated_map, name)
+
   # Pull the per-file linguist-generated answer out of the batched map.
   # `{:generated, bool}` → use; `{:error, msg}` or missing → surface
   # the failure via :read_errors AND treat as not-generated (so

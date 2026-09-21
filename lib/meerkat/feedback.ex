@@ -48,9 +48,6 @@ defmodule Meerkat.Feedback do
       |> Enum.reject(&(&1 == ""))
 
     case {parts, mode} do
-      {[], :approval_with_feedback} ->
-        ""
-
       {[], _} ->
         ""
 
