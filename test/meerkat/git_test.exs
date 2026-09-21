@@ -88,7 +88,7 @@ defmodule Meerkat.GitTest do
 
   describe "parse_multi_file_diff (via test seam)" do
     test "empty output → empty map" do
-      assert Git.parse_multi_file_diff_for_test("") == %{}
+      assert Git.parse_multi_file_diff_for_test("") == {%{}, []}
     end
 
     test "single-file modified diff is keyed by post-image path" do
@@ -104,7 +104,8 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
       assert Map.keys(result) == ["foo.rs"]
       {hunks, errors} = result["foo.rs"]
       assert errors == []
@@ -128,7 +129,8 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
       assert Map.keys(result) == ["new/path.rs"]
     end
 
@@ -147,7 +149,8 @@ defmodule Meerkat.GitTest do
       +b
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
       assert Map.keys(result) == ["foo b/bar.txt"]
     end
 
@@ -164,7 +167,8 @@ defmodule Meerkat.GitTest do
       -c
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
       assert Map.keys(result) == ["gone.rs"]
     end
 
@@ -184,8 +188,46 @@ defmodule Meerkat.GitTest do
       +Y
       """
 
-      result = Git.parse_multi_file_diff_for_test(diff)
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
       assert Map.keys(result) |> Enum.sort() == ["a.rs", "b.rs"]
+    end
+
+    test "a C-quoted path is keyed by the name it stands for" do
+      diff =
+        ~s(diff --git "a/q\\"uote.txt" "b/q\\"uote.txt"\n) <>
+          ~s(index abc..def 100644\n) <>
+          ~s(--- "a/q\\"uote.txt"\n) <>
+          ~s(+++ "b/q\\"uote.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
+      assert Map.keys(result) == [~s(q"uote.txt)]
+    end
+
+    test "an octal-escaped path is keyed by its bytes" do
+      diff =
+        ~s(diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\n) <>
+          ~s(--- "a/caf\\303\\251.txt"\n) <>
+          ~s(+++ "b/caf\\303\\251.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["café.txt"]
+    end
+
+    test "a binary file is listed, carrying the reason it has no hunks" do
+      diff = """
+      diff --git a/img.png b/img.png
+      index abc..def 100644
+      Binary files a/img.png and b/img.png differ
+      """
+
+      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
+      assert parse_errors == []
+      assert {[], [error]} = result["img.png"]
+      assert error =~ "binary file"
     end
 
     test "block with no +++ or --- marker is dropped (and produces a warning)" do
@@ -200,8 +242,10 @@ defmodule Meerkat.GitTest do
           )
         end)
 
-      assert_received {:result, result}
+      assert_received {:result, {result, parse_errors}}
       assert result == %{}
+      assert [error] = parse_errors
+      assert error =~ "couldn't parse staged-diff block"
       assert capture =~ "couldn't parse staged-diff block"
     end
   end
@@ -754,7 +798,19 @@ defmodule Meerkat.GitMeerkatDirTest do
        %{dir: dir} do
     Application.delete_env(:meerkat, :meerkat_dir)
 
-    assert Git.meerkat_dir(dir) == Path.join([dir, ".git", "meerkat-precommit"])
+    # `git rev-parse` answers with symlinks resolved, which on macOS
+    # makes every path under `/var` come back under `/private/var`.
+    root = File.cd!(dir, &File.cwd!/0)
+
+    assert Git.meerkat_dir(dir) == Path.join([root, ".git", "meerkat-precommit"])
+  end
+
+  test "with no cached value, meerkat_dir/1 from a subdirectory is the repo's own", %{dir: dir} do
+    Application.delete_env(:meerkat, :meerkat_dir)
+    sub = Path.join([dir, "services", "api"])
+    File.mkdir_p!(sub)
+
+    assert Git.meerkat_dir(sub) == Git.meerkat_dir(dir)
   end
 
   test "with no cached value and no repo, meerkat_dir/1 is meerkat-precommit under <dir>/.git" do

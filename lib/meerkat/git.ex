@@ -280,17 +280,23 @@ defmodule Meerkat.Git do
     # avoid that race entirely.
     args = ["check-attr", "-z", "linguist-generated", "--"] ++ paths
 
-    case run_git(repo_path, args) do
+    case run_git_unmerged(repo_path, args) do
       {:ok, output} ->
-        values =
+        # Key on the path git echoes, not on position: `-z` echoes it
+        # back exactly as passed, and a row count that ever drifts from
+        # the argument list would otherwise hand one file's answer to
+        # another and hide its diff behind the generated banner.
+        answered =
           output
           |> String.split(<<0>>)
           |> Enum.chunk_every(3, 3, :discard)
-          |> Enum.map(fn [_path, _attr, value] -> value end)
+          |> Map.new(fn [path, _attr, value] ->
+            {path, {:generated, value in ["true", "set"]}}
+          end)
 
-        paths
-        |> Enum.zip(values)
-        |> Map.new(fn {p, value} -> {p, {:generated, value in ["true", "set"]}} end)
+        Map.new(paths, fn p ->
+          {p, Map.get(answered, p, {:error, "`git check-attr` returned no row for #{p}"})}
+        end)
 
       {:error, reason} ->
         msg =
@@ -404,10 +410,20 @@ defmodule Meerkat.Git do
   end
 
   defp resolve_meerkat_dir(repo_path) do
+    # Resolve the worktree root first, so a path inside a repo lands on
+    # that repo's gitdir however deep it sits. A path in no repo has no
+    # root to find, and `git_dir/1`'s ceiling then keeps the fallback
+    # local instead of walking up into an ancestor repo.
+    root =
+      case toplevel(repo_path) do
+        {:ok, root} -> root
+        {:error, _} -> repo_path
+      end
+
     base =
-      case git_dir(repo_path) do
+      case git_dir(root) do
         {:ok, dir} -> dir
-        {:error, _} -> Path.join(repo_path, ".git")
+        {:error, _} -> Path.join(root, ".git")
       end
 
     Path.join(base, "meerkat-precommit")
@@ -449,7 +465,7 @@ defmodule Meerkat.Git do
       # would let a reviewer approve what looks like an empty diff.
       {hunks_map, batched_hunks_error} =
         case staged_hunks_many(repo_path) do
-          {:ok, map} -> {map, []}
+          {:ok, map, parse_errors} -> {map, parse_errors}
           {:error, reason} -> {%{}, [reason]}
         end
 
@@ -487,13 +503,15 @@ defmodule Meerkat.Git do
   # `diff --git a/<old> b/<new>` header is ambiguous when paths contain
   # a literal ` b/` because git uses spaces to separate old/new.
   @spec staged_hunks_many(String.t()) ::
-          {:ok, %{String.t() => {[String.t()], [String.t()]}}} | {:error, String.t()}
+          {:ok, %{String.t() => {[String.t()], [String.t()]}}, [String.t()]}
+          | {:error, String.t()}
   defp staged_hunks_many(repo_path) do
     args = ["-c", "core.quotePath=false", "diff", "--cached", "-U3", "-w", "-M"]
 
     case run_git(repo_path, args) do
       {:ok, output} ->
-        {:ok, parse_multi_file_diff(output)}
+        {map, parse_errors} = parse_multi_file_diff(output)
+        {:ok, map, parse_errors}
 
       {:error, reason} ->
         msg =
@@ -510,30 +528,29 @@ defmodule Meerkat.Git do
   # inside `staged_hunks_many`.
   def parse_multi_file_diff_for_test(output), do: parse_multi_file_diff(output)
 
-  defp parse_multi_file_diff(""), do: %{}
+  defp parse_multi_file_diff(""), do: {%{}, []}
 
   defp parse_multi_file_diff(output) do
     output
     |> String.split(~r/^(?=diff --git )/m, trim: true)
-    |> Enum.reduce(%{}, fn block, acc ->
+    |> Enum.reduce({%{}, []}, fn block, {acc, errors} ->
       case parse_diff_block(block) do
-        {:ok, name, hunks} ->
-          Map.put(acc, name, {hunks, []})
+        {:ok, name, hunks, block_errors} ->
+          {Map.put(acc, name, {hunks, block_errors}), errors}
 
         :error ->
-          # Unparseable block — log so the DiffViewer's red banner +
-          # this stderr breadcrumb together tell the user something's
-          # wrong. The materialise_staged caller can't attribute the
-          # parse failure to a specific file (the block's own header
-          # is what failed to parse), so the warning is global.
-          IO.puts(
-            :stderr,
-            "meerkat: warning — couldn't parse staged-diff block; " <>
-              "one file's hunks may render empty (first line: " <>
-              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)})"
-          )
+          # Unparseable block — the caller can't attribute the failure
+          # to a file (the block's own header is what failed to parse),
+          # so every staged file takes the error and carries the red
+          # banner. Dropping the block silently would take a file the
+          # reviewer never saw out of the review.
+          msg =
+            "couldn't parse staged-diff block (first line: " <>
+              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)}); " <>
+              "a file's diff may be missing"
 
-          acc
+          IO.puts(:stderr, "meerkat: warning — #{msg}")
+          {acc, errors ++ [msg]}
       end
     end)
   end
@@ -544,39 +561,116 @@ defmodule Meerkat.Git do
   # pre-image. Returns `{:ok, name, hunks}` or `:error` if the block
   # has neither marker (malformed git output).
   defp parse_diff_block(block) do
-    name = extract_diff_block_path(block)
+    case extract_diff_block_path(block) do
+      nil ->
+        parse_binary_block(block)
 
-    if name == nil do
-      :error
-    else
-      hunks =
-        block
-        |> String.split(~r/^(?=@@ )/m, trim: true)
-        |> Enum.filter(&String.starts_with?(&1, "@@"))
-        |> Meerkat.Intraline.split()
+      name ->
+        hunks =
+          block
+          |> String.split(~r/^(?=@@ )/m, trim: true)
+          |> Enum.filter(&String.starts_with?(&1, "@@"))
+          |> Meerkat.Intraline.split()
 
-      {:ok, name, hunks}
+        {:ok, name, hunks, []}
     end
+  end
+
+  # A binary file's block carries no `+++`/`---` markers at all, so the
+  # only path git gives us is the ambiguous `diff --git a/<old> b/<new>`
+  # header. Take it when both sides name the same file, which every
+  # binary block does except a rename.
+  defp parse_binary_block(block) do
+    with true <- binary_block?(block),
+         name when is_binary(name) <- binary_block_path(block) do
+      {:ok, name, [], ["binary file: git reports no text diff"]}
+    else
+      _ -> :error
+    end
+  end
+
+  defp binary_block?(block) do
+    block
+    |> String.split("\n")
+    |> Enum.any?(&(String.starts_with?(&1, "Binary files ") or &1 == "GIT binary patch"))
+  end
+
+  defp binary_block_path(block) do
+    case block |> String.split("\n", parts: 2) |> hd() do
+      "diff --git " <> rest -> same_sided_path(rest)
+      _ -> nil
+    end
+  end
+
+  defp same_sided_path(rest) do
+    parts = String.split(rest, " ")
+
+    Enum.find_value(1..(length(parts) - 1)//1, fn i ->
+      old = parts |> Enum.take(i) |> Enum.join(" ") |> side_path("a/")
+      new = parts |> Enum.drop(i) |> Enum.join(" ") |> side_path("b/")
+      if old != nil and old == new, do: new
+    end)
   end
 
   defp extract_diff_block_path(block) do
     lines = String.split(block, "\n")
-    # Strip the optional `\t<timestamp/mode>` suffix git appends in
-    # some configurations. Filename can contain spaces but not tab.
-    extract_marker_path(lines, "+++ b/") || extract_marker_path(lines, "--- a/")
+    extract_marker_path(lines, "+++ ", "b/") || extract_marker_path(lines, "--- ", "a/")
   end
 
-  defp extract_marker_path(lines, prefix) do
+  defp extract_marker_path(lines, marker, side) do
     Enum.find_value(lines, fn line ->
       case line do
-        ^prefix <> rest when rest != "" ->
-          rest |> String.split("\t", parts: 2) |> hd() |> trim_or_nil()
+        ^marker <> rest when rest != "" ->
+          # Strip the optional `\t<timestamp/mode>` suffix git appends
+          # in some configurations. A file name can contain a space but
+          # not a tab, and a quoted one carries `\t` as two characters.
+          rest |> String.split("\t", parts: 2) |> hd() |> side_path(side)
 
         _ ->
           nil
       end
     end)
   end
+
+  # `core.quotePath=false` stops git C-quoting a non-ASCII path, but it
+  # still quotes one holding a `"`, a `\` or a control character, so
+  # undo that before the `a/`/`b/` prefix comes off.
+  defp side_path(str, side) do
+    path = unquote_git_path(str)
+
+    if String.starts_with?(path, side) do
+      path |> String.replace_prefix(side, "") |> trim_or_nil()
+    end
+  end
+
+  defp unquote_git_path(<<?", rest::binary>>), do: unescape_git_path(rest, <<>>)
+  defp unquote_git_path(path), do: path
+
+  defp unescape_git_path(<<>>, acc), do: acc
+  defp unescape_git_path(<<?", _rest::binary>>, acc), do: acc
+
+  defp unescape_git_path(<<?\\, a, b, c, rest::binary>>, acc)
+       when a in ?0..?7 and b in ?0..?7 and c in ?0..?7 do
+    byte = (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)
+    unescape_git_path(rest, <<acc::binary, byte>>)
+  end
+
+  defp unescape_git_path(<<?\\, ch, rest::binary>>, acc) do
+    unescape_git_path(rest, <<acc::binary, escaped_byte(ch)>>)
+  end
+
+  defp unescape_git_path(<<ch, rest::binary>>, acc) do
+    unescape_git_path(rest, <<acc::binary, ch>>)
+  end
+
+  defp escaped_byte(?n), do: ?\n
+  defp escaped_byte(?t), do: ?\t
+  defp escaped_byte(?r), do: ?\r
+  defp escaped_byte(?a), do: 0x07
+  defp escaped_byte(?b), do: 0x08
+  defp escaped_byte(?f), do: 0x0C
+  defp escaped_byte(?v), do: 0x0B
+  defp escaped_byte(ch), do: ch
 
   defp trim_or_nil(""), do: nil
   defp trim_or_nil(s), do: s
@@ -665,6 +759,18 @@ defmodule Meerkat.Git do
 
       {output, code} ->
         {:error, "git #{Enum.join(args, " ")} exited #{code}: #{String.trim(output)}"}
+    end
+  end
+
+  # Like `run_git/2`, but leaving git's stderr where git put it. A
+  # warning about `.gitattributes` syntax merged into the NUL-separated
+  # `check-attr` answer lands inside the first path it reports.
+  # Only read-only lookups run here, so the failing command is safe to
+  # run a second time, merged, for the reason git wrote to stderr.
+  defp run_git_unmerged(repo_path, args) do
+    case System.cmd("git", args, cd: repo_path, env: @git_discovery_env_overrides) do
+      {output, 0} -> {:ok, output}
+      {_output, _code} -> run_git(repo_path, args)
     end
   end
 
