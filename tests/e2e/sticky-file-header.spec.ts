@@ -1,5 +1,6 @@
+import { rmSync } from "node:fs";
 import type { Page } from "@playwright/test";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, manifestRoot } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -9,15 +10,15 @@ const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
 const WRAPPED_WIDTHS = [1400, 900, 600];
 
-// A long branch name and commit subject, so the toolbar carries enough
-// to wrap at the widths below.
+// A branch name and commit subject long enough that the toolbar wraps
+// at 1400px, and short enough that it still fits one row at 1500px.
 function stickyFixture() {
 	const fixture = makeFixture({
 		commitMsg:
 			"Auto-approve a review nobody answers within 30 minutes\n\nBody paragraph.\n",
 		files: { "lib/tall.ex": TALL_FILE, "lib/second.ex": TALL_FILE },
 	});
-	fixture.git("branch", "-m", "feature/request-timing-instrumentation");
+	fixture.git("branch", "-m", "feature/request-timing-instrumentation-with-slow-route-alerts");
 	return fixture;
 }
 
@@ -59,10 +60,19 @@ async function scrollDeepIntoTheFirstFile(page: Page) {
 }
 
 test.describe("the file header stays readable while its diff scrolls", () => {
+	// A dev build's version chip reads `dev: <branch>` for the meerkat
+	// checkout, which would make the toolbar's width depend on that
+	// branch. A baked manifest pins the chip to a 7-character commit.
+	let releaseRoot: string;
+	test.beforeAll(() => {
+		releaseRoot = manifestRoot(["abc1234567890", "https://github.com/miridius/meerkat"]);
+	});
+	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
+
 	test(`the toolbar fits one row at ${ONE_ROW_WIDTH}px and wraps at ${WRAPPED_WIDTHS.join("px and ")}px`, async ({
 		page,
 	}) => {
-		const meerkat = await startMeerkat({ fixture: stickyFixture() });
+		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 		try {
 			await page.goto(meerkat.url);
 			await expect(page.getByRole("button", { name: /tall\.ex/ })).toBeVisible();
@@ -89,7 +99,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 		test(`at ${width}px the pinned header is not covered by the toolbar`, async ({
 			page,
 		}) => {
-			const meerkat = await startMeerkat({ fixture: stickyFixture() });
+			const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 			try {
 				await page.setViewportSize({ width, height: 800 });
 				await page.goto(meerkat.url);
@@ -114,7 +124,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	test("narrowing the window while the review is open re-pins the header", async ({
 		page,
 	}) => {
-		const meerkat = await startMeerkat({ fixture: stickyFixture() });
+		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 		try {
 			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
 			await page.goto(meerkat.url);
@@ -147,7 +157,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	test("the header is pinned correctly on the first paint, before any hook mounts", async ({
 		page,
 	}) => {
-		const meerkat = await startMeerkat({ fixture: stickyFixture() });
+		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 		// Its own page: ./lib/test's `goto` waits for LiveView to join,
 		// which cannot happen with the bundle blocked.
 		const bare = await page.context().newPage();

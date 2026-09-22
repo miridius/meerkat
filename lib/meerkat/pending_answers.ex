@@ -1,7 +1,8 @@
 defmodule Meerkat.PendingAnswers do
   @moduledoc """
-  Loads / clears the `pending-answers.json` file Claude writes after a
-  prior review's question-type comments. The file is per-worktree at
+  Stores, loads and clears the `pending-answers.json` file holding the
+  agent's answers to a prior review's question-type comments, as
+  handed over via `meerkat --answers`. The file is per-worktree at
   `<per-worktree-gitdir>/meerkat-precommit/pending-answers.json`.
   Schema version 1; returns `nil` for missing / empty payloads.
   Malformed / wrong-version files are logged to stderr and the bad file
@@ -24,12 +25,24 @@ defmodule Meerkat.PendingAnswers do
   @type payload :: %{version: pos_integer(), created_at: String.t(), answers: [answer]}
 
   @doc """
-  Schema version of the on-disk pending-answers file. Included in the
-  directive Claude reads so older binaries refuse to consume answers
-  written for a newer shape.
+  Store `input`, the agent's answers as JSON of the shape
+  `{"answers": [{"location", "question", "answer"}, ...]}`, as the
+  pending-answers file of the repo holding `path`, replacing any
+  earlier one. Returns `{:ok, count}` with the number of answers
+  stored, or, having written nothing, `{:error, kind, message}` with
+  the kind naming who has to act: `:not_a_repo` and `:invalid_input`
+  are the caller's to fix, `:write_failed` the machine's.
   """
-  @spec version() :: pos_integer()
-  def version, do: @version
+  @spec save(String.t(), binary()) ::
+          {:ok, pos_integer()}
+          | {:error, :not_a_repo | :invalid_input | :write_failed, String.t()}
+  def save(path, input) do
+    with {:ok, repo_path} <- toplevel(path),
+         {:ok, answers} <- parse_input(input),
+         :ok <- write(repo_path, answers) do
+      {:ok, length(answers)}
+    end
+  end
 
   @doc "Load pending answers for `repo_path`. Returns `nil` if absent / malformed / empty."
   @spec load(String.t()) :: payload | nil
@@ -98,12 +111,75 @@ defmodule Meerkat.PendingAnswers do
   @doc """
   Path the pending-answers file lives at for this repo's worktree.
 
-  Resolved via `git rev-parse --git-dir` so secondary worktrees get
-  `.git/worktrees/<name>/meerkat-precommit/pending-answers.json`.
+  Resolved via `Meerkat.Git.meerkat_dir/1`, so a secondary worktree
+  gets `.git/worktrees/<name>/meerkat-precommit/pending-answers.json`
+  and a subdirectory gets the same path as the worktree root.
   """
   @spec path_for(String.t()) :: String.t()
   def path_for(repo_path) do
     Path.join(Meerkat.Git.meerkat_dir(repo_path), "pending-answers.json")
+  end
+
+  # `Meerkat.Git.meerkat_dir/1` falls back to `<repo_path>/.git` when
+  # this fails, and a write there would plant a `.git/` in a directory
+  # that isn't a repo.
+  defp toplevel(path) do
+    case Meerkat.Git.toplevel(path) do
+      {:ok, _} = ok -> ok
+      {:error, reason} -> {:error, :not_a_repo, "not a git repository: #{reason}"}
+    end
+  end
+
+  defp parse_input(input) do
+    case Jason.decode(input) do
+      {:ok, %{"answers" => answers}} when is_list(answers) and answers != [] ->
+        validate_answers(answers)
+
+      {:ok, %{"answers" => []}} ->
+        {:error, :invalid_input, ~s("answers" must not be empty)}
+
+      {:ok, %{"answers" => _}} ->
+        {:error, :invalid_input, ~s("answers" must be a list)}
+
+      {:ok, %{}} ->
+        {:error, :invalid_input, ~s(missing "answers" list)}
+
+      {:ok, _} ->
+        {:error, :invalid_input, ~s(expected a JSON object with an "answers" list)}
+
+      {:error, %Jason.DecodeError{} = err} ->
+        {:error, :invalid_input, "invalid JSON: #{Exception.message(err)}"}
+    end
+  end
+
+  defp validate_answers(answers) do
+    answers
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn
+      {%{"location" => loc, "question" => q, "answer" => a}, _}, {:ok, acc}
+      when is_binary(loc) and is_binary(q) and is_binary(a) ->
+        {:cont, {:ok, [%{"location" => loc, "question" => q, "answer" => a} | acc]}}
+
+      {_, idx}, _ ->
+        {:halt,
+         {:error, :invalid_input,
+          ~s(answers[#{idx}] must have string "location", "question" and "answer")}}
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      err -> err
+    end
+  end
+
+  defp write(repo_path, answers) do
+    created_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    payload = %{"version" => @version, "createdAt" => created_at, "answers" => answers}
+    path = path_for(repo_path)
+
+    case Meerkat.AtomicFile.write(path, Jason.encode!(payload)) do
+      :ok -> :ok
+      {:error, reason} -> {:error, :write_failed, "couldn't write #{path}: #{inspect(reason)}"}
+    end
   end
 
   defp decode_answer(%{"location" => loc, "question" => q, "answer" => a}) do

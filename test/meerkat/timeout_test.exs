@@ -160,6 +160,12 @@ defmodule Meerkat.TimeoutTest do
       assert File.exists?(run_dir(repo, "recent"))
     end
 
+    test "a repo that has never held an anchor is pruned without error", %{repo: repo} do
+      repo |> run_dir("any") |> Path.dirname() |> File.rm_rf!()
+
+      assert with_run_id("current", fn -> Timeout.prune_stale(repo) end) == :ok
+    end
+
     test "this run's own anchors survive however old they are", %{repo: repo} do
       with_run_id("current", fn -> Timeout.deadline_ms(repo, "abc123") end)
       backdate(run_dir(repo, "current"), Timeout.limit_ms() + 60_000)
@@ -198,6 +204,18 @@ defmodule Meerkat.TimeoutTest do
       Application.delete_env(:meerkat, :review_state)
 
       assert {:timeout, ""} = Timeout.decision(repo, "abc123")
+    end
+
+    test "with no review state to read, no comments are reported lost", %{repo: repo} do
+      Application.delete_env(:meerkat, :review_state)
+
+      warning =
+        capture_io(:stderr, fn ->
+          send(self(), {:decision, Timeout.decision(repo, "abc123")})
+        end)
+
+      assert_received {:decision, {:timeout, ""}}
+      assert warning == ""
     end
 
     test "comments saved with no browser connected still reach the agent", %{repo: repo} do

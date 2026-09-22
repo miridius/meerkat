@@ -25,6 +25,30 @@ export MEERKAT_CURRENT_LINK="$CURRENT_LINK"
 
 RESTART_EXIT_CODE=75
 
+resolve_release() {
+  RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
+  if [[ -z "$RELEASE_DIR" || ! -x "$RELEASE_DIR/bin/meerkat" ]]; then
+    echo "meerkat: no current release at $CURRENT_LINK; re-run scripts/install.sh from the meerkat repo." >&2
+    exit 127
+  fi
+}
+
+# `--answers` reads the answers from stdin, and the loop below starts
+# the BEAM as a background job, which bash gives /dev/null as stdin.
+# So it runs once, in the foreground, with no retry to re-read a
+# stdin already consumed.
+for arg in "$@"; do
+  if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
+    if [[ -t 0 ]]; then
+      echo "meerkat: --answers reads the answers as JSON on stdin; pipe them in, e.g. meerkat --answers < answers.json" >&2
+      exit 64
+    fi
+    resolve_release
+    exec "$RELEASE_DIR/bin/meerkat" \
+      eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
+  fi
+done
+
 # Deterministic port from (cwd, args) so a respawn, and a fresh
 # git-commit re-invocation of the same review, reuse the same port and
 # the browser tab reconnects without re-navigation. Same formula and
@@ -93,11 +117,7 @@ trap on_signal TERM INT HUP
 
 crashed=0
 while true; do
-  RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
-  if [[ -z "$RELEASE_DIR" || ! -x "$RELEASE_DIR/bin/meerkat" ]]; then
-    echo "meerkat: no current release at $CURRENT_LINK; re-run scripts/install.sh from the meerkat repo." >&2
-    exit 127
-  fi
+  resolve_release
 
   "$RELEASE_DIR/bin/meerkat" \
     eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "${run_args[@]}" &

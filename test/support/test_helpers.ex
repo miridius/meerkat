@@ -28,4 +28,38 @@ defmodule Meerkat.TestHelpers do
     File.mkdir_p!(Path.join(dir, ".git"))
     dir
   end
+
+  # Under a git hook (the pre-push `mix test`) git exports GIT_DIR
+  # pointing at meerkat's own gitdir, which overrides `cd: dir` and
+  # would build the fixture repo in the wrong place. Same set as
+  # `Meerkat.Git` strips.
+  @git_discovery_overrides Enum.map(
+                             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+                                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+                                GIT_NAMESPACE),
+                             &{&1, nil}
+                           )
+
+  @spec git(String.t(), [String.t()]) :: String.t()
+  def git(dir, args) do
+    {out, code} =
+      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
+
+    if code != 0, do: ExUnit.Assertions.flunk("git #{Enum.join(args, " ")} failed: #{out}")
+    String.trim(out)
+  end
+
+  @doc """
+  Like `make_tmp_repo/1`, but the `.git` is a real `git init` so
+  `Meerkat.Git` calls that shell out to git succeed.
+  """
+  @spec make_git_repo(String.t()) :: String.t()
+  def make_git_repo(prefix \\ "meerkat-test") do
+    dir = make_tmp_repo(prefix)
+    File.rm_rf!(Path.join(dir, ".git"))
+
+    git(dir, ["init", "-q"])
+
+    dir
+  end
 end

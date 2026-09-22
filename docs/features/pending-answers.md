@@ -6,18 +6,50 @@ questions left by a prior round.
 
 ## Why
 
-Some review cycles end with the agent asking the human for
-clarification (rather than accepting / rejecting a change). Those
-questions live in
-`<gitdir>/meerkat-precommit/pending-answers.json`. The next
-meerkat invocation loads them and shows them pinned, so the
-reviewer doesn't lose track of what they still owe the agent.
+Some review cycles end with the reviewer asking the agent a
+question (a `question`-type comment) rather than accepting /
+rejecting a change. The feedback meerkat prints tells the agent to
+answer and hand the answers back with `meerkat --answers`, which
+stores them in `<gitdir>/meerkat-precommit/pending-answers.json`.
+The next meerkat invocation loads them and shows them pinned, so
+the reviewer sees the answers next to the diff they asked about.
+
+## How answers arrive
+
+The agent runs, from the repo:
+
+```sh
+meerkat --answers <<'JSON'
+{
+  "answers": [
+    {
+      "location": "src/foo.clj:123",
+      "question": "Did you mean to also touch the X handler?",
+      "answer": "Yes — landing in a follow-up PR."
+    }
+  ]
+}
+JSON
+```
+
+`PendingAnswers.save/2` validates the JSON (an object with a
+non-empty `answers` list whose entries each have string `location`,
+`question` and `answer`), stamps `version` and `createdAt`, and
+writes the file atomically. Exit `0` on success; exit `1` with the
+reason on stderr, and no file written, on bad input. A failure the
+agent cannot fix by sending better JSON exits `64`, `74` or `2`
+instead, so it knows to stop retrying: see
+[cli.md](cli.md#exit-codes). A repeat run replaces the earlier
+answers. The agent never writes the file itself.
 
 ## Schema
 
+The stored file:
+
 ```json
 {
-  "schema_version": 1,
+  "version": 1,
+  "createdAt": "2026-04-25T12:34:56Z",
   "answers": [
     {
       "location": "src/foo.clj:123",
@@ -28,15 +60,14 @@ reviewer doesn't lose track of what they still owe the agent.
 }
 ```
 
-Best-effort: a missing file, malformed JSON, or wrong
-`schema_version` → `PendingAnswers.load/1` returns `nil` and no
-banner renders. A real fault leaves a `:stderr` warning but never
-takes the review down.
+Best-effort: a missing file, malformed JSON, or wrong `version` →
+`PendingAnswers.load/1` returns `nil` and no banner renders. A real
+fault leaves a `:stderr` warning but never takes the review down.
 
 ## Lifecycle
 
-- Written by external tooling (the agent calling meerkat) before
-  invoking `meerkat`.
+- Written by `meerkat --answers` before the agent's next `git commit`
+  or bare `meerkat`.
 - Read once at `mount/3` via `PendingAnswers.load(repo_path)`.
 - Cleared on ANY terminal decision (Approve / Reject / Cancel)
   via `clear_pending_answers/0` → `PendingAnswers.clear(repo_path)`

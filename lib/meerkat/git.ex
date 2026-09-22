@@ -117,7 +117,7 @@ defmodule Meerkat.Git do
   @spec fetch_staged_blob_oid(String.t(), String.t()) ::
           {:ok, String.t()} | :not_staged | {:error, String.t()}
   def fetch_staged_blob_oid(repo_path, path) do
-    case run_git(repo_path, ["ls-files", "-s", "--", path]) do
+    case run_git(repo_path, ["--literal-pathspecs", "ls-files", "-s", "--", path]) do
       {:ok, ""} ->
         :not_staged
 
@@ -164,7 +164,9 @@ defmodule Meerkat.Git do
     # the `file_name` keys (which come from `--name-status -z`, never
     # quoted); the default C-quoting would never match and the approval
     # would silently fail to persist.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-files", "-s", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-files", "-s", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -200,7 +202,9 @@ defmodule Meerkat.Git do
   def head_blob_oids_many(repo_path, paths) when is_list(paths) do
     # `core.quotePath=false` for the same raw-path-matching reason as
     # `staged_blob_oids_many`.
-    case run_git(repo_path, ["-c", "core.quotePath=false", "ls-tree", "HEAD", "--"] ++ paths) do
+    args = ["--literal-pathspecs", "-c", "core.quotePath=false", "ls-tree", "HEAD", "--"]
+
+    case run_git(repo_path, args ++ paths) do
       {:ok, output} ->
         map =
           output
@@ -251,9 +255,10 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Batched `linguist-generated` lookup — one `git check-attr --stdin`
+  Batched `linguist-generated` lookup — one `git check-attr`
   shell-out for every path supplied. Returns a map of `path =>
-  {:generated, boolean} | {:error, reason}`.
+  {:generated, boolean} | {:error, reason}`, holding an entry for
+  every path passed in.
 
   Materialise + auto-approve both consume the same map so we don't
   spawn `git check-attr` per file twice. Failure cases are explicit
@@ -268,23 +273,29 @@ defmodule Meerkat.Git do
 
   def linguist_generated_many(repo_path, paths) when is_list(paths) do
     # `git check-attr <attr> -- <paths>` takes paths positionally and
-    # emits `<path>: <attr>: <value>` per line. One shell-out for the
+    # answers every path in a single shell-out, so running it for the
     # whole list keeps cost flat. Passing the paths via `--stdin`
     # would have a smaller argv, but `System.cmd` can't write to a
     # spawned process's stdin without falling back to a Port +
     # close-after-write that races the child's read; positional args
     # avoid that race entirely.
-    args = ["check-attr", "linguist-generated", "--"] ++ paths
+    args = ["check-attr", "-z", "linguist-generated", "--"] ++ paths
 
-    case run_git(repo_path, args) do
+    case run_git_unmerged(repo_path, args) do
       {:ok, output} ->
-        parsed = parse_check_attr_output(output)
+        # Key on the path git echoes, which `-z` gives back exactly as
+        # passed. Zipping the values onto the argument list by position
+        # hands one file's answer to another whenever the rows drift.
+        answered =
+          output
+          |> String.split(<<0>>)
+          |> Enum.chunk_every(3, 3, :discard)
+          |> Map.new(fn [path, _attr, value] ->
+            {path, {:generated, value in ["true", "set"]}}
+          end)
 
         Map.new(paths, fn p ->
-          case Map.fetch(parsed, p) do
-            {:ok, value} -> {p, {:generated, value in ["true", "set"]}}
-            :error -> {p, {:error, "no `linguist-generated` line for #{p} in check-attr output"}}
-          end
+          {p, Map.get(answered, p, {:error, "`git check-attr` returned no row for #{p}"})}
         end)
 
       {:error, reason} ->
@@ -311,20 +322,6 @@ defmodule Meerkat.Git do
       {:error, _} -> false
       nil -> false
     end
-  end
-
-  defp parse_check_attr_output(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.reduce(%{}, fn line, acc ->
-      # `<path>: linguist-generated: <value>` — value may contain
-      # whitespace if attribute set to a string, but for
-      # linguist-generated it's `true`/`false`/`set`/`unset`/`unspecified`.
-      case String.split(line, ": ", parts: 3) do
-        [path, "linguist-generated", value] -> Map.put(acc, path, value)
-        _ -> acc
-      end
-    end)
   end
 
   @doc """
@@ -378,12 +375,27 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`.
-  Falls back to `<repo_path>/.git/meerkat-precommit` if `git_dir/1`
-  fails — keeps the rest of meerkat working in a half-busted repo
-  where the rev-parse misbehaves. Use this as the base for any
-  per-worktree path (in-progress snapshots, review logs,
-  pending-answers).
+  Resolve the worktree root holding `path` via `git rev-parse
+  --show-toplevel`. Unlike `git_dir/1` it walks upward without a
+  ceiling, so `meerkat --answers` works from any subdirectory.
+  """
+  @spec toplevel(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def toplevel(path) do
+    case run_git(path, ["rev-parse", "--show-toplevel"]) do
+      {:ok, output} -> {:ok, String.trim(output)}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`,
+  for the worktree holding `repo_path`. A subdirectory of the
+  worktree resolves to the same directory as its root, so state
+  stored by one call is found by the next whatever directory it runs
+  in. Falls back to `<repo_path>/.git/meerkat-precommit` where
+  `repo_path` is in no repo, or the rev-parse misbehaves. Use this as
+  the base for any per-worktree path (in-progress snapshots, review
+  logs, pending-answers).
 
   Reads the cached value from `Application.get_env(:meerkat,
   :meerkat_dir)` when present so the LV's per-mutation save path
@@ -400,10 +412,20 @@ defmodule Meerkat.Git do
   end
 
   defp resolve_meerkat_dir(repo_path) do
+    # Resolve the worktree root first, so a path inside a repo lands on
+    # that repo's gitdir however deep it sits. A path in no repo has no
+    # root to find, and `git_dir/1`'s ceiling then keeps the fallback
+    # local instead of walking up into an ancestor repo.
+    root =
+      case toplevel(repo_path) do
+        {:ok, root} -> root
+        {:error, _} -> repo_path
+      end
+
     base =
-      case git_dir(repo_path) do
+      case git_dir(root) do
         {:ok, dir} -> dir
-        {:error, _} -> Path.join(repo_path, ".git")
+        {:error, _} -> Path.join(root, ".git")
       end
 
     Path.join(base, "meerkat-precommit")
@@ -445,7 +467,7 @@ defmodule Meerkat.Git do
       # would let a reviewer approve what looks like an empty diff.
       {hunks_map, batched_hunks_error} =
         case staged_hunks_many(repo_path) do
-          {:ok, map} -> {map, []}
+          {:ok, map, parse_errors} -> {map, parse_errors}
           {:error, reason} -> {%{}, [reason]}
         end
 
@@ -483,13 +505,15 @@ defmodule Meerkat.Git do
   # `diff --git a/<old> b/<new>` header is ambiguous when paths contain
   # a literal ` b/` because git uses spaces to separate old/new.
   @spec staged_hunks_many(String.t()) ::
-          {:ok, %{String.t() => {[String.t()], [String.t()]}}} | {:error, String.t()}
+          {:ok, %{String.t() => {[String.t()], [String.t()]}}, [String.t()]}
+          | {:error, String.t()}
   defp staged_hunks_many(repo_path) do
     args = ["-c", "core.quotePath=false", "diff", "--cached", "-U3", "-w", "-M"]
 
     case run_git(repo_path, args) do
       {:ok, output} ->
-        {:ok, parse_multi_file_diff(output)}
+        {map, parse_errors} = parse_multi_file_diff(output)
+        {:ok, map, parse_errors}
 
       {:error, reason} ->
         msg =
@@ -506,30 +530,29 @@ defmodule Meerkat.Git do
   # inside `staged_hunks_many`.
   def parse_multi_file_diff_for_test(output), do: parse_multi_file_diff(output)
 
-  defp parse_multi_file_diff(""), do: %{}
+  defp parse_multi_file_diff(""), do: {%{}, []}
 
   defp parse_multi_file_diff(output) do
     output
     |> String.split(~r/^(?=diff --git )/m, trim: true)
-    |> Enum.reduce(%{}, fn block, acc ->
+    |> Enum.reduce({%{}, []}, fn block, {acc, errors} ->
       case parse_diff_block(block) do
-        {:ok, name, hunks} ->
-          Map.put(acc, name, {hunks, []})
+        {:ok, name, hunks, block_errors} ->
+          {Map.put(acc, name, {hunks, block_errors}), errors}
 
         :error ->
-          # Unparseable block — log so the DiffViewer's red banner +
-          # this stderr breadcrumb together tell the user something's
-          # wrong. The materialise_staged caller can't attribute the
-          # parse failure to a specific file (the block's own header
-          # is what failed to parse), so the warning is global.
-          IO.puts(
-            :stderr,
-            "meerkat: warning — couldn't parse staged-diff block; " <>
-              "one file's hunks may render empty (first line: " <>
-              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)})"
-          )
+          # Unparseable block — the caller can't attribute the failure
+          # to a file (the block's own header is what failed to parse),
+          # so every staged file takes the error and carries the red
+          # banner. Dropping the block silently would take a file the
+          # reviewer never saw out of the review.
+          msg =
+            "couldn't parse staged-diff block (first line: " <>
+              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)}); " <>
+              "a file's diff may be missing"
 
-          acc
+          IO.puts(:stderr, "meerkat: warning — #{msg}")
+          {acc, errors ++ [msg]}
       end
     end)
   end
@@ -540,33 +563,70 @@ defmodule Meerkat.Git do
   # pre-image. Returns `{:ok, name, hunks}` or `:error` if the block
   # has neither marker (malformed git output).
   defp parse_diff_block(block) do
-    name = extract_diff_block_path(block)
+    case extract_diff_block_path(block) do
+      nil ->
+        parse_binary_block(block)
 
-    if name == nil do
-      :error
-    else
-      hunks =
-        block
-        |> String.split(~r/^(?=@@ )/m, trim: true)
-        |> Enum.filter(&String.starts_with?(&1, "@@"))
-        |> Meerkat.Intraline.split()
+      name ->
+        hunks =
+          block
+          |> String.split(~r/^(?=@@ )/m, trim: true)
+          |> Enum.filter(&String.starts_with?(&1, "@@"))
+          |> Meerkat.Intraline.split()
 
-      {:ok, name, hunks}
+        {:ok, name, hunks, []}
     end
+  end
+
+  # A binary file's block carries no `+++`/`---` markers at all, so the
+  # only path git gives us is the ambiguous `diff --git a/<old> b/<new>`
+  # header. Take it when both sides name the same file, which every
+  # binary block does except a rename.
+  defp parse_binary_block(block) do
+    with true <- binary_block?(block),
+         name when is_binary(name) <- binary_block_path(block) do
+      {:ok, name, [], ["binary file: git reports no text diff"]}
+    else
+      _ -> :error
+    end
+  end
+
+  defp binary_block?(block) do
+    block
+    |> String.split("\n")
+    |> Enum.any?(&(String.starts_with?(&1, "Binary files ") or &1 == "GIT binary patch"))
+  end
+
+  defp binary_block_path(block) do
+    case block |> String.split("\n", parts: 2) |> hd() do
+      "diff --git " <> rest -> same_sided_path(rest)
+      _ -> nil
+    end
+  end
+
+  defp same_sided_path(rest) do
+    parts = String.split(rest, " ")
+
+    Enum.find_value(1..(length(parts) - 1)//1, fn i ->
+      old = parts |> Enum.take(i) |> Enum.join(" ") |> side_path("a/")
+      new = parts |> Enum.drop(i) |> Enum.join(" ") |> side_path("b/")
+      if old != nil and old == new, do: new
+    end)
   end
 
   defp extract_diff_block_path(block) do
     lines = String.split(block, "\n")
-    # Strip the optional `\t<timestamp/mode>` suffix git appends in
-    # some configurations. Filename can contain spaces but not tab.
-    extract_marker_path(lines, "+++ b/") || extract_marker_path(lines, "--- a/")
+    extract_marker_path(lines, "+++ ", "b/") || extract_marker_path(lines, "--- ", "a/")
   end
 
-  defp extract_marker_path(lines, prefix) do
+  defp extract_marker_path(lines, marker, side) do
     Enum.find_value(lines, fn line ->
       case line do
-        ^prefix <> rest when rest != "" ->
-          rest |> String.split("\t", parts: 2) |> hd() |> trim_or_nil()
+        ^marker <> rest when rest != "" ->
+          # Strip the optional `\t<timestamp/mode>` suffix git appends
+          # in some configurations. A file name can contain a space but
+          # not a tab, and a quoted one carries `\t` as two characters.
+          rest |> String.split("\t", parts: 2) |> hd() |> side_path(side)
 
         _ ->
           nil
@@ -574,13 +634,53 @@ defmodule Meerkat.Git do
     end)
   end
 
+  # `core.quotePath=false` stops git C-quoting a non-ASCII path, but it
+  # still quotes one holding a `"`, a `\` or a control character, so
+  # undo that before the `a/`/`b/` prefix comes off.
+  defp side_path(str, side) do
+    path = unquote_git_path(str)
+
+    if String.starts_with?(path, side) do
+      path |> String.replace_prefix(side, "") |> trim_or_nil()
+    end
+  end
+
+  defp unquote_git_path(<<?", rest::binary>>), do: unescape_git_path(rest, <<>>)
+  defp unquote_git_path(path), do: path
+
+  defp unescape_git_path(<<>>, acc), do: acc
+  defp unescape_git_path(<<?", _rest::binary>>, acc), do: acc
+
+  defp unescape_git_path(<<?\\, a, b, c, rest::binary>>, acc)
+       when a in ?0..?7 and b in ?0..?7 and c in ?0..?7 do
+    byte = (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)
+    unescape_git_path(rest, <<acc::binary, byte>>)
+  end
+
+  defp unescape_git_path(<<?\\, ch, rest::binary>>, acc) do
+    unescape_git_path(rest, <<acc::binary, escaped_byte(ch)>>)
+  end
+
+  defp unescape_git_path(<<ch, rest::binary>>, acc) do
+    unescape_git_path(rest, <<acc::binary, ch>>)
+  end
+
+  defp escaped_byte(?n), do: ?\n
+  defp escaped_byte(?t), do: ?\t
+  defp escaped_byte(?r), do: ?\r
+  defp escaped_byte(?a), do: 0x07
+  defp escaped_byte(?b), do: 0x08
+  defp escaped_byte(?f), do: 0x0C
+  defp escaped_byte(?v), do: 0x0B
+  defp escaped_byte(ch), do: ch
+
   defp trim_or_nil(""), do: nil
   defp trim_or_nil(s), do: s
 
   # Drop modified files with no remaining hunks under `-w`. Added /
   # deleted / renamed still surface even with empty hunks, because the
   # file existence change itself is information the reviewer wants.
-  defp whitespace_only?(%{status: :modified, hunks: []}), do: true
+  defp whitespace_only?(%{status: :modified, hunks: [], read_errors: []}), do: true
   defp whitespace_only?(_), do: false
 
   @doc """
@@ -664,6 +764,18 @@ defmodule Meerkat.Git do
     end
   end
 
+  # Like `run_git/2`, but leaving git's stderr where git put it. A
+  # warning about `.gitattributes` syntax merged into the NUL-separated
+  # `check-attr` answer lands inside the first path it reports.
+  # Only read-only lookups run here, so the failing command is safe to
+  # run a second time, merged, for the reason git wrote to stderr.
+  defp run_git_unmerged(repo_path, args) do
+    case System.cmd("git", args, cd: repo_path, env: @git_discovery_env_overrides) do
+      {output, 0} -> {:ok, output}
+      {_output, _code} -> run_git(repo_path, args)
+    end
+  end
+
   # Like `run_git/2` but with `GIT_CEILING_DIRECTORIES` set to the
   # parent of `repo_path`, so rev-parse can't escape upward into an
   # ancestor git repo. Used by `git_dir/1` / `git_common_dir/1` —
@@ -687,7 +799,7 @@ defmodule Meerkat.Git do
 
   ## Body materialisation
   #
-  # `git show :path` reads from the index (staged); `git show HEAD:path`
+  # `git show :0:path` reads from the index (staged); `git show HEAD:path`
   # reads from the last commit. For a fresh repo (no HEAD) the HEAD
   # read fails → empty old_content + an error recorded in :read_errors
   # for the reviewer to see. Added files have no old_content; deleted
@@ -800,8 +912,20 @@ defmodule Meerkat.Git do
 
     diff_args =
       case entry.status do
-        :renamed -> ["diff", "-U3", "-M", "#{base_ref}..#{head_ref}", "--", old_name, name]
-        _ -> ["diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
+        :renamed ->
+          [
+            "--literal-pathspecs",
+            "diff",
+            "-U3",
+            "-M",
+            "#{base_ref}..#{head_ref}",
+            "--",
+            old_name,
+            name
+          ]
+
+        _ ->
+          ["--literal-pathspecs", "diff", "-U3", "#{base_ref}..#{head_ref}", "--", name]
       end
 
     {old, errs_old} =
@@ -829,6 +953,11 @@ defmodule Meerkat.Git do
       is_generated: is_gen
     }
   end
+
+  @doc false
+  # Test seam for `lookup_generated/2` — the batched map's error and
+  # missing entries are what a caller never produces on demand.
+  def lookup_generated_for_test(generated_map, name), do: lookup_generated(generated_map, name)
 
   # Pull the per-file linguist-generated answer out of the batched map.
   # `{:generated, bool}` → use; `{:error, msg}` or missing → surface
@@ -878,10 +1007,11 @@ defmodule Meerkat.Git do
     end
   end
 
-  # Read the staged (index) version of a file. Bare `:path` selects
-  # the index; identical to `git diff --cached`'s "after" side.
+  # Read the staged (index) version of a file. `:0:path` selects the
+  # index; identical to `git diff --cached`'s "after" side. The stage is
+  # explicit so a path like `0:foo` is not taken for a stage number.
   defp read_index(repo_path, path) do
-    case run_git(repo_path, ["show", ":#{path}"]) do
+    case run_git(repo_path, ["show", ":0:#{path}"]) do
       {:ok, content} ->
         {content, []}
 
