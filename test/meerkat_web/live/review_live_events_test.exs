@@ -67,7 +67,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # and inherit a stale repo (staged files, persistence snapshots).
     suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
-    dir = Path.join(System.tmp_dir!(), "meerkat-lv-\#{suffix}")
+    dir = Path.join(System.tmp_dir!(), "meerkat-lv-#{suffix}")
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     {_, 0} = System.cmd("git", ["init", "-q"], cd: dir)
