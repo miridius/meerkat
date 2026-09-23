@@ -162,6 +162,24 @@ defmodule Meerkat.FeedbackTest do
       out = Feedback.format(state_with_global_comment(), :rejection)
       refute out =~ "meerkat --answers"
     end
+
+    test "the no-code-changes trigger is honest — a clean staged diff still reopens, never silently drops" do
+      state = %ReviewState{
+        global_comments: [comment(body: "why?", finding_type: :question)]
+      }
+
+      out = Feedback.format(state, :rejection)
+
+      # The whole point of the directive: the agent may run `meerkat`
+      # (no args) after the committing review has consumed the staged
+      # diff, and the answers must still reach the reviewer — over an
+      # empty diff if need be — rather than being discarded by an
+      # auto-approve.
+      assert out =~ "run `meerkat` (no args)"
+      assert out =~ "empty diff"
+      assert out =~ "will not auto-approve while answers are pending"
+      refute out =~ "current staged diff"
+    end
   end
 
   describe "section renderers (via format/2)" do

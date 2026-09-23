@@ -5,7 +5,25 @@ defmodule Meerkat.CLITest do
 
   require Logger
 
-  alias Meerkat.{ApprovalCache, CLI, ReviewLog}
+  alias Meerkat.{ApprovalCache, CLI, PendingAnswers, ReviewLog}
+
+  defp write_pending_answers(repo) do
+    path = PendingAnswers.path_for(repo)
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(
+      path,
+      Jason.encode!(%{
+        "version" => 1,
+        "createdAt" => "2026-05-14T00:00:00Z",
+        "answers" => [
+          %{"location" => "src/foo.rs:42", "question" => "why this?", "answer" => "because"}
+        ]
+      })
+    )
+
+    path
+  end
 
   # Env vars are process-global; async: true is safe only because each
   # var set here is read by the CLI alone and restored before exit.
@@ -788,6 +806,80 @@ defmodule Meerkat.CLITest do
       assert out =~ "PAYLOAD-BODY"
       assert length(Regex.scan(~r/Review timed out, commit auto-approved unread/, out)) == 2
       refute out =~ "User approved"
+    end
+  end
+
+  describe "auto_approve_decision/2 — pending-answers gate (real git fixture)" do
+    # Real-git fixture (not async: each test owns a tmp repo and shells
+    # out to `git`). A prior review's **question**-type comments leave a
+    # pending-answers.json in the worktree's gitdir; the staged
+    # auto-approve fast path must NEVER fire while it exists, or the
+    # agent's answers get silently discarded (the "meerkat drops answers
+    # on a clean tree" bug). The reviewer sees them via a live review
+    # instead, and only a terminal decision clears the file.
+    setup do
+      dir =
+        Path.join(System.tmp_dir!(), "meerkat-cli-gate-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(dir)
+      git(dir, ["init", "-q", "-b", "main"])
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+      File.write!(Path.join(dir, "seed.rs"), "fn seed() {}\n")
+      git(dir, ["add", "seed.rs"])
+      git(dir, ["commit", "-qm", "seed"])
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    test "empty staged diff + no pending answers → auto-approves (fast path unchanged)",
+         %{dir: dir} do
+      # The smoke-test path in scripts/install.sh and message-only
+      # `git commit --amend` rely on this still skipping the UI.
+      # Exact message: a mutation that drops the empty-staged clause
+      # would surface the vacuous all-generated wording instead.
+      assert {:auto, "meerkat: no staged file changes — auto-approving.\n"} =
+               CLI.auto_approve_decision_for_test(dir)
+    end
+
+    test "staged unapproved file + no pending answers → live review (safety invariant)", %{
+      dir: dir
+    } do
+      # The unreviewed-file guard: a staged file that is neither
+      # generated nor already-approved must reach the UI even with no
+      # pending answers.
+      File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
+      git(dir, ["add", "a.rs"])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "empty staged diff + pending answers → live review, never auto-approve", %{dir: dir} do
+      write_pending_answers(dir)
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "auto_approve_decision/2 with pending answers leaves the file in place", %{dir: dir} do
+      path = write_pending_answers(dir)
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+      assert File.exists?(path)
+    end
+
+    test "staged file + pending answers → live review even when every file is approved", %{
+      dir: dir
+    } do
+      # A file already approved at its staged OID would otherwise hit
+      # the all-approved auto-approve branch — with answers pending the
+      # gate must block that too, or they'd be discarded mid-iteration.
+      File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
+      git(dir, ["add", "a.rs"])
+      oid = git(dir, ["rev-parse", ":a.rs"])
+
+      with path <- ApprovalCache.path_for(dir) do
+        {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      end
+
+      write_pending_answers(dir)
+      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
   end
 end

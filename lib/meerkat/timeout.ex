@@ -22,18 +22,25 @@ defmodule Meerkat.Timeout do
 
   @doc """
   Returns how long a review may run, in milliseconds. `MEERKAT_REVIEW_TIMEOUT`
-  overrides the default, in whole seconds.
+  overrides the default, in whole seconds; `0` disables the deadline
+  entirely, leaving the review open until a human answers or kills it.
   """
-  @spec limit_ms() :: pos_integer()
+  @spec limit_ms() :: pos_integer() | :infinity
   def limit_ms do
     with raw when is_binary(raw) <- System.get_env("MEERKAT_REVIEW_TIMEOUT"),
          {seconds, ""} <- Integer.parse(String.trim(raw)),
-         true <- seconds > 0 do
-      seconds * 1000
+         true <- seconds >= 0 do
+      if seconds == 0, do: :infinity, else: seconds * 1000
     else
       _ -> @default_limit_ms
     end
   end
+
+  @doc """
+  True when `MEERKAT_REVIEW_TIMEOUT=0` has disabled the deadline entirely.
+  """
+  @spec disabled?() :: boolean()
+  def disabled?, do: limit_ms() == :infinity
 
   @spec check_interval_ms() :: pos_integer()
   def check_interval_ms do
@@ -41,12 +48,13 @@ defmodule Meerkat.Timeout do
   end
 
   @doc """
-  Returns the epoch millisecond at which `review_id` runs out. Stable
-  across every call within one launcher run, and fresh in the next one.
+  Returns the epoch millisecond at which `review_id` runs out — nil when
+  the deadline is disabled. Stable across every call within one launcher
+  run, and fresh in the next one.
   """
-  @spec deadline_ms(String.t(), String.t()) :: integer()
+  @spec deadline_ms(String.t(), String.t()) :: integer() | nil
   def deadline_ms(repo_path, review_id) do
-    started_at_ms(repo_path, review_id) + limit_ms()
+    if disabled?(), do: nil, else: started_at_ms(repo_path, review_id) + limit_ms()
   end
 
   @spec expired?(integer()) :: boolean()
@@ -65,10 +73,19 @@ defmodule Meerkat.Timeout do
 
   @doc """
   Deletes the deadline directory of every run but this one, once it is
-  older than `limit_ms/0`.
+  older than `limit_ms/0`. Never prunes when the deadline is disabled:
+  there is no age past which a still-live run's anchor is stale.
   """
   @spec prune_stale(String.t()) :: :ok
   def prune_stale(repo_path) do
+    if disabled?() do
+      :ok
+    else
+      do_prune_stale(repo_path)
+    end
+  end
+
+  defp do_prune_stale(repo_path) do
     parent = Path.dirname(run_dir(repo_path))
     keep = run_id()
     cutoff_s = System.system_time(:second) - div(limit_ms(), 1000)
