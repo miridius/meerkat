@@ -14,6 +14,20 @@ defmodule Meerkat.MarkdownTest do
     end
   end
 
+  # Both non-binary-side mutants muex reported here are provably equivalent:
+  # flipping the guard's `and` to `or` (or deleting the empty-string fast-path
+  # clause) cannot change any observable outcome — a non-binary side always
+  # raises FunctionClauseError whether from the guard or from String.split,
+  # and an empty body renders to zero bytes through the full pipeline.
+  # These tests pin the documented contract, not the mutant kills.
+  describe "render_diff_sides/3 — guard contract" do
+    test "a non-binary side is rejected" do
+      assert_raise FunctionClauseError, fn ->
+        Markdown.render_diff_sides(nil, "# New", :modified)
+      end
+    end
+  end
+
   describe "to_safe_html/1 — basic markdown" do
     test "renders bold" do
       assert Markdown.to_safe_html("**bold**") =~ "<strong>bold</strong>"
