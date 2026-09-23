@@ -13,7 +13,7 @@ const WRAPPED_WIDTHS = [1150, 900, 600];
 // A branch name and commit subject long enough that the toolbar wraps
 // at 1400px, and short enough that it still fits one row at 1500px.
 function stickyFixture() {
-	return makeFixture({
+	const fixture = makeFixture({
 		commitMsg:
 			"Auto-approve a review nobody answers within 30 minutes\n\nBody paragraph.\n",
 		files: { "lib/tall.ex": TALL_FILE, "lib/second.ex": TALL_FILE },
