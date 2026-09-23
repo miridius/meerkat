@@ -94,6 +94,44 @@ defmodule Meerkat.GitBinaryTest do
     end)
   end
 
+  test "numstat output truncated mid-entry degrades to a listed read error", %{dir: dir} do
+    stage(dir, "a.txt", "one\n")
+    git(dir, ["commit", "-qm", "base"])
+    stage(dir, "a.txt", "two\n")
+
+    # A rename entry cut off before the trailing NUL makes the parser run
+    # off the end of the entry list instead of seeing the empty tail.
+    intercept_git(dir, "--numstat", '''
+    printf '1\\t2\\t\\0old.bin\\0new.bin'; exit 0
+    ''')
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:ok, [file]} = Git.staged_file_diffs(dir)
+        assert file.file_name == "a.txt"
+        assert Enum.join(file.read_errors) =~ "couldn't parse staged binary file statistics"
+      end)
+
+    assert stderr =~ "couldn't parse staged binary file statistics"
+  end
+
+  test "a stability re-check that fails reports the git error instead of crashing", %{dir: dir} do
+    stage(dir, "a.txt", "one\n")
+    git(dir, ["commit", "-qm", "base"])
+    stage(dir, "a.txt", "two\n")
+
+    # Both index probes run `ls-files --stage`; fail only the second.
+    counter = Path.join(dir, "stage-probe-count")
+
+    intercept_git(dir, "--stage", """
+    n=$(cat '#{counter}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > '#{counter}'
+    [ "$n" -ge 2 ] && { echo stage-probe-failed >&2; exit 1; }
+    """)
+
+    assert {:error, reason} = Git.staged_file_diffs(dir)
+    assert reason =~ "ls-files"
+  end
+
   test "patch parse failure survives whitespace filtering as visible read errors", %{dir: dir} do
     stage(dir, "file.txt", "old\n")
     git(dir, ["commit", "-qm", "base"])
