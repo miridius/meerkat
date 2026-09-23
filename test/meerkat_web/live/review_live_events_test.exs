@@ -6,6 +6,42 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # handler mutants muex found once this module's tests were visible
   # to its dependency analysis. async: false — mount reads the global
   # `:meerkat` app env and the singleton `Meerkat.Decision`.
+  #
+  # --- Documented surviving mutants (review-and-merge step 5) ---
+  #
+  # Equivalent (no input distinguishes mutant from original):
+  # * `attr` declarations (1013, 1014, 1074, 1121, 1193, 1194, 1260,
+  #   1261, 1262, 1263, 1264, 1488, 1489, 1525, 1665, 1666, 1667) —
+  #   deleting an `attr` line removes compile-time validation metadata
+  #   only; with every call site passing the assigns, no runtime
+  #   behaviour differs.
+  # * `form_for(nil, _) -> false` (2320) and
+  #   `file_form_open_for?(nil, _) -> false` (2324) — deleting the
+  #   body yields nil; nil is falsy exactly like false in every usage
+  #   (a `:if=` condition and a `not` operand).
+  #
+  # Thin I/O wiring already covered end-to-end by named Playwright
+  # specs (muex runs ExUnit only and cannot see them):
+  # * mount's `if connected?` viewer-registration/PubSub subscribe
+  #   (53) — multi-tab.spec.ts "a global comment added in tab A
+  #   appears in tab B without a reload" and "removing a comment in
+  #   tab A removes it from tab B too".
+  # * `comment_form.edit` (375, 376) — comments.spec.ts "add a file
+  #   comment via the per-file button, edit, remove" and "add a
+  #   global comment, edit its body, remove it".
+  # * `comment.submit`'s no-op and ReviewServer branches (402, 412) —
+  #   comments.spec.ts "clicking the L1 gutter row opens a commit-msg
+  #   form, comment lands in the gutter".
+  # * `filter.toggle_extension` delegation (449) — filter.spec.ts
+  #   "hide *.md hides NOTES.md; chip click restores it".
+  # * `filter.show_all` delegation (522) — filter.spec.ts "'Show all'
+  #   restores both files after 'only'".
+  # * `filter.toggle_generated` delegation (625, 628) — filter.spec.ts
+  #   generated-chip toggle and generated-files.spec.ts.
+  # * `decision.cancel`'s ReviewServer wipe (704, 710) —
+  #   decision.spec.ts "Cancel wipes comments, prints a cancelled
+  #   sentence, exits 1".
+
   use MeerkatWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -642,5 +678,40 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     render_hook(view2, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
     no_push_event(view2, "scroll-into-view")
+  end
+
+  test "a second decision submit still lands on the done view", %{conn: conn} do
+    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}]})
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
+
+    render_click(view, "decision.approve", %{})
+    assert render(view) =~ "Approved"
+
+    # Already-decided submit returns {:already_decided, _} — the done
+    # view must not regress to the live review.
+    html = render_click(view, "decision.approve", %{})
+    assert html =~ "Approved"
+    assert html =~ "You can close this tab"
+  end
+
+  test "approve's bulk cache write skips files without an effective oid", %{conn: conn} do
+    repo = tmp_git_repo()
+
+    state = %ReviewState{
+      files: [
+        %{@plain_file | file_name: "staged.ex", effective_oid: "oid1"},
+        %{@plain_file | file_name: "blank.ex", effective_oid: ""}
+      ],
+      head_branch: "main"
+    }
+
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_click(view, "decision.approve", %{})
+    cache = ApprovalCache.load_for(repo)
+    assert ApprovalCache.approved?(cache, "main", "staged.ex", "oid1")
+    # A blank oid would content-address nothing — it must not be cached.
+    refute ApprovalCache.approved?(cache, "main", "blank.ex", "")
+    refute Map.has_key?(cache["main"] || %{}, "blank.ex")
   end
 end
