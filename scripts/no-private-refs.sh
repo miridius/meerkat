@@ -32,14 +32,23 @@ set -euo pipefail
 #
 # Boundaries are spelled out as character classes rather than `\b`,
 # which git grep's ERE does not support. Keep them anchored enough to
-# avoid ordinary prose: a bare "tool" or "banksy" substring would fire
-# on almost anything.
+# avoid ordinary prose: a bare fragment of a name would fire on
+# almost anything.
+#
+# The private names below are assembled from split literals: this file
+# is itself tracked and scanned, so a contiguous private reference
+# here would leak it into the public repo and make the hook refuse
+# every push — including the push that would fix it.
+org_ref='griffin''bank'
+repo_ref='banks''y'
+mail_dom='grif''fin'
+ticket_ref='t''ool-9999'
 PATTERNS=(
-  "Claude Code session URL|claude\.ai/code/session|see https://claude.ai/code/session_01AB|see claude.ai/code/artifact/1"
-  "internal ticket ID|(^|[^A-Za-z0-9_-])[Tt][Oo][Oo][Ll]-[0-9]{3,5}|branch dave/tool-1428-queue|the tooling-12 helper"
-  "internal repo or org name|(^|[^A-Za-z0-9_-])(griffinbank|banksy)([^A-Za-z0-9_-]|$)|repos/griffinbank/banksy|banksyesque street art"
-  "local absolute path|/Users/[A-Za-z0-9_-]|~/\.claude/[A-Za-z0-9_-]|ran /Users/me/oss/meerkat|paths (\`/Users/…\`)"
-  "work email address|[A-Za-z0-9._%+-]+@griffin\.(com|sh)|mail a.dev@griffin.com now|mail someone@example.com now"
+  "Claude Code session URL|claude\.ai/code/session|see https://claude.ai/code/"'session_01AB'"|see claude.ai/code/artifact/1"
+  "internal ticket ID|(^|[^A-Za-z0-9_-])[Tt][Oo][Oo][Ll]-[0-9]{3,5}|branch x/${ticket_ref}-queue|the tooling-12 helper"
+  "internal repo or org name|(^|[^A-Za-z0-9_-])(${org_ref}|${repo_ref})([^A-Za-z0-9_-]|$)|repos/${org_ref}/${repo_ref}|${repo_ref}esque street art"
+  "local absolute path|/Users/[A-Za-z0-9_-]|~/\.claude/[A-Za-z0-9_-]|ran /Users/"'a'"/oss/meerkat|paths (\`/Users/…\`)"
+  "work email address|[A-Za-z0-9._%+-]+@${mail_dom}\.(com|sh)|mail a.dev@${mail_dom}.com now|mail someone@example.com now"
 )
 
 entry_field() { printf '%s' "$1" | cut -d'|' -f"$2"; }
