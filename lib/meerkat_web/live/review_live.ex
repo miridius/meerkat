@@ -2188,6 +2188,10 @@ defmodule MeerkatWeb.ReviewLive do
   def effective_oid_for_test(state, file_name), do: effective_oid_for(state, file_name)
 
   @doc false
+  def missing_effective_oid_for_test(state, file_name),
+    do: missing_effective_oid?(state, file_name)
+
+  @doc false
   def markdown_file_for_test(file), do: markdown_file?(file)
 
   @doc false

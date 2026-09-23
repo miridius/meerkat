@@ -3,6 +3,8 @@ defmodule MeerkatWeb.VersionRestartTest do
   # the live-restart hook is captured via the global `:restart_fun`.
   use MeerkatWeb.ConnCase, async: false
 
+  alias MeerkatWeb.ReviewLive
+
   import Phoenix.LiveViewTest
 
   alias Meerkat.{Decision, ReviewState}

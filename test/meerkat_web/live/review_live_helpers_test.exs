@@ -644,4 +644,54 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert html =~ "<strong>bold</strong>"
     end
   end
+
+  # --- Second-pass kills (mutants the first batch didn't reach) ---
+
+  describe "toolbar_title edge: empty PR title falls through to the next source" do
+    test "empty PR title is not a title" do
+      state = %ReviewState{pr: %{title: ""}, commit_message: "subject\n\nbody"}
+      assert ReviewLive.toolbar_title_for_test(state) == "subject"
+    end
+
+    test "nil PR falls through to head branch" do
+      assert ReviewLive.toolbar_title_for_test(%ReviewState{pr: nil, head_branch: "main"}) ==
+               "main"
+    end
+  end
+
+  describe "github_payload learn-from-this suffixes on folded sections" do
+    @learn_state %ReviewState{
+      files: [%{file_name: "a.ex"}],
+      pr: %{number: 1},
+      global_comments: [%{id: "g1", finding_type: :issue, body: "note", learn_from_this: true}],
+      file_comments: [
+        %{id: "f1", file_index: 0, finding_type: :issue, body: "file note", learn_from_this: true}
+      ]
+    }
+
+    test "global section appends the learn suffix" do
+      payload = ReviewLive.github_payload_for_test(@learn_state)
+      assert payload.body =~ "note\n\n_please learn from this._"
+    end
+
+    test "file section carries the path header and the learn suffix" do
+      payload = ReviewLive.github_payload_for_test(@learn_state)
+      assert payload.body =~ "**a.ex**:\n\n**issue:** file note\n\n_please learn from this._"
+    end
+  end
+
+  describe "missing_effective_oid?" do
+    test "a real oid is not missing" do
+      state = %ReviewState{files: [%{file_name: "a.ex", effective_oid: "abc"}]}
+      refute ReviewLive.missing_effective_oid_for_test(state, "a.ex")
+    end
+
+    test "empty or missing oid is missing" do
+      blank = %ReviewState{files: [%{file_name: "a.ex", effective_oid: ""}]}
+      assert ReviewLive.missing_effective_oid_for_test(blank, "a.ex")
+
+      absent = %ReviewState{files: [%{file_name: "other.ex", effective_oid: "abc"}]}
+      assert ReviewLive.missing_effective_oid_for_test(absent, "a.ex")
+    end
+  end
 end
