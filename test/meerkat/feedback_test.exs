@@ -168,7 +168,7 @@ defmodule Meerkat.FeedbackTest do
         global_comments: [comment(body: "why?", finding_type: :question)]
       }
 
-      out = Feedback.format(state, "/tmp/repo", :rejection)
+      out = Feedback.format(state, :rejection)
 
       # The whole point of the directive: the agent may run `meerkat`
       # (no args) after the committing review has consumed the staged

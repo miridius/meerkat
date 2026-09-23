@@ -79,13 +79,32 @@ defmodule Meerkat.TimeoutTest do
       with_env("90", fn -> assert Timeout.limit_ms() == 90_000 end)
     end
 
-    test "a limit that is not a positive whole number of seconds is ignored" do
-      for bogus <- ["", "abc", "0", "-60", "12.5", "60s"] do
+    test "a limit that is not a whole number of seconds is ignored" do
+      for bogus <- ["", "abc", "-60", "12.5", "60s"] do
         with_env(bogus, fn ->
           assert Timeout.limit_ms() == 30 * 60 * 1000,
                  "#{inspect(bogus)} should leave the default standing"
         end)
       end
+    end
+
+    test "MEERKAT_REVIEW_TIMEOUT=0 disables the deadline entirely" do
+      with_env("0", fn ->
+        assert Timeout.limit_ms() == :infinity
+        assert Timeout.disabled?()
+      end)
+    end
+
+    test "the deadline is not disabled by default" do
+      with_env(nil, fn -> refute Timeout.disabled?() end)
+    end
+  end
+
+  describe "deadline_ms/2 with the deadline disabled" do
+    test "MEERKAT_REVIEW_TIMEOUT=0 arms no deadline at all", %{repo: repo} do
+      with_env("0", fn ->
+        assert Timeout.deadline_ms(repo, "abc123") == nil
+      end)
     end
   end
 
@@ -173,6 +192,17 @@ defmodule Meerkat.TimeoutTest do
       with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
 
       assert File.exists?(anchor_path(repo, "abc123", "current"))
+    end
+
+    test "a disabled deadline prunes nothing — a live run's anchor has no stale age", %{
+      repo: repo
+    } do
+      with_run_id("abandoned", fn -> Timeout.deadline_ms(repo, "abc123") end)
+      backdate(run_dir(repo, "abandoned"), 30 * 60 * 1000 + 60_000)
+
+      with_env("0", fn -> assert :ok = Timeout.prune_stale(repo) end)
+
+      assert File.exists?(run_dir(repo, "abandoned"))
     end
   end
 

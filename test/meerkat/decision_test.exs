@@ -77,6 +77,19 @@ defmodule Meerkat.DecisionTest do
       refute_receive {:awaited, _}, 100
     end
 
+    test "a disabled deadline (nil) never auto-approves, however long the review runs" do
+      # cli.ex arms `review_deadline_ms` only when `Timeout.deadline_ms/2`
+      # returns one; disabled, it is nil and no tick ever fires.
+      Application.put_env(:meerkat, :review_deadline_ms, nil)
+      Decision.reset()
+
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+
+      # Outlives several deadline checks (`deadline_check_ms` is 5ms here).
+      refute_receive {:awaited, {:timeout, _}}, 100
+    end
+
     test "a click before the deadline is the decision the review keeps" do
       Application.put_env(
         :meerkat,

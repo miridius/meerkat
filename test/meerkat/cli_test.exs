@@ -7,25 +7,6 @@ defmodule Meerkat.CLITest do
 
   alias Meerkat.{ApprovalCache, CLI, PendingAnswers, ReviewLog}
 
-  # Strip git's discovery env vars before shelling out (same set as
-  # `Meerkat.Git`): under a git hook these point at the parent repo and
-  # would override `cd: dir` in the pending-answers-gate fixture's `git
-  # init`.
-  @git_discovery_overrides Enum.map(
-                             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-                                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-                                GIT_NAMESPACE),
-                             &{&1, nil}
-                           )
-
-  defp git(dir, args) do
-    {out, code} =
-      System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_discovery_overrides)
-
-    if code != 0, do: flunk("git #{Enum.join(args, " ")} failed: #{out}")
-    String.trim(out)
-  end
-
   defp write_pending_answers(repo) do
     path = PendingAnswers.path_for(repo)
     File.mkdir_p!(Path.dirname(path))
