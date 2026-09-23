@@ -2094,6 +2094,128 @@ defmodule MeerkatWeb.ReviewLive do
   # pipeline.
   def label_for_github_for_test(ft, body), do: label_for_github(ft, body)
 
+  ## --- Pure-logic test seams ---
+
+  # These expose the module's pure helpers so muex-run ExUnit tests can
+  # pin their behaviour without driving the LiveView. Same pattern as
+  # cli.ex's decide_from_verdicts/args_error shims: the handlers stay
+  # thin wiring; the branchy logic is what the tests assert on.
+
+  @doc false
+  def toolbar_title_for_test(state), do: toolbar_title(state)
+
+  @doc false
+  def commit_msg_seed_code_for_test(msg, anchor), do: commit_msg_seed_code(msg, anchor)
+
+  @doc false
+  def extract_snippet_for_test(file, from, to, side), do: extract_snippet(file, from, to, side)
+
+  @doc false
+  def draft_key_for_test(surface, anchor, review_id, edit_id),
+    do: draft_key_for(surface, anchor, review_id, edit_id)
+
+  @doc false
+  def visible_indices_for_test(state, filter_input, only_file_index),
+    do: visible_indices(state, filter_input, only_file_index)
+
+  @doc false
+  def matched_file_names_for_test(state, input), do: matched_file_names(state, input)
+
+  @doc false
+  def filter_sidebar_entries_for_test(files, input),
+    do: filter_sidebar_entries(files, input)
+
+  @doc false
+  def file_section_collapsed_for_test(state, expanded, collapsed, file_name),
+    do: file_section_collapsed?(state, expanded, collapsed, file_name)
+
+  @doc false
+  def find_comment_for_test(state, surface, id), do: find_comment(state, surface, id)
+
+  @doc false
+  def github_payload_for_test(state), do: github_payload(state)
+
+  @doc false
+  def stale_oid_check_for_test(repo_path, file, becoming?),
+    do: stale_oid_check(repo_path, file, becoming?)
+
+  @doc false
+  def parse_int_for_test(value), do: parse_int(value)
+
+  @doc false
+  def clamp_font_size_for_test(n), do: clamp_font_size(n)
+
+  @doc false
+  def clamp_tab_size_for_test(n), do: clamp_tab_size(n)
+
+  @doc false
+  def valid_settings_for_test(payload, assigns),
+    do: %{
+      diff_mode: valid_diff_mode(payload["diff_mode"], assigns.diff_mode),
+      wrap_lines: valid_bool(payload["wrap_lines"], assigns.wrap_lines),
+      font_size_px: valid_font_size(payload["font_size_px"], assigns.font_size_px),
+      tab_size: valid_tab_size(payload["tab_size"], assigns.tab_size)
+    }
+
+  @doc false
+  def finding_atom_for_test(ft), do: finding_atom!(ft)
+
+  @doc false
+  def surface_atom_for_test(s), do: surface_atom(s)
+
+  @doc false
+  def finding_label_for_test(ft), do: finding_label(ft)
+
+  @doc false
+  def anchor_for_test(surface, comment), do: anchor_for(surface, comment)
+
+  @doc false
+  def anchor_extras_for_test(surface, anchor), do: anchor_extras(surface, anchor)
+
+  @doc false
+  def done_view_for_test(decision), do: done_view(decision)
+
+  @doc false
+  def page_title_for_test(state), do: page_title(state)
+
+  @doc false
+  def comments_for_test(state), do: comments?(state)
+
+  @doc false
+  def comment_count_for_test(state), do: comment_count(state)
+
+  @doc false
+  def effective_oid_for_test(state, file_name), do: effective_oid_for(state, file_name)
+
+  @doc false
+  def missing_effective_oid_for_test(state, file_name),
+    do: missing_effective_oid?(state, file_name)
+
+  @doc false
+  def markdown_file_for_test(file), do: markdown_file?(file)
+
+  @doc false
+  def extension_of_for_test(file_name), do: extension_of(file_name)
+
+  @doc false
+  def file_path_dir_for_test(file_name), do: file_path_dir(file_name)
+
+  @doc false
+  def gutter_label_for_test(block), do: gutter_label(block)
+
+  @doc false
+  def status_badge_for_test(status), do: status_badge(status)
+
+  @doc false
+  def status_label_for_test(status), do: status_label(status)
+
+  @doc false
+  def group_inline_by_file_for_test(comments), do: group_inline_by_file(comments)
+
+  @doc false
+  def group_file_by_file_with_html_for_test(comments),
+    do: group_file_by_file_with_html(comments)
+
   defp github_path_for(state, file_index) do
     case Enum.at(state.files, file_index) do
       %{file_name: name} -> name

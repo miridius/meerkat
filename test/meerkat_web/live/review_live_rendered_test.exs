@@ -6,6 +6,8 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
   # and the singleton `Meerkat.Decision`.
   use MeerkatWeb.ConnCase, async: false
 
+  alias MeerkatWeb.ReviewLive
+
   import Phoenix.LiveViewTest
 
   alias Meerkat.{Decision, ReviewState}
