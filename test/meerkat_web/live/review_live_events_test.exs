@@ -48,6 +48,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
+  import Meerkat.TestHelpers, only: [make_git_repo: 1, git: 2]
 
   @plain_file %{
     status: :modified,
@@ -98,16 +99,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   defp tmp_git_repo do
-    # Crypto-random suffix: System.unique_integer restarts per VM boot,
-    # so two consecutive `mix test` runs could collide on the same dir
-    # and inherit a stale repo (staged files, persistence snapshots).
-    suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-
-    dir = Path.join(System.tmp_dir!(), "meerkat-lv-#{suffix}")
-    File.rm_rf!(dir)
-    File.mkdir_p!(dir)
-    {_, 0} = System.cmd("git", ["init", "-q"], cd: dir)
-    dir
+    # Shared helper: its git calls strip the GIT_* discovery overrides a
+    # git hook exports, which would otherwise point `git init` away from
+    # dir and leave this fixture not-a-repo under the pre-push hook.
+    make_git_repo("meerkat-lv")
   end
 
   defp put_state(state) do
@@ -371,9 +366,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "toggle_approved in bound mode delegates and persists the cache", %{conn: conn} do
     repo = tmp_git_repo()
     File.write!(Path.join(repo, "src_widget.rs"), "content\n")
-    {_, 0} = System.cmd("git", ["add", "src_widget.rs"], cd: repo)
-    {oid, 0} = System.cmd("git", ["rev-parse", ":src_widget.rs"], cd: repo)
-    oid = String.trim(oid)
+    git(repo, ["add", "src_widget.rs"])
+    oid = git(repo, ["rev-parse", ":src_widget.rs"])
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "src_widget.rs", effective_oid: oid}],
@@ -424,7 +418,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "approving an oid whose live value changed flashes the stale warning", %{conn: conn} do
     repo = tmp_git_repo()
     File.write!(Path.join(repo, "f.ex"), "content\n")
-    {_, 0} = System.cmd("git", ["add", "f.ex"], cd: repo)
+    git(repo, ["add", "f.ex"])
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: "deadbeef"}],
@@ -442,9 +436,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "approving with the live oid matches proceeds without a flash", %{conn: conn} do
     repo = tmp_git_repo()
     File.write!(Path.join(repo, "f.ex"), "content\n")
-    {_, 0} = System.cmd("git", ["add", "f.ex"], cd: repo)
-    {oid, 0} = System.cmd("git", ["rev-parse", ":f.ex"], cd: repo)
-    oid = String.trim(oid)
+    git(repo, ["add", "f.ex"])
+    oid = git(repo, ["rev-parse", ":f.ex"])
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: oid}],
