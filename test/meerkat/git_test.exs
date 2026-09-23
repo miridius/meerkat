@@ -88,7 +88,7 @@ defmodule Meerkat.GitTest do
 
   describe "parse_multi_file_diff (via test seam)" do
     test "empty output → empty map" do
-      assert Git.parse_multi_file_diff_for_test("") == {%{}, []}
+      assert Git.parse_multi_file_diff_for_test("") == {:ok, %{}}
     end
 
     test "single-file modified diff is keyed by post-image path" do
@@ -104,8 +104,7 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["foo.rs"]
       {hunks, errors} = result["foo.rs"]
       assert errors == []
@@ -129,8 +128,7 @@ defmodule Meerkat.GitTest do
        c
       """
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["new/path.rs"]
     end
 
@@ -149,8 +147,7 @@ defmodule Meerkat.GitTest do
       +b
       """
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["foo b/bar.txt"]
     end
 
@@ -167,8 +164,7 @@ defmodule Meerkat.GitTest do
       -c
       """
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["gone.rs"]
     end
 
@@ -188,8 +184,7 @@ defmodule Meerkat.GitTest do
       +Y
       """
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) |> Enum.sort() == ["a.rs", "b.rs"]
     end
 
@@ -201,8 +196,7 @@ defmodule Meerkat.GitTest do
           ~s(+++ "b/q\\"uote.txt"\n) <>
           "@@ -1 +1 @@\n-a\n+b\n"
 
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == [~s(q"uote.txt)]
     end
 
@@ -213,7 +207,7 @@ defmodule Meerkat.GitTest do
           ~s(+++ "b/caf\\303\\251.txt"\n) <>
           "@@ -1 +1 @@\n-a\n+b\n"
 
-      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["café.txt"]
     end
 
@@ -224,7 +218,7 @@ defmodule Meerkat.GitTest do
           ~s(+++ "b/tab\\there\\r\\nlf.txt"\n) <>
           "@@ -1 +1 @@\n-a\n+b\n"
 
-      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["tab\there\r\nlf.txt"]
     end
 
@@ -235,7 +229,7 @@ defmodule Meerkat.GitTest do
           ~s(+++ "b/a\\00n.txt"\n) <>
           "@@ -1 +1 @@\n-a\n+b\n"
 
-      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["a00n.txt"]
     end
 
@@ -246,19 +240,40 @@ defmodule Meerkat.GitTest do
           ~s(+++ "b/a\\0n0.txt"\n) <>
           "@@ -1 +1 @@\n-a\n+b\n"
 
-      {result, _} = Git.parse_multi_file_diff_for_test(diff)
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["a0n0.txt"]
     end
 
-    test "a header whose quote is never closed decodes to the end of the header" do
-      diff = ~s(diff --git "a/x.txt "b/x.txt\nBinary files "a/x.txt and "b/x.txt differ\n)
-
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
-      assert Map.keys(result) == ["x.txt"]
+    test "binary and metadata-only blocks need no text markers" do
+      for body <- [
+            "Binary files a/BUILD.bazel and b/BUILD.bazel differ\n",
+            "similarity index 100%\nrename from old.bin\nrename to new.bin\n",
+            "old mode 100644\nnew mode 100755\n"
+          ] do
+        assert Git.parse_multi_file_diff_for_test("diff --git a/file b/file\n" <> body) ==
+                 {:ok, %{}}
+      end
     end
 
-    test "a binary block with no header of its own is reported, not crashed on" do
+    test "an unclosed-quoted header on a binary block parses as binary" do
+      diff = ~s(diff --git "a/x.txt "b/x.txt\nBinary files "a/x.txt and "b/x.txt differ\n)
+
+      assert Git.parse_multi_file_diff_for_test(diff) == {:ok, %{}}
+    end
+
+    test "a renamed binary block needs no same-sided header" do
+      diff = """
+      diff --git a/old.png b/new.png
+      similarity index 90%
+      rename from old.png
+      rename to new.png
+      Binary files a/old.png and b/new.png differ
+      """
+
+      assert Git.parse_multi_file_diff_for_test(diff) == {:ok, %{}}
+    end
+
+    test "a binary block with no diff --git header is skipped, not crashed on" do
       diff = """
       Binary files a/x.png and b/x.png differ
       diff --git a/y.txt b/y.txt
@@ -269,49 +284,25 @@ defmodule Meerkat.GitTest do
       +b
       """
 
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        send(self(), {:parsed, Git.parse_multi_file_diff_for_test(diff)})
-      end)
-
-      assert_received {:parsed, {result, parse_errors}}
+      assert {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["y.txt"]
-      assert [error] = parse_errors
-      assert error =~ "couldn't parse staged-diff block"
     end
 
-    test "a renamed binary names neither side, so it is a parse failure" do
-      diff = """
-      diff --git a/old.png b/new.png
-      similarity index 90%
-      rename from old.png
-      rename to new.png
-      Binary files a/old.png and b/new.png differ
-      """
+    test "missing path markers are errors unless the block is metadata-only" do
+      for body <- [
+            "index abc..def 100644\n",
+            "old mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-old\n+new\n"
+          ] do
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:error, reason} =
+                   Git.parse_multi_file_diff_for_test("diff --git a/file b/file\n" <> body)
 
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        send(self(), {:parsed, Git.parse_multi_file_diff_for_test(diff)})
-      end)
-
-      assert_received {:parsed, {result, parse_errors}}
-      assert result == %{}
-      assert [error] = parse_errors
-      assert error =~ "couldn't parse staged-diff block"
+          assert reason =~ "couldn't parse staged-diff block"
+        end)
+      end
     end
 
-    test "a binary file is listed, carrying the reason it has no hunks" do
-      diff = """
-      diff --git a/img.png b/img.png
-      index abc..def 100644
-      Binary files a/img.png and b/img.png differ
-      """
-
-      {result, parse_errors} = Git.parse_multi_file_diff_for_test(diff)
-      assert parse_errors == []
-      assert {[], [error]} = result["img.png"]
-      assert error =~ "binary file"
-    end
-
-    test "block with no +++ or --- marker is dropped (and produces a warning)" do
+    test "malformed blocks return an error as well as a warning" do
       # Capture stderr to confirm the unparseable-block warning fires
       # without polluting the test output.
       capture =
@@ -323,11 +314,10 @@ defmodule Meerkat.GitTest do
           )
         end)
 
-      assert_received {:result, {result, parse_errors}}
-      assert result == %{}
-      assert [error] = parse_errors
-      assert error =~ "couldn't parse staged-diff block"
-      assert capture =~ "couldn't parse staged-diff block"
+      assert_received {:result, result}
+      assert {:error, reason} = result
+      assert reason =~ "couldn't parse staged-diff block"
+      assert capture =~ reason
     end
   end
 
@@ -360,8 +350,9 @@ defmodule Meerkat.GitTest do
     git(dir, ["add", "."])
   end
 
-  defp one_of_each_diffs(effective_oids) do
-    [
+  # Staged maps carry `is_binary`; range maps (no staging concept) omit it.
+  defp one_of_each_diffs(effective_oids, with_binary \\ true) do
+    diffs = [
       %{
         status: :added,
         file_name: "added.lock",
@@ -411,6 +402,12 @@ defmodule Meerkat.GitTest do
         is_generated: false
       }
     ]
+
+    if with_binary do
+      Enum.map(diffs, &Map.put(&1, :is_binary, false))
+    else
+      diffs
+    end
   end
 
   describe "current_branch/1" do
@@ -458,14 +455,19 @@ defmodule Meerkat.GitTest do
 
       diff_error =
         "couldn't compute batched staged diff (git -c core.quotePath=false diff --cached " <>
-          "-U3 -w -M exited 128: fatal: unable to read #{added_oid}); per-file content may " <>
-          "render empty"
+          "-U3 -w -M --no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}); " <>
+          "per-file content may render empty"
+
+      binary_error =
+        "couldn't identify staged binary files: git diff --cached --numstat -z -w -M " <>
+          "--no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}"
 
       assert result ==
                {:ok,
                 [
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: "added.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -474,7 +476,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [
                       "couldn't read staged content for added.rs: git show :0:added.rs exited " <>
                         "128: fatal: bad object :0:added.rs",
-                      diff_error
+                      diff_error,
+                      binary_error
                     ],
                     effective_oid: added_oid,
                     moved_lines: [],
@@ -482,12 +485,13 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "mod.rs",
                     old_file_name: nil,
                     old_content: "one\n",
                     new_content: "two\n",
                     hunks: [],
-                    read_errors: [diff_error],
+                    read_errors: [diff_error, binary_error],
                     effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
                     moved_lines: [],
                     is_generated: false
@@ -511,6 +515,7 @@ defmodule Meerkat.GitTest do
                 [
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "0:foo.txt",
                     old_file_name: nil,
                     old_content: "old zero\n",
@@ -523,6 +528,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "1:bar.txt",
                     old_file_name: nil,
                     old_content: "old one\n",
@@ -552,6 +558,7 @@ defmodule Meerkat.GitTest do
                 [
                   %{
                     status: :deleted,
+                    is_binary: false,
                     file_name: ":(bogus)gone.rs",
                     old_file_name: nil,
                     old_content: "gone\n",
@@ -564,6 +571,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: ":(bogus)x.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -576,6 +584,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: "plain.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -600,7 +609,7 @@ defmodule Meerkat.GitTest do
       git(dir, ["commit", "-qm", "one of each"])
 
       assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
-               {:ok, one_of_each_diffs(%{})}
+               {:ok, one_of_each_diffs(%{}, false)}
     end
 
     test "file names git would read as pathspec magic carry their own hunks and no read errors",
@@ -830,7 +839,7 @@ defmodule Meerkat.GitTest do
 
     test "staged_files/1 returns git's error", %{dir: dir} do
       assert {:error,
-              "git diff --cached --name-status -z exited 129: error: unknown option `cached'\n" <>
+              "git diff --cached --name-status -z -M exited 129: error: unknown option `cached'\n" <>
                 _usage} = Git.staged_files(dir)
     end
 
