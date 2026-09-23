@@ -29,11 +29,11 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # * `comment_form.edit` (375, 376) — comments.spec.ts "add a file
   #   comment via the per-file button, edit, remove" and "add a
   #   global comment, edit its body, remove it".
-  # * `comment.submit`'s no-op and ReviewServer branches (402, 412) —
-  #   comments.spec.ts "clicking the L1 gutter row opens a commit-msg
-  #   form, comment lands in the gutter".
-  # * `filter.toggle_extension` delegation (449) — filter.spec.ts
-  #   "hide *.md hides NOTES.md; chip click restores it".
+  # * `comment.submit`'s no-op and ReviewServer branches (402, 412,
+  #   449) — comments.spec.ts "clicking the L1 gutter row opens a
+  #   commit-msg form, comment lands in the gutter".
+  # * the whole `filter.toggle_extension` handler (518) —
+  #   filter.spec.ts "hide *.md hides NOTES.md; chip click restores it".
   # * `filter.show_all` delegation (522) — filter.spec.ts "'Show all'
   #   restores both files after 'only'".
   # * `filter.toggle_generated` delegation (625, 628) — filter.spec.ts
