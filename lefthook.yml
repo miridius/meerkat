@@ -7,6 +7,8 @@ pre-commit:
 
 pre-push:
   commands:
+    no-private-refs:
+      run: bash scripts/no-private-refs.sh
     mix-test:
       run: mix test
     bun-test:
