@@ -694,4 +694,32 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert ReviewLive.missing_effective_oid_for_test(absent, "a.ex")
     end
   end
+
+  describe "github_payload non-learn comments stay bare" do
+    test "no learn suffix without learn_from_this" do
+      state = %ReviewState{
+        files: [%{file_name: "a.ex"}],
+        pr: %{number: 1},
+        global_comments: [%{id: "g1", finding_type: :issue, body: "note", learn_from_this: false}],
+        comments: [
+          %{
+            id: "i1",
+            file_index: 0,
+            side: "new",
+            start_line: 1,
+            end_line: 1,
+            finding_type: :issue,
+            body: "inline note",
+            learn_from_this: false
+          }
+        ]
+      }
+
+      payload = ReviewLive.github_payload_for_test(state)
+      refute payload.body =~ "learn from this"
+
+      [%{body: inline_body}] = payload.comments
+      refute inline_body =~ "learn from this"
+    end
+  end
 end

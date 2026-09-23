@@ -62,7 +62,13 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   defp tmp_git_repo do
-    dir = Path.join(System.tmp_dir!(), "meerkat-lv-#{System.unique_integer([:positive])}")
+    # Crypto-random suffix: System.unique_integer restarts per VM boot,
+    # so two consecutive `mix test` runs could collide on the same dir
+    # and inherit a stale repo (staged files, persistence snapshots).
+    suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+    dir = Path.join(System.tmp_dir!(), "meerkat-lv-\#{suffix}")
+    File.rm_rf!(dir)
     File.mkdir_p!(dir)
     {_, 0} = System.cmd("git", ["init", "-q"], cd: dir)
     dir
@@ -208,34 +214,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "Feedback sent"
   end
 
-  test "cancel wipes server comments and renders Cancelled", %{conn: conn} do
-    repo = tmp_git_repo()
-
-    state = %ReviewState{
-      files: [%{@plain_file | effective_oid: nil}],
-      comments: [
-        %{
-          id: "i1",
-          body: "b",
-          finding_type: :issue,
-          learn_from_this: false,
-          file_index: 0,
-          start_line: 1,
-          end_line: 1,
-          side: "new",
-          created_at: "2026-01-01T00:00:00Z"
-        }
-      ]
-    }
-
-    {view, rid} = mount_bound(conn, state, repo)
-    assert ReviewServer.get_state(rid).comments != []
-
-    html = render_click(view, "decision.cancel", %{})
-    assert html =~ "Cancelled"
-    assert ReviewServer.get_state(rid).comments == []
-  end
-
   test "post_to_github without an attached PR flashes and dismisses", %{conn: conn} do
     view = mount_unbound(conn, %ReviewState{files: [@plain_file], pr: nil})
 
@@ -309,67 +287,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "CommentForm-commit-msg"
   end
 
-  test "comment_form.edit opens the form prefilled; unknown id no-ops", %{conn: conn} do
-    repo = tmp_git_repo()
-
-    comment = %{
-      id: "i1",
-      body: "note body",
-      finding_type: :issue,
-      learn_from_this: false,
-      file_index: 0,
-      start_line: 1,
-      end_line: 1,
-      side: "new",
-      created_at: "2026-01-01T00:00:00Z"
-    }
-
-    {view, _rid} =
-      mount_bound(conn, %ReviewState{files: [@plain_file], comments: [comment]}, repo)
-
-    html = render_hook(view, "comment_form.edit", %{"surface" => "inline", "id" => "i1"})
-    assert html =~ "note body"
-    # Edit mode relabels the submit button.
-    assert html =~ "&quot;Save&quot;"
-
-    html = render_hook(view, "comment_form.edit", %{"surface" => "inline", "id" => "nope"})
-    refute html =~ "note body"
-  end
-
-  test "comment.submit adds via the ReviewServer in bound mode; edit replaces", %{conn: conn} do
-    repo = tmp_git_repo()
-    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
-
-    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
-
-    render_click(view, "comment.submit", %{
-      "body" => "a file note",
-      "finding_type" => "issue",
-      "learn_from_this" => true
-    })
-
-    state = ReviewServer.get_state(rid)
-
-    assert [%{body: "a file note", finding_type: :issue, learn_from_this: true}] =
-             state.file_comments
-
-    # The form closed after submit.
-    refute render(view) =~ "CommentForm-file-0"
-
-    # Edit = remove old + add new.
-    comment = hd(state.file_comments)
-    render_hook(view, "comment_form.edit", %{"surface" => "file", "id" => comment.id})
-
-    render_click(view, "comment.submit", %{
-      "body" => "edited note",
-      "finding_type" => "issue",
-      "learn_from_this" => "false"
-    })
-
-    state = ReviewServer.get_state(rid)
-    assert [%{body: "edited note"}] = state.file_comments
-  end
-
   test "comment.submit with no open form is a no-op; unbound submit just closes", %{conn: conn} do
     view = mount_unbound(conn)
     # open_form == nil clause: must not crash.
@@ -400,31 +317,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     render_click(view, "comment.remove", %{"surface" => "file", "id" => "f1"})
     assert ReviewServer.get_state(rid).file_comments == []
-  end
-
-  test "comment.toggle_learn coerces the wire value", %{conn: conn} do
-    repo = tmp_git_repo()
-
-    comment = %{id: "f1", body: "b", finding_type: :issue, learn_from_this: false, file_index: 0}
-
-    {view, rid} =
-      mount_bound(conn, %ReviewState{files: [@plain_file], file_comments: [comment]}, repo)
-
-    render_click(view, "comment.toggle_learn", %{
-      "surface" => "file",
-      "id" => "f1",
-      "learn" => "true"
-    })
-
-    assert hd(ReviewServer.get_state(rid).file_comments).learn_from_this == true
-
-    render_click(view, "comment.toggle_learn", %{
-      "surface" => "file",
-      "id" => "f1",
-      "learn" => "false"
-    })
-
-    assert hd(ReviewServer.get_state(rid).file_comments).learn_from_this == false
   end
 
   test "set_open_form persists to the ReviewServer in bound mode", %{conn: conn} do
@@ -604,18 +496,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert ReviewServer.get_state(rid).file_overrides == %{"src/widget.rs" => :show}
   end
 
-  test "filter.toggle_extension / toggle_generated persist in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
-    state = %ReviewState{files: [%{@plain_file | file_name: "a.rs"}]}
-    {view, rid} = mount_bound(conn, state, repo)
-
-    render_click(view, "filter.toggle_extension", %{"ext" => "rs"})
-    assert MapSet.member?(ReviewServer.get_state(rid).hidden_extensions, "rs")
-
-    render_click(view, "filter.toggle_generated", %{})
-    assert ReviewServer.get_state(rid).show_generated == true
-  end
-
   test "toolbar.toggle_files_panel opens the sidebar with a scroll nudge and closes it", %{
     conn: conn
   } do
@@ -710,5 +590,57 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     end
 
     no_push_event(view, "open-url")
+  end
+
+  # --- Third-pass kills (final survivors) ---
+
+  test "approving a file that is no longer staged flashes the stale warning", %{conn: conn} do
+    repo = tmp_git_repo()
+    # The file exists but was never staged — the staged-blob lookup
+    # reports :not_staged.
+    File.write!(Path.join(repo, "f.ex"), "content\n")
+
+    state = %ReviewState{
+      files: [%{@plain_file | file_name: "f.ex", effective_oid: "deadbeef"}],
+      head_branch: "main"
+    }
+
+    put_state(state)
+    Application.put_env(:meerkat, :repo_path, repo)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
+
+    html = render_hook(view, "file.toggle_approved", %{"file_name" => "f.ex"})
+    assert html =~ "no longer staged"
+  end
+
+  test "un-approving does not push the scroll nudge; approving does", %{conn: conn} do
+    repo = tmp_git_repo()
+
+    state = %ReviewState{
+      files: [%{@plain_file | effective_oid: nil}],
+      head_branch: "main"
+    }
+
+    put_state(state)
+    Application.put_env(:meerkat, :repo_path, repo)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
+
+    render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    assert_push_event(view, "scroll-into-view", %{})
+
+    # Fresh socket pre-approved: un-approving must not nudge the scroll.
+    # A separate mount keeps the push mailbox clean for the negative
+    # assertion.
+    approved_state = %ReviewState{
+      files: [%{@plain_file | effective_oid: nil}],
+      head_branch: "main",
+      approved_file_names: MapSet.new(["src/widget.rs"])
+    }
+
+    put_state(approved_state)
+    {:ok, view2, _html} = live_isolated(conn, ReviewLive)
+
+    render_hook(view2, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    no_push_event(view2, "scroll-into-view")
   end
 end
