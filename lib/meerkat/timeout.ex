@@ -92,7 +92,12 @@ defmodule Meerkat.Timeout do
 
     case File.ls(parent) do
       {:ok, entries} ->
-        for entry <- entries, entry != keep, older_than?(Path.join(parent, entry), cutoff_s) do
+        # Sorted so the visit order is deterministic: which entry hits a
+        # stat failure (a run dir vanishing mid-prune) must not decide
+        # whether the entries after it still get pruned.
+        for entry <- Enum.sort(entries),
+            entry != keep,
+            older_than?(Path.join(parent, entry), cutoff_s) do
           _ = File.rm_rf(Path.join(parent, entry))
         end
 

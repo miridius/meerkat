@@ -194,6 +194,25 @@ defmodule Meerkat.TimeoutTest do
       assert File.exists?(anchor_path(repo, "abc123", "current"))
     end
 
+    test "an entry that cannot be stat'ed is skipped and later runs still prune", %{repo: repo} do
+      # A run dir vanishing between the ls and the stat must cost only
+      # itself, not the rest of the sweep. The vanished entry is named to
+      # sort first so the race is exercised deterministically.
+      deadlines = repo |> run_dir("any") |> Path.dirname()
+      File.mkdir_p!(deadlines)
+      File.ln_s("gone-#{System.unique_integer()}", Path.join(deadlines, "0-vanished"))
+
+      for name <- ["1-stale", "2-stale"] do
+        with_run_id(name, fn -> Timeout.deadline_ms(repo, "abc123") end)
+        backdate(run_dir(repo, name), Timeout.limit_ms() + 60_000)
+      end
+
+      with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
+
+      refute File.exists?(run_dir(repo, "1-stale"))
+      refute File.exists?(run_dir(repo, "2-stale"))
+    end
+
     test "a disabled deadline prunes nothing — a live run's anchor has no stale age", %{
       repo: repo
     } do
