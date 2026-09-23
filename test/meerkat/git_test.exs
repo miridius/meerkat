@@ -350,8 +350,9 @@ defmodule Meerkat.GitTest do
     git(dir, ["add", "."])
   end
 
-  defp one_of_each_diffs(effective_oids) do
-    [
+  # Staged maps carry `is_binary`; range maps (no staging concept) omit it.
+  defp one_of_each_diffs(effective_oids, with_binary \\ true) do
+    diffs = [
       %{
         status: :added,
         file_name: "added.lock",
@@ -401,6 +402,12 @@ defmodule Meerkat.GitTest do
         is_generated: false
       }
     ]
+
+    if with_binary do
+      Enum.map(diffs, &Map.put(&1, :is_binary, false))
+    else
+      diffs
+    end
   end
 
   describe "current_branch/1" do
@@ -448,14 +455,19 @@ defmodule Meerkat.GitTest do
 
       diff_error =
         "couldn't compute batched staged diff (git -c core.quotePath=false diff --cached " <>
-          "-U3 -w -M exited 128: fatal: unable to read #{added_oid}); per-file content may " <>
-          "render empty"
+          "-U3 -w -M --no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}); " <>
+          "per-file content may render empty"
+
+      binary_error =
+        "couldn't identify staged binary files: git diff --cached --numstat -z -w -M " <>
+          "--no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}"
 
       assert result ==
                {:ok,
                 [
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: "added.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -464,7 +476,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [
                       "couldn't read staged content for added.rs: git show :0:added.rs exited " <>
                         "128: fatal: bad object :0:added.rs",
-                      diff_error
+                      diff_error,
+                      binary_error
                     ],
                     effective_oid: added_oid,
                     moved_lines: [],
@@ -472,12 +485,13 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "mod.rs",
                     old_file_name: nil,
                     old_content: "one\n",
                     new_content: "two\n",
                     hunks: [],
-                    read_errors: [diff_error],
+                    read_errors: [diff_error, binary_error],
                     effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
                     moved_lines: [],
                     is_generated: false
@@ -501,6 +515,7 @@ defmodule Meerkat.GitTest do
                 [
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "0:foo.txt",
                     old_file_name: nil,
                     old_content: "old zero\n",
@@ -513,6 +528,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :modified,
+                    is_binary: false,
                     file_name: "1:bar.txt",
                     old_file_name: nil,
                     old_content: "old one\n",
@@ -542,6 +558,7 @@ defmodule Meerkat.GitTest do
                 [
                   %{
                     status: :deleted,
+                    is_binary: false,
                     file_name: ":(bogus)gone.rs",
                     old_file_name: nil,
                     old_content: "gone\n",
@@ -554,6 +571,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: ":(bogus)x.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -566,6 +584,7 @@ defmodule Meerkat.GitTest do
                   },
                   %{
                     status: :added,
+                    is_binary: false,
                     file_name: "plain.rs",
                     old_file_name: nil,
                     old_content: "",
@@ -590,7 +609,7 @@ defmodule Meerkat.GitTest do
       git(dir, ["commit", "-qm", "one of each"])
 
       assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
-               {:ok, one_of_each_diffs(%{})}
+               {:ok, one_of_each_diffs(%{}, false)}
     end
 
     test "file names git would read as pathspec magic carry their own hunks and no read errors",
@@ -820,7 +839,7 @@ defmodule Meerkat.GitTest do
 
     test "staged_files/1 returns git's error", %{dir: dir} do
       assert {:error,
-              "git diff --cached --name-status -z exited 129: error: unknown option `cached'\n" <>
+              "git diff --cached --name-status -z -M exited 129: error: unknown option `cached'\n" <>
                 _usage} = Git.staged_files(dir)
     end
 

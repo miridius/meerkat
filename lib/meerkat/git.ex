@@ -60,7 +60,7 @@ defmodule Meerkat.Git do
     # `-z` produces NUL-separated output so file names with spaces work
     # without shell quoting. Match the rename policy used by the patch
     # and binary classification, even when diff.renames is disabled.
-    case run_git(repo_path, ["diff", "--cached", "--name-status", "-z", "-M"], false) do
+    case run_git_unmerged(repo_path, ["diff", "--cached", "--name-status", "-z", "-M"]) do
       {:ok, output} -> {:ok, parse_name_status(output)}
       {:error, _} = err -> err
     end
@@ -458,9 +458,8 @@ defmodule Meerkat.Git do
   """
   @spec staged_file_diffs(String.t()) :: {:ok, [file_diff]} | {:error, String.t()}
   def staged_file_diffs(repo_path) do
-    with {:ok, initial_index} <- run_git(repo_path, ["ls-files", "--stage", "-z"], false),
-         {:ok, entries} <- staged_files(repo_path),
-         {:ok, binary_paths} <- staged_binary_paths(repo_path) do
+    with {:ok, initial_index} <- run_git_unmerged(repo_path, ["ls-files", "--stage", "-z"]),
+         {:ok, entries} <- staged_files(repo_path) do
       names = Enum.map(entries, & &1.file_name)
       generated_map = linguist_generated_many(repo_path, names)
       # One `git diff --cached -U3 -w -M` for ALL paths instead of
@@ -481,7 +480,20 @@ defmodule Meerkat.Git do
           {:error, reason} -> {%{}, [reason]}
         end
 
-      global_read_errors = batched_hunks_error ++ batched_oids_error
+      # Without the numstat answer a binary change can't be flagged, but
+      # the review still lists every file with the reason — aborting the
+      # load would hide the whole diff behind one failed probe.
+      {binary_paths, binary_paths_error} =
+        case staged_binary_paths(repo_path) do
+          {:ok, paths} ->
+            {paths, []}
+
+          {:error, reason} ->
+            IO.puts(:stderr, "meerkat: warning — #{reason}")
+            {MapSet.new(), [reason]}
+        end
+
+      global_read_errors = batched_hunks_error ++ batched_oids_error ++ binary_paths_error
 
       diffs =
         entries
@@ -496,7 +508,7 @@ defmodule Meerkat.Git do
         |> Enum.reject(&whitespace_only?/1)
         |> Meerkat.Moves.detect()
 
-      case run_git(repo_path, ["ls-files", "--stage", "-z"], false) do
+      case run_git_unmerged(repo_path, ["ls-files", "--stage", "-z"]) do
         {:ok, ^initial_index} -> {:ok, diffs}
         {:ok, _} -> {:error, "staged files changed while loading; reload the review"}
         {:error, _} = error -> error
@@ -509,20 +521,16 @@ defmodule Meerkat.Git do
   # Unlike the patch, it also describes binary-only renames. Disable
   # textconv/external diff in both commands: hunks must match index bytes.
   defp staged_binary_paths(repo_path) do
-    case run_git(
-           repo_path,
-           [
-             "diff",
-             "--cached",
-             "--numstat",
-             "-z",
-             "-w",
-             "-M",
-             "--no-textconv",
-             "--no-ext-diff"
-           ],
-           false
-         ) do
+    case run_git_unmerged(repo_path, [
+           "diff",
+           "--cached",
+           "--numstat",
+           "-z",
+           "-w",
+           "-M",
+           "--no-textconv",
+           "--no-ext-diff"
+         ]) do
       {:ok, output} ->
         parse_binary_paths(String.split(output, <<0>>, trim: false), MapSet.new())
 

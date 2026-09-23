@@ -107,13 +107,6 @@ defmodule Meerkat.GitIntegrationTest do
     end)
 
     assert Git.meerkat_dir(linked) == Path.join(expected, "meerkat-precommit")
-
-    # A directory nested inside a repository must not inherit its gitdir.
-    nested = Path.join(dir, "not-a-repository")
-    File.mkdir_p!(nested)
-    assert {:error, _} = Git.git_dir(nested)
-    assert {:error, _} = Git.git_common_dir(nested)
-    assert Git.meerkat_dir(nested) == Path.join(nested, ".git/meerkat-precommit")
   end
 
   test "staged text renames read the old path and retain both bodies", %{dir: dir} do

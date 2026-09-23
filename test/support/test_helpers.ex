@@ -4,14 +4,7 @@ defmodule Meerkat.TestHelpers do
   in the `ConnCase` setup.
   """
 
-  import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1]
-
-  @git_env Enum.map(
-             ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-                GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE),
-             &{&1, nil}
-           )
 
   # These helpers change process-wide environment and are only safe in
   # synchronous test cases. Restore it even when the test fails.
@@ -26,12 +19,6 @@ defmodule Meerkat.TestHelpers do
     previous = Map.new(overrides, fn {key, _} -> {key, System.get_env(key)} end)
     Enum.each(overrides, &put_env/1)
     on_exit(fn -> Enum.each(previous, &put_env/1) end)
-  end
-
-  def git(dir, args) do
-    {out, code} = System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: @git_env)
-    assert code == 0, out
-    out
   end
 
   def stage(dir, name, content) do

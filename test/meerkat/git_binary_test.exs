@@ -82,12 +82,16 @@ defmodule Meerkat.GitBinaryTest do
     assert renamed.old_file_name == old
   end
 
-  test "numstat failure aborts loading instead of losing a binary change", %{dir: dir} do
+  test "numstat failure keeps every file listed with the reason", %{dir: dir} do
     stage(dir, "BUILD.bazel", <<0, 255>>)
     intercept_git(dir, "--numstat", "echo numstat-failed >&2; exit 1")
-    assert {:error, reason} = Git.staged_file_diffs(dir)
-    assert reason =~ "couldn't identify staged binary files"
-    assert reason =~ "exited 1"
+
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      assert {:ok, [file]} = Git.staged_file_diffs(dir)
+      assert file.file_name == "BUILD.bazel"
+      assert Enum.join(file.read_errors) =~ "couldn't identify staged binary files"
+      assert Enum.join(file.read_errors) =~ "exited 1"
+    end)
   end
 
   test "patch parse failure survives whitespace filtering as visible read errors", %{dir: dir} do
