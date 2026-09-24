@@ -55,8 +55,7 @@ The end-to-end loop for a meerkat bug report or feature request:
    convenient.
 4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
    `main` is branch-protected on GitHub — no direct pushes, no
-   force-pushes; changes land via PR. This is a public repo: get the
-   user's OK before pushing or opening a PR.
+   force-pushes; changes land via PR.
 
 ## Quality gates
 
