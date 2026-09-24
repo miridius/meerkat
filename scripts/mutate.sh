@@ -46,7 +46,7 @@ skip_file() {
 mode=${1:-default}
 shift || true
 
-declare -a files
+files=()
 case "$mode" in
   default)
     # Capture into a tempfile + check exit status — process-subst
