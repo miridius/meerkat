@@ -42,8 +42,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 2. **Build, test, verify.** Implement in small slices. Each slice
    ends with `mix test` green AND a manual verification: review a
    real diff through `bin/meerkat-beam` from this checkout and use
-   the changed behaviour, or run `MEERKAT_BIN=$PWD/bin/meerkat-beam
-   bun run test:e2e`.
+   the changed behaviour.
 3. **Keep going until it's PR-ready, and meet every requirement the
    user asked for or approved.** Don't stop part way through. Don't
    ask the user "should I continue?" or "should I do X later?" — just
@@ -134,7 +133,3 @@ dev launcher with the prod release. install.sh is idempotent (it
 skips the rebuild when the release is already built from the current
 commit), so the hooks are cheap to fire on every `main` checkout.
 There is no state marker file; the launcher script content IS the mode.
-
-`bin/meerkat-beam` (the underlying launcher) is also runnable
-directly for ad-hoc dev — `MEERKAT_BIN=./bin/meerkat-beam bun run
-test:e2e` is the e2e suite's entry point.
