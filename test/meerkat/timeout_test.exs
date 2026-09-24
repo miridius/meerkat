@@ -27,6 +27,21 @@ defmodule Meerkat.TimeoutTest do
     end
   end
 
+  defp with_action(value, fun) do
+    previous = System.get_env("MEERKAT_REVIEW_TIMEOUT_ACTION")
+
+    if value,
+      do: System.put_env("MEERKAT_REVIEW_TIMEOUT_ACTION", value),
+      else: System.delete_env("MEERKAT_REVIEW_TIMEOUT_ACTION")
+
+    try do
+      fun.()
+    after
+      System.delete_env("MEERKAT_REVIEW_TIMEOUT_ACTION")
+      if previous, do: System.put_env("MEERKAT_REVIEW_TIMEOUT_ACTION", previous)
+    end
+  end
+
   defp with_run_id(value, fun) do
     previous = System.get_env("MEERKAT_RUN_ID")
     System.put_env("MEERKAT_RUN_ID", value)
@@ -71,8 +86,8 @@ defmodule Meerkat.TimeoutTest do
   end
 
   describe "limit_ms/0" do
-    test "a review runs for half an hour when nothing overrides it" do
-      with_env(nil, fn -> assert Timeout.limit_ms() == 30 * 60 * 1000 end)
+    test "a review runs for an hour and a half when nothing overrides it" do
+      with_env(nil, fn -> assert Timeout.limit_ms() == 90 * 60 * 1000 end)
     end
 
     test "MEERKAT_REVIEW_TIMEOUT sets the limit, in seconds" do
@@ -82,7 +97,7 @@ defmodule Meerkat.TimeoutTest do
     test "a limit that is not a whole number of seconds is ignored" do
       for bogus <- ["", "abc", "-60", "12.5", "60s"] do
         with_env(bogus, fn ->
-          assert Timeout.limit_ms() == 30 * 60 * 1000,
+          assert Timeout.limit_ms() == 90 * 60 * 1000,
                  "#{inspect(bogus)} should leave the default standing"
         end)
       end
@@ -97,6 +112,42 @@ defmodule Meerkat.TimeoutTest do
 
     test "the deadline is not disabled by default" do
       with_env(nil, fn -> refute Timeout.disabled?() end)
+    end
+  end
+
+  describe "action/0" do
+    test "a review that runs out of time waits when nothing overrides it" do
+      with_action(nil, fn -> assert Timeout.action() == :wait end)
+    end
+
+    test "MEERKAT_REVIEW_TIMEOUT_ACTION picks approve, ignoring case and spaces" do
+      with_action(" Approve\n", fn -> assert Timeout.action() == :approve end)
+      with_action("wait", fn -> assert Timeout.action() == :wait end)
+    end
+
+    test "an action meerkat does not know leaves the review waiting" do
+      for bogus <- ["", "yes", "reject", "approved"] do
+        with_action(bogus, fn ->
+          assert Timeout.action() == :wait, "#{inspect(bogus)} should leave the review waiting"
+        end)
+      end
+    end
+  end
+
+  describe "keep_alive/1" do
+    test "a run past its limit that is still open survives another run's prune",
+         %{repo: repo} do
+      with_run_id("overdue", fn -> Timeout.deadline_ms(repo, "abc123") end)
+      backdate(run_dir(repo, "overdue"), Timeout.limit_ms() + 60_000)
+
+      with_run_id("overdue", fn -> :ok = Timeout.keep_alive(repo) end)
+      with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
+
+      assert File.exists?(anchor_path(repo, "abc123", "overdue"))
+    end
+
+    test "a repo it cannot touch costs the review nothing" do
+      assert :ok = Timeout.keep_alive(nil)
     end
   end
 
@@ -292,6 +343,8 @@ defmodule Meerkat.TimeoutTest do
 
       assert warning =~ "couldn't read the comments saved for abc123",
              "the commit is told its comments were lost rather than losing them silently"
+
+      assert warning =~ "Auto-approving without them."
     end
   end
 end

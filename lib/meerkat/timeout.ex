@@ -1,6 +1,6 @@
 defmodule Meerkat.Timeout do
   @moduledoc """
-  The cap on how long one review may block the commit that asked for it.
+  The deadline on one review, and what happens to the commit when it passes.
 
   The clock starts when a review is first requested and is anchored on
   disk under `<gitdir>/meerkat-precommit/deadlines/<run>/<review_id>`,
@@ -16,14 +16,15 @@ defmodule Meerkat.Timeout do
 
   alias Meerkat.{AtomicFile, Feedback, Git, Persistence, ReviewServer, ReviewState}
 
-  @default_limit_ms 30 * 60 * 1000
+  @default_limit_ms 90 * 60 * 1000
   @check_interval_ms 15_000
   @unkeyed_run "unkeyed"
 
   @doc """
-  Returns how long a review may run, in milliseconds. `MEERKAT_REVIEW_TIMEOUT`
-  overrides the default, in whole seconds; `0` disables the deadline
-  entirely, leaving the review open until a human answers or kills it.
+  Returns how long a review runs before it times out, in milliseconds.
+  `MEERKAT_REVIEW_TIMEOUT` overrides the default, in whole seconds; `0`
+  disables the deadline entirely, leaving the review open until a human
+  answers or kills it.
   """
   @spec limit_ms() :: pos_integer() | :infinity
   def limit_ms do
@@ -41,6 +42,21 @@ defmodule Meerkat.Timeout do
   """
   @spec disabled?() :: boolean()
   def disabled?, do: limit_ms() == :infinity
+
+  @doc """
+  Returns what a review that times out does to its commit.
+  `MEERKAT_REVIEW_TIMEOUT_ACTION=approve` approves it unread; anything
+  else leaves the review open, waiting for a human.
+  """
+  @spec action() :: :approve | :wait
+  def action do
+    case System.get_env("MEERKAT_REVIEW_TIMEOUT_ACTION", "")
+         |> String.trim()
+         |> String.downcase() do
+      "approve" -> :approve
+      _ -> :wait
+    end
+  end
 
   @spec check_interval_ms() :: pos_integer()
   def check_interval_ms do
@@ -125,6 +141,18 @@ defmodule Meerkat.Timeout do
   @spec decision(String.t(), String.t()) :: {:timeout, String.t()}
   def decision(repo_path, review_id) do
     {:timeout, pending_feedback(repo_path, review_id)}
+  end
+
+  @doc """
+  Marks this run's deadline anchor as recent, so another run's
+  `prune_stale/1` keeps it. Never raises.
+  """
+  @spec keep_alive(String.t()) :: :ok
+  def keep_alive(repo_path) do
+    _ = File.touch(run_dir(repo_path))
+    :ok
+  catch
+    _, _ -> :ok
   end
 
   defp pending_feedback(repo_path, review_id) do

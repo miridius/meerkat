@@ -79,6 +79,7 @@ defmodule MeerkatWeb.ReviewLive do
        repo_path: repo_path,
        version: Meerkat.Version.info(),
        deadline_ms: Application.get_env(:meerkat, :review_deadline_ms),
+       timeout_action: Meerkat.Timeout.action(),
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
        open_form: Map.get(state, :open_form, nil),
@@ -898,6 +899,7 @@ defmodule MeerkatWeb.ReviewLive do
       assigns
       |> assign_new(:plantuml_available, fn -> Meerkat.PlantUML.available?() end)
       |> assign_new(:version, fn -> Meerkat.Version.info() end)
+      |> assign_new(:timeout_action, fn -> Meerkat.Timeout.action() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)
       |> assign_new(:collapsed_unapproved, fn -> MapSet.new() end)
       # Compute once per render and thread into both children.
@@ -999,6 +1001,7 @@ defmodule MeerkatWeb.ReviewLive do
         state={@state}
         open_form={@open_form}
         deadline_ms={@deadline_ms}
+        timeout_action={@timeout_action}
       />
     </main>
     """
@@ -1808,6 +1811,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :state, ReviewState, required: true
   attr :open_form, :any, required: true
   attr :deadline_ms, :any, required: true
+  attr :timeout_action, :atom, required: true
 
   defp decision_footer(assigns) do
     assigns =
@@ -1830,7 +1834,7 @@ defmodule MeerkatWeb.ReviewLive do
           phx-hook="Countdown"
           phx-update="ignore"
           data-deadline={@deadline_ms}
-          title="Time left before the review times out and the commit is auto-approved unread"
+          title={countdown_title(@timeout_action)}
         ></span>
         <%= if @dirty? do %>
           <span class="dirty-marker" title="Close the open comment form first">
@@ -1979,6 +1983,12 @@ defmodule MeerkatWeb.ReviewLive do
   defp done_heading(:approve), do: "Approved"
   defp done_heading(:reject), do: "Feedback sent"
   defp done_heading(:cancel), do: "Cancelled"
+
+  defp countdown_title(:approve),
+    do: "Time left before the review times out and the commit is auto-approved unread"
+
+  defp countdown_title(:wait),
+    do: "Time left before the review times out. The review stays open after that."
 
   defp comments?(state) do
     state.comments != [] or state.file_comments != [] or
@@ -2174,6 +2184,9 @@ defmodule MeerkatWeb.ReviewLive do
 
   @doc false
   def done_view_for_test(decision), do: done_view(decision)
+
+  @doc false
+  def countdown_title_for_test(action), do: countdown_title(action)
 
   @doc false
   def page_title_for_test(state), do: page_title(state)

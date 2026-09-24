@@ -42,14 +42,35 @@ defmodule Meerkat.DecisionTest do
   describe "the review deadline" do
     setup do
       Application.put_env(:meerkat, :deadline_check_ms, 5)
+      previous_action = System.get_env("MEERKAT_REVIEW_TIMEOUT_ACTION")
+      System.put_env("MEERKAT_REVIEW_TIMEOUT_ACTION", "approve")
 
       on_exit(fn ->
         Application.delete_env(:meerkat, :deadline_check_ms)
         Application.delete_env(:meerkat, :review_deadline_ms)
+        System.delete_env("MEERKAT_REVIEW_TIMEOUT_ACTION")
+
+        if previous_action,
+          do: System.put_env("MEERKAT_REVIEW_TIMEOUT_ACTION", previous_action)
+
         Decision.reset()
       end)
 
       :ok
+    end
+
+    test "a deadline already past leaves the review open when the action is wait" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT_ACTION", "wait")
+      Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
+      Decision.reset()
+
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+
+      # Outlives several deadline checks (`deadline_check_ms` is 5ms here).
+      refute_receive {:awaited, _}, 100
+      assert {:ok, {:approve, ""}} = Decision.submit({:approve, ""})
+      assert_receive {:awaited, {:approve, ""}}, 200
     end
 
     test "a deadline already past ends the review without anyone clicking" do

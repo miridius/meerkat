@@ -35,8 +35,10 @@ function backdate(fixtureDir: string, seconds: number): void {
 }
 
 test.describe("the review timeout", () => {
-	test("a review nobody answers exits 0 and says nobody read the diff", async () => {
-		const meerkat = await startMeerkat({ env: { MEERKAT_REVIEW_TIMEOUT: "1" } });
+	test("a review nobody answers exits 0 and says nobody read the diff when the action is approve", async () => {
+		const meerkat = await startMeerkat({
+			env: { MEERKAT_REVIEW_TIMEOUT: "1", MEERKAT_REVIEW_TIMEOUT_ACTION: "approve" },
+		});
 		try {
 			const { code, stderr } = await meerkat.awaitExit();
 
@@ -47,6 +49,34 @@ test.describe("the review timeout", () => {
 			expect(stderr, "the stderr line names the limit that ran out").toContain(
 				"No review within 1 second:",
 			);
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a review nobody answers stays open and counts the time over when no action is set", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat({
+			env: { MEERKAT_REVIEW_TIMEOUT: "1", MEERKAT_REVIEW_TIMEOUT_ACTION: "" },
+		});
+		try {
+			await page.goto(meerkat.url);
+			await expect(
+				page.locator(".review-countdown"),
+				"past the limit the countdown shows how long the review has run over",
+			).toHaveText(/^\d{2}:\d{2} over$/);
+
+			// Two deadline ticks (15s each) plus slack.
+			const exit = await Promise.race([
+				meerkat.awaitExit().then(({ code }) => `exited with code ${code}`),
+				page.waitForTimeout(35_000).then(() => null),
+			]);
+			expect(exit, "the review is still waiting for a human").toBeNull();
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code } = await meerkat.awaitExit();
+			expect(code, "the human's decision still ends an overdue review").toBe(0);
 		} finally {
 			await meerkat.kill();
 		}
@@ -81,16 +111,19 @@ test.describe("the review timeout", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
+		// Under the default wait action a review that inherited the
+		// abandoned anchor would stay open too, and pass for the wrong reason.
+		const env = { MEERKAT_REVIEW_TIMEOUT: "1800", MEERKAT_REVIEW_TIMEOUT_ACTION: "approve" };
 		try {
-			const abandoned = await startMeerkat({ fixture, keepFixture: true });
+			const abandoned = await startMeerkat({ fixture, keepFixture: true, env });
 			await waitForAnchor(fixture.dir);
 			await abandoned.kill();
 
 			// An hour after the abandoned review opened, past the
-			// default 30 minute limit it would have been given.
+			// 30 minute limit it was given.
 			backdate(fixture.dir, 3600);
 
-			const meerkat = await startMeerkat({ fixture, keepFixture: true });
+			const meerkat = await startMeerkat({ fixture, keepFixture: true, env });
 			try {
 				await page.goto(meerkat.url);
 				await expect(page.getByRole("button", { name: /^Approve$/ })).toBeVisible();

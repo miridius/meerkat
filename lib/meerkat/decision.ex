@@ -4,7 +4,8 @@ defmodule Meerkat.Decision do
 
   The CLI starts and blocks on `await/0`. Two things end that wait:
   `ReviewLive` calling `submit/1` from the user's button click, and the
-  review's deadline passing with nobody having clicked. `current/0`
+  review's deadline passing with nobody having clicked, unless
+  `Meerkat.Timeout.action/0` is `:wait`. `current/0`
   returns the decision if it's already been made — used by
   `ReviewLive.mount/3` on a refresh-during-shutdown F5 to seed the done
   view.
@@ -110,7 +111,7 @@ defmodule Meerkat.Decision do
     deadline = Application.get_env(:meerkat, :review_deadline_ms)
 
     if is_integer(deadline) and Meerkat.Timeout.expired?(deadline) do
-      {:noreply, put_decision(state, timed_out_decision())}
+      expire(state, Meerkat.Timeout.action())
     else
       schedule_deadline_check()
       {:noreply, state}
@@ -141,10 +142,19 @@ defmodule Meerkat.Decision do
     end
   end
 
-  defp timed_out_decision do
-    Meerkat.Timeout.decision(
-      Application.get_env(:meerkat, :repo_path),
-      Application.get_env(:meerkat, :review_id)
-    )
+  defp expire(state, :wait) do
+    :ok = Meerkat.Timeout.keep_alive(Application.get_env(:meerkat, :repo_path))
+    schedule_deadline_check()
+    {:noreply, state}
+  end
+
+  defp expire(state, :approve) do
+    decision =
+      Meerkat.Timeout.decision(
+        Application.get_env(:meerkat, :repo_path),
+        Application.get_env(:meerkat, :review_id)
+      )
+
+    {:noreply, put_decision(state, decision)}
   end
 end

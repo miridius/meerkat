@@ -41,13 +41,27 @@ staged changes, meerkat exits **0** before binding the server:
 
 The UI never opens in these cases.
 
+## Review timeout
+
+A review times out 90 minutes after it opens, or after
+`MEERKAT_REVIEW_TIMEOUT` seconds; `0` removes the deadline. The footer
+countdown shows `mm:ss left`, then `mm:ss over`.
+`MEERKAT_REVIEW_TIMEOUT_ACTION` sets what happens then:
+
+- `wait` (the default, and any unknown value): nothing. The review
+  stays open until a button is clicked.
+- `approve`: exit **0** with `No review within <limit>: commit
+  auto-approved. Nobody read this diff.` on stderr, followed by any
+  comments saved before the timeout.
+
 ## Default-deny on crash
 
 Any unhandled exception, throw, or non-decision exit downstream of
 `Meerkat.CLI.main/1` exits **2** with a "REJECT — commit aborted"
 breadcrumb on stderr. The two-layer `try/rescue/catch` in `cli.ex`
-is the safety net: the only path to exit 0 is an explicit Approve
-button click or the auto-approve fast path.
+is the safety net: the only paths to exit 0 are an explicit Approve
+button click, the auto-approve fast path, and a timeout whose action
+is `approve`.
 
 In dev mode (`MIX_ENV=dev`), the shepherd loop in `bin/meerkat-beam`
 treats non-zero exits as "wait for source change + restart" so the

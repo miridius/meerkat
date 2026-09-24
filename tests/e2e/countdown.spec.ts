@@ -8,7 +8,7 @@ function secondsLeft(text: string | null): number {
 }
 
 test.describe("review countdown", () => {
-	test("counts down towards the timeout that auto-approves the commit", async ({
+	test("counts down towards the review's timeout", async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({
