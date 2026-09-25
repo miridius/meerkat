@@ -50,6 +50,14 @@ supplied (no error, the highest-precedence one wins):
 - `MEERKAT_BIN` — used by the Playwright e2e suite to point at the
   binary under test (`bin/meerkat-beam` for in-tree dev, or
   `~/.local/bin/meerkat` for the installed launcher).
+- `MEERKAT_REVIEW_TIMEOUT` — review deadline in whole seconds (default
+  90 minutes). `0` removes the deadline and countdown; unparseable
+  values are ignored.
+- `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` — `1`, `true`, or `yes` turns on
+  auto-approval at timeout, ignoring case and surrounding whitespace.
+  Unset, empty, `0`, `false`, or `no` leaves it off and the review open
+  after timeout. Any other value prints a one-line stderr warning
+  naming the value and leaves auto-approval off.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
 - `FORCE=1` — let `scripts/install.sh` override the dev-mode

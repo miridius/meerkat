@@ -35,9 +35,19 @@ function backdate(fixtureDir: string, seconds: number): void {
 }
 
 test.describe("the review timeout", () => {
-	test("a review nobody answers exits 0 and says nobody read the diff", async () => {
-		const meerkat = await startMeerkat({ env: { MEERKAT_REVIEW_TIMEOUT: "1" } });
+	test("a review nobody answers exits 0 and says nobody read the diff when auto-approve is on", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat({
+			env: { MEERKAT_REVIEW_TIMEOUT: "1", MEERKAT_AUTO_APPROVE_ON_TIMEOUT: "true" },
+		});
 		try {
+			await page.goto(meerkat.url);
+			await expect(
+				page.locator(".review-countdown"),
+				"the countdown's tooltip warns the commit will be auto-approved",
+			).toHaveAttribute("title", /auto-approved unread/);
+
 			const { code, stderr } = await meerkat.awaitExit();
 
 			expect(code, "an unanswered review lets the commit proceed").toBe(0);
@@ -46,6 +56,51 @@ test.describe("the review timeout", () => {
 			);
 			expect(stderr, "the stderr line names the limit that ran out").toContain(
 				"No review within 1 second:",
+			);
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a review nobody answers stays open and counts the time over when auto-approve is not on", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat({
+			env: { MEERKAT_REVIEW_TIMEOUT: "1", MEERKAT_AUTO_APPROVE_ON_TIMEOUT: "maybe" },
+		});
+		try {
+			await page.goto(meerkat.url);
+			const countdown = page.locator(".review-countdown");
+			await expect(
+				countdown,
+				"past the limit the countdown shows how long the review has run over",
+			).toHaveText(/^\d{2}:\d{2} over$/);
+			await expect(countdown, "an overdue countdown is styled urgent").toHaveClass(/\burgent\b/);
+			await expect(
+				countdown,
+				"the countdown's tooltip says the review stays open",
+			).toHaveAttribute("title", /stays open/);
+			const overdueSeconds = async () => {
+				const [mm, ss] = (await countdown.textContent())!.split(" ")[0].split(":");
+				return Number(mm) * 60 + Number(ss);
+			};
+			const firstOver = await overdueSeconds();
+			await expect
+				.poll(overdueSeconds, { message: "the time over keeps growing" })
+				.toBeGreaterThan(firstOver);
+
+			// Two deadline ticks (15s each) plus slack.
+			const exit = await Promise.race([
+				meerkat.awaitExit().then(({ code }) => `exited with code ${code}`),
+				page.waitForTimeout(35_000).then(() => null),
+			]);
+			expect(exit, "the review is still waiting for a human").toBeNull();
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code, "the human's decision still ends an overdue review").toBe(0);
+			expect(stderr, "the unrecognised setting is named on stderr").toContain(
+				'MEERKAT_AUTO_APPROVE_ON_TIMEOUT="maybe"',
 			);
 		} finally {
 			await meerkat.kill();
@@ -81,16 +136,19 @@ test.describe("the review timeout", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
+		// Under the default wait action a review that inherited the
+		// abandoned anchor would stay open too, and pass for the wrong reason.
+		const env = { MEERKAT_REVIEW_TIMEOUT: "1800", MEERKAT_AUTO_APPROVE_ON_TIMEOUT: "true" };
 		try {
-			const abandoned = await startMeerkat({ fixture, keepFixture: true });
+			const abandoned = await startMeerkat({ fixture, keepFixture: true, env });
 			await waitForAnchor(fixture.dir);
 			await abandoned.kill();
 
 			// An hour after the abandoned review opened, past the
-			// default 30 minute limit it would have been given.
+			// 30 minute limit it was given.
 			backdate(fixture.dir, 3600);
 
-			const meerkat = await startMeerkat({ fixture, keepFixture: true });
+			const meerkat = await startMeerkat({ fixture, keepFixture: true, env });
 			try {
 				await page.goto(meerkat.url);
 				await expect(page.getByRole("button", { name: /^Approve$/ })).toBeVisible();

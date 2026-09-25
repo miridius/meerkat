@@ -521,6 +521,13 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
   end
 
+  describe "countdown_title" do
+    test "names what happens when the review times out" do
+      assert ReviewLive.countdown_title_for_test(:approve) =~ "auto-approved unread"
+      assert ReviewLive.countdown_title_for_test(:wait) =~ "The review stays open after that."
+    end
+  end
+
   describe "page_title" do
     test "PR number or commit-review fallback" do
       assert ReviewLive.page_title_for_test(%ReviewState{pr: %{number: 7}}) == "meerkat — PR #7"

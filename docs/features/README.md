@@ -31,7 +31,7 @@ bridges the two by exercising the docs against the running app.
 - [cli.md](cli.md) — command-line flags, target modes, exit codes, env vars.
 - [installation.md](installation.md) — dev launcher vs prod release; auto-install on merge to main.
 - [dev-mode.md](dev-mode.md) — DevWatcher, shepherd loop, hot reload, deterministic port.
-- [decision-flow.md](decision-flow.md) — Approve / Send Feedback / Cancel, auto-approve fast path, default-deny on crash, terminal-decision persistence cleanup.
+- [decision-flow.md](decision-flow.md) — Approve / Send Feedback / Cancel, auto-approve fast path, review timeout, default-deny on crash, terminal-decision persistence cleanup.
 - [inline-comments.md](inline-comments.md) — drag-select, form anchoring, edit / remove, learn toggle, suggestion mode, visual line marker, persistence across BEAM restart.
 - [non-inline-comments.md](non-inline-comments.md) — global / file / commit-msg surfaces; shared CommentForm + GitHub PENDING flatten.
 - [commit-message.md](commit-message.md) — gutter rendering, block detection, click-to-comment.

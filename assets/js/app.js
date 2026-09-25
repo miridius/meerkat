@@ -86,20 +86,19 @@ const hooks = {
   },
   // Ticks in the browser from an absolute deadline rather than from a
   // server push: the alternative sends every connected tab a diff once a
-  // second, for the whole half hour.
+  // second, for as long as the review stays open.
   Countdown: {
     mounted() {
       this._tick = () => {
-        const secs = Math.max(
-          0,
-          Math.ceil((Number(this.el.dataset.deadline) - Date.now()) / 1000),
+        const left = Math.ceil(
+          (Number(this.el.dataset.deadline) - Date.now()) / 1000,
         );
+        const secs = Math.abs(left);
         const mm = String(Math.floor(secs / 60)).padStart(2, "0");
         const ss = String(secs % 60).padStart(2, "0");
-        this.el.textContent = `${mm}:${ss} left`;
-        this.el.classList.toggle("urgent", secs <= 60);
-        this.el.classList.toggle("warn", secs > 60 && secs <= 300);
-        if (secs === 0) clearInterval(this._timer);
+        this.el.textContent = left > 0 ? `${mm}:${ss} left` : `${mm}:${ss} over`;
+        this.el.classList.toggle("urgent", left <= 60);
+        this.el.classList.toggle("warn", left > 60 && left <= 300);
       };
       this._tick();
       this._timer = setInterval(this._tick, 1000);

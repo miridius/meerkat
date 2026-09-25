@@ -42,14 +42,58 @@ defmodule Meerkat.DecisionTest do
   describe "the review deadline" do
     setup do
       Application.put_env(:meerkat, :deadline_check_ms, 5)
+      previous_action = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
+      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "true")
 
       on_exit(fn ->
         Application.delete_env(:meerkat, :deadline_check_ms)
         Application.delete_env(:meerkat, :review_deadline_ms)
+        System.delete_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
+
+        if previous_action,
+          do: System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", previous_action)
+
         Decision.reset()
       end)
 
       :ok
+    end
+
+    test "a deadline already past leaves the review open when auto-approve is off" do
+      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
+      Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
+      Decision.reset()
+
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+
+      # Outlives several deadline checks (`deadline_check_ms` is 5ms here).
+      refute_receive {:awaited, _}, 100
+      assert {:ok, {:approve, ""}} = Decision.submit({:approve, ""})
+      assert_receive {:awaited, {:approve, ""}}, 200
+    end
+
+    test "an overdue review left open keeps its deadline directory recent" do
+      repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-decision")
+      Application.put_env(:meerkat, :repo_path, repo)
+
+      on_exit(fn ->
+        Application.delete_env(:meerkat, :repo_path)
+        File.rm_rf(repo)
+      end)
+
+      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
+      Meerkat.Timeout.deadline_ms(repo, "abc123")
+      run_dir = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "unkeyed"])
+      backdated_s = System.system_time(:second) - 3600
+      File.touch!(run_dir, backdated_s)
+
+      Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
+      Decision.reset()
+      Process.sleep(100)
+
+      %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
+      assert mtime > backdated_s
     end
 
     test "a deadline already past ends the review without anyone clicking" do

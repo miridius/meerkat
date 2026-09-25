@@ -17,14 +17,24 @@ meerkat --pr 123                     # fetch and review a GitHub PR via `gh`
 
 No external server, no queue, no database. Each invocation spawns a
 short-lived Phoenix server on a random local port, opens the browser to
-it, waits up to 30 minutes for your decision, and exits. A review nobody
-answers in that time auto-approves, so the agent blocked on the commit
-moves on to its next step instead of idling until you come back. The 30
-minutes also keeps it inside the hour its prompt cache lives for.
+it, waits for your decision, and exits. A countdown shows how long the
+review has left before it times out, 90 minutes by default.
 `MEERKAT_REVIEW_TIMEOUT` sets a different limit, in whole seconds; `0`
-disables the deadline entirely, so the review waits for your decision
-until you answer or kill it. Anything else in it is ignored and the 30
-minutes stands.
+removes the deadline and the countdown. Anything else in it is ignored
+and the 90 minutes stands.
+
+`MEERKAT_AUTO_APPROVE_ON_TIMEOUT` controls what happens when the
+review deadline expires. Values are matched ignoring case and
+surrounding whitespace:
+
+- `1`, `true`, or `yes`: the commit is auto-approved unread. Meerkat
+  exits **0** with `No review within <limit>: commit auto-approved.
+  Nobody read this diff.` on stderr, followed by any comments saved
+  before the timeout.
+- `0`, `false`, `no`, empty, or unset (the default): nothing happens
+  at timeout; the review stays open until you click a button. Any other
+  value also leaves auto-approval off and prints a one-line warning
+  naming the value on stderr when the review starts.
 
 ## Status
 
@@ -101,8 +111,8 @@ request changes / comment) from github.com.
 - **Approve with feedback**. The Approve button accepts comments — label
   flips to "Approve with feedback" when any are pending.
 - **Review countdown** in the decision footer, showing the time left
-  before the review times out and the commit is auto-approved unread.
-  Amber under five minutes, red under one.
+  before the review times out, then the time it has run over. Amber
+  under five minutes, red under one.
 - **Multi-tab consistency**. State lives in `Meerkat.ReviewServer`, a
   GenServer keyed by review_id. `Phoenix.PubSub` broadcasts every
   change to every connected tab — open the same review URL in two

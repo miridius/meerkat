@@ -27,7 +27,7 @@
     "@codemirror/view": "^6.43.13",
     "@git-diff-view/shiki": "^0.1.7",
     "@git-diff-view/svelte": "^0.1.7",
-    "@lezer/highlight": "^1.2.3",
+    "@lezer/highlight": "^1.2.4",
     "@nextjournal/lang-clojure": "^1.0.0",
     "@rose-pine/palette": "^4.0.1",
     "codemirror": "^6.0.2",
@@ -40,7 +40,7 @@
     "shiki": "^3.23.0"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "svelte": "^5.57.1",
     "svelte-preprocess": "^6.0.5",
     "vite": "^8.3.0"

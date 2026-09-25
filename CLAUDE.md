@@ -38,29 +38,23 @@ remove commits a merged PR still references). Before committing:
 The end-to-end loop for a meerkat bug report or feature request:
 
 1. **Understand.** If the request is ambiguous, ask clarifying
-   questions before touching code. If the work is non-trivial
-   (multi-file, design choices, more than one viable approach),
-   invoke `/brainstorm` and let plan mode shape Context →
-   Requirements → Design → Plan with the user's input — don't
-   write the plan in chat.
+   questions before touching code.
 2. **Build, test, verify.** Implement in small slices. Each slice
-   ends with `mix test` green AND a manual verification:
-   `iex -S mix phx.server` for dev iteration (Vite hot-reloads
-   Svelte changes), or `MEERKAT_BIN=$PWD/bin/meerkat-beam bun
-   run test:e2e` for the Playwright suite end-to-end.
-3. **Keep going until it's PR-ready, and meet every requirement in
-   the plan.** Don't stop part way through. Don't ask the user
-   "should I continue?" or "should I do X later?" — just do it.
-   "Out of scope" is not an escape hatch for a requirement the user
-   already approved; if the work spans repos or layers, ship all of
-   them in this PR (vendor cross-repo bits if needed). The session
+   ends with `mix test` green AND a manual verification: review a
+   real diff through `bin/meerkat-beam` from this checkout and use
+   the changed behaviour.
+3. **Keep going until it's PR-ready, and meet every requirement the
+   user asked for or approved.** Don't stop part way through. Don't
+   ask the user "should I continue?" or "should I do X later?" — just
+   do it. "Out of scope" is not an escape hatch for a requirement the
+   user asked for or approved; if the work spans repos or layers, ship
+   all of them in this PR (vendor cross-repo bits if needed). The session
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
 4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
    `main` is branch-protected on GitHub — no direct pushes, no
-   force-pushes; changes land via PR. This is a public repo: get the
-   user's OK before pushing or opening a PR.
+   force-pushes; changes land via PR.
 
 ## Quality gates
 
@@ -139,7 +133,3 @@ dev launcher with the prod release. install.sh is idempotent (it
 skips the rebuild when the release is already built from the current
 commit), so the hooks are cheap to fire on every `main` checkout.
 There is no state marker file; the launcher script content IS the mode.
-
-`bin/meerkat-beam` (the underlying launcher) is also runnable
-directly for ad-hoc dev — `MEERKAT_BIN=./bin/meerkat-beam bun run
-test:e2e` is the e2e suite's entry point.

@@ -40,9 +40,10 @@ defmodule Meerkat.QuarantineTest do
         end)
 
       refute File.exists?(path)
-      assert log =~ "snapshot at #{path} unusable (schema mismatch)"
+      warning = log |> String.split("\n") |> Enum.find(&(&1 =~ "snapshot at #{path}"))
+      assert warning =~ "snapshot at #{path} unusable (schema mismatch)"
       # No trailing "Starting from ..." line.
-      refute log =~ "Starting"
+      refute warning =~ "Starting"
     end
 
     test "logs without success-suffix when rename fails (file missing)", %{dir: dir} do

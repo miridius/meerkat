@@ -1,9 +1,9 @@
 # Decision flow
 
-The reviewer's verdict produces an exit code that the git-commit
-hook (or calling agent) interprets. The decision footer at the
-bottom of the review UI is the only path to a terminal state in
-normal operation.
+The reviewer's verdict produces an exit code that the git-commit hook
+(or calling agent) interprets. An open review normally ends when a
+button is clicked; the auto-approve fast path exits before the UI opens,
+and an auto-approved timeout can end an unanswered review.
 
 ## Buttons
 
@@ -41,13 +41,43 @@ staged changes, meerkat exits **0** before binding the server:
 
 The UI never opens in these cases.
 
+## Review timeout
+
+A review's deadline is 90 minutes by default. `MEERKAT_REVIEW_TIMEOUT`
+sets it in whole seconds; `0` removes the deadline and countdown.
+Unparseable values are ignored, leaving the 90-minute default. The
+footer countdown shows `mm:ss left` before the deadline, then
+`mm:ss over`.
+
+`MEERKAT_AUTO_APPROVE_ON_TIMEOUT` is off by default. Values `1`,
+`true`, or `yes` turn it on, ignoring case and surrounding whitespace.
+`0`, `false`, `no`, empty, or unset leave it off. Any other value
+prints a one-line warning naming the value on stderr when the review
+starts, and leaves auto-approval off.
+
+With auto-approval off, reaching the deadline does nothing: the review
+stays open until a button is clicked. With it on, the timeout exits
+**0** with `No review within <limit>: commit auto-approved. Nobody read
+this diff.` on stderr, followed by any comments saved before the
+timeout.
+
+On each 15-second deadline check, an overdue review that is still
+waiting refreshes the mtime of this run's deadline directory, if it
+exists; it never creates one. Pruning removes other runs' deadline
+directories once their mtime is older than the timeout limit plus two
+deadline-check intervals. The extra two intervals cover the gap
+before an overdue review's first post-deadline check refreshes its
+directory. Pruning is disabled when the deadline is disabled.
+
 ## Default-deny on crash
 
 Any unhandled exception, throw, or non-decision exit downstream of
 `Meerkat.CLI.main/1` exits **2** with a "REJECT — commit aborted"
-breadcrumb on stderr. The two-layer `try/rescue/catch` in `cli.ex`
-is the safety net: the only path to exit 0 is an explicit Approve
-button click or the auto-approve fast path.
+breadcrumb on stderr. The two-layer `try/rescue/catch` in `cli.ex` is the safety net: the
+only paths to exit 0 are an explicit Approve button click, the
+auto-approve fast path (no meaningful staged changes, so the UI never
+opens), a timeout with `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled, and a
+stored `--answers` payload, which runs no review at all.
 
 In dev mode (`MIX_ENV=dev`), the shepherd loop in `bin/meerkat-beam`
 treats non-zero exits as "wait for source change + restart" so the

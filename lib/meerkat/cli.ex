@@ -57,8 +57,9 @@ defmodule Meerkat.CLI do
   Exit-0 has four paths: an explicit `{:approve, _}` /
   `{:approve_with_feedback, _}` from a button click, the auto-approve
   fast path with its visible "auto-approving" stderr breadcrumb,
-  `{:timeout, _}` once the review has run out of time, which says so on
-  stderr, and a stored `--answers` payload, which runs no review at
+  `{:timeout, _}` once a review with
+  `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled has run out of time, which
+  says so on stderr, and a stored `--answers` payload, which runs no review at
   all. Anything else (Decision GenServer crash, ReviewServer
   crash, unhandled exception, endpoint failure, supervisor restart)
   must bubble out as a non-zero exit so the git hook ABORTS the
@@ -154,6 +155,7 @@ defmodule Meerkat.CLI do
       {:ok, state} ->
         prune_approval_cache(repo_path())
         _ = Timeout.prune_stale(repo_path())
+        :ok = Timeout.warn_if_unrecognised()
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
 

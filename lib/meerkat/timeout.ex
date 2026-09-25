@@ -1,29 +1,25 @@
 defmodule Meerkat.Timeout do
   @moduledoc """
-  The cap on how long one review may block the commit that asked for it.
+  The deadline on one review, and what happens to the commit when it passes.
 
   The clock starts when a review is first requested and is anchored on
   disk under `<gitdir>/meerkat-precommit/deadlines/<run>/<review_id>`,
   where `<run>` is the launcher's `MEERKAT_RUN_ID`. A BEAM respawned by
   the shepherd is the same run and resumes the remaining time; a later
   `git commit` is a new one and gets a full window.
-
-  An agent's `git commit` blocks on this, and the agent sits idle until
-  someone answers. Its prompt cache lives an hour, so a review answered
-  after that charges the whole context as a cache write plus input
-  rather than a cache read.
   """
 
   alias Meerkat.{AtomicFile, Feedback, Git, Persistence, ReviewServer, ReviewState}
 
-  @default_limit_ms 30 * 60 * 1000
+  @default_limit_ms 90 * 60 * 1000
   @check_interval_ms 15_000
   @unkeyed_run "unkeyed"
 
   @doc """
-  Returns how long a review may run, in milliseconds. `MEERKAT_REVIEW_TIMEOUT`
-  overrides the default, in whole seconds; `0` disables the deadline
-  entirely, leaving the review open until a human answers or kills it.
+  Returns how long a review runs before it times out, in milliseconds.
+  `MEERKAT_REVIEW_TIMEOUT` overrides the default, in whole seconds; `0`
+  disables the deadline entirely, leaving the review open until a human
+  answers or kills it.
   """
   @spec limit_ms() :: pos_integer() | :infinity
   def limit_ms do
@@ -41,6 +37,46 @@ defmodule Meerkat.Timeout do
   """
   @spec disabled?() :: boolean()
   def disabled?, do: limit_ms() == :infinity
+
+  @doc """
+  Returns what happens when a review reaches its deadline. `:approve`
+  auto-approves the commit unread; `:wait` leaves the review open for a
+  human. `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` selects `:approve` for `1`,
+  `true`, or `yes`, ignoring case and surrounding whitespace; all other
+  values select `:wait`.
+  """
+  @spec action() :: :approve | :wait
+  def action do
+    case auto_approve_setting() do
+      :approve -> :approve
+      _ -> :wait
+    end
+  end
+
+  @spec warn_if_unrecognised() :: :ok
+  def warn_if_unrecognised do
+    case auto_approve_setting() do
+      {:unrecognised, raw} ->
+        IO.puts(
+          :stderr,
+          "meerkat: ignoring MEERKAT_AUTO_APPROVE_ON_TIMEOUT=#{inspect(raw)} " <>
+            "(expected true or false); a review that times out will wait."
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp auto_approve_setting do
+    raw = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "")
+
+    case raw |> String.trim() |> String.downcase() do
+      value when value in ["1", "true", "yes"] -> :approve
+      value when value in ["", "0", "false", "no"] -> :wait
+      _ -> {:unrecognised, raw}
+    end
+  end
 
   @spec check_interval_ms() :: pos_integer()
   def check_interval_ms do
@@ -72,9 +108,12 @@ defmodule Meerkat.Timeout do
   end
 
   @doc """
-  Deletes the deadline directory of every run but this one, once it is
-  older than `limit_ms/0`. Never prunes when the deadline is disabled:
-  there is no age past which a still-live run's anchor is stale.
+  Deletes the deadline directory of every run but this one once its
+  mtime is older than `limit_ms/0` plus two deadline-check intervals.
+  An overdue review's directory is not refreshed until its first
+  deadline check after the deadline, so the extra two intervals keep
+  another run from pruning a live review's anchor in that gap. Never
+  prunes when the deadline is disabled.
   """
   @spec prune_stale(String.t()) :: :ok
   def prune_stale(repo_path) do
@@ -88,7 +127,7 @@ defmodule Meerkat.Timeout do
   defp do_prune_stale(repo_path) do
     parent = Path.dirname(run_dir(repo_path))
     keep = run_id()
-    cutoff_s = System.system_time(:second) - div(limit_ms(), 1000)
+    cutoff_s = System.system_time(:second) - div(limit_ms() + 2 * check_interval_ms(), 1000)
 
     case File.ls(parent) do
       {:ok, entries} ->
@@ -125,6 +164,21 @@ defmodule Meerkat.Timeout do
   @spec decision(String.t(), String.t()) :: {:timeout, String.t()}
   def decision(repo_path, review_id) do
     {:timeout, pending_feedback(repo_path, review_id)}
+  end
+
+  @doc """
+  Refreshes this run's deadline directory mtime so another run's
+  `prune_stale/1` keeps an overdue, waiting review's anchor. Called on
+  each deadline check after the deadline passes. Does nothing if this
+  run has no deadline directory; never creates one and never raises.
+  """
+  @spec keep_alive(String.t()) :: :ok
+  def keep_alive(repo_path) do
+    dir = run_dir(repo_path)
+    if File.dir?(dir), do: File.touch(dir)
+    :ok
+  catch
+    _, _ -> :ok
   end
 
   defp pending_feedback(repo_path, review_id) do

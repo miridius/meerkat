@@ -46,7 +46,7 @@ skip_file() {
 mode=${1:-default}
 shift || true
 
-declare -a files
+files=()
 case "$mode" in
   default)
     # Capture into a tempfile + check exit status — process-subst
@@ -128,4 +128,8 @@ MIX_ENV=test mix compile --warnings-as-errors
 
 # muex's `--files` accepts comma-separated globs/paths.
 joined=$(IFS=,; echo "${files[*]}")
-mix muex --files "$joined" "${extra_args[@]}"
+# Keep --coverage-guided: muex's dependency analysis misses tests that
+# reach modules through multi-aliases, so it may run only a subset and
+# miss mutants those tests kill. Coverage-guided selects tests that
+# execute each mutated line.
+mix muex --files "$joined" --coverage-guided "${extra_args[@]}"
