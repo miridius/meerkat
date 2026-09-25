@@ -23,13 +23,18 @@ review has left before it times out, 90 minutes by default.
 removes the deadline and the countdown. Anything else in it is ignored
 and the 90 minutes stands.
 
-`MEERKAT_REVIEW_TIMEOUT_ACTION` sets what a timeout does:
+`MEERKAT_AUTO_APPROVE_ON_TIMEOUT` controls what happens when the
+review deadline expires. Values are matched ignoring case and
+surrounding whitespace:
 
-- `wait` (the default): nothing. The review stays open and the
-  countdown shows how long it has run over.
-- `approve`: the commit goes through unread, so the agent blocked on it
-  moves on instead of idling until you come back. The agent gets any
-  comments you saved before the timeout.
+- `1`, `true`, or `yes`: the commit is auto-approved unread. Meerkat
+  exits **0** with `No review within <limit>: commit auto-approved.
+  Nobody read this diff.` on stderr, followed by any comments saved
+  before the timeout.
+- `0`, `false`, `no`, empty, or unset (the default): nothing happens
+  at timeout; the review stays open until you click a button. Any other
+  value also leaves auto-approval off and prints a one-line warning
+  naming the value on stderr when the review starts.
 
 ## Status
 
