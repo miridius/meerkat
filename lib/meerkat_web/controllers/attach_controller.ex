@@ -26,11 +26,11 @@ defmodule MeerkatWeb.AttachController do
 
   alias Meerkat.{Decision, Persistence, ReviewState}
 
-  # A heartbeat to a caller that has gone fails, which ends its request and detaches it.
-  # The deadline runs until that failed heartbeat detaches the caller, so this interval
-  # bounds how long it keeps running after the caller dies. At 1 s, that's about two
-  # seconds: curl dies on its next write, then the server's next heartbeat fails.
-  @heartbeat_ms 1_000
+  # The deadline runs only while a caller is attached. A dead caller is detached when a
+  # heartbeat write fails. The write that kills curl and the server's first write after
+  # curl dies can both succeed; the next write fails. Detachment can take up to three
+  # intervals after the caller dies (1.5 s at 500 ms).
+  @heartbeat_ms 500
 
   plug :require_token
 

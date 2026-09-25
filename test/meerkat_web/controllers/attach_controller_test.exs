@@ -151,7 +151,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert map_size(:sys.get_state(Decision).callers) == 1, "the caller attached before publish"
 
     :ok = Decision.publish({0, "approved\n"})
-    assert Task.await(task).resp_body == "o approved\nx 0\n"
+    assert Task.await(task).resp_body =~ ~r/\A(k\n)*o approved\nx 0\n\z/
   end
 
   test "a caller is told when a later invocation of the same review takes it over",
