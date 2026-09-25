@@ -58,7 +58,7 @@ defmodule Meerkat.MixProject do
       # tables/fences/lists); html_sanitize_ex strips `<script>` /
       # event handlers / javascript: URLs from the result so a
       # hostile comment body can't fire JS in the local review tab.
-      {:mdex, "~> 0.13.5"},
+      {:mdex, "~> 0.14.0"},
       {:html_sanitize_ex, "~> 1.4"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
