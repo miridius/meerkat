@@ -158,18 +158,22 @@ defmodule Meerkat.CLI do
         :ok = Timeout.warn_if_unrecognised()
         review_id = ReviewId.derive(repo_path(), target)
         log = ReviewLog.start(repo_path(), state)
+        serve_dir = System.get_env("MEERKAT_SERVE_DIR")
 
         # Set before `start_endpoint!` starts the application:
         # `Meerkat.Decision` arms its first deadline tick as it boots, and
-        # arms none at all when this is unset.
+        # arms none at all when this is unset. Under a launcher it stays
+        # unset: the deadline runs only while a caller is attached.
         Application.put_env(
           :meerkat,
           :review_deadline_ms,
-          Timeout.deadline_ms(repo_path(), review_id)
+          if(is_nil(serve_dir), do: Timeout.deadline_ms(repo_path(), review_id))
         )
 
+        Application.put_env(:meerkat, :review_target, target)
+        Application.put_env(:meerkat, :no_open, opts.no_open)
         start_endpoint!(opts.port, state, review_id, repo_path())
-        announce_url(target)
+        announce_url(target, serve_dir)
         open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Give the LiveView a moment to flush the done-view
@@ -177,12 +181,19 @@ defmodule Meerkat.CLI do
         Process.sleep(750)
         {tag, payload} = decision
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
+        {code, text} = exit_code(decision, review_id, feedback_file_path(log))
+        run = deliver({code, text}, serve_dir)
         # Clear the in-progress snapshot — the next invocation must
         # start with an empty review, not replay stale comments from
         # a closed cycle.
         _ = Persistence.delete(repo_path(), review_id)
-        _ = Timeout.clear(repo_path(), review_id)
-        exit_code(decision, review_id, feedback_file_path(log))
+
+        _ =
+          if run,
+            do: Timeout.clear(repo_path(), review_id, run),
+            else: Timeout.clear(repo_path(), review_id)
+
+        code
 
       {:error, reason} ->
         IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
@@ -660,9 +671,30 @@ defmodule Meerkat.CLI do
     """
   end
 
-  defp announce_url(target) do
-    IO.write(:stderr, pause_banner(target, review_url()))
-    IO.puts(:stderr, "debug logs at: #{Application.get_env(:meerkat, :log_path)}")
+  defp announce_url(target, serve_dir) do
+    banner =
+      pause_banner(target, review_url()) <>
+        "debug logs at: #{Application.get_env(:meerkat, :log_path)}\n"
+
+    if serve_dir do
+      Application.put_env(:meerkat, :review_banner, banner)
+      {:ok, {_ip, port}} = MeerkatWeb.Endpoint.server_info(:http)
+      # The caller attaches on the port, and kills this BEAM by pid if its
+      # shepherd dies before a decision.
+      :ok = Meerkat.AtomicFile.write(Path.join(serve_dir, "port"), "#{port} #{System.pid()}\n")
+    else
+      IO.write(:stderr, banner)
+    end
+  end
+
+  defp deliver({_code, text}, nil) do
+    IO.write(:stderr, text)
+    nil
+  end
+
+  defp deliver(outcome, _serve_dir) do
+    :ok = Decision.publish(outcome)
+    Decision.await_delivery()
   end
 
   defp open_browser_unless_disabled(true, _open), do: :ok
@@ -774,34 +806,29 @@ defmodule Meerkat.CLI do
   # all the agent gets — and now it gets one.
 
   defp exit_code({:approve, _payload}, _review_id, _feedback_path) do
-    IO.puts(:stderr, "The user approved your commit. Proceeding.")
-    0
+    {0, "The user approved your commit. Proceeding.\n"}
   end
 
   defp exit_code({:approve_with_feedback, payload}, review_id, feedback_path) do
-    write_feedback(:approve_with_feedback, payload, review_id, feedback_path)
-    0
+    {0, write_feedback(:approve_with_feedback, payload, review_id, feedback_path)}
   end
 
   defp exit_code({:timeout, payload}, review_id, feedback_path) do
-    IO.puts(
-      :stderr,
+    notice =
       "No review within #{limit_phrase(Timeout.limit_ms())}: commit auto-approved. " <>
-        "Nobody read this diff."
-    )
+        "Nobody read this diff.\n"
 
-    if payload != "", do: write_feedback(:timeout, payload, review_id, feedback_path)
-    0
+    if payload != "",
+      do: {0, notice <> write_feedback(:timeout, payload, review_id, feedback_path)},
+      else: {0, notice}
   end
 
   defp exit_code({:reject, payload}, review_id, feedback_path) do
-    write_feedback(:reject, payload, review_id, feedback_path)
-    1
+    {1, write_feedback(:reject, payload, review_id, feedback_path)}
   end
 
   defp exit_code({:cancel, _payload}, _review_id, _feedback_path) do
-    IO.puts(:stderr, "Review cancelled — commit aborted, no feedback to act on.")
-    1
+    {1, "Review cancelled — commit aborted, no feedback to act on.\n"}
   end
 
   defp decision_atom(:approve_with_feedback), do: :approve
@@ -816,12 +843,14 @@ defmodule Meerkat.CLI do
   # and recovery path. Emitted even for an empty payload (a reject with
   # no comments) so the verdict is never silent.
   defp write_feedback(verdict, payload, review_id, feedback_path) when is_binary(payload) do
-    saved = if payload == "", do: :none, else: save_feedback_file(payload, feedback_path)
+    {saved, warning} =
+      case if(payload == "", do: :none, else: save_feedback_file(payload, feedback_path)) do
+        {:error, warning} -> {:error, warning}
+        saved -> {saved, ""}
+      end
+
     banner = feedback_banner(verdict, comment_count(review_id), saved)
-    IO.write(:stderr, banner)
-    if payload != "", do: IO.write(:stderr, payload)
-    IO.write(:stderr, banner)
-    :ok
+    warning <> banner <> payload <> banner
   end
 
   # Best-effort: on failure yield nil so the banner omits the count
@@ -847,12 +876,7 @@ defmodule Meerkat.CLI do
   # Surface the reason — swallowing it leaves the agent with no recovery
   # copy and no clue why.
   defp feedback_file_unsaved(path, reason) do
-    IO.puts(
-      :stderr,
-      "meerkat: warning — couldn't save full feedback to #{path} (#{inspect(reason)})."
-    )
-
-    :error
+    {:error, "meerkat: warning — couldn't save full feedback to #{path} (#{inspect(reason)}).\n"}
   end
 
   # User-attributed, not tool-attributed: a "meerkat:" label next to

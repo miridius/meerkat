@@ -50,6 +50,7 @@ exit "\${codes[$i]:-0}"
 					...process.env,
 					MEERKAT_CURRENT_LINK: join(dir, "current"),
 					MEERKAT_PORT: "44444",
+					MEERKAT_RUNS_DIR: join(dir, "runs"),
 					I_FILE: join(dir, "i"),
 					SEQ_FILE: join(dir, "seq"),
 					...(opts.input === undefined ? {} : { STDIN_FILE: join(dir, "stdin") }),

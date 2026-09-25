@@ -1,0 +1,249 @@
+# shellcheck shell=bash
+#
+# The caller half of the meerkat launchers, sourced by `meerkat-shepherd`
+# and `meerkat-beam`. `meerkat_attach` starts the review backend
+# detached, or finds the one an earlier invocation of the same review
+# left running, relays its stderr, and exits with its decision. The
+# backend sits outside the caller's process tree, so killing the caller
+# leaves the review running for the next invocation to reattach to.
+#
+# A backend's run dir holds `pid` (its shepherd), `token`, `log` (its
+# stderr), `port` ("<port> <BEAM pid>" while a BEAM serves) and, once it
+# has exited, `exit`. The attach stream's frames are documented in
+# `MeerkatWeb.AttachController`.
+
+meerkat_attach() {
+  local self="$1"
+  shift
+  set +e
+
+  local key runs
+  # Keyed like the port, so a rerun of the same review finds its run dir.
+  key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
+  runs="${MEERKAT_RUNS_DIR:-${TMPDIR:-/tmp}/meerkat-runs}"
+  mkdir -p "$runs"
+
+  _MA_DIR="$runs/$key"
+  _MA_RUN="$(uuidgen)"
+  _MA_OWNED=0
+  _MA_OFFSET=0
+  _MA_QUIET=0
+  _MA_PID_WAIT=0
+  _MA_TICK=0
+  _ma_record_ancestors
+
+  while true; do
+    if [[ -f "$_MA_DIR/exit" ]]; then
+      if ((_MA_OWNED)); then
+        _ma_relay_log
+        local code
+        code="$(<"$_MA_DIR/exit")"
+        rm -rf "$_MA_DIR"
+        exit "$code"
+      fi
+      # Its output went to the caller that was attached to it.
+      rm -rf "$_MA_DIR"
+    fi
+
+    if [[ ! -d "$_MA_DIR" ]]; then
+      # A failed mkdir means another caller started one first.
+      _ma_start_server "$self" "$@" || continue
+    elif ! _ma_server_alive; then
+      _ma_bury_server
+      continue
+    fi
+
+    # A reattaching caller skips the log so far: the attach stream sends
+    # it the banner.
+    if ((!_MA_OWNED)); then
+      _MA_OWNED=1
+      _MA_OFFSET=$(_ma_log_size)
+    fi
+    _ma_relay_log
+
+    if [[ -f "$_MA_DIR/port" ]]; then
+      _ma_attach
+    else
+      _ma_exit_if_orphaned
+      sleep 0.2
+    fi
+  done
+}
+
+# Record every process above the caller, from its parent up to pid 1, so
+# _ma_exit_if_orphaned can detect when one exits. Use ps rather than kill -0:
+# kill -0 reports "operation not permitted" for live root-owned processes such
+# as launchd or a terminal's login process, making them look dead.
+_ma_record_ancestors() {
+  local pid=$PPID
+  _MA_ANCESTORS=()
+  while ((pid > 1)); do
+    _MA_ANCESTORS+=("$pid")
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [[ -n "$pid" ]] || break
+  done
+}
+
+# A killed git commit can leave its hook (and this caller) running and attached.
+# It would then receive the decision and print it where nobody can read it, so
+# exit once any recorded ancestor exits and leave the decision held for the next
+# invocation. Check at most once a second (every fifth 0.2 s tick).
+_ma_exit_if_orphaned() {
+  ((_MA_TICK++ % 5 == 0)) || return 0
+  ((${#_MA_ANCESTORS[@]})) || return 0
+  local joined live
+  joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
+  live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
+  ((live < ${#_MA_ANCESTORS[@]})) && exit 1
+  return 0
+}
+
+_ma_log_size() {
+  if [[ -f "$_MA_DIR/log" ]]; then wc -c <"$_MA_DIR/log" | tr -d ' '; else echo 0; fi
+}
+
+_ma_relay_log() {
+  local size
+  size=$(_ma_log_size)
+  if ((size > _MA_OFFSET)); then
+    tail -c +$((_MA_OFFSET + 1)) "$_MA_DIR/log" | head -c $((size - _MA_OFFSET)) >&2
+    _MA_OFFSET=$size
+  fi
+}
+
+_ma_start_server() {
+  local self="$1"
+  shift
+  mkdir "$_MA_DIR" 2>/dev/null || return 1
+  uuidgen >"$_MA_DIR/token"
+  _MA_OWNED=1
+  _MA_OFFSET=0
+  _MA_PID_WAIT=0
+  # fork + setsid take the backend out of the caller's process group and
+  # session, so a signal to the caller's whole tree (the app that ran it
+  # restarting) leaves the review running.
+  MEERKAT_SERVE_DIR="$_MA_DIR" \
+    MEERKAT_SERVE_TOKEN="$(<"$_MA_DIR/token")" \
+    MEERKAT_RUN_ID="$_MA_RUN" \
+    perl -MPOSIX -e '
+      my $dir = shift;
+      exit 0 if fork;
+      POSIX::setsid();
+      open(my $f, ">", "$dir/pid.tmp") or die "meerkat: $dir/pid: $!";
+      print $f "$$\n";
+      close($f);
+      rename("$dir/pid.tmp", "$dir/pid");
+      exec(@ARGV) or die "meerkat: exec $ARGV[0]: $!";
+    ' "$_MA_DIR" "$self" "$@" </dev/null >>"$_MA_DIR/log" 2>&1
+}
+
+_ma_server_alive() {
+  # The detached child writes `pid` after the fork returns here.
+  if [[ ! -f "$_MA_DIR/pid" ]]; then
+    ((_MA_PID_WAIT++ < 50))
+    return
+  fi
+  local pid
+  pid="$(<"$_MA_DIR/pid")"
+  # The command check stops a reused pid passing for the backend.
+  kill -0 "$pid" 2>/dev/null && [[ -f "$_MA_DIR/exit" || "$(ps -p "$pid" -o command= 2>/dev/null)" == *meerkat* ]]
+}
+
+_ma_bury_server() {
+  # It exited cleanly after the loop's exit check; the next pass collects
+  # the exit code.
+  [[ -f "$_MA_DIR/exit" ]] && return
+  if [[ -f "$_MA_DIR/port" ]]; then
+    local port beam
+    read -r port beam <"$_MA_DIR/port"
+    # A BEAM whose shepherd died still holds the review's port.
+    if [[ -n "$beam" && "$(ps -p "$beam" -o command= 2>/dev/null)" == *meerkat* ]]; then
+      kill -9 "$beam" 2>/dev/null
+    fi
+  fi
+  if ((_MA_OWNED)); then
+    _ma_relay_log
+    echo "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)." >&2
+    rm -rf "$_MA_DIR"
+    exit 2
+  fi
+  rm -rf "$_MA_DIR"
+}
+
+_ma_wait_for_exit() {
+  local i
+  for ((i = 0; i < 150; i++)); do
+    [[ -f "$_MA_DIR/exit" ]] && return 0
+    _ma_server_alive || return 0
+    sleep 0.2
+  done
+}
+
+_ma_request() {
+  local method="$1" path="$2"
+  shift 2
+  local port beam
+  read -r port beam <"$_MA_DIR/port"
+  curl -sS -X "$method" -H "x-meerkat-token: $(<"$_MA_DIR/token")" \
+    "http://127.0.0.1:$port/api/$path" "$@"
+}
+
+_ma_attach() {
+  local fd code="" status="" line="" part
+  # Through a pipe, a killed caller's curl dies on its next write, and the
+  # backend sees the caller gone. Output to a file keeps curl alive.
+  exec {fd}< <(_ma_request GET "attach?run=$_MA_RUN&quiet=$_MA_QUIET" -N -w 's %{http_code}\n' 2>/dev/null)
+
+  while true; do
+    if IFS= read -r -t 0.2 part <&"$fd"; then
+      line+="$part"
+      # Relay server stderr since the last relay before banner frames, preserving
+      # main's warning-before-banner order.
+      [[ "$line" == [on]" "* ]] && _ma_relay_log
+      case "$line" in
+        "o "*) printf '%s\n' "${line:2}" >&2 ;;
+        "n "*) printf '%s' "${line:2}" >&2 ;;
+        "x "*) code="${line:2}" ;;
+        "s "*) status="${line:2}" ;;
+        d)
+          exec {fd}<&-
+          echo "meerkat: a later invocation of this review took it over — aborting." >&2
+          exit 1
+          ;;
+      esac
+      # A reattach after a BEAM restart must not print the banner again.
+      [[ "$line" == [on]" "* ]] && _MA_QUIET=1
+      line=""
+    elif (($? > 128)); then
+      # A read that timed out returns the partial line it got.
+      line+="$part"
+      _ma_relay_log
+      _ma_exit_if_orphaned
+    else
+      break
+    fi
+  done
+  exec {fd}<&-
+
+  if [[ -n "$code" ]]; then
+    _ma_request POST "attach/delivered?run=$_MA_RUN" -o /dev/null 2>/dev/null
+    _ma_wait_for_exit
+    _ma_relay_log
+    rm -rf "$_MA_DIR"
+    exit "$code"
+  fi
+
+  # 409: this review replaces the backend's. 503: the backend delivered
+  # to another caller. Either way it is exiting, and this caller starts
+  # a fresh one.
+  case "$status" in
+    409 | 503)
+      _MA_OWNED=0
+      _ma_wait_for_exit
+      rm -rf "$_MA_DIR"
+      ;;
+    *)
+      sleep 0.2
+      ;;
+  esac
+}

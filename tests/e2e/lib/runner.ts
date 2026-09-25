@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { delimiter } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { type Fixture, makeFixture } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
@@ -18,6 +20,12 @@ export type RunnerOpts = {
 	env?: Record<string, string>;
 	// If true, the fixture's `cleanup()` is NOT invoked on exit (debugging).
 	keepFixture?: boolean;
+	// Another runner's `runsDir`, so this run reattaches to its backend.
+	runsDir?: string;
+	// Run meerkat as a child of `sh`, like in a git hook, so `killParent` can kill the shell alone and leave meerkat running.
+	underParent?: boolean;
+	// When false, return without waiting for the review URL, for runs that exit without printing one (such as collecting a decision already made).
+	awaitUrl?: boolean;
 };
 
 export type Runner = {
@@ -25,7 +33,15 @@ export type Runner = {
 	fixture: { dir: string; cleanup?: () => void } & Partial<Fixture>;
 	// Resolves with {code, stderr} when meerkat exits.
 	awaitExit: () => Promise<{ code: number | null; stderr: string }>;
+	// Stops the detached backends in `runsDir` as well as the caller.
 	kill: () => Promise<void>;
+	// SIGKILLs the caller alone; its backend keeps serving the review.
+	killCaller: () => Promise<void>;
+	// SIGKILLs the `sh` running meerkat under `underParent`, leaving meerkat running.
+	killParent: () => Promise<void>;
+	// Resolves once meerkat and every process holding its stderr pipe have exited.
+	awaitClose: () => Promise<void>;
+	runsDir: string;
 };
 
 const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
@@ -46,19 +62,28 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 					throw new Error("startMeerkat: fixture has no commitMsgPath; pass `args` explicitly");
 				})());
 
-	const env = { ...process.env, ...opts.env };
+	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), "meerkat-runs-"));
+	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}
 
-	const proc = spawn(MEERKAT_BIN, [...args, "--no-open", "--port", "0"], {
+	const argv = [MEERKAT_BIN, ...args, "--no-open", "--port", "0"];
+	// sh -c execs its script's last command in place of itself; trailing `exit $?` keeps it alive as meerkat's parent.
+	const [cmd, ...cmdArgs] = opts.underParent ? ["sh", "-c", '"$@"; exit $?', "sh", ...argv] : argv;
+	const proc = spawn(cmd, cmdArgs, {
 		cwd: fixture.dir,
 		stdio: ["ignore", "pipe", "pipe"],
 		env,
 	});
 
+	const closePromise = new Promise<void>((resolve) => proc.once("close", () => resolve()));
 	let stderrBuf = "";
 	const url = await new Promise<string>((resolve, reject) => {
+		if (opts.awaitUrl === false) {
+			resolve("");
+			return;
+		}
 		// Generous; --pr mode does a `gh pr view` + `git fetch` round
 		// trip before the server binds, and parallel BEAM cold-starts
 		// across the worker pool can stretch wall-clock past 20s on
@@ -107,8 +132,50 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		fixture,
 		awaitExit: () => exitPromise,
 		kill: async () => {
-			if (!proc.killed) proc.kill("SIGTERM");
+			await stopBackends(runsDir);
+			if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
+			await exitPromise;
+			if (opts.runsDir === undefined) rmSync(runsDir, { recursive: true, force: true });
+		},
+		killCaller: async () => {
+			proc.kill("SIGKILL");
 			await exitPromise;
 		},
+		killParent: async () => {
+			if (!opts.underParent) throw new Error("killParent: start the runner with underParent");
+			proc.kill("SIGKILL");
+			await exitPromise;
+		},
+		awaitClose: () => closePromise,
+		runsDir,
 	};
+}
+
+async function stopBackends(runsDir: string): Promise<void> {
+	if (!existsSync(runsDir)) return;
+	const pids = readdirSync(runsDir, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => join(runsDir, entry.name, "pid"))
+		.filter((path) => existsSync(path))
+		.map((path) => Number(readFileSync(path, "utf8").trim()));
+
+	for (const pid of pids) {
+		try {
+			process.kill(pid, "SIGTERM");
+		} catch {}
+	}
+
+	const deadline = Date.now() + 10_000;
+	while (Date.now() < deadline && pids.some(alive)) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
 }

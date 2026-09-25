@@ -55,6 +55,7 @@ defmodule MeerkatWeb.ReviewLive do
       # installed version, so VersionWatcher live-restarts at a safe point.
       Meerkat.Viewers.register()
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
     end
 
     # Refresh-during-shutdown: if the CLI has already submitted a
@@ -861,6 +862,10 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_info({:state_changed, %ReviewState{} = state}, socket) do
     socket = assign(socket, state: state, open_form: Map.get(state, :open_form, nil))
     {:noreply, maybe_apply_update(socket)}
+  end
+
+  def handle_info({:meerkat_deadline, deadline_ms}, socket) do
+    {:noreply, assign(socket, deadline_ms: deadline_ms)}
   end
 
   # A newer version is installed. Defer the live-restart until no comment

@@ -4,9 +4,10 @@ defmodule Meerkat.Timeout do
 
   The clock starts when a review is first requested and is anchored on
   disk under `<gitdir>/meerkat-precommit/deadlines/<run>/<review_id>`,
-  where `<run>` is the launcher's `MEERKAT_RUN_ID`. A BEAM respawned by
-  the shepherd is the same run and resumes the remaining time; a later
-  `git commit` is a new one and gets a full window.
+  where `<run>` identifies the invocation of meerkat waiting on the
+  review. A BEAM respawned by the shepherd serves the same run and
+  resumes the remaining time; a later `git commit` is a new run and gets
+  a full window.
   """
 
   alias Meerkat.{AtomicFile, Feedback, Git, Persistence, ReviewServer, ReviewState}
@@ -84,26 +85,26 @@ defmodule Meerkat.Timeout do
   end
 
   @doc """
-  Returns the epoch millisecond at which `review_id` runs out — nil when
-  the deadline is disabled. Stable across every call within one launcher
-  run, and fresh in the next one.
+  Returns the epoch millisecond at which `review_id` runs out for `run`,
+  this BEAM's own run by default. nil when the deadline is disabled.
+  Stable across every call for one run, and fresh for the next.
   """
-  @spec deadline_ms(String.t(), String.t()) :: integer() | nil
-  def deadline_ms(repo_path, review_id) do
-    if disabled?(), do: nil, else: started_at_ms(repo_path, review_id) + limit_ms()
+  @spec deadline_ms(String.t(), String.t(), String.t()) :: integer() | nil
+  def deadline_ms(repo_path, review_id, run \\ run_id()) do
+    if disabled?(), do: nil, else: started_at_ms(repo_path, review_id, run) + limit_ms()
   end
 
   @spec expired?(integer()) :: boolean()
   def expired?(deadline_ms), do: System.system_time(:millisecond) >= deadline_ms
 
   @doc """
-  Deletes `review_id`'s anchor, and this run's deadline directory once it
-  holds nothing else.
+  Deletes `review_id`'s anchor for `run`, and that run's deadline
+  directory once it holds nothing else.
   """
-  @spec clear(String.t(), String.t()) :: :ok
-  def clear(repo_path, review_id) do
-    _ = File.rm(path_for(repo_path, review_id))
-    _ = File.rmdir(run_dir(repo_path))
+  @spec clear(String.t(), String.t(), String.t()) :: :ok
+  def clear(repo_path, review_id, run \\ run_id()) do
+    _ = File.rm(path_for(repo_path, review_id, run))
+    _ = File.rmdir(run_dir(repo_path, run))
     :ok
   end
 
@@ -125,7 +126,7 @@ defmodule Meerkat.Timeout do
   end
 
   defp do_prune_stale(repo_path) do
-    parent = Path.dirname(run_dir(repo_path))
+    parent = Path.dirname(run_dir(repo_path, run_id()))
     keep = run_id()
     cutoff_s = System.system_time(:second) - div(limit_ms() + 2 * check_interval_ms(), 1000)
 
@@ -167,14 +168,15 @@ defmodule Meerkat.Timeout do
   end
 
   @doc """
-  Refreshes this run's deadline directory mtime so another run's
-  `prune_stale/1` keeps an overdue, waiting review's anchor. Called on
-  each deadline check after the deadline passes. Does nothing if this
-  run has no deadline directory; never creates one and never raises.
+  Refreshes `run`'s deadline directory mtime, this BEAM's own run by
+  default, so another run's `prune_stale/1` keeps an overdue, waiting
+  review's anchor. Called on each deadline check after the deadline
+  passes. Does nothing if `run` has no deadline directory; never creates
+  one and never raises.
   """
-  @spec keep_alive(String.t()) :: :ok
-  def keep_alive(repo_path) do
-    dir = run_dir(repo_path)
+  @spec keep_alive(String.t(), String.t() | nil) :: :ok
+  def keep_alive(repo_path, run \\ nil) do
+    dir = run_dir(repo_path, run || run_id())
     if File.dir?(dir), do: File.touch(dir)
     :ok
   catch
@@ -215,8 +217,8 @@ defmodule Meerkat.Timeout do
     _, _ -> nil
   end
 
-  defp started_at_ms(repo_path, review_id) do
-    path = path_for(repo_path, review_id)
+  defp started_at_ms(repo_path, review_id, run) do
+    path = path_for(repo_path, review_id, run)
 
     with {:ok, raw} <- File.read(path),
          {ms, _} <- Integer.parse(String.trim(raw)) do
@@ -229,12 +231,14 @@ defmodule Meerkat.Timeout do
     end
   end
 
-  defp path_for(repo_path, review_id) do
-    Path.join([run_dir(repo_path), review_id])
+  defp path_for(repo_path, review_id, run) do
+    Path.join([run_dir(repo_path, run), review_id])
   end
 
-  defp run_dir(repo_path) do
-    Path.join([Git.meerkat_dir(repo_path), "deadlines", run_id()])
+  defp run_dir(repo_path, run) do
+    # An attaching caller's run id arrives over HTTP; `basename` keeps it
+    # inside the deadlines directory.
+    Path.join([Git.meerkat_dir(repo_path), "deadlines", Path.basename(run)])
   end
 
   defp run_id do

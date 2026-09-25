@@ -19,8 +19,7 @@ remove commits a merged PR still references). Before committing:
 - **Elixir + pnpm + Bun.** `mix …` for backend. JS dependencies are
   installed ONLY with `pnpm install` (the workspace root covers
   `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
-  age as a supply-chain guard — bun has no equivalent, which is why
-  installs and script-running are split). `bun run` / `bunx` for
+  age as a supply-chain guard). `bun run` / `bunx` for
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh`
@@ -42,7 +41,10 @@ The end-to-end loop for a meerkat bug report or feature request:
 2. **Build, test, verify.** Implement in small slices. Each slice
    ends with `mix test` green AND a manual verification: review a
    real diff through `bin/meerkat-beam` from this checkout and use
-   the changed behaviour.
+   the changed behaviour. Once `bun run test` passes, and before
+   the PR is opened, the `meerkat-qa` agent exercises the changed
+   behaviour the way a user meets it. Each bug it finds becomes a new
+   e2e test, which fails before the fix.
 3. **Keep going until it's PR-ready, and meet every requirement the
    user asked for or approved.** Don't stop part way through. Don't
    ask the user "should I continue?" or "should I do X later?" — just
@@ -53,8 +55,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    reviewable branch, not when a response boundary feels
    convenient.
 4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
-   `main` is branch-protected on GitHub — no direct pushes, no
-   force-pushes; changes land via PR.
+   Do not ask before pushing or opening the PR. `main` is
+   branch-protected on GitHub — no direct pushes, no force-pushes;
+   changes land via PR.
 
 ## Quality gates
 
@@ -62,16 +65,17 @@ Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
 - `mix format --check-formatted`
 - `mix compile --warnings-as-errors`
 
-Pre-push hook: `scripts/no-private-refs.sh`, `mix test`, `cd assets &&
-bun test`, `scripts/outdated.sh`.
+Pre-push hook: `scripts/no-private-refs.sh`, `scripts/outdated.sh`.
 
-You can run them yourself any time:
+On every PR, CI runs `mix compile --warnings-as-errors`,
+`mix format --check-formatted`, `mix test`, `bun test` in `assets/`,
+and the Playwright e2e suite; run the commands below locally before
+opening a PR.
 
 ```bash
 mix compile --warnings-as-errors
 mix format
-mix test
-bun run test:e2e                     # Playwright — exercises the bin/meerkat-beam launcher
+bun run test                         # mix test, assets bun test, then the Playwright e2e suite
 ```
 
 When you change behaviour, change or add a test — ExUnit in
@@ -129,7 +133,5 @@ for unmerged work. Bringing local `main` up to date — via `git pull`,
 or by `git switch`/`git checkout main` after a GitHub squash-merge —
 fires the lefthook `post-merge` / `post-checkout` hooks, which run
 `scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
-dev launcher with the prod release. install.sh is idempotent (it
-skips the rebuild when the release is already built from the current
-commit), so the hooks are cheap to fire on every `main` checkout.
-There is no state marker file; the launcher script content IS the mode.
+dev launcher with the prod release. There is no state marker file;
+the launcher script content IS the mode.

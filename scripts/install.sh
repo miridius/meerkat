@@ -31,6 +31,7 @@ WRAPPER="$DEST_BIN/meerkat"
 # The prod shepherd lives outside the version dirs (it re-resolves
 # `current` every spawn, so it's version-agnostic and survives GC).
 SHEPHERD_DEST="$DEST_SHARE/meerkat-shepherd"
+ATTACH_DEST="$DEST_SHARE/meerkat-attach"
 # How many version dirs to retain for rollback/history. A version a
 # running review is still pinned to is always kept, even past this.
 KEEP_VERSIONS=5
@@ -87,7 +88,7 @@ CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
       && "$CURRENT_STAMP" == "$HEAD_COMMIT" \
-      && -x "$CURRENT_TARGET/bin/meerkat" && -x "$SHEPHERD_DEST" ]]; then
+      && -x "$CURRENT_TARGET/bin/meerkat" && -x "$SHEPHERD_DEST" && -f "$ATTACH_DEST" ]]; then
   echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
   exit 0
 fi
@@ -187,6 +188,10 @@ trap 'rm -rf "$SMOKE_DIR"' EXIT
 TMP_LINK="$CURRENT_LINK.tmp.$$"
 ln -sfn "$FINAL_DIR" "$TMP_LINK"
 mv -hf "$TMP_LINK" "$CURRENT_LINK"
+
+# The shepherd below sources this, so this lands first.
+cp bin/meerkat-attach "$ATTACH_DEST.tmp.$$"
+mv -f "$ATTACH_DEST.tmp.$$" "$ATTACH_DEST"
 
 # Install the shepherd via temp + atomic rename: a shepherd a review is
 # already running keeps its old inode (bash reads the script by offset

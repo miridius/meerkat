@@ -27,5 +27,7 @@ defmodule MeerkatWeb.Router do
 
     get "/plantuml/svg", PlantUMLController, :svg
     get "/file", FileContentController, :show
+    get "/attach", AttachController, :attach
+    post "/attach/delivered", AttachController, :delivered
   end
 end
