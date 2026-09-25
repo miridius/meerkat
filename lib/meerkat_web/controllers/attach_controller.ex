@@ -10,6 +10,11 @@ defmodule MeerkatWeb.AttachController do
   invocation whose review changed gets 409, and this BEAM halts so it
   can start a fresh one. Once a caller has taken delivery, others get
   503. `quiet=1` skips the banner, for a caller that already printed it.
+  A `d` frame ends the stream of a caller displaced by a later
+  invocation; that caller exits 1. A caller attaching after a decision
+  has been made—whether the outcome is held or a click has happened but
+  the outcome has not yet been published—gets no banner and opens no
+  browser tab.
 
   `POST /api/attach/delivered?run=<run>` reports that the caller printed
   the outcome.
@@ -21,8 +26,11 @@ defmodule MeerkatWeb.AttachController do
 
   alias Meerkat.{Decision, Persistence, ReviewState}
 
-  # A heartbeat to a caller that has gone fails, which ends its request.
-  @heartbeat_ms 5_000
+  # A heartbeat to a caller that has gone fails, which ends its request and detaches it.
+  # The deadline runs until that failed heartbeat detaches the caller, so this interval
+  # bounds how long it keeps running after the caller dies. At 1 s, that's about two
+  # seconds: curl dies on its next write, then the server's next heartbeat fails.
+  @heartbeat_ms 1_000
 
   plug :require_token
 
@@ -84,14 +92,21 @@ defmodule MeerkatWeb.AttachController do
       :closing ->
         send_resp(conn, 503, "closing\n")
 
-      {:ok, held} ->
+      {:ok, nil} ->
         conn = send_chunked(conn, 200)
+        # The CLI publishes the outcome 750 ms after a click so the tab can
+        # render the done view first. A caller can attach in that window
+        # before an outcome is held; Decision.current/0 catches it.
+        quiet? = quiet? or Decision.current() != nil
         banner = if quiet?, do: "", else: Application.get_env(:meerkat, :review_banner, "")
 
         with {:ok, conn} <- chunk(conn, frames(banner)) do
           unless quiet?, do: open_browser_if_unwatched(conn, run)
-          if held, do: send_outcome(conn, held), else: await_outcome(conn)
+          await_outcome(conn)
         end
+
+      {:ok, held} ->
+        conn |> send_chunked(200) |> send_outcome(held)
     end
   end
 
@@ -106,7 +121,14 @@ defmodule MeerkatWeb.AttachController do
 
   defp await_outcome(conn) do
     receive do
-      {:meerkat_outcome, outcome} -> send_outcome(conn, outcome)
+      {:meerkat_outcome, outcome} ->
+        send_outcome(conn, outcome)
+
+      :meerkat_displaced ->
+        case chunk(conn, "d\n") do
+          {:ok, conn} -> conn
+          {:error, _} -> conn
+        end
     after
       @heartbeat_ms ->
         case chunk(conn, "k\n") do

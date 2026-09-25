@@ -1,13 +1,12 @@
 defmodule MeerkatWeb.AttachControllerTest do
   use MeerkatWeb.ConnCase, async: false
 
-  # Surviving muex mutant in attach_controller.ex, and why it is not a
-  # test gap:
-  #
-  # - attach_controller.ex:120 send_outcome (delete the `{:error, _}`
-  #   clause) — the clause handles a caller whose connection closed
-  #   before the outcome was written. Plug's test adapter never fails a
-  #   chunk, so ExUnit cannot reach it.
+  # Surviving muex mutant in attach_controller.ex, and why it is not a test gap:
+  # - attach_controller.ex:130 await_outcome/1 (delete the `{:error, _} -> conn`
+  #   clause from `case chunk(conn, "d\n")`) — handles a displaced caller whose
+  #   connection closed before the `d` frame was written. Plug's test adapter
+  #   never fails a chunk, so ExUnit cannot reach it. The `send_outcome/2` clause
+  #   previously listed here (now line 144) was not reported this run.
 
   import Meerkat.TestHelpers
 
@@ -59,6 +58,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     previous_app = Map.new(app_env, fn {k, _} -> {k, Application.fetch_env(:meerkat, k)} end)
     Enum.each(app_env, fn {k, v} -> Application.put_env(:meerkat, k, v) end)
     Decision.reset()
+    Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
 
     on_exit(fn ->
       Enum.each(previous_env, fn
@@ -83,6 +83,13 @@ defmodule MeerkatWeb.AttachControllerTest do
     conn
     |> put_req_header("x-meerkat-token", @token)
     |> get("/api/attach?run=#{run}&quiet=#{quiet}")
+  end
+
+  # An attach made before a decision arms the deadline; Decision broadcasts on its
+  # deadline topic, which setup subscribes to, so receiving this confirms the caller
+  # attached.
+  defp await_attached do
+    assert_receive {:meerkat_deadline, _}, 1000
   end
 
   defp delivered(conn, run) do
@@ -114,26 +121,53 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert conn.status == 403
   end
 
-  test "the caller that started the backend gets the banner, then the held outcome and its exit code",
+  test "the caller that started the backend gets the banner, then the outcome and its exit code",
        %{conn: conn} do
+    task = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
     :ok = Decision.publish({1, "feedback\n"})
-    conn = attach(conn, @own_run)
+    conn = Task.await(task)
 
     assert conn.status == 200
     assert conn.resp_body == "o BANNER line\no feedback\nx 1\n"
   end
 
-  test "a later invocation of the same review replays the held outcome byte for byte",
+  test "a later invocation of the same review replays the held outcome byte for byte, without the banner",
        %{conn: conn} do
     :ok = Decision.publish({0, "The user approved your commit. Proceeding.\n"})
     conn = attach(conn, "later-run")
 
     assert conn.status == 200
-
-    assert conn.resp_body ==
-             "o BANNER line\no The user approved your commit. Proceeding.\nx 0\n"
-
+    assert conn.resp_body == "o The user approved your commit. Proceeding.\nx 0\n"
     refute_receive {:halted, _}, 300
+  end
+
+  test "a later invocation attaching after the click, before the outcome is published, gets no banner and opens no tab",
+       %{conn: conn} do
+    Application.put_env(:meerkat, :no_open, false)
+    {:ok, _} = Decision.submit({:approve, ""})
+    task = Task.async(fn -> attach(conn, "later-run") end)
+    refute_receive {:opened, _}, 1000
+    assert map_size(:sys.get_state(Decision).callers) == 1, "the caller attached before publish"
+
+    :ok = Decision.publish({0, "approved\n"})
+    assert Task.await(task).resp_body == "o approved\nx 0\n"
+  end
+
+  test "a caller is told when a later invocation of the same review takes it over",
+       %{conn: conn} do
+    first = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
+    second = Task.async(fn -> attach(conn, "later-run") end)
+    await_attached()
+
+    displaced = Task.await(first)
+    assert displaced.status == 200
+    assert displaced.resp_body == "o BANNER line\nd\n"
+
+    :ok = Decision.publish({0, "approved\n"})
+    taken_over = Task.await(second)
+    assert taken_over.resp_body == "o BANNER line\no approved\nx 0\n"
   end
 
   test "a later invocation whose staged content changed replaces the review",
@@ -192,17 +226,38 @@ defmodule MeerkatWeb.AttachControllerTest do
   describe "opening the browser on reattach" do
     setup do
       Application.put_env(:meerkat, :no_open, false)
-      :ok = Decision.publish({0, "approved\n"})
+    end
+
+    # Start an attach task while the review is undecided, wait for it to attach, and
+    # return a function that publishes an outcome (ending the stream) and returns the
+    # finished conn.
+    defp attach_waiting(conn, run, quiet \\ "0") do
+      task = Task.async(fn -> attach(conn, run, quiet) end)
+      await_attached()
+
+      fn ->
+        :ok = Decision.publish({0, "approved\n"})
+        Task.await(task)
+      end
     end
 
     test "a later invocation with no tab connected opens the review", %{conn: conn} do
-      attach(conn, "later-run")
+      finish = attach_waiting(conn, "later-run")
       assert_receive {:opened, "http://127.0.0.1:" <> _}
+      finish.()
+    end
+
+    test "a later invocation collecting a held outcome does not open the review",
+         %{conn: conn} do
+      :ok = Decision.publish({0, "approved\n"})
+      attach(conn, "later-run")
+      refute_receive {:opened, _}, 100
     end
 
     test "the invocation that started the backend does not open it again", %{conn: conn} do
-      attach(conn, @own_run)
+      finish = attach_waiting(conn, @own_run)
       refute_receive {:opened, _}, 100
+      finish.()
     end
 
     test "a later invocation does not open a review a tab is already watching",
@@ -217,22 +272,25 @@ defmodule MeerkatWeb.AttachControllerTest do
         end)
 
       assert_receive :registered
-      attach(conn, "later-run")
+      finish = attach_waiting(conn, "later-run")
       refute_receive {:opened, _}, 100
+      finish.()
       Process.unlink(viewer)
       Process.exit(viewer, :kill)
     end
 
     test "a later invocation run with --no-open does not open the review", %{conn: conn} do
       Application.put_env(:meerkat, :no_open, true)
-      attach(conn, "later-run")
+      finish = attach_waiting(conn, "later-run")
       refute_receive {:opened, _}, 100
+      finish.()
     end
 
     test "a quiet reattach, after the caller already printed the banner, does not open it",
          %{conn: conn} do
-      attach(conn, "later-run", "1")
+      finish = attach_waiting(conn, "later-run", "1")
       refute_receive {:opened, _}, 100
+      finish.()
     end
   end
 end

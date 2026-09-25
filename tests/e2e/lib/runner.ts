@@ -22,6 +22,10 @@ export type RunnerOpts = {
 	keepFixture?: boolean;
 	// Another runner's `runsDir`, so this run reattaches to its backend.
 	runsDir?: string;
+	// Run meerkat as a child of `sh`, like in a git hook, so `killParent` can kill the shell alone and leave meerkat running.
+	underParent?: boolean;
+	// When false, return without waiting for the review URL, for runs that exit without printing one (such as collecting a decision already made).
+	awaitUrl?: boolean;
 };
 
 export type Runner = {
@@ -33,6 +37,10 @@ export type Runner = {
 	kill: () => Promise<void>;
 	// SIGKILLs the caller alone; its backend keeps serving the review.
 	killCaller: () => Promise<void>;
+	// SIGKILLs the `sh` running meerkat under `underParent`, leaving meerkat running.
+	killParent: () => Promise<void>;
+	// Resolves once meerkat and every process holding its stderr pipe have exited.
+	awaitClose: () => Promise<void>;
 	runsDir: string;
 };
 
@@ -60,14 +68,22 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}
 
-	const proc = spawn(MEERKAT_BIN, [...args, "--no-open", "--port", "0"], {
+	const argv = [MEERKAT_BIN, ...args, "--no-open", "--port", "0"];
+	// sh -c execs its script's last command in place of itself; trailing `exit $?` keeps it alive as meerkat's parent.
+	const [cmd, ...cmdArgs] = opts.underParent ? ["sh", "-c", '"$@"; exit $?', "sh", ...argv] : argv;
+	const proc = spawn(cmd, cmdArgs, {
 		cwd: fixture.dir,
 		stdio: ["ignore", "pipe", "pipe"],
 		env,
 	});
 
+	const closePromise = new Promise<void>((resolve) => proc.once("close", () => resolve()));
 	let stderrBuf = "";
 	const url = await new Promise<string>((resolve, reject) => {
+		if (opts.awaitUrl === false) {
+			resolve("");
+			return;
+		}
 		// Generous; --pr mode does a `gh pr view` + `git fetch` round
 		// trip before the server binds, and parallel BEAM cold-starts
 		// across the worker pool can stretch wall-clock past 20s on
@@ -125,6 +141,12 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			proc.kill("SIGKILL");
 			await exitPromise;
 		},
+		killParent: async () => {
+			if (!opts.underParent) throw new Error("killParent: start the runner with underParent");
+			proc.kill("SIGKILL");
+			await exitPromise;
+		},
+		awaitClose: () => closePromise,
 		runsDir,
 	};
 }

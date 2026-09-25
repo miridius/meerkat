@@ -24,7 +24,12 @@ defmodule Meerkat.Decision do
   its place. So under a launcher the CLI does not print the outcome. It
   publishes it with `publish/1`, every attached caller is sent it, and
   the CLI halts only once a caller reports it delivered. An outcome
-  published with nobody attached is held for the next caller.
+  published with nobody attached is held for the next caller. A caller
+  attaching for a different run displaces every caller already attached
+  for another run: each displaced caller is sent `:meerkat_displaced`
+  and is no longer tracked. Reattaching for its own run (for example,
+  after a dev BEAM restart) displaces nobody, so only one invocation at
+  a time waits on a review.
 
   The deadline runs only while a caller is attached, because it exists
   to release a caller that is waiting. Each attach arms it for that
@@ -93,11 +98,11 @@ defmodule Meerkat.Decision do
   end
 
   @doc """
-  Attach the calling process as a caller for launcher run `run_id`. It
-  is sent `{:meerkat_outcome, outcome}` once the outcome is published,
-  and detached when it exits. Returns the outcome already held, if any,
-  and `:closing` once a caller has taken delivery, since this BEAM is
-  about to halt.
+  Attach the calling process as a caller for launcher run `run_id`. It is sent
+  `{:meerkat_outcome, outcome}` once the outcome is published, `:meerkat_displaced`
+  once a caller for another run attaches, and is detached when it exits. Returns
+  the outcome already held, if any, and `:closing` once a caller has taken
+  delivery, since this BEAM is about to halt.
   """
   @spec attach(String.t()) :: {:ok, outcome | nil} | :closing
   def attach(run_id) do
@@ -189,13 +194,25 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call({:attach, pid, run_id}, _from, state) do
+    {displaced, kept} =
+      Enum.split_with(state.callers, fn {_ref, {_pid, run}} -> run != run_id end)
+
+    Enum.each(displaced, fn {ref, {old, _run}} ->
+      Process.demonitor(ref, [:flush])
+      send(old, :meerkat_displaced)
+    end)
+
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
-    {:reply, {:ok, state.outcome}, %{state | callers: Map.put(state.callers, ref, pid)}}
+    callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
+    {:reply, {:ok, state.outcome}, %{state | callers: callers}}
   end
 
   def handle_call({:publish, outcome}, _from, state) do
-    Enum.each(Map.values(state.callers), &send(&1, {:meerkat_outcome, outcome}))
+    Enum.each(Map.values(state.callers), fn {pid, _run} ->
+      send(pid, {:meerkat_outcome, outcome})
+    end)
+
     {:reply, :ok, %{state | outcome: outcome}}
   end
 

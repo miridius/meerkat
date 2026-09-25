@@ -93,6 +93,12 @@ what it streams, and exits with the code it sends. When the
 invocation exits first, by any signal, Ctrl-C included, the server
 keeps serving the review and saving its comments.
 
+If the process that ran meerkat is killed instead—for example,
+`git commit` is killed by SIGTERM or SIGKILL—its hook can keep
+running. Meerkat notices an exited ancestor within about a second
+and detaches. A decision clicked while no invocation is attached
+stays held for the next invocation.
+
 A decision clicked while no invocation is attached is held. The
 next invocation of the same review attaches to the same server and
 gets that decision byte for byte, with its exit code. Cancel is held
@@ -100,11 +106,18 @@ like any other decision. The same review means the same staged
 content and the same commit message. When either has changed, the
 old server exits and the invocation starts a new one.
 
+Only one invocation of a review waits on it at a time: a later
+invocation takes the review over, and the earlier one prints
+`meerkat: a later invocation of this review took it over — aborting.`
+and exits 1, aborting its commit. An invocation that collects a
+decision already made prints the decision's output only, with no
+pause banner and no browser tab.
+
 A server whose invocation exited stays up until a later invocation
 of the same review attaches to it. The review deadline runs only
 while an invocation is attached, and each one gets the full limit.
-An invocation that reattaches opens the browser, unless a tab is
-already open on the review or it was passed `--no-open`.
+A waiting invocation that reattaches opens the browser if no tab is
+already connected and `--no-open` was not passed.
 
 ## Persistence across decisions
 

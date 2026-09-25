@@ -3,6 +3,15 @@ defmodule Meerkat.DecisionTest do
   # main supervisor. Tests clear its state between runs via reset/0.
   use ExUnit.Case, async: false
 
+  # Surviving muex mutants in decision.ex, and why none is a test gap:
+  # - decision.ex:2 (delete the `@moduledoc`) — documentation only; no behaviour.
+  # - decision.ex:256 handle_info/2 (delete `Logger.warning` in the catch-all
+  #   clause) — changes only log output.
+  # - decision.ex:290 arm_deadline/1 (`unless was_armed?` → `if`) — muex reports
+  #   this as surviving, but "a deadline armed by an attach ends the review once
+  #   it passes" fails against it under every seed tried. muex's timed-out mutants
+  #   make its result unreliable here.
+
   alias Meerkat.Decision
 
   setup do
@@ -208,6 +217,7 @@ defmodule Meerkat.DecisionTest do
 
           receive do
             {:meerkat_outcome, outcome} -> send(parent, {:outcome, self(), outcome})
+            :meerkat_displaced -> send(parent, {:displaced, self()})
           end
 
           receive do
@@ -225,6 +235,22 @@ defmodule Meerkat.DecisionTest do
 
       :ok = Decision.publish({1, "feedback\n"})
       assert_receive {:outcome, ^pid, {1, "feedback\n"}}, 1000
+    end
+
+    test "a caller for another run displaces the one attached before it" do
+      {first, _} = spawn_caller("run-a")
+      {second, _} = spawn_caller("run-b")
+      assert_receive {:displaced, ^first}, 1000
+
+      :ok = Decision.publish({0, "approved\n"})
+      assert_receive {:outcome, ^second, {0, "approved\n"}}, 1000
+      refute_receive {:outcome, ^first, _}, 100
+    end
+
+    test "a caller reattaching for its own run displaces nobody" do
+      {first, _} = spawn_caller("run-a")
+      {_again, _} = spawn_caller("run-a")
+      refute_receive {:displaced, ^first}, 100
     end
 
     test "an outcome published with nobody attached is held for the next caller" do
