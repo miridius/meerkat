@@ -85,6 +85,27 @@ user's review tab doesn't die when the BEAM crashes mid-iteration.
 This applies only to dev; prod (release-installed `meerkat`)
 propagates the exit normally.
 
+## When the caller exits
+
+Both launchers start the review server detached from the process
+that invoked them. That invocation attaches to the server, prints
+what it streams, and exits with the code it sends. When the
+invocation exits first, by any signal, Ctrl-C included, the server
+keeps serving the review and saving its comments.
+
+A decision clicked while no invocation is attached is held. The
+next invocation of the same review attaches to the same server and
+gets that decision byte for byte, with its exit code. Cancel is held
+like any other decision. The same review means the same staged
+content and the same commit message. When either has changed, the
+old server exits and the invocation starts a new one.
+
+A server whose invocation exited stays up until a later invocation
+of the same review attaches to it. The review deadline runs only
+while an invocation is attached, and each one gets the full limit.
+An invocation that reattaches opens the browser, unless a tab is
+already open on the review or it was passed `--no-open`.
+
 ## Persistence across decisions
 
 A terminal decision deletes the in-progress JSON snapshot at

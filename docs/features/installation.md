@@ -49,8 +49,10 @@ scripts/install.sh
 - Builds a `mix release` under `_build/<env>/rel/meerkat`.
 - Copies it to `~/.local/share/meerkat-beam/` (override via
   `MEERKAT_INSTALL_PREFIX`).
-- Writes `~/.local/bin/meerkat` to launch the release directly,
-  no Mix, no shepherd, no DevWatcher.
+- Installs the prod shepherd `meerkat-shepherd`, and the
+  `meerkat-attach` library it sources, beside the versions.
+- Writes `~/.local/bin/meerkat` to exec that shepherd, which runs
+  the release: no Mix, no DevWatcher.
 
 The post-merge git hook (`scripts/no-main-commits.sh` enables
 lefthook, which runs `scripts/install.sh` on merge to `main`)
@@ -81,3 +83,6 @@ No marker file; the launcher script content IS the mode. Cat
   the launcher lives in.
 - `MEERKAT_PORT` — override the deterministic port computation
   for tests / debugging.
+- `MEERKAT_RUNS_DIR` — where review backends keep their run dirs
+  (default `$TMPDIR/meerkat-runs`). The e2e runner gives each test
+  its own.
