@@ -6,32 +6,31 @@ defmodule Meerkat.CLITest do
   # fixed or documented; muex runs ExUnit only, so the e2e suite is the
   # only thing that can see most of this glue):
   #
-  # - main/1:73, main/1:78 (answers/review branch, auto/live dispatch,
-  #   invert + case-clause deletions) — the CLI entry point boots the
-  #   endpoint and reads stdin, unrunnable under ExUnit. Covered e2e by
+  # - `main/1`'s answers/review branch, auto/live dispatch, invert +
+  #   case-clause deletions — the CLI entry point boots the endpoint and
+  #   reads stdin, unrunnable under ExUnit. Covered e2e by
   #   answers.spec.ts "stores answers from stdin and the next review
   #   pins them above the diff" (true branch), decision.spec.ts
   #   "staged-diff with no file changes auto-approves and exits 0
   #   immediately" + "Approve → meerkat exits 0" (auto clause),
   #   smoke.spec.ts "renders the page with header, files, and decision
   #   footer" (live clause).
-  # - cli.ex:118 flush_logs/0 (delete `_ -> :ok` handler-absent clause)
-  #   — equivalent: flush_logs' own `rescue _ -> :ok catch _, _ -> :ok`
-  #   swallows the CaseClauseError the deletion raises, so no input
-  #   distinguishes the mutant from the original.
-  # - cli.ex:153 run_live_review (case-clause deletions on
-  #   ReviewState.from_target) — boots the live review UI; covered e2e
-  #   by smoke.spec.ts "renders the page with header, files, and
-  #   decision footer".
-  # - cli.ex:241 parse_args (delete the non-nil args_error clause) —
-  #   the clause ends in System.halt/1, killing the ExUnit VM by
-  #   design (see args_error docs); covered e2e by entry-points.spec.ts
-  #   "an unrecognised option exits 64 and names the option" and "a ref
-  #   that does not resolve exits 64 and says the target could not be
-  #   resolved".
-  # - cli.ex:351 auto_approve_staged (statement deletion among the Git
-  #   shell-outs) — real-git I/O wiring; covered e2e by decision.spec.ts
-  #   "staged-diff with only linguist-generated files auto-approves".
+  # - `flush_logs/0`'s handler-absent `_ -> :ok` clause — equivalent:
+  #   flush_logs' own `rescue _ -> :ok catch _, _ -> :ok` swallows the
+  #   CaseClauseError the deletion raises, so no input distinguishes the
+  #   mutant from the original.
+  # - `run_live_review/2`'s case on `ReviewState.from_target` — boots
+  #   the live review UI; covered e2e by smoke.spec.ts "renders the page
+  #   with header, files, and decision footer".
+  # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
+  #   System.halt/1, killing the ExUnit VM by design (see args_error
+  #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
+  #   exits 64 and names the option" and "a ref that does not resolve
+  #   exits 64 and says the target could not be resolved".
+  # - The staged-diff auto-approve path in `auto_approve_staged/1`
+  #   (statement deletion among the Git shell-outs) — real-git I/O
+  #   wiring; covered e2e by decision.spec.ts "staged-diff with only
+  #   linguist-generated files auto-approves".
 
   import Meerkat.TestHelpers
 

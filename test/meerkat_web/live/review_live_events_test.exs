@@ -10,37 +10,41 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # --- Documented surviving mutants (review-and-merge step 5) ---
   #
   # Equivalent (no input distinguishes mutant from original):
-  # * `attr` declarations (1013, 1014, 1074, 1121, 1193, 1194, 1260,
-  #   1261, 1262, 1263, 1264, 1488, 1489, 1525, 1665, 1666, 1667) —
+  # * `attr` declarations in function components `learn_toggle`,
+  #   `version_chip`, `commit_message_section`, `global_comments_section`,
+  #   `file_list`, `markdown_preview`, `file_filter`, and `diff_toolbar` —
   #   deleting an `attr` line removes compile-time validation metadata
-  #   only; with every call site passing the assigns, no runtime
-  #   behaviour differs.
-  # * `form_for(nil, _) -> false` (2320) and
-  #   `file_form_open_for?(nil, _) -> false` (2324) — deleting the
-  #   body yields nil; nil is falsy exactly like false in every usage
-  #   (a `:if=` condition and a `not` operand).
+  #   only; with every call site passing its assigns, no runtime behaviour
+  #   differs. `markdown_preview`'s `:read_errors` attr default is never
+  #   used because its only caller always passes `read_errors`.
+  # * `form_for(nil, _) -> false` and
+  #   `file_form_open_for?(nil, _) -> false` — deleting the body yields
+  #   nil; nil is falsy exactly like false in every usage (a `:if=`
+  #   condition and a `not` operand).
   #
   # Thin I/O wiring already covered end-to-end by named Playwright
   # specs (muex runs ExUnit only and cannot see them):
-  # * mount's `if connected?` viewer-registration/PubSub subscribe
-  #   (53) — multi-tab.spec.ts "a global comment added in tab A
+  # * `mount/3`'s `if connected?(socket)` viewer-registration/PubSub
+  #   subscribe — multi-tab.spec.ts "a global comment added in tab A
   #   appears in tab B without a reload" and "removing a comment in
   #   tab A removes it from tab B too".
-  # * `comment_form.edit` (375, 376) — comments.spec.ts "add a file
-  #   comment via the per-file button, edit, remove" and "add a
+  # * The whole `comment_form.edit` handler — comments.spec.ts "add a
+  #   file comment via the per-file button, edit, remove" and "add a
   #   global comment, edit its body, remove it".
-  # * `comment.submit`'s no-op and ReviewServer branches (402, 412,
-  #   449) — comments.spec.ts "clicking the L1 gutter row opens a
-  #   commit-msg form, comment lands in the gutter".
-  # * the whole `filter.toggle_extension` handler (518) —
-  #   filter.spec.ts "hide *.md hides NOTES.md; chip click restores it".
-  # * `filter.show_all` delegation (522) — filter.spec.ts "'Show all'
-  #   restores both files after 'only'".
-  # * `filter.toggle_generated` delegation (625, 628) — filter.spec.ts
-  #   generated-chip toggle and generated-files.spec.ts.
-  # * `decision.cancel`'s ReviewServer wipe (704, 710) —
-  #   decision.spec.ts "Cancel wipes comments, prints a cancelled
-  #   sentence, exits 1".
+  # * `comment.submit`'s open_form-nil no-op clause and its cond clauses
+  #   for edit and add — comments.spec.ts "clicking the L1 gutter row
+  #   opens a commit-msg form, comment lands in the gutter".
+  # * The whole `filter.toggle_extension` handler, including its
+  #   `if rid != "unbound"` — filter.spec.ts "hide *.md hides NOTES.md;
+  #   chip click restores it".
+  # * `filter.toggle_generated`'s handler and its
+  #   `if rid != "unbound"` — filter.spec.ts generated-chip toggle and
+  #   generated-files.spec.ts.
+  # * `decision.cancel`'s ReviewServer wipe — decision.spec.ts "Cancel
+  #   wipes comments, prints a cancelled sentence, exits 1".
+  # * `comment.toggle_learn`'s `if rid != "unbound"` ReviewServer
+  #   delegation — inline-comments-rendering.spec.ts "learn-from-this
+  #   defaults off; toggle on rendered comment flips it".
 
   use MeerkatWeb.ConnCase, async: false
 

@@ -1,6 +1,18 @@
 defmodule Meerkat.TimeoutTest do
   use ExUnit.Case, async: false
 
+  # Surviving muex mutants in lib/meerkat/timeout.ex, with why they are
+  # not test gaps:
+  #
+  # Equivalent (no input distinguishes mutant from original):
+  # * `do_prune_stale/1`'s `case File.ls(parent)` — deleting the
+  #   `_ -> :ok` fallback raises `CaseClauseError`; the function's own
+  #   `catch _, _ -> :ok` catches it and returns the same `:ok`.
+  # * `saved_state/2`'s `case` on
+  #   `Application.get_env(:meerkat, :review_state)` — deleting the
+  #   `_ -> nil` fallback raises `CaseClauseError`; the function's own
+  #   `catch _, _ -> nil` returns the same `nil`.
+
   import ExUnit.CaptureIO
   import Meerkat.TestHelpers
 

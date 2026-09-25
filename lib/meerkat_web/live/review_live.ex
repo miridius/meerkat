@@ -2253,7 +2253,6 @@ defmodule MeerkatWeb.ReviewLive do
   defp file_path_dir(file_name) do
     case Path.dirname(file_name) do
       "." -> ""
-      "" -> ""
       dir -> "#{dir}/"
     end
   end
