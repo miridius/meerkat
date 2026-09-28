@@ -7,10 +7,9 @@ pre-commit:
 
 pre-push:
   commands:
-    no-private-refs:
-      run: bash scripts/no-private-refs.sh
-    outdated:
-      run: bash scripts/outdated.sh
+    checks:
+      run: bash scripts/pre-push.sh
+      use_stdin: true
 
 # Auto-install meerkat whenever local `main` advances, however it
 # advances. `post-merge` catches `git pull` / `git merge`;
