@@ -228,11 +228,11 @@ test.describe("a review outlives the process that invoked it", () => {
 			});
 			const { code, stderr } = await second.awaitExit();
 			expect(code).toBe(1);
-			expect(
-				stderr.replace(/^meerkat: warning — .*\n/gm, ""),
-				"besides its own warnings, the rerun prints only the cancelled sentence",
-			).toBe(
-				"Review cancelled — commit aborted, no feedback to act on.\n",
+			expect(stderr, "the replayed outcome is the cancelled sentence, last and whole").toMatch(
+				/(^|\n)Review cancelled — commit aborted, no feedback to act on\.\n$/,
+			);
+			expect(stderr, "a rerun collecting a held Cancel is not told to wait for a review").not.toContain(
+				"Paused for human review",
 			);
 		} finally {
 			await second?.kill();
