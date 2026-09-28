@@ -82,10 +82,9 @@ defmodule Meerkat.TestHelpers do
     dir
   end
 
-  # Under a git hook (the pre-push `mix test`) git exports GIT_DIR
-  # pointing at meerkat's own gitdir, which overrides `cd: dir` and
-  # would build the fixture repo in the wrong place. Same set as
-  # `Meerkat.Git` strips.
+  # Any test run inside a git hook has GIT_DIR exported by git, pointing at
+  # meerkat's own gitdir, which overrides `cd: dir` and would build the
+  # fixture repo in the wrong place. Same set as `Meerkat.Git` strips.
   @git_discovery_overrides Enum.map(
                              ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
                                 GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES

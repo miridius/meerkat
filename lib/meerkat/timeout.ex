@@ -236,9 +236,7 @@ defmodule Meerkat.Timeout do
   end
 
   defp run_dir(repo_path, run) do
-    # An attaching caller's run id arrives over HTTP; `basename` keeps it
-    # inside the deadlines directory.
-    Path.join([Git.meerkat_dir(repo_path), "deadlines", Path.basename(run)])
+    Path.join([Git.meerkat_dir(repo_path), "deadlines", run])
   end
 
   defp run_id do

@@ -1,20 +1,23 @@
 defmodule MeerkatWeb.AttachController do
   @moduledoc """
   Endpoints for the caller in `bin/meerkat-attach`. Both require the
-  backend's serve token.
+  backend's serve token and return 400 when the run id contains anything
+  other than letters, digits, and hyphens.
 
   `GET /api/attach?run=<run>` attaches the caller for its run and
   streams newline-terminated frames: `o <line>` is a line for stderr,
   `n <text>` is stderr text with no trailing newline, `k` is a
   heartbeat, and `x <code>` carries the exit code, last. A later
   invocation whose review changed gets 409, and this BEAM halts so it
-  can start a fresh one. Once a caller has taken delivery, others get
-  503. `quiet=1` skips the banner, for a caller that already printed it.
-  A `d` frame ends the stream of a caller displaced by a later
-  invocation; that caller exits 1. A caller attaching after a decision
-  has been made—whether the outcome is held or a click has happened but
-  the outcome has not yet been published—gets no banner and opens no
-  browser tab.
+  can start a fresh one. Before the 409 is sent, every attached caller
+  gets a `d <line>` frame; a displaced caller prints `<line>` to stderr
+  and exits 1. Once a caller has taken delivery, others get 503. `quiet=1`
+  skips the banner, for a caller that already printed it. A later
+  invocation whose review target cannot be resolved gets 502 with the
+  error in `o` frames, and the review keeps running. A caller attaching
+  after a decision has been made, whether the outcome is held or a click
+  has happened but the outcome has not yet been published, gets no banner
+  and opens no browser tab.
 
   `POST /api/attach/delivered?run=<run>` reports that the caller printed
   the outcome.
@@ -33,26 +36,36 @@ defmodule MeerkatWeb.AttachController do
   @heartbeat_ms 500
 
   plug :require_token
+  plug :require_run
 
-  def attach(conn, %{"run" => run} = params) do
-    if run == System.get_env("MEERKAT_RUN_ID") or same_review?() do
-      stream(conn, run, Map.get(params, "quiet") == "1")
-    else
-      IO.puts(
-        :stderr,
-        "meerkat: a later invocation found this review's diff or commit message changed, " <>
-          "so it replaces this review — aborting."
-      )
+  @replaced "meerkat: a later invocation found this review's diff or commit message changed, " <>
+              "so it replaces this review — aborting."
 
-      conn = send_resp(conn, 409, "stale\n")
-      halt_after_response(1)
-      conn
+  def attach(conn, %{"run" => run} = params) when is_binary(run) do
+    compared = if run == System.get_env("MEERKAT_RUN_ID"), do: :same, else: compare_review()
+
+    case compared do
+      :same ->
+        stream(conn, run, Map.get(params, "quiet") == "1")
+
+      :changed ->
+        # Displace and wait before answering 409: otherwise a caller seeing its
+        # connection drop could reattach to the replacement backend and take
+        # over its review.
+        await_exits(Decision.replace(@replaced))
+        conn = send_resp(conn, 409, "stale\n")
+        halt_after_response(1)
+        conn
+
+      {:error, reason} ->
+        body = frames("meerkat: error resolving review target: #{reason}\n")
+        send_resp(conn, 502, body)
     end
   end
 
   def attach(conn, _params), do: send_resp(conn, 400, "bad request\n")
 
-  def delivered(conn, %{"run" => run}) do
+  def delivered(conn, %{"run" => run}) when is_binary(run) do
     case Decision.delivered(run) do
       :ok -> send_resp(conn, 200, "ok\n")
       {:error, :no_outcome} -> send_resp(conn, 409, "no outcome\n")
@@ -71,7 +84,21 @@ defmodule MeerkatWeb.AttachController do
     end
   end
 
-  defp same_review? do
+  defp require_run(conn, _opts) do
+    case conn.params do
+      %{"run" => run} when is_binary(run) ->
+        # Run ids name directories under deadlines, so reject paths like "..";
+        # launcher ids are UUIDs from uuidgen.
+        if run =~ ~r/\A[A-Za-z0-9-]+\z/,
+          do: conn,
+          else: conn |> send_resp(400, "bad request\n") |> halt()
+
+      _ ->
+        conn
+    end
+  end
+
+  defp compare_review do
     base = Application.fetch_env!(:meerkat, :review_state)
 
     case ReviewState.from_target(
@@ -79,12 +106,27 @@ defmodule MeerkatWeb.AttachController do
            Application.fetch_env!(:meerkat, :repo_path)
          ) do
       {:ok, now} ->
-        Persistence.state_signature(now) == Persistence.state_signature(base) and
-          now.commit_message == base.commit_message
+        if Persistence.state_signature(now) == Persistence.state_signature(base) and
+             now.commit_message == base.commit_message,
+           do: :same,
+           else: :changed
 
-      {:error, _} ->
-        false
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp await_exits(pids) do
+    refs = Enum.map(pids, &Process.monitor/1)
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    Enum.each(refs, fn ref ->
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> Process.demonitor(ref, [:flush])
+      end
+    end)
   end
 
   defp stream(conn, run, quiet?) do
@@ -100,9 +142,13 @@ defmodule MeerkatWeb.AttachController do
         quiet? = quiet? or Decision.current() != nil
         banner = if quiet?, do: "", else: Application.get_env(:meerkat, :review_banner, "")
 
-        with {:ok, conn} <- chunk(conn, frames(banner)) do
-          unless quiet?, do: open_browser_if_unwatched(conn, run)
-          await_outcome(conn)
+        case chunk(conn, frames(banner)) do
+          {:ok, conn} ->
+            unless quiet?, do: open_browser_if_unwatched(conn, run)
+            await_outcome(conn)
+
+          {:error, _} ->
+            conn
         end
 
       {:ok, held} ->
@@ -124,8 +170,8 @@ defmodule MeerkatWeb.AttachController do
       {:meerkat_outcome, outcome} ->
         send_outcome(conn, outcome)
 
-      :meerkat_displaced ->
-        case chunk(conn, "d\n") do
+      {:meerkat_displaced, text} ->
+        case chunk(conn, ["d ", text, "\n"]) do
           {:ok, conn} -> conn
           {:error, _} -> conn
         end

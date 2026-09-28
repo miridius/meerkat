@@ -3,15 +3,6 @@ defmodule Meerkat.DecisionTest do
   # main supervisor. Tests clear its state between runs via reset/0.
   use ExUnit.Case, async: false
 
-  # Surviving muex mutants in decision.ex, and why none is a test gap:
-  # - decision.ex:2 (delete the `@moduledoc`) — documentation only; no behaviour.
-  # - decision.ex:256 handle_info/2 (delete `Logger.warning` in the catch-all
-  #   clause) — changes only log output.
-  # - decision.ex:290 arm_deadline/1 (`unless was_armed?` → `if`) — muex reports
-  #   this as surviving, but "a deadline armed by an attach ends the review once
-  #   it passes" fails against it under every seed tried. muex's timed-out mutants
-  #   make its result unreliable here.
-
   alias Meerkat.Decision
 
   setup do
@@ -217,7 +208,7 @@ defmodule Meerkat.DecisionTest do
 
           receive do
             {:meerkat_outcome, outcome} -> send(parent, {:outcome, self(), outcome})
-            :meerkat_displaced -> send(parent, {:displaced, self()})
+            {:meerkat_displaced, text} -> send(parent, {:displaced, self(), text})
           end
 
           receive do
@@ -240,7 +231,10 @@ defmodule Meerkat.DecisionTest do
     test "a caller for another run displaces the one attached before it" do
       {first, _} = spawn_caller("run-a")
       {second, _} = spawn_caller("run-b")
-      assert_receive {:displaced, ^first}, 1000
+
+      assert_receive {:displaced, ^first,
+                      "meerkat: a later invocation of this review took it over — aborting."},
+                     1000
 
       :ok = Decision.publish({0, "approved\n"})
       assert_receive {:outcome, ^second, {0, "approved\n"}}, 1000
@@ -250,7 +244,19 @@ defmodule Meerkat.DecisionTest do
     test "a caller reattaching for its own run displaces nobody" do
       {first, _} = spawn_caller("run-a")
       {_again, _} = spawn_caller("run-a")
-      refute_receive {:displaced, ^first}, 100
+      refute_receive {:displaced, ^first, _}, 100
+    end
+
+    test "replacing the review tells every attached caller why, stops tracking them and disarms the deadline" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-a")
+      {again, _} = spawn_caller("run-a")
+
+      assert Enum.sort(Decision.replace("changed")) == Enum.sort([first, again])
+      assert_receive {:displaced, ^first, "changed"}, 1000
+      assert_receive {:displaced, ^again, "changed"}, 1000
+      assert :sys.get_state(Decision).callers == %{}
+      assert Application.get_env(:meerkat, :review_deadline_ms) == nil
     end
 
     test "an outcome published with nobody attached is held for the next caller" do
@@ -304,6 +310,51 @@ defmodule Meerkat.DecisionTest do
              "the last caller leaving disarms the deadline"
     end
 
+    test "a later run's deadline starts from its own attach, however long an earlier run waited",
+         %{repo: repo} do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-a")
+      anchor = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "run-a", "abc123"])
+      File.write!(anchor, Integer.to_string(System.system_time(:millisecond) - 3_600_000))
+      Process.exit(first, :kill)
+
+      {_second, _} = spawn_caller("run-b")
+
+      assert Application.get_env(:meerkat, :review_deadline_ms) >
+               System.system_time(:millisecond) + 590_000
+    end
+
+    test "a caller reattaching within one deadline check leaves a single check running" do
+      Application.put_env(:meerkat, :deadline_check_ms, 200)
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-i")
+      Process.exit(first, :kill)
+
+      Enum.find_value(1..100, fn _ ->
+        Process.sleep(2)
+        is_nil(Application.get_env(:meerkat, :review_deadline_ms))
+      end)
+
+      {_again, _} = spawn_caller("run-j")
+      decision = Process.whereis(Decision)
+      :erlang.trace(decision, true, [:receive])
+      Process.sleep(1000)
+      :erlang.trace(decision, false, [:receive])
+
+      checks =
+        Stream.repeatedly(fn ->
+          receive do
+            {:trace, ^decision, :receive, :check_deadline} -> :check
+          after
+            0 -> nil
+          end
+        end)
+        |> Enum.take_while(& &1)
+        |> length()
+
+      assert checks <= 6, "one check every 200 ms over 1 s, not #{checks}"
+    end
+
     test "a deadline armed by an attach ends the review once it passes" do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
       parent = self()
@@ -349,6 +400,36 @@ defmodule Meerkat.DecisionTest do
       # A fresh decision can be submitted after reset.
       Decision.submit({:reject, []})
       assert {:reject, []} = Decision.current()
+    end
+  end
+
+  describe "stray messages" do
+    test "an unexpected message is logged and the decision survives it" do
+      pid = Process.whereis(Decision)
+      {:ok, _} = Decision.submit({:approve, ""})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, :not_a_decision_message)
+          :sys.get_state(Decision)
+        end)
+
+      assert log =~ "Meerkat.Decision: unexpected message :not_a_decision_message"
+      assert Process.whereis(Decision) == pid
+      assert Decision.current() == {:approve, ""}
+    end
+
+    test "a deadline check arriving after the decision is dropped silently" do
+      {:ok, _} = Decision.submit({:approve, ""})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, :check_deadline)
+          :sys.get_state(Decision)
+        end)
+
+      assert log == ""
+      assert Decision.current() == {:approve, ""}
     end
   end
 end

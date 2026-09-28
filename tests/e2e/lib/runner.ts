@@ -26,6 +26,8 @@ export type RunnerOpts = {
 	underParent?: boolean;
 	// When false, return without waiting for the review URL, for runs that exit without printing one (such as collecting a decision already made).
 	awaitUrl?: boolean;
+	// Starts meerkat as its own process-group leader, so `signalGroup` can signal it.
+	ownGroup?: boolean;
 };
 
 export type Runner = {
@@ -39,6 +41,8 @@ export type Runner = {
 	killCaller: () => Promise<void>;
 	// SIGKILLs the `sh` running meerkat under `underParent`, leaving meerkat running.
 	killParent: () => Promise<void>;
+	// Signals meerkat's whole process group (requires `ownGroup`), as the caller's parent app does when signaling its process tree.
+	signalGroup: (signal: NodeJS.Signals) => void;
 	// Resolves once meerkat and every process holding its stderr pipe have exited.
 	awaitClose: () => Promise<void>;
 	runsDir: string;
@@ -75,6 +79,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		cwd: fixture.dir,
 		stdio: ["ignore", "pipe", "pipe"],
 		env,
+		detached: opts.ownGroup,
 	});
 
 	const closePromise = new Promise<void>((resolve) => proc.once("close", () => resolve()));
@@ -145,6 +150,12 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			if (!opts.underParent) throw new Error("killParent: start the runner with underParent");
 			proc.kill("SIGKILL");
 			await exitPromise;
+		},
+		signalGroup: (signal) => {
+			if (!opts.ownGroup || proc.pid === undefined) {
+				throw new Error("signalGroup: start the runner with ownGroup");
+			}
+			process.kill(-proc.pid, signal);
 		},
 		awaitClose: () => closePromise,
 		runsDir,

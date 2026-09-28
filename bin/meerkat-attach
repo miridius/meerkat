@@ -157,7 +157,7 @@ _ma_bury_server() {
     local port beam
     read -r port beam <"$_MA_DIR/port"
     # A BEAM whose shepherd died still holds the review's port.
-    if [[ -n "$beam" && "$(ps -p "$beam" -o command= 2>/dev/null)" == *meerkat* ]]; then
+    if [[ -n "$beam" && "$(ps -p "$beam" -o command= 2>/dev/null)" == *[Mm]eerkat* ]]; then
       kill -9 "$beam" 2>/dev/null
     fi
   fi
@@ -205,9 +205,16 @@ _ma_attach() {
         "n "*) printf '%s' "${line:2}" >&2 ;;
         "x "*) code="${line:2}" ;;
         "s "*) status="${line:2}" ;;
+        # Keep for older backends that send bare d; an orphaned review lives
+        # until reattached, so the backend can outlast an upgrade.
         d)
           exec {fd}<&-
           echo "meerkat: a later invocation of this review took it over — aborting." >&2
+          exit 1
+          ;;
+        "d "*)
+          exec {fd}<&-
+          printf '%s\n' "${line:2}" >&2
           exit 1
           ;;
       esac
@@ -233,14 +240,19 @@ _ma_attach() {
     exit "$code"
   fi
 
-  # 409: this review replaces the backend's. 503: the backend delivered
-  # to another caller. Either way it is exiting, and this caller starts
-  # a fresh one.
+  # 409 means the review changed and 503 means another caller took delivery;
+  # either way, the backend is exiting and this caller starts a fresh one.
+  # 502 means this rerun could not resolve its review target; the error was
+  # printed from its o frames, the backend keeps its review, and this caller
+  # exits 64, the CLI's unresolved-target exit code.
   case "$status" in
     409 | 503)
       _MA_OWNED=0
       _ma_wait_for_exit
       rm -rf "$_MA_DIR"
+      ;;
+    502)
+      exit 64
       ;;
     *)
       sleep 0.2

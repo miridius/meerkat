@@ -26,14 +26,17 @@ defmodule Meerkat.Decision do
   the CLI halts only once a caller reports it delivered. An outcome
   published with nobody attached is held for the next caller. A caller
   attaching for a different run displaces every caller already attached
-  for another run: each displaced caller is sent `:meerkat_displaced`
-  and is no longer tracked. Reattaching for its own run (for example,
-  after a dev BEAM restart) displaces nobody, so only one invocation at
-  a time waits on a review.
+  for another run: each displaced caller is sent
+  `{:meerkat_displaced, text}`, where `text` is the line it prints before
+  exiting, and is no longer tracked. `replace/1` likewise displaces every
+  attached caller and stops tracking them. Reattaching for its own run
+  (for example, after a dev BEAM restart) displaces nobody, so only one
+  invocation at a time waits on a review.
 
   The deadline runs only while a caller is attached, because it exists
-  to release a caller that is waiting. Each attach arms it for that
-  caller's run, and it is disarmed when the last caller detaches.
+  to release a caller that is waiting. An attach arms it only when no
+  decision exists, and it is disarmed when the last caller detaches or
+  `replace/1` is called.
   """
 
   use GenServer
@@ -50,6 +53,7 @@ defmodule Meerkat.Decision do
   @type outcome :: {non_neg_integer(), String.t()}
 
   @deadline_topic "meerkat:deadline"
+  @taken_over "meerkat: a later invocation of this review took it over — aborting."
 
   ## Public API
 
@@ -99,14 +103,26 @@ defmodule Meerkat.Decision do
 
   @doc """
   Attach the calling process as a caller for launcher run `run_id`. It is sent
-  `{:meerkat_outcome, outcome}` once the outcome is published, `:meerkat_displaced`
-  once a caller for another run attaches, and is detached when it exits. Returns
-  the outcome already held, if any, and `:closing` once a caller has taken
-  delivery, since this BEAM is about to halt.
+  `{:meerkat_outcome, outcome}` once the outcome is published, and
+  `{:meerkat_displaced, text}` when a caller for another run attaches or
+  `replace/1` is called; `text` is the line to print before exiting. The caller
+  is detached when it exits. Returns the outcome already held, if any, and
+  `:closing` once a caller has taken delivery, since this BEAM is about to halt.
   """
   @spec attach(String.t()) :: {:ok, outcome | nil} | :closing
   def attach(run_id) do
     GenServer.call(__MODULE__, {:attach, self(), run_id})
+  end
+
+  @doc """
+  Displace every attached caller by sending it
+  `{:meerkat_displaced, text}`, where `text` is the line to print. Stop
+  tracking them and disarm the deadline. Returns the pids of the callers
+  displaced.
+  """
+  @spec replace(String.t()) :: [pid()]
+  def replace(text) when is_binary(text) do
+    GenServer.call(__MODULE__, {:replace, text})
   end
 
   @doc """
@@ -145,8 +161,7 @@ defmodule Meerkat.Decision do
 
   @impl true
   def init(:no_decision) do
-    schedule_deadline_check()
-    {:ok, initial_state()}
+    {:ok, schedule_deadline_check(initial_state())}
   end
 
   defp initial_state do
@@ -156,6 +171,7 @@ defmodule Meerkat.Decision do
       outcome: nil,
       callers: %{},
       deadline_run: nil,
+      deadline_tick: nil,
       delivered_to: nil,
       delivery_waiters: []
     }
@@ -182,10 +198,10 @@ defmodule Meerkat.Decision do
     {:reply, decision, state}
   end
 
-  def handle_call(:reset, _from, %{callers: callers}) do
+  def handle_call(:reset, _from, %{callers: callers, deadline_tick: tick}) do
     Enum.each(Map.keys(callers), &Process.demonitor(&1, [:flush]))
-    schedule_deadline_check()
-    {:reply, :ok, initial_state()}
+    if tick, do: Process.cancel_timer(tick)
+    {:reply, :ok, schedule_deadline_check(initial_state())}
   end
 
   def handle_call({:attach, _pid, _run_id}, _from, %{delivered_to: run} = state)
@@ -197,15 +213,17 @@ defmodule Meerkat.Decision do
     {displaced, kept} =
       Enum.split_with(state.callers, fn {_ref, {_pid, run}} -> run != run_id end)
 
-    Enum.each(displaced, fn {ref, {old, _run}} ->
-      Process.demonitor(ref, [:flush])
-      send(old, :meerkat_displaced)
-    end)
-
+    displace(displaced, @taken_over)
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
     callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
     {:reply, {:ok, state.outcome}, %{state | callers: callers}}
+  end
+
+  def handle_call({:replace, text}, _from, state) do
+    displace(state.callers, text)
+    set_deadline(nil)
+    {:reply, for({_ref, {pid, _run}} <- state.callers, do: pid), %{state | callers: %{}}}
   end
 
   def handle_call({:publish, outcome}, _from, state) do
@@ -235,17 +253,17 @@ defmodule Meerkat.Decision do
 
   @impl true
   def handle_info(:check_deadline, %{decision: nil} = state) do
+    state = %{state | deadline_tick: nil}
     deadline = Application.get_env(:meerkat, :review_deadline_ms)
 
     if is_integer(deadline) and Meerkat.Timeout.expired?(deadline) do
       expire(state, Meerkat.Timeout.action())
     else
-      schedule_deadline_check()
-      {:noreply, state}
+      {:noreply, schedule_deadline_check(state)}
     end
   end
 
-  def handle_info(:check_deadline, state), do: {:noreply, state}
+  def handle_info(:check_deadline, state), do: {:noreply, %{state | deadline_tick: nil}}
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{callers: callers} = state)
       when is_map_key(callers, ref) do
@@ -270,9 +288,12 @@ defmodule Meerkat.Decision do
   # clock, which does not advance while the machine is suspended. The tick
   # compares two wall-clock times instead, so a night asleep burns the
   # review's time.
-  defp schedule_deadline_check do
+  defp schedule_deadline_check(state) do
     if Application.get_env(:meerkat, :review_deadline_ms) do
-      Process.send_after(self(), :check_deadline, Meerkat.Timeout.check_interval_ms())
+      tick = Process.send_after(self(), :check_deadline, Meerkat.Timeout.check_interval_ms())
+      %{state | deadline_tick: tick}
+    else
+      state
     end
   end
 
@@ -280,8 +301,7 @@ defmodule Meerkat.Decision do
     :ok =
       Meerkat.Timeout.keep_alive(Application.get_env(:meerkat, :repo_path), state.deadline_run)
 
-    schedule_deadline_check()
-    {:noreply, state}
+    {:noreply, schedule_deadline_check(state)}
   end
 
   defp expire(state, :approve) do
@@ -294,11 +314,7 @@ defmodule Meerkat.Decision do
     {:noreply, put_decision(state, decision)}
   end
 
-  # A deadline already armed has its tick running, so only a disarmed one
-  # starts a new tick.
   defp arm_deadline(state, run_id) do
-    was_armed? = is_integer(Application.get_env(:meerkat, :review_deadline_ms))
-
     set_deadline(
       Meerkat.Timeout.deadline_ms(
         Application.get_env(:meerkat, :repo_path),
@@ -307,8 +323,15 @@ defmodule Meerkat.Decision do
       )
     )
 
-    unless was_armed?, do: schedule_deadline_check()
-    %{state | deadline_run: run_id}
+    state = %{state | deadline_run: run_id}
+    if state.deadline_tick, do: state, else: schedule_deadline_check(state)
+  end
+
+  defp displace(callers, text) do
+    Enum.each(callers, fn {ref, {pid, _run}} ->
+      Process.demonitor(ref, [:flush])
+      send(pid, {:meerkat_displaced, text})
+    end)
   end
 
   defp set_deadline(deadline_ms) do

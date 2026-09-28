@@ -2,11 +2,10 @@ defmodule MeerkatWeb.AttachControllerTest do
   use MeerkatWeb.ConnCase, async: false
 
   # Surviving muex mutant in attach_controller.ex, and why it is not a test gap:
-  # - attach_controller.ex:130 await_outcome/1 (delete the `{:error, _} -> conn`
-  #   clause from `case chunk(conn, "d\n")`) — handles a displaced caller whose
+  # - await_outcome/1 (delete the `{:error, _} -> conn` clause from
+  #   `case chunk(conn, ["d ", text, "\n"])`) handles a displaced caller whose
   #   connection closed before the `d` frame was written. Plug's test adapter
-  #   never fails a chunk, so ExUnit cannot reach it. The `send_outcome/2` clause
-  #   previously listed here (now line 144) was not reported this run.
+  #   never fails a chunk, so ExUnit cannot reach it.
 
   import Meerkat.TestHelpers
 
@@ -163,7 +162,9 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     displaced = Task.await(first)
     assert displaced.status == 200
-    assert displaced.resp_body == "o BANNER line\nd\n"
+
+    assert displaced.resp_body ==
+             "o BANNER line\nd meerkat: a later invocation of this review took it over — aborting.\n"
 
     :ok = Decision.publish({0, "approved\n"})
     taken_over = Task.await(second)
@@ -192,14 +193,44 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert_receive {:halted, 1}, 1000
   end
 
-  test "a later invocation whose target no longer resolves replaces the review",
+  test "a caller attached to a review that changed is told so before the backend halts",
+       %{conn: conn, repo: repo} do
+    first = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
+    stage(repo, "a.txt", "two\n")
+
+    assert attach(conn, "later-run").status == 409
+
+    assert Task.await(first).resp_body =~
+             ~r/\Ao BANNER line\n(k\n)*d meerkat: a later invocation found this review's diff or commit message changed, so it replaces this review — aborting\.\n\z/
+
+    assert_receive {:halted, 1}, 1000
+  end
+
+  test "a later invocation whose target no longer resolves is refused and leaves the review running",
        %{conn: conn} do
+    first = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
     Application.put_env(:meerkat, :review_target, {:single_ref, "no-such-ref"})
 
     conn = attach(conn, "later-run")
 
-    assert conn.status == 409
-    assert_receive {:halted, 1}, 1000
+    assert conn.status == 502
+    assert conn.resp_body =~ ~r/\Ao meerkat: error resolving review target: .+\n(o .*\n)*\z/
+    refute_receive {:halted, _}, 300
+    assert map_size(:sys.get_state(Decision).callers) == 1, "the attached caller stays attached"
+
+    :ok = Decision.publish({0, "approved\n"})
+    assert Task.await(first).resp_body =~ ~r/\Ao BANNER line\n(k\n)*o approved\nx 0\n\z/
+  end
+
+  test "a run id that is not a launcher run id is refused", %{conn: conn} do
+    for run <- ["..", "a%2Fb", "."] do
+      assert attach(conn, run).status == 400
+      assert delivered(conn, run).status == 400
+    end
+
+    refute_receive {:halted, _}, 100
   end
 
   test "a delivery report hands the CLI the run that took delivery", %{conn: conn} do
@@ -211,6 +242,17 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     assert conn.status == 200
     assert_receive {:delivered_to, "later-run"}, 1000
+  end
+
+  test "a caller attaching after another took delivery is told the backend is closing",
+       %{conn: conn} do
+    :ok = Decision.publish({0, "approved\n"})
+    assert delivered(conn, "later-run").status == 200
+
+    conn = attach(conn, "third-run")
+
+    assert conn.status == 503
+    assert conn.resp_body == "closing\n"
   end
 
   test "a delivery report before any outcome exists is refused", %{conn: conn} do
