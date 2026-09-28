@@ -15,13 +15,17 @@ that ran `git commit` (or to a GitHub PENDING review).
   `meerkat A..B` / `A...B` for a range, `meerkat --pr <N>` for a
   GitHub PR.
 
-The binary is one process per invocation: parses args, derives a
-review target, decides whether to auto-approve (see
+Each invocation parses args and derives a review target, then
+decides whether to auto-approve (see
 [decision-flow.md](decision-flow.md) for the auto-approve fast
-path), otherwise binds a localhost HTTP port, opens the URL in the
-browser, blocks until the human makes a decision, prints feedback
-to stderr, exits with a code the caller (the git hook) uses to
-allow or block the commit.
+path). Otherwise, from the invocation's perspective, a localhost
+HTTP port is bound, the URL is opened in the browser, and it blocks
+until the human makes a decision. It prints feedback to stderr and
+exits with a code the caller (the git hook) uses to allow or block
+the commit. Under the launchers, the review server is detached from
+the invocation that started it and outlives it; a later invocation
+of the same review attaches to that server (see
+[decision-flow.md#when-the-caller-exits](decision-flow.md#when-the-caller-exits)).
 
 ## Top-level affordances
 

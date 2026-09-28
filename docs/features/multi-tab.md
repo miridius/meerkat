@@ -57,13 +57,16 @@ write-through update at work.
 
 ## Tab close
 
-Unless `--no-open` is passed, the browser tab is opened once at
-review start (via `Meerkat.Browser.open/1` from `Meerkat.CLI`).
-If the user closes it before submitting a decision, meerkat does
-not reopen it — the BEAM keeps waiting on the same URL, which is
-still printed on stderr at startup. The user can navigate back
-manually (or open a new tab on the same port) and the LiveView
-reconnects to the same `ReviewServer` with persisted state intact.
+Unless `--no-open` is passed, the browser tab is opened at review
+start. A later invocation that reattaches to a review with no tab
+connected opens it again, unless `--no-open` was passed. An
+invocation collecting a decision already made opens no tab.
+
+If the user closes the tab before submitting a decision, meerkat
+does not reopen it for the invocation that is already waiting — the
+server keeps waiting on the same URL, printed on stderr. The user
+can navigate back manually (or open a new tab on the same port) and
+the LiveView reconnects to the same `ReviewServer` with state intact.
 
 ## Failure modes
 

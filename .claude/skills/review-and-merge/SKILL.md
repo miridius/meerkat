@@ -10,7 +10,7 @@ description: Shepherd a GitHub PR through review-to-merge. Runs /pr-review-toolk
 3. Verify the remaining findings empirically — run the code, don't just read it — and fix the accurate ones on the PR's branch.
 4. Anything debatable on accuracy or actionability → `/escalate` with concrete options.
 5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Every surviving mutant gets fixed on this branch (a test that kills it) or escalated — no discarding, no "pre-existing" pass (see "Fix every surviving mutant"). The only exceptions are provably-equivalent mutants and pure-observability mutations, each documented. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
-6. Squash-merge on GitHub once every kept finding (including surviving mutants) is resolved on this PR's branch and the quality gates ran clean from the branch tip. **There is no separate CI gate; the review IS the check.** The gates are `mix compile --warnings-as-errors`, `mix test`, and `bun run test:e2e`. The lefthook pre-commit hook runs `bash scripts/check.sh` (format-check + compile) and the pre-push hook runs `mix test`, so fix commits in steps 3/5 exercise those on `git commit` / `git push` — but the e2e suite is in no hook, so run `bun run test:e2e` yourself before merging. If no fix commits were needed, run all three gates yourself.
+6. Squash-merge on GitHub once every kept finding (including surviving mutants) is resolved on this PR's branch and CI is green on the branch tip.
 
 ## Guardrails
 

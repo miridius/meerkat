@@ -22,6 +22,15 @@ defmodule Meerkat.CLITest do
   # - `run_live_review/2`'s case on `ReviewState.from_target` — boots
   #   the live review UI; covered e2e by smoke.spec.ts "renders the page
   #   with header, files, and decision footer".
+  # - `run_live_review/2`'s deadline setup (swap the put_env arguments,
+  #   invert `is_nil(serve_dir)`) — equivalent under a launcher:
+  #   `Meerkat.Decision` re-arms the deadline when the first caller
+  #   attaches, milliseconds after boot, and disarms it when the caller
+  #   leaves. detach.spec.ts "a review whose caller exited does not time
+  #   out before a rerun collects it" pins that behaviour.
+  # - `run_live_review/2`'s `if run` (invert) — which run's deadline
+  #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
+  #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
   # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
@@ -692,9 +701,7 @@ defmodule Meerkat.CLITest do
     end
 
     defp exit_code(decision, path) do
-      ExUnit.CaptureIO.with_io(:stderr, fn ->
-        CLI.exit_code_for_test(decision, "no-live-review", path)
-      end)
+      CLI.exit_code_for_test(decision, "no-live-review", path)
     end
 
     test "approve exits 0 and says the commit proceeds", %{path: path} do
@@ -783,10 +790,7 @@ defmodule Meerkat.CLITest do
           "meerkat-cli-unwritten-#{System.unique_integer([:positive])}.txt"
         )
 
-      out =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten) == :ok
-        end)
+      out = CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten)
 
       assert out =~ "User requested changes"
       refute out =~ "saved to"
@@ -796,11 +800,7 @@ defmodule Meerkat.CLITest do
     test "writes the recovery file and brackets the payload with the verdict banner" do
       path = Path.join(make_tmp_repo("meerkat-cli-fb"), "fb.txt")
 
-      out =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", path) ==
-                   :ok
-        end)
+      out = CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", path)
 
       assert File.read!(path) == "PAYLOAD-BODY"
       assert out =~ "PAYLOAD-BODY"
@@ -812,11 +812,7 @@ defmodule Meerkat.CLITest do
     test "an unwritable path breadcrumbs the reason, degrades the banner, stays non-fatal" do
       bad = "/no-such-dir-#{System.unique_integer([:positive])}/fb.txt"
 
-      out =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", bad) ==
-                   :ok
-        end)
+      out = CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", bad)
 
       refute File.exists?(bad)
       assert out =~ "couldn't save full feedback to #{bad} (:enoent)"
@@ -827,11 +823,7 @@ defmodule Meerkat.CLITest do
     test "a timed-out review's comments reach the agent under the unread banner" do
       path = Path.join(make_tmp_repo("meerkat-cli-timeout-fb"), "fb.txt")
 
-      out =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.write_feedback_for_test(:timeout, "PAYLOAD-BODY", "no-live-review", path) ==
-                   :ok
-        end)
+      out = CLI.write_feedback_for_test(:timeout, "PAYLOAD-BODY", "no-live-review", path)
 
       assert File.read!(path) == "PAYLOAD-BODY"
       assert out =~ "PAYLOAD-BODY"

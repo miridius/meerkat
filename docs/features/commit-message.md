@@ -11,10 +11,11 @@ and rendered as a clickable gutter above the diff body.
 with `#`) are stripped. The remaining content is the commit
 message.
 
-The file is **read once at mount**. Subsequent edits to the file
-on disk do NOT re-propagate to a running meerkat — the user has
-to restart meerkat (kill the BEAM, re-fire the commit hook). The
-deterministic-port shepherd makes that cheap (same URL).
+The file is **read once at mount**. Subsequent edits to the file on
+disk do NOT reach a running review. Re-run the commit with the
+changed message to pick it up: the new invocation detects the
+commit message change and replaces the old review server with a
+fresh one on the same URL.
 
 Without `--commit-msg`, this section is omitted entirely.
 

@@ -91,6 +91,7 @@ defmodule Meerkat.DecisionTest do
       Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
       Decision.reset()
       Process.sleep(100)
+      :sys.get_state(Decision)
 
       %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
       assert mtime > backdated_s
@@ -164,6 +165,233 @@ defmodule Meerkat.DecisionTest do
     end
   end
 
+  describe "callers" do
+    import Meerkat.TestHelpers
+
+    setup do
+      repo = make_tmp_repo("meerkat-decision-callers")
+      Application.put_env(:meerkat, :repo_path, repo)
+      Application.put_env(:meerkat, :review_id, "abc123")
+      Application.put_env(:meerkat, :deadline_check_ms, 5)
+      previous = System.get_env("MEERKAT_REVIEW_TIMEOUT")
+      previous_action = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
+      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "true")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("MEERKAT_REVIEW_TIMEOUT", previous),
+          else: System.delete_env("MEERKAT_REVIEW_TIMEOUT")
+
+        if previous_action,
+          do: System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", previous_action),
+          else: System.delete_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
+
+        Enum.each(
+          [:repo_path, :review_id, :deadline_check_ms, :review_deadline_ms],
+          &Application.delete_env(:meerkat, &1)
+        )
+
+        Decision.reset()
+        File.rm_rf(repo)
+      end)
+
+      Application.put_env(:meerkat, :review_deadline_ms, nil)
+      Decision.reset()
+      %{repo: repo}
+    end
+
+    defp spawn_caller(run_id) do
+      parent = self()
+
+      pid =
+        spawn(fn ->
+          send(parent, {:attached, self(), Decision.attach(run_id)})
+
+          receive do
+            {:meerkat_outcome, outcome} -> send(parent, {:outcome, self(), outcome})
+            {:meerkat_displaced, text} -> send(parent, {:displaced, self(), text})
+          end
+
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      assert_receive {:attached, ^pid, reply}, 1000
+      {pid, reply}
+    end
+
+    test "an attached caller is sent the outcome once it is published" do
+      {pid, reply} = spawn_caller("run-a")
+      assert reply == {:ok, nil}
+
+      :ok = Decision.publish({1, "feedback\n"})
+      assert_receive {:outcome, ^pid, {1, "feedback\n"}}, 1000
+    end
+
+    test "a caller for another run displaces the one attached before it" do
+      {first, _} = spawn_caller("run-a")
+      {second, _} = spawn_caller("run-b")
+
+      assert_receive {:displaced, ^first,
+                      "meerkat: a later invocation of this review took it over — aborting."},
+                     1000
+
+      :ok = Decision.publish({0, "approved\n"})
+      assert_receive {:outcome, ^second, {0, "approved\n"}}, 1000
+      refute_receive {:outcome, ^first, _}, 100
+    end
+
+    test "a caller reattaching for its own run displaces nobody" do
+      {first, _} = spawn_caller("run-a")
+      {_again, _} = spawn_caller("run-a")
+      refute_receive {:displaced, ^first, _}, 100
+    end
+
+    test "replacing the review tells every attached caller why, stops tracking them and disarms the deadline" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-a")
+      {again, _} = spawn_caller("run-a")
+
+      assert Enum.sort(Decision.replace("changed")) == Enum.sort([first, again])
+      assert_receive {:displaced, ^first, "changed"}, 1000
+      assert_receive {:displaced, ^again, "changed"}, 1000
+      assert :sys.get_state(Decision).callers == %{}
+      assert Application.get_env(:meerkat, :review_deadline_ms) == nil
+    end
+
+    test "an outcome published with nobody attached is held for the next caller" do
+      :ok = Decision.publish({0, "approved\n"})
+
+      {_pid, reply} = spawn_caller("run-b")
+      assert reply == {:ok, {0, "approved\n"}}
+    end
+
+    test "a delivery wakes the CLI with the delivering run, and later callers are turned away" do
+      parent = self()
+      spawn_link(fn -> send(parent, {:delivered_to, Decision.await_delivery()}) end)
+
+      assert Decision.delivered("run-c") == {:error, :no_outcome}
+      refute_receive {:delivered_to, _}, 50
+
+      :ok = Decision.publish({0, "approved\n"})
+      assert Decision.delivered("run-c") == :ok
+      assert_receive {:delivered_to, "run-c"}, 1000
+      assert Decision.attach("run-d") == :closing
+    end
+
+    test "a delivery reported before the CLI waits for one is handed to it when it does" do
+      :ok = Decision.publish({0, "approved\n"})
+      :ok = Decision.delivered("run-e")
+      assert Decision.await_delivery() == "run-e"
+    end
+
+    test "an outcome without an integer exit code and a text is refused" do
+      for outcome <- [{"1", "feedback\n"}, {1, :feedback}] do
+        assert_raise FunctionClauseError, fn -> apply(Decision, :publish, [outcome]) end
+      end
+    end
+
+    test "the deadline runs only while a caller is attached" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {pid, _} = spawn_caller("run-e")
+
+      armed = Application.get_env(:meerkat, :review_deadline_ms)
+      assert is_integer(armed), "attaching arms the deadline"
+      assert armed > System.system_time(:millisecond) + 590_000
+
+      Process.exit(pid, :kill)
+
+      Enum.find_value(1..100, fn _ ->
+        Process.sleep(10)
+        is_nil(Application.get_env(:meerkat, :review_deadline_ms))
+      end)
+
+      assert Application.get_env(:meerkat, :review_deadline_ms) == nil,
+             "the last caller leaving disarms the deadline"
+    end
+
+    test "a later run's deadline starts from its own attach, however long an earlier run waited",
+         %{repo: repo} do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-a")
+      anchor = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "run-a", "abc123"])
+      File.write!(anchor, Integer.to_string(System.system_time(:millisecond) - 3_600_000))
+      Process.exit(first, :kill)
+
+      {_second, _} = spawn_caller("run-b")
+
+      assert Application.get_env(:meerkat, :review_deadline_ms) >
+               System.system_time(:millisecond) + 590_000
+    end
+
+    test "a caller reattaching within one deadline check leaves a single check running" do
+      Application.put_env(:meerkat, :deadline_check_ms, 200)
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      {first, _} = spawn_caller("run-i")
+      Process.exit(first, :kill)
+
+      Enum.find_value(1..100, fn _ ->
+        Process.sleep(2)
+        is_nil(Application.get_env(:meerkat, :review_deadline_ms))
+      end)
+
+      {_again, _} = spawn_caller("run-j")
+      decision = Process.whereis(Decision)
+      :erlang.trace(decision, true, [:receive])
+      Process.sleep(1000)
+      :erlang.trace(decision, false, [:receive])
+
+      checks =
+        Stream.repeatedly(fn ->
+          receive do
+            {:trace, ^decision, :receive, :check_deadline} -> :check
+          after
+            0 -> nil
+          end
+        end)
+        |> Enum.take_while(& &1)
+        |> length()
+
+      assert checks <= 6, "one check every 200 ms over 1 s, not #{checks}"
+    end
+
+    test "a deadline armed by an attach ends the review once it passes" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+      {_pid, _} = spawn_caller("run-f")
+
+      assert_receive {:awaited, {:timeout, _}}, 3000
+    end
+
+    test "an overdue review left open keeps its attached caller's deadline directory recent",
+         %{repo: repo} do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
+      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
+      {_pid, _} = spawn_caller("run-h")
+      run_dir = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "run-h"])
+      backdated_s = System.system_time(:second) - 3600
+      File.touch!(run_dir, backdated_s)
+
+      Process.sleep(1200)
+      :sys.get_state(Decision)
+
+      %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
+      assert mtime > backdated_s
+    end
+
+    test "a review whose caller has left does not time out" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+      {pid, _} = spawn_caller("run-g")
+      Process.exit(pid, :kill)
+
+      refute_receive {:awaited, _}, 1500
+    end
+  end
+
   describe "reset/0" do
     test "clears a submitted decision back to nil" do
       Decision.submit({:approve, []})
@@ -174,6 +402,36 @@ defmodule Meerkat.DecisionTest do
       # A fresh decision can be submitted after reset.
       Decision.submit({:reject, []})
       assert {:reject, []} = Decision.current()
+    end
+  end
+
+  describe "stray messages" do
+    test "an unexpected message is logged and the decision survives it" do
+      pid = Process.whereis(Decision)
+      {:ok, _} = Decision.submit({:approve, ""})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, :not_a_decision_message)
+          :sys.get_state(Decision)
+        end)
+
+      assert log =~ "Meerkat.Decision: unexpected message :not_a_decision_message"
+      assert Process.whereis(Decision) == pid
+      assert Decision.current() == {:approve, ""}
+    end
+
+    test "a deadline check arriving after the decision is dropped silently" do
+      {:ok, _} = Decision.submit({:approve, ""})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, :check_deadline)
+          :sys.get_state(Decision)
+        end)
+
+      assert log == ""
+      assert Decision.current() == {:approve, ""}
     end
   end
 end

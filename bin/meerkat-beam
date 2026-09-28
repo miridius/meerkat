@@ -91,6 +91,16 @@ for arg in "$@"; do
   fi
 done
 
+# Run as the caller, which re-runs this script detached, with
+# MEERKAT_SERVE_DIR set, to serve the review.
+if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
+  # shellcheck source=bin/meerkat-attach
+  source "$SCRIPT_DIR/meerkat-attach"
+  # The re-run takes the user's repo from its working directory.
+  cd "$ORIG_PWD"
+  meerkat_attach "$SCRIPT_DIR/meerkat-beam" "$@"
+fi
+
 # Deterministic port derived from (cwd, args). Same review session
 # from the SAME repo + SAME target = same port across:
 #   * DevWatcher-triggered restarts in this shepherd
@@ -155,13 +165,9 @@ OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
 # `mktemp` creates an empty file. The BEAM treats "empty" as
 # "browser not yet opened"; after a successful open it writes "1".
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
-trap 'rm -f "$OPEN_MARKER"' EXIT
-
-# Keys this invocation's review deadlines (`Meerkat.Timeout`). A staged
-# review's id is the same on every commit in a repo, so without this an
-# abandoned `git commit` hands the next one its expired deadline.
-MEERKAT_RUN_ID="$(uuidgen)"
-export MEERKAT_RUN_ID
+# The caller is not this shepherd's parent, so it reads the exit code
+# from the serve dir.
+trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
 
 # Forward TERM/INT to the running BEAM. Bash never relays signals to
 # a foreground child, so without this a killed shepherd (e2e runner
@@ -223,6 +229,9 @@ while true; do
     continue
   fi
 
+  # The caller attaches once `port` exists, so it must name the BEAM
+  # about to start, not the one that just exited.
+  rm -f "$MEERKAT_SERVE_DIR/port"
   set +e
   mix run --no-start --no-compile -e "$CLI_EVAL" -- "${this_args[@]}" &
   beam_pid=$!
