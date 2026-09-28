@@ -91,6 +91,7 @@ defmodule Meerkat.DecisionTest do
       Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
       Decision.reset()
       Process.sleep(100)
+      :sys.get_state(Decision)
 
       %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
       assert mtime > backdated_s
@@ -374,6 +375,7 @@ defmodule Meerkat.DecisionTest do
       File.touch!(run_dir, backdated_s)
 
       Process.sleep(1200)
+      :sys.get_state(Decision)
 
       %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
       assert mtime > backdated_s
