@@ -11,10 +11,11 @@ description: Shepherd a GitHub PR through review-to-merge. Runs /pr-review-toolk
 4. Anything debatable on accuracy or actionability → `/escalate` with concrete options.
 5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Every surviving mutant gets fixed on this branch (a test that kills it) or escalated — no discarding, no "pre-existing" pass (see "Fix every surviving mutant"). The only exceptions are provably-equivalent mutants and pure-observability mutations, each documented. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
 6. Squash-merge on GitHub once every kept finding (including surviving mutants) is resolved on this PR's branch and CI is green on the branch tip.
+7. Immediately after the merge lands, update local `main` with `git fetch origin main:main`; if that fails because `main` is checked out in a worktree, run `git pull --ff-only` in that worktree. Deploy from a clean checkout of `main`—either the worktree with `main` checked out or the PR worktree after `git switch --detach main`—by running `bash scripts/install.sh`. Leave the session’s worktree detached at `main`; do not run the installer from a dirty checkout, which builds a `-wip` version, and do not discard changes to make it clean. Confirm the install reports either `meerkat: done.` or `meerkat: current already built from <commit> (clean tree); skipping.` for the merged commit. Then clean up dead branches and worktrees across the repository. Get merged PR heads with `gh pr list --state merged --limit 1000 --json headRefName,headRefOid`. A branch is dead only if it is not `main` and its tip exactly matches the `headRefOid` of a merged PR whose `headRefName` is that branch; nothing else counts as dead. Run `git fetch --prune origin` before choosing remote branches, and choose only matching branches among the remaining `origin/*` refs; delete them with `git push origin --delete <branch>...`. Remove worktrees on dead local branches first with `git worktree remove <path>`—never force removal—and then run `git worktree prune`. If removal is refused because a worktree has uncommitted changes, leave it and its checked-out branch intact. Delete every other dead local branch with `git branch -D <branch>`.
 
 ## Guardrails
 
-- Never push, rebase, or update PRs without explicit permission. Invoking this skill counts as permission to push fix commits to the PR's branch and squash-merge; nothing broader.
+- Never push, rebase, or update PRs without explicit permission. Invoking this skill counts as permission to push fix commits to the PR’s branch and squash-merge it; after a merge, it also authorizes step 7’s `main` update and deployment, plus deletion of only the dead remote/local branches and worktrees defined there—including pushing to delete qualifying remote branches. Nothing broader.
 - Fix commits go on the PR's branch. Never commit to `main` — `scripts/no-main-commits.sh` blocks this; don't bypass with `--no-verify`.
 - Squash-merge via GitHub (`gh pr merge --squash --delete-branch`). Never merge locally bypassing GitHub.
 
@@ -52,7 +53,7 @@ Two load-bearing details:
 - **`set -euo pipefail`** so a `gh pr diff` failure (auth, wrong PR#) aborts instead of silently leaving `$CHANGED` empty and skipping the step.
 - **Empty-`$CHANGED` guard**: a PR that only touches `tests/`, `tests/e2e/`, `assets/`, or config has no Elixir source to mutate — skip the step, don't run the full suite.
 
-Mutation runs take minutes per module. `scripts/mutate.sh` prints the survivor list to read by hand.
+`scripts/mutate.sh` prints the survivor list to read by hand.
 
 ### Fix every surviving mutant
 
