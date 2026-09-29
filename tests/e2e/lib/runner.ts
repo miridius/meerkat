@@ -48,7 +48,9 @@ export type Runner = {
 	runsDir: string;
 };
 
-const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
+const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
+
+const URL_RE =/Paused for human review at (https?:\/\/[^\s]+)/;
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
 // a runner the test can drive. Tests should `await runner.awaitExit()`
@@ -66,7 +68,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 					throw new Error("startMeerkat: fixture has no commitMsgPath; pass `args` explicitly");
 				})());
 
-	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), "meerkat-runs-"));
+	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
 	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
@@ -160,6 +162,19 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		awaitClose: () => closePromise,
 		runsDir,
 	};
+}
+
+// Each test worker creates `meerkat-runs-<pid>-<random>` in the OS temp dir.
+// Reap its recorded backends and remove the dir only if that PID is no longer alive;
+// live owners, including concurrent runs, and dirs without a PID are left alone.
+export async function reapOrphanedBackends(): Promise<void> {
+	for (const name of readdirSync(tmpdir())) {
+		const owner = name.match(OWNED_RUNS_DIR_RE);
+		if (!owner || alive(Number(owner[1]))) continue;
+		const dir = join(tmpdir(), name);
+		await stopBackends(dir);
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 async function stopBackends(runsDir: string): Promise<void> {

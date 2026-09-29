@@ -6,6 +6,10 @@ import { defineConfig, devices } from "@playwright/test";
 // point of the spec suite.
 export default defineConfig({
 	testDir: "./tests/e2e",
+	// Setup reaps backends left by earlier runs killed before teardown; teardown reaps
+	// any backends this run left behind.
+	globalSetup: "./tests/e2e/lib/reap.ts",
+	globalTeardown: "./tests/e2e/lib/reap.ts",
 	timeout: 60_000,
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
