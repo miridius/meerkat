@@ -33,7 +33,7 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
 
 ## Starting a request
 
-1. Preserve the user's request verbatim. If anything important is ambiguous, ask the user with AskUserQuestion and preserve their answers verbatim too. Do not start a child until ambiguity is resolved.
+1. Preserve the user's request verbatim. If anything important is ambiguous, ask the user with AskUserQuestion and preserve their answers verbatim too. Do not start a child to build the request until ambiguity is resolved.
 2. Choose a candidate label matching `[a-z][a-z0-9-]{0,31}`. Do not use a label already recorded for a child in this session. Before using a candidate, check that `claude/<label>` exists neither locally nor on the remote:
    ```sh
    git branch --list "claude/<label>"
@@ -89,17 +89,17 @@ Child completion notifications arrive automatically with the child's final messa
 
 - On the child's first final message, record the worktree path it reports and, for a new-request child, the branch it reports; do this whether or not it created a PR.
 - The first time a child without the `merge requested` flag finishes and reports a PR URL in a final message, if that URL is not in the session-local set of PR URLs already opened in the browser, whether the PR is new or one it took over, run `open <url>` to open it in the user's browser. Tell the user the child's label and PR number; extract the number from the URL or use `gh pr view <url> --json number -q .number` if needed. Record the URL in the opened-URL set and record the URL and number for the child so the same PR is not mistaken for a new one later.
-- If an initial build finishes without a PR, pass the child's final message to the user and wait for their response. Do not invent an answer or start a replacement child before the user responds. If the user answers, start a takeover child for the existing branch using **Taking over in-flight work**; include the child's question and the user's answer verbatim in its prompt. Never message the finished child.
+- If an initial build finishes without a PR, pass the child’s final message to the user; if it contains a question, also ask that question with AskUserQuestion, then wait for their response. Do not invent an answer or start a replacement child before the user responds. If the user answers, start a takeover child for the existing branch using **Taking over in-flight work**; include the child's question and the user's answer verbatim in its prompt. Never message the finished child.
 - Send user feedback verbatim with `SendMessage` to a running child that owns the PR or branch, whether builder or reviewer. If no child that owns it is running, start a takeover child for its branch using **Taking over in-flight work** and include the feedback verbatim in its prompt. Never message a finished child. Do not paraphrase or add instructions on the user's behalf. If you cannot tell which child the user means, ask before routing the feedback.
 - Ask the user any question a child raises with AskUserQuestion, then route the answer as feedback under this section.
-- **Track pushes and CI.** When a child reports a push with a PR URL, associate its SHA and PR with that child and start this Bash command from the main checkout with `run_in_background: true`, replacing `<N>` and `<sha>`:
+- **Track pushes and CI.** When a child reports a push with a PR URL, associate its SHA and PR with that child. Before starting a watcher for that push, if a watcher for the same PR is still running, stop it with `TaskStop`, using that background task’s ID. Then start a guarded watcher for this push from the main checkout with `run_in_background: true`, replacing `<N>` and `<sha>`:
   ```sh
   until gh pr view <N> --json headRefOid,statusCheckRollup -q 'select(.headRefOid == "<sha>") | .statusCheckRollup | length > 0' | grep -qx true; do sleep 10; done
   gh pr checks <N> --watch --fail-fast
   ```
   This waits for that SHA to be the PR head and have at least one check before watching. Record the background task, its PR, and its reported SHA. Do not start a watcher for `PR: none`; when the child later reports the PR URL, start one for the SHA it identifies. The watch command follows the PR’s current head, so it can observe later pushes too.
 
-  When a watcher exits, read its output and exit status, then check the current head with `gh pr view <N> --json headRefOid -q .headRefOid`. If the head differs from the SHA recorded for that watcher, do not route its result as a failure for the recorded SHA. Ensure a guarded watcher is running for the current head, using an existing watcher if one is already active; otherwise start one with the command above and the current SHA. If the head still matches, an exit status of 0 means no failing or pending checks; do not route it as a failure. On exit status 1, route only if the output identifies a failed check. If the output indicates a CLI/API error or that no checks are reported, retry with the guarded command rather than treating it as a CI failure. A cancelled check alone is not a failure.
+  Remember the task IDs of watchers stopped with `TaskStop`. When a watcher exits, ignore its exit entirely if you stopped it with `TaskStop`; do not inspect its output, retry it, or route it. Otherwise, read its output and exit status, then check the current head with `gh pr view <N> --json headRefOid -q .headRefOid`. If the head differs from the SHA recorded for that watcher, do not route its result as a failure for the recorded SHA. Ensure a guarded watcher for the current head is active. If one is already active for that head, leave it running; otherwise stop any running watcher for that PR with `TaskStop`, using its task ID, before starting a guarded watcher for the current head. If the head still matches, an exit status of 0 means no failing or pending checks; do not route it as a failure. On exit status 1, route only if the output identifies a failed check. If the output indicates a CLI/API error or that no checks are reported, retry with the guarded command rather than treating it as a CI failure. A cancelled check alone is not a failure.
 
   Route a confirmed CI failure like feedback: send the failing `gh` output verbatim to the running child that owns the PR; otherwise start a takeover child using **Taking over in-flight work**. Since there are no user words, use that output verbatim as the feedback payload in place of user words.
 - For later completions, distinguish a new PR from an already-recorded URL. Relay relevant status to the user; do not treat an existing PR as a missing one.
@@ -146,12 +146,12 @@ git pull --ff-only
 
 If `git worktree remove` fails, stop cleanup and report the error to the user. Do not delete the branch, run the pull, or say cleanup is complete. Run the pull only while on `main`; it lets the repository's lefthook post-merge hook reinstall the production Meerkat build. Do not remove remote branches. Tell the user when cleanup is complete.
 
-After confirming the PR is `MERGED`, check the other open PRs’ mergeability. Run this Bash command from the main checkout with `run_in_background: true`; when it exits, handle each returned row:
+After confirming the PR is `MERGED`, check the mergeability of the other open PRs authored by `@me`. Run this Bash command from the main checkout with `run_in_background: true`; when it exits, handle each returned row:
 ```sh
-until ! gh pr list --json mergeable -q '.[].mergeable' | grep -qx UNKNOWN; do sleep 10; done
-gh pr list --json number,url,mergeable -q '.[] | select(.mergeable != "MERGEABLE")'
+until gh pr list --author @me --json mergeable -q 'all(.[]; .mergeable != "UNKNOWN")' | grep -qx true; do sleep 10; done
+gh pr list --author @me --json number,url,mergeable -q '.[] | select(.mergeable == "CONFLICTING")'
 ```
-For each `CONFLICTING` PR, route the `gh` output verbatim as feedback to its running owner; if no owner is running, start a takeover child using **Taking over in-flight work**, with the output as the feedback payload in place of user words. Do not route PRs reported as `MERGEABLE`.
+For each returned `CONFLICTING` PR, send only that PR’s row from the `gh pr list` output verbatim as feedback to its running owner; if no owner is running, start a takeover child using **Taking over in-flight work**, with only that row as the feedback payload in place of user words.
 
 ## Status
 
