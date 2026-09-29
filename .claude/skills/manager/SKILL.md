@@ -10,7 +10,7 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
 
 ## Non-negotiable boundaries
 
-- Stay in the main checkout on branch `main`. Never implement a request, edit code, build or test the project, or create, review, or merge a PR yourself. Delegate the work to a child.
+- Stay in the main checkout on branch `main`. Delegate implementation and research, including research needed to frame user questions, to a child.
 - Before starting a child, check where you are:
   ```sh
   git branch --show-current
@@ -49,7 +49,9 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
    - The user's answers to any clarifying questions verbatim, or state that there were none.
    - An instruction that its **first action**, before any other work, is to rename its branch with `git branch -m claude/<label>`. If the rename fails, it must stop and report the error in its final message.
    - An instruction to run `mix deps.get` and `pnpm install` in its worktree before building.
-   - An instruction to follow the **Workflow** section of the repository's `CLAUDE.md` end to end. The child must build, test, verify, and open a draft PR as that workflow specifies; it must not ask for approval before pushing.
+   - An instruction to follow the **Workflow** section of the repository's `CLAUDE.md` end to end.
+   - If you hit a design fork, send the manager the question and concrete options with SendMessage `to: "main"` instead of guessing; continue work that does not depend on the answer.
+   - After every successful push, immediately send the manager a `SendMessage` with `to: "main"` naming the pushed commit SHA and PR URL. If no PR exists yet, report the SHA and `PR: none`; immediately after opening the draft PR, send another message with that SHA and the PR URL. Do this after every later push too; do not wait until your final message.
    - An instruction that before every final message, including one that asks the user a question, it commits and pushes all its work to its branch and leaves no uncommitted work. This requirement does not apply once its PR is merged; it must never push to a merged PR's branch. Its final message must end with all of the following: the worktree path (the exact output of `git rev-parse --show-toplevel`), its current branch (the exact output of `git branch --show-current`), and the PR URL. If it has no PR, it must say `PR: none`.
 
 ## Taking over in-flight work
@@ -74,7 +76,7 @@ When the user asks you to resume, continue, take over, or do other work on an op
 4. Start the child with the same three Agent arguments as a new request. Its prompt includes:
    - The user's request verbatim (including any later feedback or answer), the PR URL (or the branch name if there is no PR), and the user's answers to any clarifying questions verbatim. If the user is answering a child's question, include that question verbatim too.
    - An instruction that its **first action** is to check out the existing branch in its own worktree and delete the branch that worktree was created with, running each Git operation as a separate plain command (the worktree guard refused forms such as Git commands inside `$(...)`, inside `if`, or using shell variables). For this takeover, in order: record the output of `git branch --show-current` as the original branch; run `git fetch origin`; run `git switch "<branch>"`; run `git rev-parse --verify --quiet "origin/<branch>"` and, only if it prints a commit, run `git merge --ff-only "origin/<branch>"` (if it prints no commit, skip the merge); then run `git branch -D "<original branch>"` using the recorded name. Stop at the first command that fails and report the error in the final message; no commit from the `rev-parse` check means skip the merge, not stop. Do not rename the branch, because it already exists and may have a PR.
-   - The same dependency-setup and final-message instructions as a new request.
+   - The same dependency-setup, push-message, and final-message instructions as a new request.
    - An instruction to follow the **Workflow** section of the repository's `CLAUDE.md` end to end without asking for approval before pushing. The prompt must also state that its instructions to push to the existing branch instead of branching off `main` and to open a draft PR only if none exists override the Workflow's **Ship** step.
    - An instruction to read the PR description and conversation and the branch's commits since `origin/main` before changing anything.
    - An instruction to push to the existing branch instead of branching off `main`.
@@ -89,7 +91,18 @@ Child completion notifications arrive automatically with the child's final messa
 - The first time a child without the `merge requested` flag finishes and reports a PR URL in a final message, if that URL is not in the session-local set of PR URLs already opened in the browser, whether the PR is new or one it took over, run `open <url>` to open it in the user's browser. Tell the user the child's label and PR number; extract the number from the URL or use `gh pr view <url> --json number -q .number` if needed. Record the URL in the opened-URL set and record the URL and number for the child so the same PR is not mistaken for a new one later.
 - If an initial build finishes without a PR, pass the child's final message to the user and wait for their response. Do not invent an answer or start a replacement child before the user responds. If the user answers, start a takeover child for the existing branch using **Taking over in-flight work**; include the child's question and the user's answer verbatim in its prompt. Never message the finished child.
 - Send user feedback verbatim with `SendMessage` to a running child that owns the PR or branch, whether builder or reviewer. If no child that owns it is running, start a takeover child for its branch using **Taking over in-flight work** and include the feedback verbatim in its prompt. Never message a finished child. Do not paraphrase or add instructions on the user's behalf. If you cannot tell which child the user means, ask before routing the feedback.
-- For later completions, distinguish a new PR from an already-recorded URL. Relay relevant status or questions to the user; do not treat an existing PR as a missing one.
+- Ask the user any question a child raises with AskUserQuestion, then route the answer as feedback under this section.
+- **Track pushes and CI.** When a child reports a push with a PR URL, associate its SHA and PR with that child and start this Bash command from the main checkout with `run_in_background: true`, replacing `<N>` and `<sha>`:
+  ```sh
+  until gh pr view <N> --json headRefOid,statusCheckRollup -q 'select(.headRefOid == "<sha>") | .statusCheckRollup | length > 0' | grep -qx true; do sleep 10; done
+  gh pr checks <N> --watch --fail-fast
+  ```
+  This waits for that SHA to be the PR head and have at least one check before watching. Record the background task, its PR, and its reported SHA. Do not start a watcher for `PR: none`; when the child later reports the PR URL, start one for the SHA it identifies. The watch command follows the PR’s current head, so it can observe later pushes too.
+
+  When a watcher exits, read its output and exit status, then check the current head with `gh pr view <N> --json headRefOid -q .headRefOid`. If the head differs from the SHA recorded for that watcher, do not route its result as a failure for the recorded SHA. Ensure a guarded watcher is running for the current head, using an existing watcher if one is already active; otherwise start one with the command above and the current SHA. If the head still matches, an exit status of 0 means no failing or pending checks; do not route it as a failure. On exit status 1, route only if the output identifies a failed check. If the output indicates a CLI/API error or that no checks are reported, retry with the guarded command rather than treating it as a CI failure. A cancelled check alone is not a failure.
+
+  Route a confirmed CI failure like feedback: send the failing `gh` output verbatim to the running child that owns the PR; otherwise start a takeover child using **Taking over in-flight work**. Since there are no user words, use that output verbatim as the feedback payload in place of user words.
+- For later completions, distinguish a new PR from an already-recorded URL. Relay relevant status to the user; do not treat an existing PR as a missing one.
 
 ## Review and merge
 
@@ -104,7 +117,7 @@ If a child in this session built or last worked on this PR and is still running,
 If no running reviewer child in this session owns the PR, always start a new reviewer child, even if a child in this session built the PR; never resume or message the builder to perform or start the review. Choose a label as in **Taking over in-flight work**, step 3, and start the reviewer with the same three Agent arguments: `name`, `isolation: "worktree"`, and `run_in_background: true`. Set its `merge requested` flag before starting it. Its prompt must include:
 - The user's request verbatim and the PR URL. For a follow-up after a finished child, also include any earlier request and the latest user feedback or answer verbatim; if the user is answering a question, include the question it answers verbatim too.
 - The exact first-action instruction from **Taking over in-flight work**, step 4, second prompt bullet.
-- The dependency-setup and final-message instructions from **Starting a request**, step 4.
+- The dependency-setup, push-message, and final-message instructions from **Starting a request**, step 4.
 - An instruction to run the project's `/review-and-merge <N>` skill and complete it. If acting on an escalation answer, use the finished reviewer's final message to identify the step to resume and the last-reviewed commit. Read the commits after that commit and all PR conversation since the last review. Act on the answer and continue from the named step, not step 1. Run mutation testing on new commits and wait for green CI before merging. Repeat the full review only if the answer changes direction.
 - An instruction that, when a step needs the user's decision, the reviewer ends its turn with the question and concrete options instead of asking the user directly. Its final message must name the `/review-and-merge` step that raised the question, the commit it last reviewed, and list any unresolved findings it kept, including surviving mutants.
 - An instruction not to remove its own worktree.
@@ -132,6 +145,13 @@ git pull --ff-only
 ```
 
 If `git worktree remove` fails, stop cleanup and report the error to the user. Do not delete the branch, run the pull, or say cleanup is complete. Run the pull only while on `main`; it lets the repository's lefthook post-merge hook reinstall the production Meerkat build. Do not remove remote branches. Tell the user when cleanup is complete.
+
+After confirming the PR is `MERGED`, check the other open PRs’ mergeability. Run this Bash command from the main checkout with `run_in_background: true`; when it exits, handle each returned row:
+```sh
+until ! gh pr list --json mergeable -q '.[].mergeable' | grep -qx UNKNOWN; do sleep 10; done
+gh pr list --json number,url,mergeable -q '.[] | select(.mergeable != "MERGEABLE")'
+```
+For each `CONFLICTING` PR, route the `gh` output verbatim as feedback to its running owner; if no owner is running, start a takeover child using **Taking over in-flight work**, with the output as the feedback payload in place of user words. Do not route PRs reported as `MERGEABLE`.
 
 ## Status
 
