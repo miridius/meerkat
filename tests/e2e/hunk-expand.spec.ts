@@ -59,6 +59,19 @@ for (const wrap of [true, false]) {
 					expect(centre).toBeLessThanOrEqual(gutter.right);
 				}
 
+				// The emptied old-side action cell should match the hunk header background,
+				// rather than look like a blank button tile.
+				const leftAction = file.locator("td.diff-line-hunk-action").first();
+				const leftHeader = file.locator("td.diff-line-hunk-content").first();
+				const bg = (cell: Locator) =>
+					cell.evaluate((el) => getComputedStyle(el).backgroundColor);
+				expect(await bg(leftAction)).toBe(await bg(leftHeader));
+
+				// Each hunk header should appear once, not once per side.
+				await expect(
+					file.getByText(/^@@ -17,7 \+17,7 @@$/).filter({ visible: true }),
+				).toHaveCount(1);
+
 				await expect(file.getByText("line 40", { exact: true }).first()).toBeHidden();
 				await file.locator('button[title="Expand All"]').filter({ visible: true }).click();
 				await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();

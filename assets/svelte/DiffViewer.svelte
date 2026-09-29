@@ -1038,6 +1038,21 @@
        old-side cell as a spacer that holds its width. */
     visibility: hidden;
   }
+  /* The library gives the old-side action cell an inline background in the
+     hunk line-number colour—the button tile colour. With its button hidden,
+     it would look like a blank tile, so use the hunk content colour to blend
+     it into the header. !important overrides the inline style. */
+  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-action),
+  :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action)) {
+    background-color: var(--diff-hunk-content--) !important;
+  }
+  /* The library prints each hunk header on both sides. Hide the new-side
+     copy so each header appears once, on the left. With wrapping on, the
+     content cell after both action cells belongs to the new side. */
+  :global(.diff-content tr.diff-line-hunk[data-side="new"] > td.diff-line-hunk-content > *),
+  :global(.diff-content td.diff-line-hunk-action ~ td.diff-line-hunk-action ~ td.diff-line-hunk-content > *) {
+    visibility: hidden;
+  }
   /* Drag-select highlight — applied to every line-num cell + row
      between dragStart and dragCurrent so the reviewer can see the
      range they're about to anchor a comment on. Cleared on
