@@ -1,6 +1,6 @@
 ---
 name: manager
-description: Run this session as the meerkat manager: hand each feature request or bug report to a background child agent in its own worktree, take over in-flight work, open draft PRs in the browser, relay feedback, have the child review and merge, and clean up.
+description: Run this session as the meerkat manager: hand each feature request or bug report to a background child agent in its own worktree, take over in-flight work, open a PR in the browser the first time a child without the `merge requested` flag reports it, relay feedback, delegate review and merge to a reviewer child, and clean up.
 disable-model-invocation: true
 ---
 
@@ -18,7 +18,7 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
   ```
   If the branch is not `main` or the second command prints nothing (this is a linked worktree), do not switch branches or launch a child; tell the user to start the manager session in the main checkout on `main`.
 - There is no planning or approval step. If a request is clear, start its child immediately. If it is ambiguous, use the **AskUserQuestion** tool to clarify before starting the child.
-- Agent teams are enabled. **Every child must be started with the Agent tool and `isolation: "worktree"` explicitly set.** Never omit this argument or start an in-process teammate. A named Agent call without isolation can create a teammate whose worktree changes this manager session's checkout. With `isolation: "worktree"`, the child gets its own worktree under `.claude/worktrees/` and branch, leaving this session on `main`.
+- **Every child must be started with the Agent tool and `isolation: "worktree"` explicitly set.** Never omit this argument or start an in-process teammate. A named Agent call without isolation can create a teammate whose worktree changes this manager session's checkout. With `isolation: "worktree"`, the child gets its own worktree under `.claude/worktrees/` and branch, leaving this session on `main`.
 - Keep session-local records for each child: label, original request, clarifying answers, state, `merge requested` flag, output file, worktree path, branch, and PR number/URL.
   - The output file is the `output_file` path in the Agent tool's launch result.
   - Record the worktree path exactly as reported in the child's first final message.
@@ -26,7 +26,6 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
   - For a takeover or reviewer child, record at launch the branch you hand it and, if it has a PR, the PR URL and number you hand it.
   - Use the recorded worktree path and branch for cleanup.
   - Children do not survive a manager-session restart; do not claim that they do.
-  - Pick up work an earlier session left behind with a takeover child (see **Taking over in-flight work**).
 
 ## Starting a request
 
@@ -48,8 +47,6 @@ You are the user's long-lived manager for this Claude Code session. Stay availab
    - An instruction to run `mix deps.get` and `pnpm install` in its worktree before building.
    - An instruction to follow the **Workflow** section of the repository's `CLAUDE.md` end to end. The child must build, test, verify, and open a draft PR as that workflow specifies; it must not ask for approval before pushing.
    - An instruction that its final message must end with all of the following: the worktree path (the exact output of `git rev-parse --show-toplevel`), its current branch (the exact output of `git branch --show-current`), and the PR URL. If it has no PR, it must say `PR: none`.
-
-Do not ask the user to approve the child's plan or wait for another confirmation before launching it.
 
 ## Taking over in-flight work
 
@@ -96,17 +93,20 @@ Delegate whenever the user asks to review and/or merge a PR, whether by typing `
 
 If you cannot tell which PR or child the user means, ask the user with AskUserQuestion before sending anything.
 
-If a child in this session built or last worked on this PR and is still running, wait for it to finish before doing anything else. Identify the PR and its branch as in **Taking over in-flight work**, step 1. If a worktree holds the branch, find and check it as in step 2, but before removing it also check that it is in sync with `origin`: run `git fetch origin`, then require `git -C "<path>" rev-parse HEAD` to equal `git rev-parse "origin/<branch>"`. If it is dirty or not in sync, show the user the relevant `git -C "<path>" status --short` output and/or both commit IDs, and ask with AskUserQuestion how to proceed. Do nothing further until they answer. If it is clean and in sync, or the user chooses to proceed, remove it with `git worktree remove -f -f "<path>"`. Keep the branch. Once the reviewer is started, it owns the PR from then on; send later feedback, questions, and takeover or resume requests about that PR to the reviewer, never the builder.
+Before doing anything else in this flow, check whether a reviewer child in this session already owns the PR. If so, send the user's request verbatim to it with SendMessage and do nothing else for this request. From the moment a reviewer starts, it owns the PR; send later feedback, questions, and review, takeover, or resume requests about that PR to it, never to the builder.
 
-Always start a new reviewer child, even if a child in this session built the PR; never resume or message the builder to perform or start the review. Choose a label as in **Taking over in-flight work**, step 3, and start the reviewer with the same three Agent arguments: `name`, `isolation: "worktree"`, and `run_in_background: true`. Set its `merge requested` flag before starting it. Its prompt must include:
+If a child in this session built or last worked on this PR and is still running, wait for it to finish before doing anything else. Identify the PR and its branch as in **Taking over in-flight work**, step 1. If a worktree holds the branch, find and check it as in step 2, but before removing it also check that it is in sync with `origin`: run `git fetch origin`, then require `git -C "<path>" rev-parse HEAD` to equal `git rev-parse "origin/<branch>"`. If it is dirty or not in sync, show the user the relevant `git -C "<path>" status --short` output and/or both commit IDs, and ask with AskUserQuestion how to proceed. Do nothing further until they answer. If it is clean and in sync, or the user chooses to proceed, remove it with `git worktree remove -f -f "<path>"`. Keep the branch.
+
+If no reviewer child in this session already owns the PR, always start a new reviewer child, even if a child in this session built the PR; never resume or message the builder to perform or start the review. Choose a label as in **Taking over in-flight work**, step 3, and start the reviewer with the same three Agent arguments: `name`, `isolation: "worktree"`, and `run_in_background: true`. Set its `merge requested` flag before starting it. Its prompt must include:
 - The user's request verbatim and the PR URL.
 - The exact first-action instruction from **Taking over in-flight work**, step 4, second prompt bullet.
 - The dependency-setup and final-message instructions from **Starting a request**, step 4.
 - An instruction to run the project's `/review-and-merge <N>` skill and complete it.
 - An instruction that when a step needs the user's decision, the reviewer ends its turn with the question and concrete options instead of asking the user directly.
 - An instruction not to remove its own worktree.
+- An instruction to skip step 7's update of local `main` and its deployment, never move local `main` by any means, and still perform step 7's **Cleanup** paragraph.
 
-Do not include the **Workflow** instruction or the other takeover prompt items about reading the PR history, pushing to the existing branch, opening a draft PR only if none exists, or updating the PR title and description. Do not perform the review, fixes, mutation testing, or merge yourself. Review-and-merge step 7 tries to update local `main`, which is checked out in the manager's checkout, so the reviewer cannot update it and may report that `main` was not updated or deployment was skipped. This is expected: the manager's cleanup pull updates `main` and reinstalls. Do not pass that report to the user as a failure.
+Do not include the **Workflow** instruction or the other takeover prompt items about reading the PR history, pushing to the existing branch, opening a draft PR only if none exists, or updating the PR title and description. Do not perform the review, fixes, mutation testing, or merge yourself.
 
 Whenever a child with `merge requested` finishes—including after the user answers an escalation question—check the actual PR state:
 
