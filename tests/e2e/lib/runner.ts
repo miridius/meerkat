@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { type Fixture, makeFixture } from "./fixture.js";
@@ -48,6 +48,8 @@ export type Runner = {
 	runsDir: string;
 };
 
+const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
+
 const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
@@ -66,7 +68,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 					throw new Error("startMeerkat: fixture has no commitMsgPath; pass `args` explicitly");
 				})());
 
-	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), "meerkat-runs-"));
+	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
 	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
@@ -162,13 +164,29 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	};
 }
 
+// Each `startMeerkat` call without `runsDir` creates `meerkat-runs-<worker pid>-<random>`
+// in the OS temp dir.
+// Reap its recorded backends and remove the dir only if that PID is no longer alive;
+// live owners, including concurrent runs, and dirs without a PID are left alone.
+export async function reapOrphanedBackends(): Promise<void> {
+	for (const name of readdirSync(tmpdir())) {
+		const owner = name.match(OWNED_RUNS_DIR_RE);
+		if (!owner || alive(Number(owner[1]))) continue;
+		const dir = join(tmpdir(), name);
+		await stopBackends(dir);
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 async function stopBackends(runsDir: string): Promise<void> {
 	if (!existsSync(runsDir)) return;
 	const pids = readdirSync(runsDir, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => join(runsDir, entry.name, "pid"))
 		.filter((path) => existsSync(path))
-		.map((path) => Number(readFileSync(path, "utf8").trim()));
+		.map((path) => ({ pid: Number(readFileSync(path, "utf8").trim()), written: statSync(path).mtimeMs }))
+		.filter(({ pid, written }) => startedBy(pid, written))
+		.map(({ pid }) => pid);
 
 	for (const pid of pids) {
 		try {
@@ -180,6 +198,32 @@ async function stopBackends(runsDir: string): Promise<void> {
 	while (Date.now() < deadline && pids.some(alive)) {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
+}
+
+// A backend writes its pid file after it starts, so a process that started later
+// only reuses the pid of a backend that has exited. `ps` truncates the elapsed time
+// to whole seconds, hence the 1 s allowance; reading the clock before `ps` runs
+// keeps the time `ps` takes from counting against it.
+function startedBy(pid: number, pidWrittenMs: number): boolean {
+	const now = Date.now();
+	let etime: string;
+	try {
+		etime = execFileSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8" }).trim();
+	} catch (e) {
+		// `ps -p` exits 1 when no such process exists; any other failure would leave
+		// backends running with nothing recording them, so it surfaces.
+		if ((e as { status?: number }).status === 1) return false;
+		throw e;
+	}
+	return now - elapsedSeconds(etime) * 1000 <= pidWrittenMs + 1000;
+}
+
+// Parses `ps -o etime=` output, `[[dd-]hh:]mm:ss`, into seconds.
+export function elapsedSeconds(etime: string): number {
+	const m = etime.match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
+	if (!m) throw new Error(`unrecognised ps etime: ${JSON.stringify(etime)}`);
+	const [, days = "0", hours = "0", minutes, seconds] = m;
+	return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
 }
 
 function alive(pid: number): boolean {

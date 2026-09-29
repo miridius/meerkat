@@ -65,7 +65,7 @@ Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
 - `mix format --check-formatted`
 - `mix compile --warnings-as-errors`
 
-Pre-push hook: `scripts/no-private-refs.sh`, `scripts/outdated.sh`.
+Pre-push hook: `scripts/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh`, except when all pushed refs are deletions.
 
 On every PR, CI runs `mix compile --warnings-as-errors`,
 `mix format --check-formatted`, `mix test`, `bun test` in `assets/`,
@@ -96,10 +96,7 @@ scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
 scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
 ```
 
-Run `scripts/mutate.sh changed` locally before opening a PR. It's
-not wired into a hook — mutation tests can take minutes per
-module and the signal is best surfaced by a human reading the
-survivor list.
+Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
 
 ## Local dev mode
 

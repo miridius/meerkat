@@ -7,9 +7,9 @@
 #
 # Why two hooks: `post-merge` catches `git pull` / `git merge`;
 # `post-checkout` catches `git switch main` / `git checkout main` — the
-# path a GitHub squash-merge takes, since it lands on origin/main and
-# local main is brought to it by switching/resetting, never a local
-# merge. Together they cover every way local `main` advances.
+# path a GitHub squash-merge takes, since it lands on origin/main,
+# never a local merge. `git fetch origin main:main` and `git reset`
+# fire neither hook, so run scripts/install.sh after them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

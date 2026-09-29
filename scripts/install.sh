@@ -139,9 +139,10 @@ while [[ -e "$FINAL_DIR" ]]; do
 done
 VERSION_ID="$(basename "$FINAL_DIR")"
 
-# Stamp the source commit so the idempotency check can tell whether
-# `current` is already this commit, independent of the dir name.
-printf '%s\n' "$HEAD_COMMIT" > "$SRC_RELEASE/INSTALLED_COMMIT"
+# Stamp clean builds with HEAD and dirty builds with a -wip suffix, so
+# the clean-tree idempotency check reuses only a release stamped with
+# exactly HEAD; a clean install then replaces a dirty build of that commit.
+printf '%s\n' "$HEAD_COMMIT${DIRTY:+-wip}" > "$SRC_RELEASE/INSTALLED_COMMIT"
 write_version_manifest "$SRC_RELEASE/meerkat_version"
 
 # Stage beside the final home, then atomic-rename into place.

@@ -121,19 +121,16 @@ if ! self_test > /dev/null; then
   exit 1
 fi
 
-# `git push` feeds the hook "<local ref> <local sha> <remote ref>
-# <remote sha>" per ref on stdin. lefthook does not forward that, so
-# work out the range from the upstream instead, and fall back to
-# origin/main for a branch that has none yet.
-upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo "")
-if [ -n "$upstream" ]; then
-  base="$upstream"
-else
-  base="origin/main"
-fi
+# Each argument is the tip of a ref being pushed; scripts/pre-push.sh
+# passes them from the ref list `git push` gives the hook. Run by hand
+# with none, it checks HEAD. The commits checked are the ones no
+# remote-tracking branch has yet, since this push is what publishes
+# them.
+tips=("$@")
+[ "${#tips[@]}" -gt 0 ] || tips=(HEAD)
 
-if ! git rev-parse --verify --quiet "$base" > /dev/null; then
-  echo "no-private-refs: cannot resolve '$base' — refusing the push." >&2
+if ! messages=$(git log --format='%H %s%n%b' "${tips[@]}" --not --remotes); then
+  echo "no-private-refs: cannot list the commits being pushed — refusing the push." >&2
   exit 1
 fi
 
@@ -143,18 +140,23 @@ for entry in "${PATTERNS[@]}"; do
   label=$(entry_field "$entry" 1)
   pattern=$(pattern_of "$entry")
 
-  if messages=$(git log --format='%H %s%n%b' "$base..HEAD" 2>/dev/null) &&
-    hits=$(printf '%s\n' "$messages" | grep -nE "$pattern" || true) &&
-    [ -n "$hits" ]; then
+  hits=$(printf '%s\n' "$messages" | grep -nE "$pattern" || true)
+  if [ -n "$hits" ]; then
     echo "ERROR: $label in a commit message being pushed:" >&2
     printf '%s\n' "$hits" | sed 's/^/    /' >&2
     found=1
   fi
 
-  # Tracked files at HEAD. `git grep` skips the working tree's
-  # untracked and ignored files, which are not being pushed.
-  if hits=$(git grep -nE "$pattern" HEAD -- . 2>/dev/null || true) &&
-    [ -n "$hits" ]; then
+  # Tracked files at each pushed tip. `git grep` skips the working
+  # tree's untracked and ignored files, which are not being pushed.
+  # It exits 1 when nothing matches and higher when it fails.
+  rc=0
+  hits=$(git grep -nE "$pattern" "${tips[@]}" -- .) || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "no-private-refs: cannot search the files being pushed — refusing the push." >&2
+    exit 1
+  fi
+  if [ -n "$hits" ]; then
     echo "ERROR: $label in a tracked file:" >&2
     printf '%s\n' "$hits" | sed 's/^/    /' >&2
     found=1
