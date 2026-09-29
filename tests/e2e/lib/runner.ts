@@ -164,7 +164,8 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	};
 }
 
-// Each test worker creates `meerkat-runs-<pid>-<random>` in the OS temp dir.
+// Each `startMeerkat` call without `runsDir` creates `meerkat-runs-<worker pid>-<random>`
+// in the OS temp dir.
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
 // live owners, including concurrent runs, and dirs without a PID are left alone.
 export async function reapOrphanedBackends(): Promise<void> {
@@ -200,20 +201,29 @@ async function stopBackends(runsDir: string): Promise<void> {
 }
 
 // A backend writes its pid file after it starts, so a process that started later
-// only reuses the pid of a backend that has exited. `ps` gives the elapsed time
-// in whole seconds, hence the 1 s allowance.
+// only reuses the pid of a backend that has exited. `ps` truncates the elapsed time
+// to whole seconds, hence the 1 s allowance; reading the clock before `ps` runs
+// keeps the time `ps` takes from counting against it.
 function startedBy(pid: number, pidWrittenMs: number): boolean {
+	const now = Date.now();
 	let etime: string;
 	try {
 		etime = execFileSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8" }).trim();
-	} catch {
-		return false;
+	} catch (e) {
+		// `ps -p` exits 1 when no such process exists; any other failure would leave
+		// backends running with nothing recording them, so it surfaces.
+		if ((e as { status?: number }).status === 1) return false;
+		throw e;
 	}
+	return now - elapsedSeconds(etime) * 1000 <= pidWrittenMs + 1000;
+}
+
+// Parses `ps -o etime=` output, `[[dd-]hh:]mm:ss`, into seconds.
+export function elapsedSeconds(etime: string): number {
 	const m = etime.match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
-	if (!m) return false;
+	if (!m) throw new Error(`unrecognised ps etime: ${JSON.stringify(etime)}`);
 	const [, days = "0", hours = "0", minutes, seconds] = m;
-	const elapsedS = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
-	return Date.now() - elapsedS * 1000 <= pidWrittenMs + 1000;
+	return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
 }
 
 function alive(pid: number): boolean {
