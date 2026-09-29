@@ -59,6 +59,21 @@ The end-to-end loop for a meerkat bug report or feature request:
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
 
+   For every PR that changes what meerkat's review page shows,
+   include screenshots in the PR description. After opening the
+   draft PR, run `bun scripts/pr-screenshots.ts capture <steps.ts>`.
+   The script header documents the usage and steps-file format.
+   Write a small steps file that drives the page to the changed UI
+   and names each screenshot with alt text. Capture reviews the
+   PR's own diff in meerkat using this checkout's code. Before
+   uploading, inspect every PNG: each must show the changed UI and
+   contain no private data, such as local absolute paths or other
+   repositories. Then run `bun scripts/pr-screenshots.ts attach` to
+   upload the PNGs and add a Screenshots section to the PR
+   description. Attach requires the PR to exist; running it again
+   replaces that section. If a later push changes the UI, capture,
+   inspect, and attach fresh screenshots the same way.
+
 ## Quality gates
 
 Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
@@ -93,7 +108,6 @@ passes against is a test gap.
 scripts/mutate.sh                # all lib/meerkat/*.ex (slow)
 scripts/mutate.sh changed        # only files changed vs origin/main
 scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
-scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
 ```
 
 Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
@@ -114,10 +128,7 @@ read directly from this tree, so:
   picked up by `Meerkat.DevWatcher` — it halts the BEAM with exit
   code 75 on any file change under `lib/`, the shepherd loop in
   `bin/meerkat-beam` respawns on the same port, and LiveView's
-  client auto-reconnects. Phoenix's request-time code reloader is
-  off in dev (it fought `Meerkat.CLI`'s `Application.put_env` +
-  manual-supervisor startup pattern); the DevWatcher restart is
-  the dev-iteration story.
+  client auto-reconnects.
 
 ```bash
 scripts/dev-install.sh        # ~/.local/bin/meerkat → this branch
