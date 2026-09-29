@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -50,6 +50,26 @@ test.describe("orphaned backend reaper", () => {
 			}
 			rmSync(orphaned, { recursive: true, force: true });
 			rmSync(owned, { recursive: true, force: true });
+		}
+	});
+
+	test("leaves alone a process that took over a dead backend's pid", async () => {
+		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${await exitedPid()}-`));
+		const bystander = backend(orphaned);
+		// The pid file predates the process now holding its pid, as when the
+		// backend exited long ago and the OS reused its pid.
+		const written = new Date(Date.now() - 60_000);
+		utimesSync(join(orphaned, "run", "pid"), written, written);
+		try {
+			await reapOrphanedBackends();
+
+			expect(alive(bystander), "a later process holding the recorded pid keeps running").toBe(true);
+			expect(existsSync(orphaned), "runs dir of an exited owner is removed").toBe(false);
+		} finally {
+			try {
+				process.kill(bystander, "SIGKILL");
+			} catch {}
+			rmSync(orphaned, { recursive: true, force: true });
 		}
 	});
 });

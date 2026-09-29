@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { type Fixture, makeFixture } from "./fixture.js";
@@ -50,7 +50,7 @@ export type Runner = {
 
 const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 
-const URL_RE =/Paused for human review at (https?:\/\/[^\s]+)/;
+const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
 // a runner the test can drive. Tests should `await runner.awaitExit()`
@@ -183,7 +183,9 @@ async function stopBackends(runsDir: string): Promise<void> {
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => join(runsDir, entry.name, "pid"))
 		.filter((path) => existsSync(path))
-		.map((path) => Number(readFileSync(path, "utf8").trim()));
+		.map((path) => ({ pid: Number(readFileSync(path, "utf8").trim()), written: statSync(path).mtimeMs }))
+		.filter(({ pid, written }) => startedBy(pid, written))
+		.map(({ pid }) => pid);
 
 	for (const pid of pids) {
 		try {
@@ -195,6 +197,23 @@ async function stopBackends(runsDir: string): Promise<void> {
 	while (Date.now() < deadline && pids.some(alive)) {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
+}
+
+// A backend writes its pid file after it starts, so a process that started later
+// only reuses the pid of a backend that has exited. `ps` gives the elapsed time
+// in whole seconds, hence the 1 s allowance.
+function startedBy(pid: number, pidWrittenMs: number): boolean {
+	let etime: string;
+	try {
+		etime = execFileSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8" }).trim();
+	} catch {
+		return false;
+	}
+	const m = etime.match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
+	if (!m) return false;
+	const [, days = "0", hours = "0", minutes, seconds] = m;
+	const elapsedS = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+	return Date.now() - elapsedS * 1000 <= pidWrittenMs + 1000;
 }
 
 function alive(pid: number): boolean {
