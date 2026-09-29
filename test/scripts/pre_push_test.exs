@@ -41,6 +41,10 @@ defmodule Meerkat.PrePushHookTest do
     exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
     """)
 
+    # Where `pnpm install` puts it, for lefthook.yml's `lefthook:` setting.
+    File.mkdir_p!(Path.join(work, "node_modules/.bin"))
+    File.ln_s!(lefthook(), Path.join(work, "node_modules/.bin/lefthook"))
+
     {_, 0} =
       System.cmd(lefthook(), ["install"], cd: work, env: hook_env(), stderr_to_stdout: true)
 
@@ -107,6 +111,15 @@ defmodule Meerkat.PrePushHookTest do
     assert File.exists?(ctx.marker)
   end
 
+  test "a checkout without its own lefthook refuses the push", %{work: work, marker: marker} do
+    File.rm_rf!(Path.join(work, "node_modules"))
+    commit(work, "a.txt", "a\n", "add a")
+
+    assert {_, code} = push(work, ["origin", "HEAD:refs/heads/feature"])
+    assert code != 0
+    refute File.exists?(marker)
+  end
+
   defp lefthook do
     case Path.wildcard(
            Path.join(@root, "node_modules/.pnpm/lefthook-*/node_modules/lefthook-*/bin/lefthook")
@@ -117,9 +130,10 @@ defmodule Meerkat.PrePushHookTest do
   end
 
   # Git exports GIT_DIR and friends to hooks; clear them so a run from inside a
-  # hook still pushes the fixture. LEFTHOOK=0 would silently disable the hook.
+  # hook still pushes the fixture. LEFTHOOK=0 would silently disable the hook,
+  # and LEFTHOOK_BIN would bypass lefthook.yml's `lefthook:` setting.
   defp hook_env do
-    [{"LEFTHOOK_BIN", lefthook()}, {"LEFTHOOK", nil}] ++
+    [{"LEFTHOOK_BIN", nil}, {"LEFTHOOK", nil}] ++
       Enum.map(
         ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
            GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE),
