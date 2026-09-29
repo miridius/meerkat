@@ -81,35 +81,38 @@ defmodule Meerkat.PersistenceTest do
       assert Persistence.load(repo, id, seed) == seed
     end
 
-    test "open_form (inline) round-trips with atom surface + anchor keys",
+    test "open_forms (inline) round-trip with atom surface + anchor keys, in order",
          %{repo: repo, review_id: id} do
-      form = %{
+      first = %{
         surface: :inline,
         anchor: %{file_index: 0, start_line: 4, end_line: 6, side: "new"},
         edit_id: nil,
         initial_body: nil
       }
 
-      state = %ReviewState{open_form: form}
+      second = %{
+        surface: :inline,
+        anchor: %{file_index: 1, start_line: 9, end_line: 9, side: "old"}
+      }
+
+      state = %ReviewState{open_forms: [first, second]}
       :ok = Persistence.save(repo, id, state)
       loaded = Persistence.load(repo, id, %ReviewState{})
 
-      assert loaded.open_form.surface == :inline
-      assert loaded.open_form.anchor.file_index == 0
-      assert loaded.open_form.anchor.start_line == 4
-      assert loaded.open_form.anchor.end_line == 6
-      assert loaded.open_form.anchor.side == "new"
+      assert [a, b] = loaded.open_forms
+      assert a.surface == :inline
+      assert a.anchor == %{file_index: 0, start_line: 4, end_line: 6, side: "new"}
+      assert b.anchor == %{file_index: 1, start_line: 9, end_line: 9, side: "old"}
     end
 
-    test "open_form nil stays nil through round-trip", %{repo: repo, review_id: id} do
-      state = %ReviewState{open_form: nil}
-      :ok = Persistence.save(repo, id, state)
+    test "empty open_forms stays empty through round-trip", %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: []})
       loaded = Persistence.load(repo, id, %ReviewState{})
 
-      assert loaded.open_form == nil
+      assert loaded.open_forms == []
     end
 
-    test "open_form (edit) preserves edit_id + prefill metadata",
+    test "open_forms (edit) preserves edit_id + prefill metadata",
          %{repo: repo, review_id: id} do
       form = %{
         surface: :file,
@@ -120,15 +123,53 @@ defmodule Meerkat.PersistenceTest do
         initial_learn_from_this: true
       }
 
-      :ok = Persistence.save(repo, id, %ReviewState{open_form: form})
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: [form]})
       loaded = Persistence.load(repo, id, %ReviewState{})
 
-      assert loaded.open_form.surface == :file
-      assert loaded.open_form.anchor.file_index == 2
-      assert loaded.open_form.edit_id == "abc-123"
-      assert loaded.open_form.initial_body == "previous body"
-      assert loaded.open_form.initial_finding_type == "suggestion"
-      assert loaded.open_form.initial_learn_from_this == true
+      assert [loaded_form] = loaded.open_forms
+      assert loaded_form.surface == :file
+      assert loaded_form.anchor.file_index == 2
+      assert loaded_form.edit_id == "abc-123"
+      assert loaded_form.initial_body == "previous body"
+      assert loaded_form.initial_finding_type == "suggestion"
+      assert loaded_form.initial_learn_from_this == true
+    end
+
+    test "a snapshot holding one legacy open_form loads it as the only open form",
+         %{repo: repo, review_id: id} do
+      path = Persistence.path_for(repo, id)
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(
+        path,
+        Jason.encode!(%{
+          "open_form" => %{
+            "surface" => "inline",
+            "anchor" => %{"file_index" => 0, "start_line" => 2, "end_line" => 3, "side" => "new"}
+          }
+        })
+      )
+
+      loaded = Persistence.load(repo, id, %ReviewState{})
+
+      assert loaded.open_forms == [
+               %{
+                 surface: :inline,
+                 anchor: %{file_index: 0, start_line: 2, end_line: 3, side: "new"}
+               }
+             ]
+    end
+
+    test "a snapshot whose legacy open_form is null loads with no open forms",
+         %{repo: repo, review_id: id} do
+      path = Persistence.path_for(repo, id)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, ~s({"open_form": null, "global_comments": [{"id": "g1"}]}))
+
+      loaded = Persistence.load(repo, id, %ReviewState{})
+
+      assert loaded.open_forms == []
+      assert [%{id: "g1"}] = loaded.global_comments
     end
 
     test "delete/2 removes the file", %{repo: repo, review_id: id} do

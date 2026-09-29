@@ -17,10 +17,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   #   only; with every call site passing its assigns, no runtime behaviour
   #   differs. `markdown_preview`'s `:read_errors` attr default is never
   #   used because its only caller always passes `read_errors`.
-  # * `form_for(nil, _) -> false` and
-  #   `file_form_open_for?(nil, _) -> false` — deleting the body yields
-  #   nil; nil is falsy exactly like false in every usage (a `:if=`
-  #   condition and a `not` operand).
   #
   # Thin I/O wiring already covered end-to-end by named Playwright
   # specs (muex runs ExUnit only and cannot see them):
@@ -31,7 +27,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # * The whole `comment_form.edit` handler — comments.spec.ts "add a
   #   file comment via the per-file button, edit, remove" and "add a
   #   global comment, edit its body, remove it".
-  # * `comment.submit`'s open_form-nil no-op clause and its cond clauses
+  # * `comment.submit`'s cond clauses
   #   for edit and add — comments.spec.ts "clicking the L1 gutter row
   #   opens a commit-msg form, comment lands in the gutter".
   # * The whole `filter.toggle_extension` handler, including its
@@ -294,12 +290,46 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     html = render_click(view, "comment_form.show_file", %{"file_index" => "0"})
     assert html =~ "CommentForm-file-0"
 
+    # Opening a second form keeps the first open.
+    assert html =~ "CommentForm-global"
+
     # Junk index: no-op — the previously-open form stays open, no crash.
     html = render_click(view, "comment_form.show_file", %{"file_index" => "junk"})
     assert html =~ "CommentForm-file-0"
 
-    assert render_click(view, "comment_form.hide", %{}) =~ ""
-    refute render(view) =~ "CommentForm-global"
+    # Hiding one form by key leaves the other open.
+    html = render_click(view, "comment_form.hide", %{"form_key" => "global"})
+    refute html =~ "CommentForm-global"
+    assert html =~ "CommentForm-file-0"
+  end
+
+  test "inline forms at different lines stay open together; each submit posts at its own lines",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    for {from, to} <- [{"1", "1"}, {"2", "3"}] do
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "0",
+        "start_line" => from,
+        "end_line" => to,
+        "side" => "new"
+      })
+    end
+
+    assert [%{anchor: %{start_line: 1}}, %{anchor: %{start_line: 2}}] =
+             ReviewServer.get_state(rid).open_forms
+
+    render_hook(view, "comment.submit", %{
+      "form_key" => "inline:0:new:1-1",
+      "body" => "first",
+      "finding_type" => "issue",
+      "learn_from_this" => false
+    })
+
+    state = ReviewServer.get_state(rid)
+    assert [%{body: "first", start_line: 1, end_line: 1}] = state.comments
+    assert [%{anchor: %{start_line: 2, end_line: 3}}] = state.open_forms
   end
 
   test "commit-msg gutter form opens for block ranges", %{conn: conn} do
@@ -314,18 +344,19 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     html =
       render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "1", "end_line" => "3"})
 
-    assert html =~ "CommentForm-commit-msg"
+    assert html =~ "CommentForm-commit_msg-1-3"
 
     html =
       render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "x", "end_line" => "3"})
 
-    assert html =~ "CommentForm-commit-msg"
+    assert html =~ "CommentForm-commit_msg-1-3"
   end
 
   test "comment.submit with no open form is a no-op; unbound submit just closes", %{conn: conn} do
     view = mount_unbound(conn)
-    # open_form == nil clause: must not crash.
+    # No form open under that key: must not crash.
     render_click(view, "comment.submit", %{
+      "form_key" => "global",
       "body" => "x",
       "finding_type" => "issue",
       "learn_from_this" => false
@@ -334,6 +365,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     render_hook(view, "comment_form.show_global", %{})
 
     render_click(view, "comment.submit", %{
+      "form_key" => "global",
       "body" => "x",
       "finding_type" => "issue",
       "learn_from_this" => false
@@ -354,15 +386,15 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert ReviewServer.get_state(rid).file_comments == []
   end
 
-  test "set_open_form persists to the ReviewServer in bound mode", %{conn: conn} do
+  test "opening and hiding forms persists to the ReviewServer in bound mode", %{conn: conn} do
     repo = tmp_git_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
-    assert %{} = ReviewServer.get_state(rid).open_form
+    assert [%{surface: :file}] = ReviewServer.get_state(rid).open_forms
 
-    render_hook(view, "comment_form.hide", %{})
-    assert ReviewServer.get_state(rid).open_form == nil
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
+    assert ReviewServer.get_state(rid).open_forms == []
   end
 
   ## --- Approvals ---

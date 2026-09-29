@@ -61,7 +61,7 @@ defmodule MeerkatWeb.VersionRestartTest do
 
     refute_receive {:restart, _}, 200
 
-    render_hook(view, "comment_form.hide", %{})
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
     assert_receive {:restart, 75}, 1000
   end
 
@@ -87,7 +87,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     refute_receive {:restart, _}, 200
 
     # A cross-tab state push that carries no open form should apply the
-    # deferred restart (set_open_form is not the only path into the gate).
+    # deferred restart (change_open_forms is not the only path into the gate).
     send(view.pid, {:state_changed, %ReviewState{files: [@rs_file]}})
     assert_receive {:restart, 75}, 1000
   end

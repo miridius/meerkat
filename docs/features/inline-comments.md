@@ -17,11 +17,13 @@ code content itself stays selectable for copy/paste.
 - Drag across both sides (old + new) is rejected; the side of the
   pointerdown wins.
 
-The form is injected as `<tr class="meerkat-form-row">` directly
-after the row anchoring `end_line`. Its only child is a
-full-colspan `<td>` containing the CommentForm component. Only
-one inline form is open at a time (across all files); opening a
-new one moves the form rather than stacking it.
+DiffViewer injects one `<tr class="meerkat-form-row">` per open
+inline form on that file, after its anchor row and below that line's
+comment rows. Its only child is a full-colspan `<td>` containing the
+CommentForm. Forms opened earlier at the same line stay above it.
+Opening another form leaves existing forms and their typed text in
+place. After a split/unified toggle, open forms and posted comment
+rows are placed again in the re-rendered table.
 
 ## Form contents
 
@@ -100,11 +102,11 @@ adding a comment immediately adds it.
 
 ## Persistence
 
-The inline-form state (which surface, which anchor, edit_id,
-prefilled body for edit mode) is persisted to ReviewState's
-`open_form` field. On BEAM restart (DevWatcher hot reload, crash,
-tab close/reopen), the form reopens at the same anchor — the
-localStorage draft restores the body content separately.
+All open-form metadata (surface, anchor, edit_id and edit prefill
+fields) is persisted in ReviewState's `open_forms` list, in opening
+order. After a BEAM restart or tab reload, the forms reopen at their
+anchors; each form's localStorage draft restores its typed body
+separately.
 
 This is the contract the user relies on during dev iteration: a
 hot reload **never** loses an in-progress comment.

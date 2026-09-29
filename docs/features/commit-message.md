@@ -52,7 +52,7 @@ self-contained, no git dependency.
   <ul class="commit-msg-comments">
     <li class="note commit-msg-note">...</li>
   </ul>
-  <!-- inline form, rendered when open_form.surface == :commit_msg -->
+  <!-- one CommentForm per open commit-message form -->
 </section>
 ```
 

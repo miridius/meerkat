@@ -23,6 +23,9 @@ that inline comments use:
 - Body rendered through `Meerkat.Markdown.to_safe_html/1` —
   fenced code blocks, headings, bullets, inline code all work.
 - Cmd/Ctrl+Enter submits, Escape cancels.
+- Several forms can be open at once, across surfaces and files;
+  opening one never closes another. Submit and cancel send that
+  form's `form_key`.
 - localStorage draft persistence on per-surface `draftKey`.
 - Inline `learn` checkbox on rendered comments; toggleable in
   place via `comment.toggle_learn` push event.
@@ -38,8 +41,10 @@ Empty state: a single `+ Add global comment` button.
 Populated state: a list of `.note.note-{finding_type}` rows
 followed by `+ Add another`.
 
-`open_form: %{surface: :global, anchor: %{}}` opens the form;
-submit pushes via `comment.submit` with no anchor payload.
+`ReviewState.open_forms` holds each form's surface and anchor.
+A global form has `surface: :global` and `anchor: %{}`. Its submit
+pushes `comment.submit` with that form's `form_key`; the server uses
+the named form, not an anchor payload.
 
 ## File comments
 
@@ -48,8 +53,9 @@ Lives under `state.file_comments` keyed implicitly by
 diff body, in a `<ul class="file-comments">`. The
 `+ Add file comment` button sits below that list.
 
-`open_form: %{surface: :file, anchor: %{file_index: N}}` opens
-the form. The form is rendered AT THE BOTTOM of the file section
+`open_forms` can contain forms with `surface: :file` and
+`anchor: %{file_index: N}`. Each matching form is rendered AT THE
+BOTTOM of the file section
 (NOT injected into the diff body — file comments don't anchor at
 a specific line). Submit pushes via `comment.submit` with
 `file_index` in the payload.
@@ -64,9 +70,9 @@ Lives under `state.commit_message_comments`. Anchored to
 `<ul class="commit-msg-comments">` below the gutter (see
 `commit-message.md`).
 
-`open_form: %{surface: :commit_msg, anchor: %{start_line, end_line}}`
-opens the form. Submit pushes via `comment.submit` with
-`start_line` / `end_line` in the payload.
+`open_forms` can contain forms with `surface: :commit_msg` and
+an anchor of `%{start_line: N, end_line: N}`. Submit sends the form's
+`form_key`; the server uses that form's anchor for the comment range.
 
 ## Why the form lives elsewhere for each surface
 

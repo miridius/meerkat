@@ -285,27 +285,36 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
-  describe "set_open_form/2" do
-    test "stores the form descriptor verbatim", %{repo: repo, review_id: id} do
+  describe "open_form/2 + close_form/2" do
+    test "opens forms alongside each other, in order", %{repo: repo, review_id: id} do
       {:ok, _} =
         ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
 
-      form = %{
+      first = %{
         surface: :inline,
         anchor: %{file_index: 0, start_line: 4, end_line: 6, side: "new"}
       }
 
-      _ = ReviewServer.set_open_form(id, form)
-      assert ReviewServer.get_state(id).open_form == form
+      second = %{surface: :global, anchor: %{}}
+
+      _ = ReviewServer.open_form(id, first)
+      _ = ReviewServer.open_form(id, second)
+      assert ReviewServer.get_state(id).open_forms == [first, second]
     end
 
-    test "nil clears the field", %{repo: repo, review_id: id} do
+    test "close_form/2 closes only the form with that key", %{repo: repo, review_id: id} do
       {:ok, _} =
         ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
 
-      _ = ReviewServer.set_open_form(id, %{surface: :global, anchor: %{}})
-      _ = ReviewServer.set_open_form(id, nil)
-      assert ReviewServer.get_state(id).open_form == nil
+      inline = %{
+        surface: :inline,
+        anchor: %{file_index: 0, start_line: 1, end_line: 1, side: "new"}
+      }
+
+      _ = ReviewServer.open_form(id, %{surface: :global, anchor: %{}})
+      _ = ReviewServer.open_form(id, inline)
+      _ = ReviewServer.close_form(id, "global")
+      assert ReviewServer.get_state(id).open_forms == [inline]
     end
 
     test "broadcasts {:state_changed, state}", %{repo: repo, review_id: id} do
@@ -315,9 +324,9 @@ defmodule Meerkat.ReviewServerTest do
       Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(id))
 
       form = %{surface: :global, anchor: %{}}
-      _ = ReviewServer.set_open_form(id, form)
+      _ = ReviewServer.open_form(id, form)
 
-      assert_receive {:state_changed, %ReviewState{open_form: ^form}}, 500
+      assert_receive {:state_changed, %ReviewState{open_forms: [^form]}}, 500
     end
 
     test "persists across a process restart via Persistence", %{repo: repo, review_id: id} do
@@ -329,14 +338,15 @@ defmodule Meerkat.ReviewServerTest do
         anchor: %{file_index: 1, start_line: 10, end_line: 12, side: "old"}
       }
 
-      _ = ReviewServer.set_open_form(id, form)
+      _ = ReviewServer.open_form(id, form)
 
       loaded = Persistence.load(repo, id, %ReviewState{})
-      assert loaded.open_form.surface == :inline
-      assert loaded.open_form.anchor.file_index == 1
-      assert loaded.open_form.anchor.start_line == 10
-      assert loaded.open_form.anchor.end_line == 12
-      assert loaded.open_form.anchor.side == "old"
+      assert [loaded_form] = loaded.open_forms
+      assert loaded_form.surface == :inline
+      assert loaded_form.anchor.file_index == 1
+      assert loaded_form.anchor.start_line == 10
+      assert loaded_form.anchor.end_line == 12
+      assert loaded_form.anchor.side == "old"
     end
   end
 

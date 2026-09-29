@@ -21,7 +21,7 @@ defmodule Meerkat.ReviewServer do
 
   use GenServer
 
-  alias Meerkat.{Persistence, ReviewState}
+  alias Meerkat.{OpenForms, Persistence, ReviewState}
 
   @type review_id :: String.t()
 
@@ -158,14 +158,21 @@ defmodule Meerkat.ReviewServer do
   end
 
   @doc """
-  Persist the currently-open comment form (which surface, anchor,
-  edit context). Stored on `ReviewState.open_form` so a BEAM restart
-  reopens the form at the same anchor — partial typed content is
-  separately preserved by the CommentForm's localStorage draft.
+  Open a comment form (which surface, anchor, edit context) alongside
+  any already open; see `Meerkat.OpenForms.open/2`. Stored on
+  `ReviewState.open_forms` so a BEAM restart reopens the form at the
+  same anchor — partial typed content is separately preserved by the
+  CommentForm's localStorage draft.
   """
-  @spec set_open_form(review_id, map() | nil) :: ReviewState.t()
-  def set_open_form(review_id, form) when is_map(form) or is_nil(form) do
-    GenServer.call(via(review_id), {:set_open_form, form})
+  @spec open_form(review_id, Meerkat.OpenForms.form()) :: ReviewState.t()
+  def open_form(review_id, form) when is_map(form) do
+    GenServer.call(via(review_id), {:open_form, form})
+  end
+
+  @doc "Close the open comment form whose `Meerkat.OpenForms.key/1` is `key`."
+  @spec close_form(review_id, String.t()) :: ReviewState.t()
+  def close_form(review_id, key) when is_binary(key) do
+    GenServer.call(via(review_id), {:close_form, key})
   end
 
   ## GenServer plumbing
@@ -274,8 +281,12 @@ defmodule Meerkat.ReviewServer do
     update(ctx, fn s -> %{s | show_generated: show?} end)
   end
 
-  def handle_call({:set_open_form, form}, _from, ctx) do
-    update(ctx, fn s -> %{s | open_form: form} end)
+  def handle_call({:open_form, form}, _from, ctx) do
+    update(ctx, fn s -> %{s | open_forms: OpenForms.open(s.open_forms, form)} end)
+  end
+
+  def handle_call({:close_form, key}, _from, ctx) do
+    update(ctx, fn s -> %{s | open_forms: OpenForms.close(s.open_forms, key)} end)
   end
 
   defp surface_key(:inline), do: :comments

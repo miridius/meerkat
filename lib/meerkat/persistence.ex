@@ -10,7 +10,7 @@ defmodule Meerkat.Persistence do
   The mutable user-input subset survives a crash: all four comment
   surfaces, per-file approvals, hidden-extension filters, per-file
   visibility overrides, the show-generated toggle, and the in-flight
-  comment-form anchor (`open_form`). `files`, `commit_message`,
+  comment-form anchors (`open_forms`). `files`, `commit_message`,
   `commit_message_blocks`, `pr`, and branch metadata are re-derived
   from git on mount, so they're not persisted. The terminal decision
   is owned by `Meerkat.Decision` and is reset on each invocation.
@@ -33,7 +33,7 @@ defmodule Meerkat.Persistence do
     :hidden_extensions,
     :file_overrides,
     :show_generated,
-    :open_form,
+    :open_forms,
     :state_signature
   ]
 
@@ -241,14 +241,8 @@ defmodule Meerkat.Persistence do
     {:file_overrides, Map.new(map, fn {k, v} -> {k, to_string(v)} end)}
   end
 
-  # open_form holds atom keys (`:surface`, `:anchor`) that Jason
-  # encodes fine, but the round-trip via `keys: :atoms!` requires
-  # those atoms to exist on load. They're declared on the LV at
-  # boot, so the simple Map.from_struct/.put path is enough.
-  defp serialise({:open_form, nil}), do: {:open_form, nil}
-
-  defp serialise({:open_form, form}) when is_map(form) do
-    {:open_form, normalise_form(form)}
+  defp serialise({:open_forms, forms}) when is_list(forms) do
+    {:open_forms, Enum.map(forms, &normalise_form/1)}
   end
 
   defp serialise(other), do: other
@@ -286,7 +280,15 @@ defmodule Meerkat.Persistence do
         value -> Map.put(acc, key, deserialise(key, value))
       end
     end)
+    |> merge_legacy_open_form(decoded)
   end
+
+  # Snapshots written before several forms could be open hold one
+  # form (or nil) under `open_form`.
+  defp merge_legacy_open_form(state, %{open_form: form}) when is_map(form),
+    do: %{state | open_forms: [deserialise_form(form)]}
+
+  defp merge_legacy_open_form(state, _decoded), do: state
 
   defp deserialise(:approved_file_names, list) when is_list(list), do: MapSet.new(list)
   defp deserialise(:hidden_extensions, list) when is_list(list), do: MapSet.new(list)
@@ -314,7 +316,12 @@ defmodule Meerkat.Persistence do
     end)
   end
 
-  defp deserialise(:open_form, form) when is_map(form) do
+  defp deserialise(:open_forms, forms) when is_list(forms),
+    do: Enum.map(forms, &deserialise_form/1)
+
+  defp deserialise(_, value), do: value
+
+  defp deserialise_form(form) do
     surface = surface_atom(Map.get(form, "surface") || Map.get(form, :surface))
     anchor = atomise_anchor(Map.get(form, "anchor") || Map.get(form, :anchor) || %{})
 
@@ -336,8 +343,6 @@ defmodule Meerkat.Persistence do
       end
     end)
   end
-
-  defp deserialise(_, value), do: value
 
   defp migrate_finding_type(%{finding_type: "thought"} = c),
     do: Map.put(c, :finding_type, "follow_up")
