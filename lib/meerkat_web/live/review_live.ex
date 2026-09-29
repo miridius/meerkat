@@ -416,8 +416,6 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
-  # A footer link: make the form's file visible (shown, expanded, and
-  # in diff view for an inline form), then have the client scroll to it.
   def handle_event("comment_form.reveal", %{"form_key" => key}, socket) do
     case OpenForms.find(socket.assigns.open_forms, key) do
       nil ->
@@ -2455,7 +2453,6 @@ defmodule MeerkatWeb.ReviewLive do
       else: socket
   end
 
-  # Where a form is, for the footer's open-form links.
   defp open_form_label(%{surface: :global} = form, _files), do: edit_label("Global", form)
 
   defp open_form_label(%{surface: :commit_msg, anchor: a} = form, _files),

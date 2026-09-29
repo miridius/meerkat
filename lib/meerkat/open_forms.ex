@@ -6,9 +6,7 @@ defmodule Meerkat.OpenForms do
   `:commit_msg` or `:inline`), an `:anchor`, and for edit forms an
   `:edit_id` plus the prefill fields. A form's `key/1` names its
   surface, anchor and edit target, so several forms can be open at
-  once and each submit or cancel acts on the form it came from. The
-  key is also part of each form's localStorage `draftKey`, so
-  changing its format orphans drafts saved under the old one.
+  once and each submit or cancel acts on the form it came from.
   """
 
   @type form :: %{

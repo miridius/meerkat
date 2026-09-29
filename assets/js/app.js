@@ -434,8 +434,7 @@ window.addEventListener("phx:scroll-into-view", (e) => {
 
 // A footer open-form link: the server has just expanded / unhidden the
 // form's file, so the form may take a few frames to mount (DiffViewer
-// injects inline forms two frames after render). Wait for it, then
-// scroll it to the middle of the viewport and focus its text box.
+// injects inline forms two frames after render).
 window.addEventListener("phx:comment-form:reveal", (e) => {
   const { key, id } = e.detail ?? {};
   if (typeof key !== "string" || typeof id !== "string") return;

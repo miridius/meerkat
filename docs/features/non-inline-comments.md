@@ -26,7 +26,8 @@ that inline comments use:
 - Several forms can be open at once, across surfaces and files;
   opening one never closes another. Submit and cancel send that
   form's `form_key`.
-- localStorage draft persistence on per-form `draftKey`.
+- Per-form `draftKey` persistence for add-form prose in localStorage;
+  multiple forms on the same surface can be open.
 - Inline `learn` checkbox on rendered comments; toggleable in
   place via `comment.toggle_learn` push event.
 - Edit reopens form prefilled; Remove drops the comment.
@@ -57,8 +58,9 @@ diff body, in a `<ul class="file-comments">`. The
 `anchor: %{file_index: N}`. Each matching form is rendered AT THE
 BOTTOM of the file section
 (NOT injected into the diff body — file comments don't anchor at
-a specific line). Submit sends the form's `form_key`; the server
-takes `file_index` from that form's anchor.
+a specific line). Submit pushes via `comment.submit` with the form's
+`form_key`; the server ignores any payload `file_index` and takes
+`file_index` from that form's anchor.
 
 Per-file language is wired through to the form's `language` prop
 so Suggestion mode's CodeMirror picks the right syntax pack.

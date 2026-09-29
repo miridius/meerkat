@@ -45,16 +45,18 @@ visible.
 Open-form state is shared through persisted
 `ReviewState.open_forms`. Every tab renders every open form, including
 forms opened by other tabs. If tab 1 opens A and tab 2 opens B, both
-A and B remain open in both tabs. Each add form's prose is held in
-its localStorage draft; open-form state carries metadata, not live
-textarea content.
+A and B remain open in both tabs. Only an add form's prose is held
+in its localStorage draft; open-form state carries metadata, not
+live textarea content.
 
 Each form carries a `form_key` derived from its surface, anchor and
 edit target. Submit and cancel act only on the form with that key.
-A submit for a key that is no longer open (for example, closed in
-another tab while the submit was in flight) saves nothing and shows
-an error on the form, which keeps its draft. Removing a comment also
-closes any form editing it, in every tab.
+A submit for a key that is no longer open (for example, after it was
+closed in another tab while the submit was in flight) saves nothing
+and replies with an error the form shows: "This comment form is no
+longer open, so the comment wasn't saved." The form keeps its draft.
+Removing a comment also closes any open form editing it in every tab,
+so saving that form cannot bring the comment back.
 
 ## Tab close
 

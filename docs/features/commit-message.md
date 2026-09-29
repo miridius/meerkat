@@ -52,9 +52,9 @@ self-contained, no git dependency.
   <ul class="commit-msg-comments">
     <li class="note commit-msg-note">...</li>
   </ul>
-  <div class="commit-msg-form">  <!-- one per open commit-message form -->
+  <div class="commit-msg-form">
     <span class="line-anchor">L{start}–{end}</span>
-    CommentForm
+    <CommentForm />
   </div>
 </section>
 ```
@@ -72,12 +72,11 @@ Same edit/remove/learn-toggle affordances as other comment
 surfaces. Form's anchor carries `{start_line, end_line}` (no
 side, no file_index).
 
-Dragging across gutter blocks selects a range: the `CommitMsgGutter`
-hook in `assets/js/app.js` pushes one `comment_form.show_commit_msg`
-from the earliest `start_line` to the latest `end_line`. Each open
-form is labelled with the lines it will post at, since every
-commit-message form renders below the comment list rather than at
-its lines.
+Dragging across gutter blocks selects a range: `CommitMsgGutter`
+pushes one `comment_form.show_commit_msg` event from the earliest
+block's `start_line` to the latest block's `end_line`. Each open
+commit-message form renders below the comment list, labelled with
+the `L{start}–{end}` range it will post at.
 
 ## When the commit message is wrong
 

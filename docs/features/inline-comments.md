@@ -22,9 +22,12 @@ inline form on that file, after its anchor row and below that line's
 comment rows. Its only child is a full-colspan `<td>` containing the
 CommentForm. Forms opened earlier at the same line stay above it.
 Opening another form leaves existing forms and their typed text in
-place. After a split/unified or wrap toggle, open forms and posted
-comment rows are placed again in the re-rendered table, and each form
-keeps its typed text, finding type and learn flag.
+place. After a split/unified or line-wrap toggle, open forms and
+posted comment rows are placed again in the new table, and each
+form keeps its mounted state: typed text, finding type and learn
+flag. After reload, if a form's anchor is on a context line that
+was expanded and renders collapsed again, DiffViewer expands the
+whole file once so the form shows.
 
 ## Form contents
 
@@ -69,9 +72,9 @@ When `finding_type === "suggestion"`:
 ## Rendered comment
 
 After submit, the form row disappears and a
-`<tr class="meerkat-comment-row">` appears directly below the anchor
-row, above any forms still open at that line, hosting
-an `<InlineComment>` per comment at that anchor. Multiple comments
+`<tr class="meerkat-comment-row">` is inserted directly below the
+anchor row, above any forms still open at that line. It hosts an
+`<InlineComment>` per comment at that anchor. Multiple comments
 sharing one anchor stack inside the same row's list.
 
 Each rendered comment shows:
@@ -107,8 +110,11 @@ adding a comment immediately adds it.
 All open-form metadata (surface, anchor, edit_id and edit prefill
 fields) is persisted in ReviewState's `open_forms` list, in opening
 order. After a BEAM restart or tab reload, the forms reopen at their
-anchors; each add form's localStorage draft restores its typed prose
-separately. An edit form reopens with the saved comment's body.
+anchors. An add form's localStorage draft restores its typed prose;
+an edit form reopens with the saved comment's body, not its unsaved
+edits. Add forms restore suggestion code, finding type and learn flag
+to their defaults; edit forms reopen with those values from the saved
+comment, but unsaved changes to them are lost.
 
 This is the contract the user relies on during dev iteration: a
 hot reload **never** loses an open form or the prose typed into an
