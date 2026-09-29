@@ -30,6 +30,8 @@ export type RunnerOpts = {
 	ownGroup?: boolean;
 	// `--port` value: defaults to 0 (OS-assigned); null omits it so the launcher chooses.
 	port?: number | null;
+	// The meerkat launcher to run, in place of MEERKAT_BIN.
+	bin?: string;
 };
 
 export type Runner = {
@@ -77,7 +79,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	}
 
 	const port = opts.port === undefined ? 0 : opts.port;
-	const argv = [MEERKAT_BIN, ...args, "--no-open", ...(port === null ? [] : ["--port", String(port)])];
+	const argv = [opts.bin ?? MEERKAT_BIN, ...args, "--no-open", ...(port === null ? [] : ["--port", String(port)])];
 	// sh -c execs its script's last command in place of itself; trailing `exit $?` keeps it alive as meerkat's parent.
 	const [cmd, ...cmdArgs] = opts.underParent ? ["sh", "-c", '"$@"; exit $?', "sh", ...argv] : argv;
 	const proc = spawn(cmd, cmdArgs, {
