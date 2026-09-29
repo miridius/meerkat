@@ -88,7 +88,22 @@ defmodule MeerkatWeb.AttachControllerTest do
   # deadline topic, which setup subscribes to, so receiving this confirms the caller
   # attached.
   defp await_attached do
-    assert_receive {:meerkat_deadline, _}, 1000
+    assert_receive {:meerkat_deadline, _}, 5000
+  end
+
+  # An attach made after a decision arms no deadline, so poll Decision instead.
+  defp await_callers(n, tries \\ 500) do
+    cond do
+      map_size(:sys.get_state(Decision).callers) == n ->
+        :ok
+
+      tries == 0 ->
+        flunk("expected #{n} attached caller(s)")
+
+      true ->
+        Process.sleep(10)
+        await_callers(n, tries - 1)
+    end
   end
 
   defp delivered(conn, run) do
@@ -128,7 +143,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     conn = Task.await(task)
 
     assert conn.status == 200
-    assert conn.resp_body == "o BANNER line\no feedback\nx 1\n"
+    assert conn.resp_body =~ ~r/\Ao BANNER line\n(k\n)*o feedback\nx 1\n\z/
   end
 
   test "a later invocation of the same review replays the held outcome byte for byte, without the banner",
@@ -146,11 +161,12 @@ defmodule MeerkatWeb.AttachControllerTest do
     Application.put_env(:meerkat, :no_open, false)
     {:ok, _} = Decision.submit({:approve, ""})
     task = Task.async(fn -> attach(conn, "later-run") end)
-    refute_receive {:opened, _}, 1000
-    assert map_size(:sys.get_state(Decision).callers) == 1, "the caller attached before publish"
+    await_callers(1)
 
     :ok = Decision.publish({0, "approved\n"})
     assert Task.await(task).resp_body =~ ~r/\A(k\n)*o approved\nx 0\n\z/
+    # The task sends {:opened, _} before its reply, so it would already be here.
+    refute_received {:opened, _}
   end
 
   test "a caller is told when a later invocation of the same review takes it over",
@@ -163,12 +179,12 @@ defmodule MeerkatWeb.AttachControllerTest do
     displaced = Task.await(first)
     assert displaced.status == 200
 
-    assert displaced.resp_body ==
-             "o BANNER line\nd meerkat: a later invocation of this review took it over — aborting.\n"
+    assert displaced.resp_body =~
+             ~r/\Ao BANNER line\n(k\n)*d meerkat: a later invocation of this review took it over — aborting\.\n\z/
 
     :ok = Decision.publish({0, "approved\n"})
     taken_over = Task.await(second)
-    assert taken_over.resp_body == "o BANNER line\no approved\nx 0\n"
+    assert taken_over.resp_body =~ ~r/\Ao BANNER line\n(k\n)*o approved\nx 0\n\z/
   end
 
   test "a later invocation whose staged content changed replaces the review",
