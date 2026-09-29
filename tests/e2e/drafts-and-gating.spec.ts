@@ -19,7 +19,7 @@ test.describe("draft persistence", () => {
 
 			await page.reload();
 
-			// `open_form` is now persisted server-side, so the form is
+			// `open_forms` is persisted server-side, so the form is
 			// already open after reload — no re-click needed. The body
 			// is restored from localStorage via `loadFormDraft(draftKey)`
 			// in CommentForm.svelte's onMount.

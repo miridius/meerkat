@@ -432,6 +432,31 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
 });
 
+// A footer open-form link: the server has just expanded / unhidden the
+// form's file, so the form may take a few frames to mount (DiffViewer
+// injects inline forms two frames after render). Wait for it, then
+// scroll it to the middle of the viewport and focus its text box.
+window.addEventListener("phx:comment-form:reveal", (e) => {
+  const { key, id } = e.detail ?? {};
+  if (typeof key !== "string" || typeof id !== "string") return;
+  const find = () =>
+    document.getElementById(id) ??
+    document.querySelector(`tr.meerkat-form-row[data-meerkat-form-key="${CSS.escape(key)}"]`);
+  const deadline = performance.now() + 3000;
+  const tick = () => {
+    const el = find();
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      el.querySelector("textarea")?.focus({ preventScroll: true });
+    } else if (performance.now() < deadline) {
+      requestAnimationFrame(tick);
+    } else {
+      console.warn("meerkat: open form not found to reveal", key);
+    }
+  };
+  tick();
+});
+
 // Scroll preservation across a live-restart full reload. When a new
 // version changes assets, phx-track-static reloads the page on socket
 // reconnect; without this the reviewer is thrown back to the top.

@@ -317,6 +317,28 @@ defmodule Meerkat.ReviewServerTest do
       assert ReviewServer.get_state(id).open_forms == [inline]
     end
 
+    test "remove_comment/3 closes the forms editing that comment, and only those",
+         %{repo: repo, review_id: id} do
+      comment = fn cid ->
+        %{id: cid, body: cid, finding_type: :issue, learn_from_this: false}
+      end
+
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{global_comments: [comment.("g1"), comment.("g2")]}
+        })
+
+      add = %{surface: :global, anchor: %{}}
+      edit_g1 = %{surface: :global, anchor: %{}, edit_id: "g1"}
+      edit_g2 = %{surface: :global, anchor: %{}, edit_id: "g2"}
+      for form <- [add, edit_g1, edit_g2], do: ReviewServer.open_form(id, form)
+
+      state = ReviewServer.remove_comment(id, :global, "g1")
+      assert [%{id: "g2"}] = state.global_comments
+      assert state.open_forms == [add, edit_g2]
+    end
+
     test "broadcasts {:state_changed, state}", %{repo: repo, review_id: id} do
       {:ok, _} =
         ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})

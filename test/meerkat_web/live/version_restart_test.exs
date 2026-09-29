@@ -65,6 +65,21 @@ defmodule MeerkatWeb.VersionRestartTest do
     assert_receive {:restart, 75}, 1000
   end
 
+  test "with two forms open, the restart waits for the last one to close", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_hook(view, "comment_form.show_global", %{})
+    send(view.pid, {:meerkat_version_available, "versions/v2"})
+    _ = render(view)
+
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
+    refute_receive {:restart, _}, 200
+
+    render_hook(view, "comment_form.hide", %{"form_key" => "global"})
+    assert_receive {:restart, 75}, 1000
+  end
+
   test "does not live-restart once a decision has been submitted", %{conn: conn} do
     {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
 

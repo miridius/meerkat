@@ -22,8 +22,9 @@ inline form on that file, after its anchor row and below that line's
 comment rows. Its only child is a full-colspan `<td>` containing the
 CommentForm. Forms opened earlier at the same line stay above it.
 Opening another form leaves existing forms and their typed text in
-place. After a split/unified toggle, open forms and posted comment
-rows are placed again in the re-rendered table.
+place. After a split/unified or wrap toggle, open forms and posted
+comment rows are placed again in the re-rendered table, and each form
+keeps its typed text, finding type and learn flag.
 
 ## Form contents
 
@@ -68,7 +69,8 @@ When `finding_type === "suggestion"`:
 ## Rendered comment
 
 After submit, the form row disappears and a
-`<tr class="meerkat-comment-row">` appears in its place, hosting
+`<tr class="meerkat-comment-row">` appears directly below the anchor
+row, above any forms still open at that line, hosting
 an `<InlineComment>` per comment at that anchor. Multiple comments
 sharing one anchor stack inside the same row's list.
 
@@ -105,8 +107,9 @@ adding a comment immediately adds it.
 All open-form metadata (surface, anchor, edit_id and edit prefill
 fields) is persisted in ReviewState's `open_forms` list, in opening
 order. After a BEAM restart or tab reload, the forms reopen at their
-anchors; each form's localStorage draft restores its typed body
-separately.
+anchors; each add form's localStorage draft restores its typed prose
+separately. An edit form reopens with the saved comment's body.
 
 This is the contract the user relies on during dev iteration: a
-hot reload **never** loses an in-progress comment.
+hot reload **never** loses an open form or the prose typed into an
+add form.

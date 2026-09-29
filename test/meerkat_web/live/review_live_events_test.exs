@@ -352,15 +352,224 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "CommentForm-commit_msg-1-3"
   end
 
-  test "comment.submit with no open form is a no-op; unbound submit just closes", %{conn: conn} do
+  test "commit-msg forms at two ranges are labelled and each posts at its own range",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+
+    state = %ReviewState{
+      files: [@plain_file],
+      commit_message: "subject\n\nbody\nmore",
+      commit_message_blocks: [
+        %{start_line: 1, end_line: 1, text: "subject"},
+        %{start_line: 3, end_line: 4, text: "body\nmore"}
+      ]
+    }
+
+    {view, rid} = mount_bound(conn, state, repo)
+
+    render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "1", "end_line" => "1"})
+
+    html =
+      render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "3", "end_line" => "4"})
+
+    assert html =~ "CommentForm-commit_msg-1-1"
+    assert html =~ "CommentForm-commit_msg-3-4"
+
+    labels =
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(".commit-msg-form .line-anchor")
+      |> Enum.map(&LazyHTML.text/1)
+
+    assert labels == ["L1–1", "L3–4"]
+
+    render_hook(view, "comment.submit", %{
+      "form_key" => "commit_msg:3-4",
+      "body" => "second range",
+      "finding_type" => "issue",
+      "learn_from_this" => false
+    })
+
+    state = ReviewServer.get_state(rid)
+    assert [%{body: "second range", start_line: 3, end_line: 4}] = state.commit_message_comments
+    assert [%{surface: :commit_msg, anchor: %{start_line: 1, end_line: 1}}] = state.open_forms
+  end
+
+  test "the footer names every open form, as a link that reveals it", %{conn: conn} do
+    state = %ReviewState{
+      files: [@plain_file],
+      commit_message: "subject",
+      commit_message_blocks: [%{start_line: 1, end_line: 3, text: "subject"}]
+    }
+
+    view = mount_unbound(conn, state)
+    refute has_element?(view, ".dirty-marker")
+
+    render_hook(view, "comment_form.show_global", %{})
+    assert has_element?(view, ".dirty-marker", "1 unsaved form open:")
+
+    render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "1", "end_line" => "3"})
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_hook(view, "comment_form.show_file", %{"file_index" => "7"})
+
+    for {from, to, side} <- [{"2", "2", "new"}, {"2", "4", "old"}] do
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "0",
+        "start_line" => from,
+        "end_line" => to,
+        "side" => side
+      })
+    end
+
+    labels =
+      render(view)
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(".dirty-marker .dirty-form-link")
+      |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+    assert labels == [
+             "Global",
+             "Commit message L1–3",
+             "src/widget.rs",
+             "file 7",
+             "src/widget.rs L2",
+             "src/widget.rs L2–4 (old)"
+           ]
+
+    assert has_element?(view, ".dirty-marker", "6 unsaved forms open:")
+
+    assert has_element?(
+             view,
+             ~s(.dirty-form-link[phx-click="comment_form.reveal"][phx-value-form_key="inline:0:old:2-4"])
+           )
+  end
+
+  test "an edit form's footer link says it is editing", %{conn: conn} do
+    comment = %{id: "g1", body: "b", finding_type: :issue, learn_from_this: false}
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file], global_comments: [comment]})
+
+    render_click(view, "comment_form.edit", %{"surface" => "global", "id" => "g1"})
+    assert has_element?(view, ".dirty-form-link", "Global (editing)")
+  end
+
+  test "revealing a form in a filtered-out, collapsed file shows and expands it", %{conn: conn} do
+    repo = tmp_git_repo()
+    other = %{@plain_file | file_name: "other.ex"}
+
+    state = %ReviewState{
+      files: [@plain_file, other],
+      approved_file_names: MapSet.new(["src/widget.rs"])
+    }
+
+    {view, rid} = mount_bound(conn, state, repo)
+
+    render_hook(view, "comment_form.show_at_line", %{
+      "file_index" => "0",
+      "start_line" => "1",
+      "end_line" => "1",
+      "side" => "new"
+    })
+
+    render_hook(view, "filter.set_input", %{"value" => "other"})
+    render_click(view, "filter.show_only", %{"file_index" => "1"})
+    refute has_element?(view, "#file-0")
+
+    render_click(view, "comment_form.reveal", %{"form_key" => "inline:0:new:1-1"})
+
+    assert has_element?(view, "#file-0")
+    refute has_element?(view, "#file-0.collapsed")
+    # Show-only and the substring filter are cleared: both files show.
+    assert has_element?(view, "#file-1")
+    assert ReviewServer.get_state(rid).file_overrides == %{"src/widget.rs" => :show}
+
+    assert_push_event(view, "comment-form:reveal", %{
+      key: "inline:0:new:1-1",
+      id: "CommentForm-inline-0-new-1-1"
+    })
+  end
+
+  test "revealing keeps a filter that already shows the file", %{conn: conn} do
+    other = %{@plain_file | file_name: "other.ex"}
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file, other]})
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_hook(view, "filter.set_input", %{"value" => "widget"})
+    render_click(view, "comment_form.reveal", %{"form_key" => "file:0"})
+
+    assert has_element?(view, "#file-0")
+    refute has_element?(view, "#file-1")
+    assert_push_event(view, "comment-form:reveal", %{key: "file:0", id: "CommentForm-file-0"})
+  end
+
+  test "revealing a file form expands a file collapsed by hand, keeping it rendered",
+       %{conn: conn} do
+    view = mount_unbound(conn, %ReviewState{files: [@md_file]})
+
+    render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+    render_click(view, "file.toggle_expanded", %{"file_name" => "README.md"})
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    assert has_element?(view, "#file-0.collapsed")
+
+    render_click(view, "comment_form.reveal", %{"form_key" => "file:0"})
+    refute has_element?(view, "#file-0.collapsed")
+    # A file comment doesn't need the diff, so the rendered view stays.
+    assert has_element?(view, "#file-0 .md-preview")
+  end
+
+  test "revealing an inline form switches a rendered markdown file back to its diff",
+       %{conn: conn} do
+    view = mount_unbound(conn, %ReviewState{files: [@md_file]})
+
+    render_hook(view, "comment_form.show_at_line", %{
+      "file_index" => "0",
+      "start_line" => "3",
+      "end_line" => "3",
+      "side" => "new"
+    })
+
+    render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+    assert has_element?(view, "#file-0 .md-preview")
+
+    render_click(view, "comment_form.reveal", %{"form_key" => "inline:0:new:3-3"})
+    refute has_element?(view, "#file-0 .md-preview")
+  end
+
+  test "revealing a global form only scrolls; an unknown key does nothing", %{conn: conn} do
     view = mount_unbound(conn)
-    # No form open under that key: must not crash.
+
+    render_click(view, "comment_form.reveal", %{"form_key" => "global"})
+    no_push_event(view, "comment-form:reveal")
+
+    render_hook(view, "comment_form.show_global", %{})
+    render_click(view, "comment_form.reveal", %{"form_key" => "global"})
+    assert_push_event(view, "comment-form:reveal", %{key: "global", id: "CommentForm-global"})
+
+    # A file form whose index the diff doesn't have: no file to show.
+    render_hook(view, "comment_form.show_file", %{"file_index" => "7"})
+    render_click(view, "comment_form.reveal", %{"form_key" => "file:7"})
+    assert_push_event(view, "comment-form:reveal", %{key: "file:7"})
+  end
+
+  test "comment_form.hide without a form_key is ignored, not a crash", %{conn: conn} do
+    view = mount_unbound(conn)
+    render_click(view, "comment_form.show_global", %{})
+
+    assert render_hook(view, "comment_form.hide", %{}) =~ "CommentForm-global"
+  end
+
+  test "comment.submit with no open form replies with an error; unbound submit just closes",
+       %{conn: conn} do
+    view = mount_unbound(conn)
+    # No form open under that key: must not crash, and must tell the
+    # form so it keeps its draft.
     render_click(view, "comment.submit", %{
       "form_key" => "global",
       "body" => "x",
       "finding_type" => "issue",
       "learn_from_this" => false
     })
+
+    assert_reply(view, %{status: "error", message: "This comment form is no longer open" <> _})
 
     render_hook(view, "comment_form.show_global", %{})
 

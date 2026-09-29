@@ -10,7 +10,8 @@ defmodule Meerkat.Persistence do
   The mutable user-input subset survives a crash: all four comment
   surfaces, per-file approvals, hidden-extension filters, per-file
   visibility overrides, the show-generated toggle, and the in-flight
-  comment-form anchors (`open_forms`). `files`, `commit_message`,
+  comment forms' surface, anchor and edit prefill (`open_forms`).
+  `files`, `commit_message`,
   `commit_message_blocks`, `pr`, and branch metadata are re-derived
   from git on mount, so they're not persisted. The terminal decision
   is owned by `Meerkat.Decision` and is reset on each invocation.

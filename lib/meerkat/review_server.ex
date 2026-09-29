@@ -95,7 +95,8 @@ defmodule Meerkat.ReviewServer do
   @doc """
   Remove a comment by id from any surface (inline / file / global /
   commit-msg). Caller specifies the surface so the server doesn't
-  have to scan four lists.
+  have to scan four lists. Also closes any open form editing that
+  comment, so saving it can't bring the comment back.
   """
   @spec remove_comment(review_id, :inline | :file | :global | :commit_msg, String.t()) ::
           ReviewState.t()
@@ -232,7 +233,11 @@ defmodule Meerkat.ReviewServer do
     key = surface_key(surface)
 
     update(ctx, fn state ->
-      Map.update!(state, key, fn list -> Enum.reject(list, fn c -> c.id == id end) end)
+      state
+      |> Map.update!(key, fn list -> Enum.reject(list, fn c -> c.id == id end) end)
+      |> Map.update!(:open_forms, fn forms ->
+        Enum.reject(forms, &(Map.get(&1, :edit_id) == id))
+      end)
     end)
   end
 

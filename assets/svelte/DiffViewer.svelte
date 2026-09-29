@@ -324,7 +324,8 @@
   // Visual indicator: mark every diff-line row covered by a
   // comment range. Also injects a custom `<tr class="meerkat-comment-row">`
   // right after the anchor row to host one InlineComment per comment.
-  // Re-runs whenever the comments prop or diff instance changes;
+  // Re-runs whenever the comments prop, the diff instance, the view
+  // mode or line wrapping changes (the last two swap the diff table);
   // tolerates @git-diff-view's internal re-renders by re-applying.
   let mountedInlineComments: Array<{ component: ReturnType<typeof mount>; host: HTMLElement }> = [];
   let injectedCommentRows: HTMLTableRowElement[] = [];
@@ -335,6 +336,7 @@
     if (!diffContainer || !diffInstance) return;
     void comments.length;
     void diffViewMode;
+    void wrap_lines;
     let cancelled = false;
     // Defer two animation frames so @git-diff-view's syntax / extend
     // rendering settles before we walk the rows.
@@ -391,14 +393,16 @@
 
   // Inject one inline-comment FORM per open form on this file, each
   // at its own anchor row. LiveSvelte applies prop changes as in-place
-  // JSON patches, so the effect snapshots the whole list: that reads
-  // every nested field, and a form moving to other lines re-runs it
-  // just as a form opening or closing does.
+  // JSON patches by list index, so the effect snapshots the whole list:
+  // that reads every nested field, and a different form taking an
+  // existing slot re-runs it just as a form opening or closing does.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const descs = $state.snapshot(inline_forms) as InlineFormDescriptor[];
-    // A split/unified toggle re-renders the table without our rows.
+    // A split/unified or wrap toggle re-renders the table without our
+    // rows.
     void diffViewMode;
+    void wrap_lines;
     let handle2 = 0;
     const handle = requestAnimationFrame(() => {
       handle2 = requestAnimationFrame(() => renderInlineForms(descs));
@@ -431,7 +435,10 @@
     for (const desc of descs) {
       const side = desc.anchor.side === "old" ? "old" : "new";
       const rows = anchorRowsFor(side, desc.anchor.end_line);
-      if (rows.length === 0) continue;
+      if (rows.length === 0) {
+        expandToShowHiddenAnchor();
+        continue;
+      }
       const anchor = rows[rows.length - 1];
       let after: Element = anchor;
       while (
@@ -446,6 +453,8 @@
         const tr = buildSideAwareRow(anchor, side, "meerkat-form-row", "meerkat-form-cell");
         tr.setAttribute("data-meerkat-form-anchor", String(desc.anchor.end_line));
         tr.setAttribute("data-meerkat-form-side", side);
+        // The footer's open-form links scroll to the form by key.
+        tr.setAttribute("data-meerkat-form-key", desc.key);
         after.parentNode?.insertBefore(tr, after.nextSibling);
         return tr;
       };
@@ -462,8 +471,8 @@
         m = { component, row: tr };
         mountedInlineForms.set(desc.key, m);
       } else if (m.row.parentNode !== anchor.parentNode) {
-        // The diff table was re-rendered (split/unified toggle, hunk
-        // expand), so the row's columns may no longer fit. Rebuild it
+        // The diff table was replaced (split/unified or wrap toggle),
+        // so the row's columns may no longer fit. Rebuild it
         // for the new table and carry the mounted form across intact.
         const tr = buildRow();
         formCell(tr).append(...formCell(m.row).childNodes);
@@ -474,6 +483,22 @@
       }
       placed.add(m.row);
     }
+  }
+
+  // A form can be anchored on a context line the reviewer expanded
+  // before a reload, which renders collapsed again. The form must stay
+  // reachable (it blocks the decision buttons), so expand the whole
+  // file once per diff instance and view mode; the hunk-expand
+  // observer then places it.
+  const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
+  function expandToShowHiddenAnchor() {
+    if (!diffInstance) return;
+    const expandMode = diffViewMode === DiffModeEnum.Unified ? "unified" : "split";
+    const done = expandedForHiddenAnchor.get(diffInstance) ?? new Set<string>();
+    if (done.has(expandMode)) return;
+    done.add(expandMode);
+    expandedForHiddenAnchor.set(diffInstance, done);
+    diffInstance.onAllExpand(expandMode);
   }
 
   function unmountInlineForm(m: MountedInlineForm) {

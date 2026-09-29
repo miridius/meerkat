@@ -162,6 +162,196 @@ test.describe("multiple open comment forms", () => {
 		}
 	});
 
+	test("an open form keeps its text, finding type and learn flag through another form opening and every view toggle", async ({
+		page,
+	}) => {
+		const fixture = makeFixture({ files: { "src/lib.rs": "fn a() {}\nfn b() {}\nfn c() {}\n" } });
+		fixture.git("commit", "-q", "-m", "base");
+		writeFileSync(join(fixture.dir, "src/lib.rs"), "fn a() {}\nfn b2() {}\nfn c() {}\nfn d() {}\n");
+		fixture.git("add", "src/lib.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/lib.rs" });
+			const lineCell = (n: number) =>
+				fileSection.locator(`td.diff-line-new-num:has(span[data-line-num="${n}"])`);
+
+			// A posted comment, to check comment rows survive the toggles too.
+			await lineCell(2).click();
+			await formAt(fileSection, 2).locator("textarea").fill("posted on two");
+			await formAt(fileSection, 2).getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(commentRowAt(fileSection, 2)).toContainText("posted on two");
+
+			await lineCell(1).click();
+			const kept = formAt(fileSection, 1);
+			await kept.getByRole("button", { name: "Question", exact: true }).click();
+			await kept.getByRole("checkbox", { name: /learn from this/ }).check();
+			await kept.locator("textarea").fill("kept question");
+
+			const expectKept = async () => {
+				await expect(kept).toHaveCount(1);
+				await expect(kept.locator(".finding-chip.active")).toHaveText("Question");
+				await expect(kept.getByRole("checkbox", { name: /learn from this/ })).toBeChecked();
+				await expect(kept.locator("textarea")).toHaveValue("kept question");
+				await expect(commentRowAt(fileSection, 2)).toContainText("posted on two");
+			};
+
+			await lineCell(4).click();
+			await expect(formAt(fileSection, 4)).toBeVisible();
+			await expectKept();
+
+			const wrap = page.getByRole("checkbox", { name: "Wrap" });
+			for (const toggle of [
+				() => page.getByRole("button", { name: "Unified", exact: true }).click(),
+				() => wrap.click(),
+				() => page.getByRole("button", { name: "Split", exact: true }).click(),
+				() => wrap.click(),
+			]) {
+				await toggle();
+				await expectKept();
+			}
+
+			await kept.getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(commentRowAt(fileSection, 1)).toContainText("question L1 (new)");
+			await expect(commentRowAt(fileSection, 1).getByRole("checkbox")).toBeChecked();
+			await expect(commentRowAt(fileSection, 1)).toContainText("kept question");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("an inline edit form and an add form at the same line stay apart, in opening order", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			const fileSection = mainRs(page);
+
+			await newLine(fileSection, 3).click();
+			await formAt(fileSection, 3).locator("textarea").fill("alpha");
+			await formAt(fileSection, 3).getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(commentRowAt(fileSection, 3)).toContainText("alpha");
+
+			await newLine(fileSection, 3).click();
+			await formAt(fileSection, 3).locator("textarea").fill("gamma");
+			await commentRowAt(fileSection, 3).getByRole("button", { name: "Edit" }).click();
+			await expect(formAt(fileSection, 3)).toHaveCount(2);
+
+			// Anchor row, then the comment row, then the add form, then the
+			// edit form opened after it.
+			const comment = 'tr.meerkat-comment-row[data-meerkat-anchor-line="3"]';
+			const addForm = fileSection.locator(`${comment} + tr.meerkat-form-row textarea`);
+			const editForm = fileSection.locator(
+				`${comment} + tr.meerkat-form-row + tr.meerkat-form-row textarea`,
+			);
+			await expect(addForm).toHaveValue("gamma");
+			await expect(editForm).toHaveValue("alpha");
+
+			await editForm.fill("beta");
+			await fileSection
+				.locator(`${comment} + tr.meerkat-form-row + tr.meerkat-form-row`)
+				.getByRole("button", { name: /^Save$/ })
+				.click();
+
+			await expect(formAt(fileSection, 3)).toHaveCount(1);
+			await expect(formAt(fileSection, 3).locator("textarea")).toHaveValue("gamma");
+			await expect(commentRowAt(fileSection, 3)).toContainText("beta");
+			await expect(commentRowAt(fileSection, 3)).not.toContainText("alpha");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("removing a comment closes the form editing it, so saving can't bring it back", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			const global = page.locator(".global-comments");
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			await global.locator(".comment-form textarea").fill("doomed");
+			await global.getByRole("button", { name: /^Add Global Comment$/ }).click();
+			await expect(global.locator(".note")).toContainText("doomed");
+
+			await global.locator(".note").getByRole("button", { name: "Edit" }).click();
+			await expect(global.locator(".comment-form")).toBeVisible();
+			await global.locator(".note").getByRole("button", { name: "Remove" }).click();
+
+			await expect(global.locator(".comment-form")).toHaveCount(0);
+			await expect(page.locator(".global-comments .note")).toHaveCount(0);
+			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeEnabled();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a form hidden by approving its file is linked from the footer, and the link shows it", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			const fileSection = mainRs(page);
+
+			await newLine(fileSection, 2).click();
+			await formAt(fileSection, 2).locator("textarea").fill("hidden by approval");
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+
+			await fileSection.getByRole("checkbox", { name: "Approved" }).click();
+			await expect(formAt(fileSection, 2)).toHaveCount(0);
+
+			const footer = page.locator(".decision-footer");
+			await expect(footer).toContainText("2 unsaved forms open:");
+			await expect(footer.getByRole("button", { name: "Global" })).toBeVisible();
+			await footer.getByRole("button", { name: "src/main.rs L2" }).click();
+
+			const form = formAt(fileSection, 2);
+			await expect(form).toBeInViewport();
+			await expect(form.locator("textarea")).toHaveValue("hidden by approval");
+			await expect(form.locator("textarea")).toBeFocused();
+
+			await form.getByRole("button", { name: /^Cancel$/ }).click();
+			await page.locator(".global-comments").getByRole("button", { name: /^Cancel$/ }).click();
+			await expect(footer.locator(".dirty-marker")).toHaveCount(0);
+			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeEnabled();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a form on an expanded context line is shown again after a reload", async ({ page }) => {
+		const lines = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`);
+		const fixture = makeFixture({ files: { "src/long.txt": `${lines.join("\n")}\n` } });
+		fixture.git("commit", "-q", "-m", "base");
+		lines[29] = "line 30 changed";
+		writeFileSync(join(fixture.dir, "src/long.txt"), `${lines.join("\n")}\n`);
+		fixture.git("add", "src/long.txt");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			await page.getByRole("button", { name: "Unified", exact: true }).click();
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/long.txt" });
+
+			// Line 5 sits in collapsed context until the hunk is expanded.
+			await expect(newLine(fileSection, 5)).toHaveCount(0);
+			while ((await newLine(fileSection, 5).count()) === 0) {
+				await fileSection.locator("td.diff-line-hunk-action button").first().click();
+			}
+			await newLine(fileSection, 5).click();
+			await formAt(fileSection, 5).locator("textarea").fill("on a context line");
+
+			await page.reload();
+
+			await expect(formAt(fileSection, 5).locator("textarea")).toHaveValue("on a context line");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("a global form and an inline form stay open together", async ({ page }) => {
 		const meerkat = await startMeerkat();
 		try {

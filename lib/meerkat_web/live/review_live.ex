@@ -411,11 +411,33 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, close_form(socket, key)}
   end
 
+  def handle_event("comment_form.hide", params, socket) do
+    IO.puts(:stderr, "meerkat: comment_form.hide ignored — no form_key: #{inspect(params)}")
+    {:noreply, socket}
+  end
+
+  # A footer link: make the form's file visible (shown, expanded, and
+  # in diff view for an inline form), then have the client scroll to it.
+  def handle_event("comment_form.reveal", %{"form_key" => key}, socket) do
+    case OpenForms.find(socket.assigns.open_forms, key) do
+      nil ->
+        {:noreply, socket}
+
+      form ->
+        {:noreply,
+         socket
+         |> show_form_file(form)
+         |> push_event("comment-form:reveal", %{key: key, id: form_dom_id(form)})}
+    end
+  end
+
   ## --- Submit (add / edit) ---
 
   # The submitting form names itself by key, so a submit posts at that
   # form's anchor even while other forms are open. A key that isn't
-  # open (already submitted from another tab) is a no-op.
+  # open (closed from another tab while this submit was in flight)
+  # saves nothing and replies with an error, so the form keeps its
+  # draft instead of clearing it as if the comment had posted.
   def handle_event("comment.submit", payload, socket) do
     %{open_forms: forms, review_id: rid} = socket.assigns
     %{"body" => body, "finding_type" => ft, "learn_from_this" => learn?} = payload
@@ -426,7 +448,13 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       form == nil ->
-        {:noreply, socket}
+        IO.puts(:stderr, "meerkat: comment.submit ignored — form not open: #{inspect(key)}")
+
+        {:reply,
+         %{
+           status: "error",
+           message: "This comment form is no longer open, so the comment wasn't saved."
+         }, socket}
 
       rid == "unbound" ->
         {:noreply, close_form(socket, key)}
@@ -1203,13 +1231,17 @@ defmodule MeerkatWeb.ReviewLive do
           </div>
         </li>
       </ul>
-      <.svelte
-        :for={form <- forms_for(@open_forms, :commit_msg)}
-        id={form_dom_id(form)}
-        name="CommentForm"
-        props={commit_msg_form_props(form, @review_id, @state.commit_message)}
-        socket={@socket}
-      />
+      <%!-- Every open commit-message form sits here, below the list,
+      so each names the lines it will post at. --%>
+      <div :for={form <- forms_for(@open_forms, :commit_msg)} class="commit-msg-form">
+        <span class="line-anchor">L{form.anchor.start_line}–{form.anchor.end_line}</span>
+        <.svelte
+          id={form_dom_id(form)}
+          name="CommentForm"
+          props={commit_msg_form_props(form, @review_id, @state.commit_message)}
+          socket={@socket}
+        />
+      </div>
     </section>
     """
   end
@@ -1857,11 +1889,21 @@ defmodule MeerkatWeb.ReviewLive do
           data-deadline={@deadline_ms}
           title={countdown_title(@timeout_action)}
         ></span>
-        <%= if @dirty? do %>
-          <span class="dirty-marker" title="Close the open comment form first">
-            unsaved form open
-          </span>
-        <% end %>
+        <%!-- Each link shows its form, even one in a collapsed or
+        filtered-out file, so the reviewer can finish or discard it. --%>
+        <span :if={@dirty?} class="dirty-marker">
+          {length(@open_forms)} unsaved {if length(@open_forms) == 1, do: "form", else: "forms"} open:
+          <button
+            :for={form <- @open_forms}
+            type="button"
+            class="dirty-form-link"
+            phx-click="comment_form.reveal"
+            phx-value-form_key={OpenForms.key(form)}
+            title="Show this form"
+          >
+            {open_form_label(form, @state.files)}
+          </button>
+        </span>
       </div>
       <div class="decision-actions">
         <button
@@ -2359,6 +2401,88 @@ defmodule MeerkatWeb.ReviewLive do
   # the button that would open it again.
   defp new_form_open?(open_forms, surface, anchor),
     do: OpenForms.find(open_forms, OpenForms.key(%{surface: surface, anchor: anchor})) != nil
+
+  defp show_form_file(socket, %{surface: surface, anchor: %{file_index: idx}})
+       when surface in [:file, :inline] do
+    case Enum.at(socket.assigns.state.files, idx) do
+      nil -> socket
+      file -> show_file_for_form(socket, surface, idx, file.file_name)
+    end
+  end
+
+  defp show_form_file(socket, _form), do: socket
+
+  defp show_file_for_form(socket, surface, idx, name) do
+    %{
+      state: state,
+      review_id: rid,
+      filter_input: filter_input,
+      only_file_index: only_file_index,
+      expanded_approved: expanded,
+      collapsed_unapproved: collapsed,
+      rendered_files: rendered
+    } = socket.assigns
+
+    # A :show override beats every filter except show-only and the
+    # substring filter, so clear those too when they hide this file.
+    socket =
+      if MapSet.member?(visible_indices(state, filter_input, only_file_index), idx) do
+        socket
+      else
+        if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, name, :show)
+
+        assign(socket,
+          state: %{state | file_overrides: Map.put(state.file_overrides, name, :show)},
+          only_file_index: if(only_file_index in [nil, idx], do: only_file_index),
+          filter_input: if(matches_filter?(name, filter_input), do: filter_input, else: "")
+        )
+      end
+
+    socket =
+      cond do
+        not file_section_collapsed?(state, expanded, collapsed, name) ->
+          socket
+
+        MapSet.member?(state.approved_file_names, name) ->
+          assign(socket, expanded_approved: MapSet.put(expanded, name))
+
+        true ->
+          assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
+      end
+
+    if surface == :inline,
+      do: assign(socket, rendered_files: MapSet.delete(rendered, name)),
+      else: socket
+  end
+
+  # Where a form is, for the footer's open-form links.
+  defp open_form_label(%{surface: :global} = form, _files), do: edit_label("Global", form)
+
+  defp open_form_label(%{surface: :commit_msg, anchor: a} = form, _files),
+    do: edit_label("Commit message L#{a.start_line}–#{a.end_line}", form)
+
+  defp open_form_label(%{surface: :file, anchor: %{file_index: idx}} = form, files),
+    do: edit_label(file_name_at(files, idx), form)
+
+  defp open_form_label(%{surface: :inline, anchor: a} = form, files) do
+    lines =
+      if a.start_line == a.end_line, do: "#{a.end_line}", else: "#{a.start_line}–#{a.end_line}"
+
+    side = if a.side == "old", do: " (old)", else: ""
+    edit_label("#{file_name_at(files, a.file_index)} L#{lines}#{side}", form)
+  end
+
+  defp edit_label(label, form),
+    do: if(Map.get(form, :edit_id), do: "#{label} (editing)", else: label)
+
+  # `comment_form.show_file` takes any integer index, so a form can
+  # name a file the diff doesn't have.
+  defp file_name_at(files, idx) do
+    case Enum.at(files, idx) do
+      nil -> "file #{idx}"
+      file -> file.file_name
+    end
+  end
 
   # LiveSvelte needs a stable DOM id per mounted form.
   defp form_dom_id(form),
