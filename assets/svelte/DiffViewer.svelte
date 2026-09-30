@@ -775,10 +775,13 @@
     dragCurrent = null;
   }
 
-  // Re-apply `.drag-selecting` to every line-num cell + row in the
-  // current drag range so the reviewer can see what they're about to
-  // anchor on. Runs whenever the drag state changes; cleared when
-  // `dragStart` returns to null.
+  // Re-apply drag-select classes whenever drag state changes. First remove
+  // `.drag-selecting` and `.drag-selecting-side` everywhere, then add
+  // `.drag-selecting` to each line-number cell in the drag range on the
+  // dragged side. In unified view (one `td.diff-line-num` with both numbers),
+  // also mark the whole row; in split view, mark that side's number cell and
+  // adjacent content cell with `.drag-selecting-side`. All highlights clear
+  // when `dragStart` returns to `null`.
   $effect(() => {
     if (!diffContainer) return;
     for (const el of diffContainer.querySelectorAll(".drag-selecting, .drag-selecting-side")) {
@@ -805,8 +808,11 @@
       const td = (hit as HTMLElement).closest("td");
       if (!td) continue;
       td.classList.add("drag-selecting");
-      // A split row holds both sides, so shade only this side's
-      // number and content cells rather than the whole row.
+      // In unified view, a row represents one line, so shade the whole row.
+      // In split view, line wrap puts both sides in one row (old number and
+      // content, then new number and content), so shading the row would also
+      // shade the other side. With wrapping off, each side has its own table.
+      // Shade only this side's number cell and the content cell after it.
       if (td.classList.contains("diff-line-num")) {
         td.closest("tr.diff-line")?.classList.add("drag-selecting");
       } else {
@@ -1057,10 +1063,13 @@
   :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action)) {
     --diff-hunk-lineNumber--: var(--diff-hunk-content--);
   }
-  /* Drag-select highlight — applied to every line-num cell + row
-     between dragStart and dragCurrent so the reviewer can see the
-     range they're about to anchor a comment on. Cleared on
-     pointerup / pointercancel via the $effect that drives it. */
+  /*
+   * Drag-select highlights line-number cells in the range, plus the whole row
+   * in unified view or only the selected side's number and content cells
+   * (`.drag-selecting-side`) in split view. It shows the range the reviewer
+   * is about to anchor a comment on and is cleared on pointerup or
+   * pointercancel by the `$effect` when `dragStart` returns to `null`.
+   */
   :global(.diff-content td.diff-line-old-num.drag-selecting),
   :global(.diff-content td.diff-line-new-num.drag-selecting),
   :global(.diff-content td.diff-line-num.drag-selecting) {

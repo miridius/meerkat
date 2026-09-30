@@ -780,8 +780,8 @@ a.chip-link:hover .chip-value {
 
 .review-body {
   display: grid;
-  /* File-filter is now a floating overlay (see .file-filter below),
-     so the body always uses the full viewport — no sidebar gutter. */
+  /* The file filter is a panel in normal page flow above the file list, so
+     the review body needs no sidebar column and always uses one column. */
   grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
@@ -801,13 +801,12 @@ a.chip-link:hover .chip-value {
 }
 
 /* --- File filter (inline collapsible panel) ---
-
-   Sits in normal page flow above the file list; takes the full
-   viewport width so file paths fit on one line without truncation.
-   Toggled via the toolbar's '☰ Files' button. Same affordances
-   as the pre-port version: substring filter, status dots, full
-   relative path (dir prefix dimmed + base name bold), per-entry
-   only / hide-extension / show-all controls. */
+   Sits in normal page flow above the file list; takes the full width of
+   the page's content area (the page's main element has padding), so file
+   paths fit on one line without truncation. Toggled via the toolbar's
+   '☰ Files' button. Same affordances as the pre-port version: substring
+   filter, status dots, full relative path (dir prefix dimmed + base name
+   at font-weight 500), per-entry only / hide-extension / show-all controls. */
 
 .file-filter {
   background: var(--panel);

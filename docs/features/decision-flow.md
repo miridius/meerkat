@@ -7,10 +7,11 @@ and an auto-approved timeout can end an unanswered review.
 
 ## Buttons
 
-The footer shows three buttons normally. When reviewing a GitHub PR
-outside pre-commit hook mode, it also shows **Post to GitHub**,
-between **Cancel** and **Send Feedback**, for four buttons total.
-Left-to-right:
+The footer buttons appear left to right as follows. **Post to GitHub**
+appears only when the review has an attached PR and is not a staged
+(pre-commit hook) review. `--pr` reviews have an attached PR; so do
+single-commit and range reviews when the current branch has an open
+GitHub PR.
 
 1. **Cancel** — abandon the review. Wipes every in-progress
    comment, submits a `:cancel` decision. The BEAM exits **1** and
@@ -19,9 +20,11 @@ Left-to-right:
    payload — just the verdict line). Use when the reviewer wants to
    back out without producing feedback for the calling agent.
 
-2. **Post to GitHub** — export the review's comments as a GitHub
-   PENDING review. Shown only when reviewing a GitHub PR and not in
-   pre-commit hook mode.
+2. **Post to GitHub** — export the review's comments to the PR as a
+   GitHub PENDING review. Disabled while any comment form is open.
+   Posting does not end the review: on success, the browser opens the
+   pending review's URL in a new tab; on failure, the page shows an
+   error banner.
 
 3. **Send Feedback** — submit `:reject`. Disabled when there are
    zero comments or when any comment form is open. The footer shows
@@ -36,7 +39,7 @@ Left-to-right:
    box. Exit **1** with the formatted comment payload on stderr.
 
 4. **Approve** — labelled **Approve with feedback** when the review
-   has any comments, and **Approve** otherwise. Submit `:approve`
+   has any comments, and **Approve** otherwise. Submits `:approve`
    (no comments) or `:approve_with_feedback` (any comments).
    Disabled while any comment form is open. Exit **0**. With no
    comments, stderr prints `The user approved your commit.

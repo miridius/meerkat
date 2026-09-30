@@ -1,8 +1,9 @@
-# File filter sidebar
+# File filter panel
 
-A collapsible panel in normal page flow, placed above the diff body
-and spanning the full page width, that lists every file in the diff
-with affordances to narrow / hide / focus the main file list.
+A collapsible panel in normal page flow, rendered above the diff body
+and spanning the width of the page's content area. It lists every
+file in the diff with controls to narrow, hide, or focus the main
+file list.
 
 ## Toggle
 
@@ -10,15 +11,15 @@ Hidden by default. The toolbar's `☰ Files` button toggles it via
 `toolbar.toggle_files_panel`. State lives on the LV's
 `files_panel_open` socket assign (ephemeral, NOT persisted).
 
-When open, the panel renders above the `.review-body` element, which
-always has one column (`grid-template-columns: 1fr`); opening the
-panel does not change the diff body's width. On opening, the server
-pushes a `scroll-into-view` event for the element with id
-`file-filter`, so the panel scrolls into view if the reviewer has
-scrolled down the page. The toolbar holding the `☰ Files` button is
-sticky, so it can be clicked from anywhere on the page.
+The `.review-body` always has one column
+(`grid-template-columns: 1fr`); opening the panel does not change
+the diff body's width. Every time the panel opens, the server pushes
+a `scroll-into-view` event for the element with id `file-filter`,
+and the client smoothly scrolls the panel to the top of the viewport
+(`block: "start"`). The toolbar holding the `☰ Files` button is
+sticky, so the button is reachable from anywhere on the page.
 
-## Sidebar contents
+## Panel contents
 
 Top to bottom:
 
@@ -28,7 +29,7 @@ Top to bottom:
    `Show all` (visible when `only_file_index != nil` OR any
    `file_overrides` entry is set; clears overrides).
 2. **Filter input**: a debounced (50ms) `phx-change="filter.set_input"`
-   text box. Filters the sidebar list AND the main file list by
+   text box. Filters the panel's list AND the main file list by
    case-insensitive substring on the file's base name.
 3. **Generated-file chip**: `generated ✓` / `generated ×` —
    click to toggle `show_generated`. Only renders when at least
@@ -44,20 +45,20 @@ Top to bottom:
 
 Each row in the file-entries list shows:
 
-- A file-visibility checkbox. Its tooltip is `Show / hide <file>
-  in the diff list`; it is checked when the file is visible.
-  Unticking a visible file records a `:hide` override in
-  `state.file_overrides`; ticking a hidden file records a `:show`
-  override. If another file is shown alone, ticking a hidden file
-  also clears the “only” filter so the main list returns to all
-  files still allowed by hidden-extension and generated-file
-  filters, per-file overrides, and the filter text. This is not an
-  approval checkbox; approving a file is done only with the
-  per-file checkbox in the main file list.
+- A file-visibility checkbox with tooltip `Show / hide <file> in the
+  diff list`, checked when the file is visible. Unticking a visible
+  file records a `:hide` override in `state.file_overrides`; ticking
+  a hidden file records a `:show` override. If another file is being
+  shown alone (`only`), ticking a hidden file also clears that filter.
+  The main list then returns to every file still allowed by the
+  hidden-extension and generated-file filters, per-file overrides,
+  and filter text. This is not an approval checkbox; files are
+  approved only with the per-file checkbox in the main file list.
 - The file's status, shown as a coloured dot whose tooltip names
   the status.
 - The file's name is a link showing its full path on one line with no
-  truncation; the directory part is dimmed and the base name is bold.
+  truncation; the directory part is dimmed and the base name has
+  medium weight (`font-weight: 500`), not bold.
 - A hover-revealed `only` button (shows ONLY this file in the
   main list via `filter.show_only`).
 - A hover-revealed `hide *.<ext>` button (hides all files of this
@@ -78,8 +79,8 @@ Each row in the file-entries list shows:
 - `only_file_index` (int | nil, in-LV ephemeral) — "show only
   this file" override.
 - `state.approved_file_names` (MapSet, persisted) — driven by
-  the per-file Approved checkbox in the main file list, not by
-  the sidebar row.
+  the per-file Approved checkbox in the main file list; the panel's
+  rows have no approval checkbox.
 
 Hidden / show_generated / file_overrides / approved-files survive
 a BEAM restart. `filter_input` and `only_file_index` don't —
