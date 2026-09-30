@@ -37,9 +37,15 @@ for (const wrap of [true, false]) {
 				await page.goto(meerkat.url);
 				const wrapToggle = page.locator(".diff-toolbar .wrap-toggle input[type=checkbox]");
 				await expect(wrapToggle).toBeChecked();
-				if (!wrap) await wrapToggle.uncheck();
-
 				const file = page.locator(".file-section").filter({ hasText: "a.txt" });
+				// The toggle round-trips through the server before the diff
+				// swaps tables, so wait for the wrap-off table, whose hunk rows
+				// carry data-side, before measuring anything in it.
+				if (!wrap) {
+					await wrapToggle.uncheck();
+					await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
+				}
+
 				const expandButtons = file.locator(
 					'td.diff-line-hunk-action button[title^="Expand"]',
 				);

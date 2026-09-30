@@ -1141,7 +1141,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "src_widget.rs", effective_oid: oid}],
-      head_branch: "main"
+      head_branch: "main",
+      precommit?: true
     }
 
     {view, rid} = mount_bound(conn, state, repo)
@@ -1194,18 +1195,47 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view =
       mount_unbound(conn, %ReviewState{
         files: [%{@plain_file | effective_oid: nil}],
-        head_branch: "main"
+        head_branch: "main",
+        precommit?: true
       })
 
     html = render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
     assert html =~ "didn&#39;t persist"
   end
 
+  test "ticking Approved in a PR / range review leaves the approval cache alone", %{conn: conn} do
+    repo = tmp_git_repo()
+
+    # A staged-mode approval already cached for the same branch name.
+    ApprovalCache.modify(ApprovalCache.path_for(repo), fn cache ->
+      ApprovalCache.approve(cache, "feature", "src/widget.rs", "staged-oid")
+    end)
+
+    state = %ReviewState{files: [%{@plain_file | effective_oid: nil}], head_branch: "feature"}
+    {view, rid} = mount_bound(conn, state, repo)
+
+    html = render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    refute html =~ "didn&#39;t persist"
+    assert ReviewServer.get_state(rid).approved_file_names == MapSet.new(["src/widget.rs"])
+
+    # Un-tick: bound mode makes this a real unapprove, which must not
+    # drop the staged approval cached under the same branch name.
+    render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    assert ReviewServer.get_state(rid).approved_file_names == MapSet.new()
+
+    assert ApprovalCache.approved?(
+             ApprovalCache.load_for(repo),
+             "feature",
+             "src/widget.rs",
+             "staged-oid"
+           )
+  end
+
   test "approving outside a git repo skips persistence without flashing", %{conn: conn} do
     dir = Path.join(System.tmp_dir!(), "meerkat-lv-nogit-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
 
-    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}]})
+    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}], precommit?: true})
     Application.put_env(:meerkat, :repo_path, dir)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
@@ -1239,7 +1269,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: oid}],
-      head_branch: "main"
+      head_branch: "main",
+      precommit?: true
     }
 
     put_state(state)

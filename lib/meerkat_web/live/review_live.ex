@@ -280,12 +280,13 @@ defmodule MeerkatWeb.ReviewLive do
           _ = ReviewServer.set_approved(rid, file_name, becoming_approved?)
         end
 
-        # Mirror into the global per-branch approval cache so future
-        # hook runs on this branch can short-circuit the UI via the
-        # staged-diff fast path. Best-effort: a write failure just
-        # means the user re-ticks Approved next round — but we
-        # surface the failure as a flash so the user knows the tick
-        # isn't durable instead of finding out next session.
+        # In a staged review, mirror into the global per-branch
+        # approval cache so future hook runs on this branch can
+        # short-circuit the UI via the staged-diff fast path.
+        # Best-effort: a write failure just means the user re-ticks
+        # Approved next round — but we surface the failure as a flash
+        # so the user knows the tick isn't durable instead of finding
+        # out next session.
         persist_result =
           persist_approval_cache_toggle(
             repo_path,
@@ -815,6 +816,16 @@ defmodule MeerkatWeb.ReviewLive do
          "#{file_name} changed since you opened the review — refresh to see the new content before approving."}
     end
   end
+
+  # Only the staged pre-commit flow matches approvals against the
+  # cache, and only it has blob OIDs to content-address against. A
+  # PR, range or single-ref review has neither, and its `head_branch`
+  # can name the same branch whose staged approvals the cache holds —
+  # so it leaves the cache alone.
+  defp persist_approval_cache_toggle(_repo_path, _file_name, _approved?, _branch, %ReviewState{
+         precommit?: false
+       }),
+       do: :ok
 
   defp persist_approval_cache_toggle(repo_path, file_name, approved?, branch, state) do
     with path when is_binary(path) <- ApprovalCache.path_for(repo_path),
