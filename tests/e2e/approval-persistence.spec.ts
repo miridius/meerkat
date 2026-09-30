@@ -3,24 +3,7 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
-import { expect, test } from "./lib/test";
-
-// Wait for LiveView to finish joining — phx-click handlers aren't bound
-// until the root view is `phx-connected`, and events fired before then
-// are dropped silently. The `page` fixture's goto does this, but pages
-// from `context.newPage()` don't, and each round needs a fresh page so a
-// dead round's socket doesn't abort the next navigation.
-async function gotoConnected(page: Page, url: string): Promise<void> {
-	await page.goto(url);
-	await page.waitForFunction(
-		() =>
-			document
-				.querySelector("[data-phx-main]")
-				?.classList.contains("phx-connected") === true,
-		undefined,
-		{ timeout: 45_000 },
-	);
-}
+import { expect, gotoConnected, test } from "./lib/test";
 
 // A deletion's approval content-addresses against the HEAD pre-image
 // (the content being removed). It once carried an empty `effective_oid`
@@ -54,6 +37,8 @@ test.describe("approval persistence across review rounds", () => {
 			// write lands, racing the kill below.
 			const round1 = await startMeerkat({ fixture, keepFixture: true });
 			rounds.push(round1);
+			// Each round gets a fresh page so a dead round's socket doesn't
+			// abort the next navigation.
 			const page1 = await context.newPage();
 			await gotoConnected(page1, round1.url);
 			await goneSection(page1)

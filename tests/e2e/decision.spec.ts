@@ -49,9 +49,9 @@ test.describe("decision flow", () => {
 		// the rewrite — Rust's behaviour is short-circuit auto-approve
 		// BEFORE binding the review server, so meerkat never prints a
 		// URL and never blocks. The default startMeerkat() helper waits
-		// on a URL that never arrives, so we spawn meerkat directly here
-		// (and hard-cap the exit wait to surface a regression as a
-		// failed test rather than a 30s suite-timeout hang).
+		// on a URL that never arrives, so we spawn meerkat directly here,
+		// and fail as soon as it prints one: a review opened is a review
+		// that blocks on a human.
 		const fixture = makeFixture({ files: {} });
 		try {
 			const proc = spawn(
@@ -61,19 +61,16 @@ test.describe("decision flow", () => {
 			);
 
 			let stderrBuf = "";
-			proc.stderr?.on("data", (c: Buffer) => {
-				stderrBuf += c.toString("utf8");
-			});
-
 			const exitCode = await new Promise<number | null>((resolve, reject) => {
-				const timer = setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGTERM");
-					reject(new Error(`auto-approve did not finish within 5s\nstderr:\n${stderrBuf}`));
-				}, 5_000);
-				proc.once("exit", (code) => {
-					clearTimeout(timer);
-					resolve(code);
+				proc.stderr?.on("data", (c: Buffer) => {
+					stderrBuf += c.toString("utf8");
+					if (/Paused for human review at http/.test(stderrBuf)) {
+						proc.kill("SIGTERM");
+						reject(new Error(`an empty diff opened a review instead of auto-approving\nstderr:\n${stderrBuf}`));
+					}
 				});
+				// "close", not "exit": stderr is read to its end before the checks below.
+				proc.once("close", (code) => resolve(code));
 			});
 
 			expect(exitCode).toBe(0);

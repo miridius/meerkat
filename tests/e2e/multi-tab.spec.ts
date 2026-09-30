@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "./lib/test";
+import { expect, gotoConnected, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 
 // Multi-tab consistency. `Meerkat.ReviewServer` owns the canonical
@@ -15,8 +15,8 @@ test.describe("multi-tab consistency", () => {
 		try {
 			const tabA = await context.newPage();
 			const tabB = await context.newPage();
-			await tabA.goto(meerkat.url);
-			await tabB.goto(meerkat.url);
+			await gotoConnected(tabA, meerkat.url);
+			await gotoConnected(tabB, meerkat.url);
 
 			await addGlobalComment(tabA, "comment from tab A");
 
@@ -37,8 +37,8 @@ test.describe("multi-tab consistency", () => {
 		try {
 			const tabA = await context.newPage();
 			const tabB = await context.newPage();
-			await tabA.goto(meerkat.url);
-			await tabB.goto(meerkat.url);
+			await gotoConnected(tabA, meerkat.url);
+			await gotoConnected(tabB, meerkat.url);
 
 			await addGlobalComment(tabA, "to be removed");
 
