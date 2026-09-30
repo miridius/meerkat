@@ -85,10 +85,7 @@ it for pure logic, don't chase it to zero on I/O glue.
   already handles the case). Document *why*. Never delete a real safety guard
   just to remove the mutation point.
 - **Pure observability** — the mutation only changes log/`IO.puts` message text.
-- **I/O wiring already covered end-to-end** — a `StatementDeletion`/conditional
-  mutant on thin glue (config assembly, `server_info` parsing, the CLI entry
-  point, the staged-files→classify plumbing) whose behaviour the Playwright
-  suite already exercises. muex can't see that coverage. Do **not** duplicate it
-  in a real-git-fixture ExUnit test — those are redundant with e2e, fight the
-  repo's unit-vs-e2e split, and (doing concurrent `git` I/O in an `async` module)
-  flake. Name the e2e test that covers it instead.
+- **Unreachable I/O seam** — a mutant on code ExUnit cannot reach, such as
+  `parse_args/1`'s `System.halt(64)`.
+  - Explain why ExUnit cannot reach that code.
+  - Name the e2e test that kills the mutant.

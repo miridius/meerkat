@@ -43,8 +43,10 @@ The end-to-end loop for a meerkat bug report or feature request:
    real diff through `bin/meerkat-beam` from this checkout and use
    the changed behaviour. Once `bun run test` passes, and before
    the PR is opened, the `meerkat-qa` agent exercises the changed
-   behaviour the way a user meets it. Each bug it finds becomes a new
-   e2e test, which fails before the fix.
+   behaviour the way a user meets it. Turn each QA-found bug into a
+   test that fails before the fix, at the lowest layer that reaches
+   it; use e2e only when lower-layer tests cannot reach the seam,
+   1-3 tests per seam.
 3. **Keep going until it's PR-ready, and meet every requirement the
    user asked for or approved.** Don't stop part way through. Don't
    ask the user "should I continue?" or "should I do X later?" — just
@@ -87,9 +89,13 @@ This is a Lefthook script, not a command, so history-only force-pushes still get
 
 `bun run test` runs `mix test`, then `bun test` in `assets/`, then the Playwright e2e suite. `git commit --no-verify` and `git push --no-verify` bypass their respective hooks.
 
-When you change behaviour, change or add a test — ExUnit in
-`test/**/*_test.exs`, Playwright e2e in `tests/e2e/*.spec.ts`. The
-Playwright suite IS the behavioural contract.
+When behaviour changes, choose the lowest layer that exercises it:
+- Use ExUnit (`test/**/*_test.exs`, including LiveViewTest) or asset
+  `bun test` for behaviour they can reach.
+- Use Playwright (`tests/e2e/*.spec.ts`) only for seams those tests
+  cannot reach, 1-3 tests per seam: browser Svelte/JS to LiveView,
+  CLI to BEAM exit/stdout, and process lifecycle.
+- Keep owned/local behaviour real; mock only boundaries we don't own.
 
 ## Mutation testing
 
@@ -124,9 +130,7 @@ read directly from this tree, so:
   code 75 on any file change under `lib/`, the shepherd loop in
   `bin/meerkat-beam` respawns on the same port, and LiveView's
   client auto-reconnects. Phoenix's request-time code reloader is
-  off in dev (it fought `Meerkat.CLI`'s `Application.put_env` +
-  manual-supervisor startup pattern); the DevWatcher restart is
-  the dev-iteration story.
+  off in dev. The DevWatcher restart replaces it.
 
 ```bash
 scripts/dev-install.sh        # ~/.local/bin/meerkat → this branch
