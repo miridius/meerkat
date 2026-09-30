@@ -10,6 +10,7 @@
   --muted: #8b949e;
   --accent: #58a6ff;
   --accent-strong: #1f6feb;
+  --accent-soft: rgba(31, 111, 235, 0.32);
   --success: #2ea043;
   --success-strong: #3fb950;
   --warn: #d29922;
@@ -554,7 +555,9 @@ a.chip-link:hover .chip-value {
   color: var(--muted);
   cursor: pointer;
 }
-.gutter-line-num:hover {
+/* :not(:disabled) lifts this above the generic
+   button:hover:not(:disabled) rule, which would otherwise win. */
+.gutter-line-num:hover:not(:disabled) {
   background: var(--accent-strong);
   color: #ffffff;
   border-color: var(--accent-strong);
