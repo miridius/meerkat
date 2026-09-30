@@ -49,6 +49,8 @@ defmodule Meerkat.PreCommitHookTest do
 
     # test/scripts/bump_deps_test.exs covers the dependency bump.
     File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
+    # Stands in for the per-file runner, so the stubs log its gate as `mix test`.
+    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
 
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.mkdir_p!(Path.join(work, "assets"))
