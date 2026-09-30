@@ -1,4 +1,4 @@
-import { type Locator } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 

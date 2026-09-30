@@ -53,6 +53,28 @@ test.describe("diff line click + drag selection", () => {
 		}
 	});
 
+	test("the lines in a drag's range are highlighted over the add shading", async ({ page }) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/main.rs" });
+			const lines = fileSection.locator("td.diff-line-num span[data-line-new-num]");
+			await lines.nth(0).hover();
+			await page.mouse.down();
+			await lines.nth(2).hover();
+
+			const numCell = fileSection.locator("td.diff-line-num.drag-selecting").first();
+			const codeCell = fileSection.locator("tr.drag-selecting > td:not(.diff-line-num)").first();
+			await expect(numCell).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await expect(numCell).toHaveCSS("color", "rgb(255, 255, 255)");
+			await expect(codeCell).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await page.mouse.up();
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	// Split-mode number spans have `pointer-events: none` since
 	// @git-diff-view 0.1.4 — the td is the event target, a path the
 	// unified-mode tests above never exercise.

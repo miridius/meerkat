@@ -192,7 +192,7 @@
     // as prose feedback ("we should probably ...") without a
     // concrete code rewrite.
     if (code.trim().length === 0) return prose;
-    const fence = "```" + (language || "");
+    const fence = `\`\`\`${language || ""}`;
     return `${prose}\n\n${fence}\n${code}\n\`\`\``;
   }
 

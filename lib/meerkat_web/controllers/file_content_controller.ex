@@ -84,28 +84,26 @@ defmodule MeerkatWeb.FileContentController do
   defp fetch_file("unbound", _idx), do: :no_review
 
   defp fetch_file(rid, idx) do
-    try do
-      ReviewServer.get_file_at(rid, idx)
-    catch
-      :exit, {:noproc, _} ->
-        :no_review
+    ReviewServer.get_file_at(rid, idx)
+  catch
+    :exit, {:noproc, _} ->
+      :no_review
 
-      :exit, {:timeout, _} ->
-        IO.puts(
-          :stderr,
-          "meerkat: FileContentController timed out fetching file #{idx} for review #{rid}"
-        )
+    :exit, {:timeout, _} ->
+      IO.puts(
+        :stderr,
+        "meerkat: FileContentController timed out fetching file #{idx} for review #{rid}"
+      )
 
-        :timeout
+      :timeout
 
-      :exit, reason ->
-        IO.puts(
-          :stderr,
-          "meerkat: FileContentController couldn't fetch file #{idx} for review #{rid}: " <>
-            "#{inspect(reason)}"
-        )
+    :exit, reason ->
+      IO.puts(
+        :stderr,
+        "meerkat: FileContentController couldn't fetch file #{idx} for review #{rid}: " <>
+          "#{inspect(reason)}"
+      )
 
-        {:exit, reason}
-    end
+      {:exit, reason}
   end
 end

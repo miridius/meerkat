@@ -121,7 +121,7 @@ if ! self_test > /dev/null; then
   exit 1
 fi
 
-# Each argument is the tip of a ref being pushed; scripts/pre-push.sh
+# Each argument is the tip of a ref being pushed; .lefthook/pre-push/pre-push.sh
 # passes them from the ref list `git push` gives the hook. Run by hand
 # with none, it checks HEAD. The commits checked are the ones no
 # remote-tracking branch has yet, since this push is what publishes

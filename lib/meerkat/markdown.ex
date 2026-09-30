@@ -99,26 +99,27 @@ defmodule Meerkat.Markdown do
   # ~~~ prefix) while inside a code block; a blank line only ends the
   # current block when no fence is open.
   defp group_lines(lines) do
-    {blocks, current, _fence} =
-      Enum.reduce(lines, {[], [], nil}, fn line, {blocks, current, fence} ->
-        cond do
-          fence != nil ->
-            if fence_close?(line, fence),
-              do: {blocks, [line | current], nil},
-              else: {blocks, [line | current], fence}
-
-          (marker = fence_open(line)) != nil ->
-            {blocks, [line | current], marker}
-
-          String.trim(line) == "" ->
-            {flush(blocks, current), [], nil}
-
-          true ->
-            {blocks, [line | current], nil}
-        end
-      end)
+    {blocks, current, _fence} = Enum.reduce(lines, {[], [], nil}, &group_line/2)
 
     flush(blocks, current) |> Enum.reverse()
+  end
+
+  defp group_line(line, {blocks, current, fence}) do
+    cond do
+      fence != nil ->
+        if fence_close?(line, fence),
+          do: {blocks, [line | current], nil},
+          else: {blocks, [line | current], fence}
+
+      (marker = fence_open(line)) != nil ->
+        {blocks, [line | current], marker}
+
+      String.trim(line) == "" ->
+        {flush(blocks, current), [], nil}
+
+      true ->
+        {blocks, [line | current], nil}
+    end
   end
 
   defp flush(blocks, []), do: blocks

@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Locator, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";

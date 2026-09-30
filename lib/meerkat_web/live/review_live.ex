@@ -174,6 +174,12 @@ defmodule MeerkatWeb.ReviewLive do
     if MapSet.member?(set, key), do: MapSet.delete(set, key), else: MapSet.put(set, key)
   end
 
+  defp show_rendered(socket, %{file_name: file_name} = file) do
+    %{rendered_files: rendered, rendered_html: cache} = socket.assigns
+    cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
+    assign(socket, rendered_files: MapSet.put(rendered, file_name), rendered_html: cache)
+  end
+
   defp render_markdown_sides(file) do
     Meerkat.Markdown.render_diff_sides(
       file.old_content || "",
@@ -311,12 +317,9 @@ defmodule MeerkatWeb.ReviewLive do
         # event so the just-approved header re-anchors to the top of
         # the viewport.
         socket =
-          if becoming_approved? do
-            idx = Enum.find_index(state.files, &(&1.file_name == file_name))
-            if idx, do: push_event(socket, "scroll-into-view", %{id: "file-#{idx}"}), else: socket
-          else
-            socket
-          end
+          if becoming_approved?,
+            do: scroll_file_into_view(socket, state.files, file_name),
+            else: socket
 
         {:noreply, socket}
 
@@ -536,7 +539,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("file.toggle_rendered", %{"file_name" => file_name}, socket) do
-    %{state: state, rendered_files: rendered, rendered_html: cache} = socket.assigns
+    %{state: state, rendered_files: rendered} = socket.assigns
 
     if MapSet.member?(rendered, file_name) do
       {:noreply, assign(socket, rendered_files: MapSet.delete(rendered, file_name))}
@@ -551,10 +554,7 @@ defmodule MeerkatWeb.ReviewLive do
           {:noreply, socket}
 
         file ->
-          cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
-
-          {:noreply,
-           assign(socket, rendered_files: MapSet.put(rendered, file_name), rendered_html: cache)}
+          {:noreply, show_rendered(socket, file)}
       end
     end
   end
@@ -834,18 +834,21 @@ defmodule MeerkatWeb.ReviewLive do
 
         {:error, :missing_oid}
       else
-        ApprovalCache.modify(path, fn cache ->
-          if approved? do
-            ApprovalCache.approve(cache, branch, file_name, effective_oid_for(state, file_name))
-          else
-            ApprovalCache.unapprove(cache, branch, file_name)
-          end
-        end)
+        ApprovalCache.modify(
+          path,
+          &toggle_cached_approval(&1, approved?, branch, file_name, state)
+        )
       end
     else
       _ -> :ok
     end
   end
+
+  defp toggle_cached_approval(cache, true, branch, file_name, state),
+    do: ApprovalCache.approve(cache, branch, file_name, effective_oid_for(state, file_name))
+
+  defp toggle_cached_approval(cache, false, branch, file_name, _state),
+    do: ApprovalCache.unapprove(cache, branch, file_name)
 
   defp missing_effective_oid?(state, file_name) do
     case effective_oid_for(state, file_name) do
@@ -864,6 +867,11 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
+  defp scroll_file_into_view(socket, files, file_name) do
+    idx = Enum.find_index(files, &(&1.file_name == file_name))
+    if idx, do: push_event(socket, "scroll-into-view", %{id: "file-#{idx}"}), else: socket
+  end
+
   # Approve writes EVERY currently-staged (file_name, oid) into the
   # cache — not just the explicitly-ticked ones — so the next staged-
   # mode hook on this branch can short-circuit the diff for any file
@@ -878,19 +886,21 @@ defmodule MeerkatWeb.ReviewLive do
         :ok
 
       path ->
-        ApprovalCache.modify(path, fn cache ->
-          # `effective_oid` is already on every file_diff (populated by
-          # materialise_staged at mount). No need to re-shell out to
-          # `git ls-files -s` per file inside the cache lockdir.
-          Enum.reduce(files, cache, fn %{file_name: name, effective_oid: oid}, c ->
-            if is_binary(oid) and oid != "",
-              do: ApprovalCache.approve(c, branch, name, oid),
-              else: c
-          end)
-        end)
+        ApprovalCache.modify(path, &approve_staged_files(&1, branch, files))
 
         :ok
     end
+  end
+
+  # `effective_oid` is already on every file_diff (populated by
+  # materialise_staged at mount). No need to re-shell out to
+  # `git ls-files -s` per file inside the cache lockdir.
+  defp approve_staged_files(cache, branch, files) do
+    Enum.reduce(files, cache, fn %{file_name: name, effective_oid: oid}, c ->
+      if is_binary(oid) and oid != "",
+        do: ApprovalCache.approve(c, branch, name, oid),
+        else: c
+    end)
   end
 
   defp clear_pending_answers do
@@ -2009,39 +2019,37 @@ defmodule MeerkatWeb.ReviewLive do
   # file_overrides (persisted — per-row file-filter checkbox wins
   # over every default filter).
   defp visible_indices(state, filter_input, only_file_index) do
-    show_generated? = state.show_generated
-
     state.files
     |> Enum.with_index()
     |> Enum.reduce(MapSet.new(), fn {file, idx}, acc ->
-      ext = extension_of(file.file_name)
+      in_only_file? = only_file_index == nil or only_file_index == idx
 
-      override = Map.get(state.file_overrides, file.file_name)
-
-      cond do
-        override == :show and (only_file_index == nil or only_file_index == idx) and
-            (filter_input == "" or matches_filter?(file.file_name, filter_input)) ->
-          MapSet.put(acc, idx)
-
-        override == :hide ->
-          acc
-
-        not show_generated? and Map.get(file, :is_generated, false) ->
-          acc
-
-        MapSet.member?(state.hidden_extensions, ext) ->
-          acc
-
-        only_file_index != nil and only_file_index != idx ->
-          acc
-
-        filter_input != "" and not matches_filter?(file.file_name, filter_input) ->
-          acc
-
-        true ->
-          MapSet.put(acc, idx)
-      end
+      if visible?(state, file, filter_input, in_only_file?),
+        do: MapSet.put(acc, idx),
+        else: acc
     end)
+  end
+
+  # A `:show` override beats the default filters (generated, hidden
+  # extensions) but not the ephemeral ones (only_file_index,
+  # filter_input); a `:hide` override always hides.
+  defp visible?(state, file, filter_input, in_only_file?) do
+    passes_ephemeral? =
+      in_only_file? and (filter_input == "" or matches_filter?(file.file_name, filter_input))
+
+    case Map.get(state.file_overrides, file.file_name) do
+      :show -> passes_ephemeral?
+      :hide -> false
+      _ -> passes_ephemeral? and not hidden_by_default?(state, file)
+    end
+  end
+
+  defp hidden_by_default?(state, file) do
+    cond do
+      not state.show_generated and Map.get(file, :is_generated, false) -> true
+      MapSet.member?(state.hidden_extensions, extension_of(file.file_name)) -> true
+      true -> false
+    end
   end
 
   defp matches_filter?(file_name, input) do

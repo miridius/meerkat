@@ -1,10 +1,10 @@
 defmodule Meerkat.PrePushHookTest do
-  # Pushes through the repo's real lefthook.yml, scripts/pre-push.sh and
-  # scripts/no-private-refs.sh to a local bare remote. Only outdated.sh is
+  # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
+  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh is
   # replaced, by a stub that records each run and exits with a chosen status.
   use ExUnit.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3]
+  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
 
   @root File.cwd!()
 
@@ -23,16 +23,15 @@ defmodule Meerkat.PrePushHookTest do
     outdated_status = Path.join(base, "outdated-status")
 
     File.mkdir_p!(Path.join(work, "scripts"))
+    File.mkdir_p!(Path.join(work, ".lefthook/pre-push"))
     git(base, ["init", "-q", "--bare", remote])
     git(work, ["init", "-q", "--initial-branch=main"])
     git(work, ["config", "user.email", "t@t.t"])
     git(work, ["config", "user.name", "t"])
     git(work, ["remote", "add", "origin", remote])
 
-    File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
-
-    for script <- ~w(pre-push.sh no-private-refs.sh) do
-      File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
+    for file <- ~w(lefthook.yml .lefthook/pre-push/pre-push.sh scripts/no-private-refs.sh) do
+      File.cp!(Path.join(@root, file), Path.join(work, file))
     end
 
     File.write!(Path.join([work, "scripts", "outdated.sh"]), """
@@ -41,12 +40,7 @@ defmodule Meerkat.PrePushHookTest do
     exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
     """)
 
-    # Where `pnpm install` puts it, for lefthook.yml's `lefthook:` setting.
-    File.mkdir_p!(Path.join(work, "node_modules/.bin"))
-    File.ln_s!(lefthook(), Path.join(work, "node_modules/.bin/lefthook"))
-
-    {_, 0} =
-      System.cmd(lefthook(), ["install"], cd: work, env: hook_env(), stderr_to_stdout: true)
+    Meerkat.TestHelpers.install_lefthook(work)
 
     commit(work, "README.md", "hello\n", "base")
     no_hooks(work, ["push", "-q", "origin", "main"])
@@ -88,6 +82,33 @@ defmodule Meerkat.PrePushHookTest do
     assert out =~ "in a commit message being pushed"
   end
 
+  # lefthook skips a pre-push *command* when `git diff HEAD @{push}` is
+  # empty, which is true of a force-push that changes only history.
+  test "a force-push that only rewrites history runs the checks", ctx do
+    no_hooks(ctx.work, ["switch", "-q", "-c", "feature"])
+    commit(ctx.work, "a.txt", "a\n", "add a")
+    assert {_, 0} = push(ctx.work, ["-u", "origin", "feature"])
+    File.rm!(ctx.marker)
+
+    no_hooks(ctx.work, ["commit", "-q", "--amend", "-m", "reworded"])
+
+    assert {_, 0} = push(ctx.work, ["--force", "origin", "feature"])
+    assert File.exists?(ctx.marker)
+  end
+
+  test "a force-push that only rewrites a commit message to hold a private reference is refused",
+       ctx do
+    no_hooks(ctx.work, ["switch", "-q", "-c", "feature"])
+    commit(ctx.work, "a.txt", "a\n", "add a")
+    assert {_, 0} = push(ctx.work, ["-u", "origin", "feature"])
+
+    no_hooks(ctx.work, ["commit", "-q", "--amend", "-m", "copied from #{@private_path}"])
+
+    assert {out, code} = push(ctx.work, ["--force", "origin", "feature"])
+    assert code != 0
+    assert out =~ "in a commit message being pushed"
+  end
+
   test "deleting a remote branch skips the checks", ctx do
     commit(ctx.work, "a.txt", "a\n", "add a")
     assert {_, 0} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
@@ -118,27 +139,6 @@ defmodule Meerkat.PrePushHookTest do
     assert {_, code} = push(work, ["origin", "HEAD:refs/heads/feature"])
     assert code != 0
     refute File.exists?(marker)
-  end
-
-  defp lefthook do
-    case Path.wildcard(
-           Path.join(@root, "node_modules/.pnpm/lefthook-*/node_modules/lefthook-*/bin/lefthook")
-         ) do
-      [bin | _] -> bin
-      [] -> flunk("lefthook binary not found under node_modules; run `pnpm install`")
-    end
-  end
-
-  # Git exports GIT_DIR and friends to hooks; clear them so a run from inside a
-  # hook still pushes the fixture. LEFTHOOK=0 would silently disable the hook,
-  # and LEFTHOOK_BIN would bypass lefthook.yml's `lefthook:` setting.
-  defp hook_env do
-    [{"LEFTHOOK_BIN", nil}, {"LEFTHOOK", nil}] ++
-      Enum.map(
-        ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
-           GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE),
-        &{&1, nil}
-      )
   end
 
   defp push(work, args) do

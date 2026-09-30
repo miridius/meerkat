@@ -1,4 +1,4 @@
-import { type BrowserContext, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 

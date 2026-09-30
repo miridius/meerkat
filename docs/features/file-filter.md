@@ -58,8 +58,9 @@ Each row in the file-entries list shows:
 - `state.show_generated` (boolean, persisted) — flips
   generated-file visibility.
 - `state.file_overrides` (`%{file_name => :show | :hide}`,
-  persisted) — explicit per-file checkbox state. Takes precedence
-  over the extension / generated / filter rules.
+  persisted) — explicit per-file override. `:hide` always hides;
+  `:show` bypasses only the persisted generated-file and
+  hidden-extension filters, not `only_file_index` or `filter_input`.
 - `filter_input` (string, in-LV ephemeral) — substring filter.
 - `only_file_index` (int | nil, in-LV ephemeral) — "show only
   this file" override.
@@ -72,18 +73,17 @@ they're tab-local narrowing affordances.
 
 ## Composition
 
-The visible-files set is `visible_indices/3` walking each file:
+`visible_indices/3` includes a file only if it passes the applicable rules:
 
-1. If `file_overrides[file_name]` is set, use it directly
-   (`:show` → visible, `:hide` → hidden). This wins over every
-   other rule so the per-row checkbox is always authoritative.
-2. Otherwise, drop generated files unless `show_generated`.
-3. Otherwise, drop files whose extension is in `hidden_extensions`.
-4. If `only_file_index` is set, drop everything else.
-5. If `filter_input` is non-empty, drop files whose base name
-   doesn't contain the substring (case-insensitive).
-
-Order matters: `file_overrides` is first because user-explicit
-choice should beat any heuristic. `only_file_index` short-circuits
-before the substring filter so "only this file" wins over a stale
-filter string.
+1. A `:hide` override always hides the file.
+2. The ephemeral filters apply to every file, including files with a
+   `:show` override. If `only_file_index` is set, every other file is
+   hidden. If `filter_input` is non-empty, the base name must contain
+   it (case-insensitive). These conditions are ANDed, so a file selected
+   by "show only" is still hidden if it does not match the filter string.
+   `filter.show_only` does not clear `filter_input`.
+3. A `:show` override bypasses the persisted default filters, but only
+   after the file passes the ephemeral filters.
+4. Without an override, a file must also pass both persisted default
+   filters: generated files are hidden unless `show_generated`, and
+   files with an extension in `hidden_extensions` are hidden.

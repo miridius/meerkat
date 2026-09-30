@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
@@ -240,6 +240,45 @@ test.describe("commit-message comments", () => {
 
 			await drag(last, 1);
 			await expect(labels).toHaveText([`L${await startOf(1)}–${await endOf(last)}`]);
+		} finally {
+			await teardown(meerkat);
+		}
+	});
+
+	test("hovering a gutter number fills it with the accent colour", async ({ page }) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			const num = page.locator("#commit-msg-gutter .gutter-line-num").first();
+
+			await num.hover();
+			await expect(num).toHaveCSS("background-color", "rgb(31, 111, 235)");
+		} finally {
+			await teardown(meerkat);
+		}
+	});
+
+	test("only the blocks in a gutter drag's range are shaded while dragging", async ({ page }) => {
+		const fixture = makeFixture({ commitMsg: "Subject\n\nBody paragraph.\n\n- one\n- two\n" });
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const blocks = page.locator("#commit-msg-gutter > li");
+			await expect(blocks).toHaveCount(4);
+			const a = await blocks.nth(0).boundingBox();
+			const b = await blocks.nth(1).boundingBox();
+			if (!a || !b) throw new Error("commit-msg blocks not found");
+
+			await page.mouse.move(a.x + 10, a.y + a.height / 2);
+			await page.mouse.down();
+			await page.mouse.move(b.x + 10, b.y + b.height / 2, { steps: 5 });
+
+			await expect(blocks.nth(0)).toHaveClass(/dragging/);
+			await expect(blocks.nth(0)).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await expect(blocks.nth(1)).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await expect(blocks.nth(2)).not.toHaveClass(/dragging/);
+			await expect(blocks.nth(2)).not.toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await page.mouse.up();
 		} finally {
 			await teardown(meerkat);
 		}

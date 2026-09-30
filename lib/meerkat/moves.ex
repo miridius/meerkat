@@ -61,18 +61,7 @@ defmodule Meerkat.Moves do
     candidates =
       removed
       |> Enum.with_index()
-      |> Enum.flat_map(fn {%{content: c}, r_start} ->
-        case Map.get(added_index, c) do
-          nil ->
-            []
-
-          positions ->
-            for a_start <- positions,
-                len = run_length(removed_arr, r_start, added_arr, a_start),
-                len >= @min_block_size,
-                do: {r_start, a_start, len}
-        end
-      end)
+      |> Enum.flat_map(&candidates_from(&1, added_index, removed_arr, added_arr))
       |> Enum.sort_by(fn {_r, _a, len} -> -len end)
 
     {moves, _, _} =
@@ -103,6 +92,19 @@ defmodule Meerkat.Moves do
         existing ++ Enum.reverse(Map.get(moved_by_file, file.file_name, []))
       end)
     end)
+  end
+
+  defp candidates_from({%{content: c}, r_start}, added_index, removed_arr, added_arr) do
+    case Map.get(added_index, c) do
+      nil ->
+        []
+
+      positions ->
+        for a_start <- positions,
+            len = run_length(removed_arr, r_start, added_arr, a_start),
+            len >= @min_block_size,
+            do: {r_start, a_start, len}
+    end
   end
 
   defp range_overlaps?(_start, len, _taken) when len <= 0, do: false
@@ -186,10 +188,8 @@ defmodule Meerkat.Moves do
           k
 
         k > 0 and
-            (r.file_idx != elem(removed_arr, r_start + k - 1).file_idx or
-               a.file_idx != elem(added_arr, a_start + k - 1).file_idx or
-               r.number != elem(removed_arr, r_start + k - 1).number + 1 or
-               a.number != elem(added_arr, a_start + k - 1).number + 1) ->
+            not (continues?(elem(removed_arr, r_start + k - 1), r) and
+                     continues?(elem(added_arr, a_start + k - 1), a)) ->
           k
 
         true ->
@@ -197,6 +197,9 @@ defmodule Meerkat.Moves do
       end
     end
   end
+
+  defp continues?(prev, line),
+    do: line.file_idx == prev.file_idx and line.number == prev.number + 1
 
   defp build_index(lines) do
     lines
@@ -222,23 +225,25 @@ defmodule Meerkat.Moves do
     {_old, _new, acc} =
       hunk
       |> String.split("\n")
-      |> Enum.reduce({0, 0, []}, fn line, {old_ln, new_ln, acc} ->
-        cond do
-          line == "" ->
-            {old_ln, new_ln, acc}
-
-          String.starts_with?(line, "@@ ") ->
-            case parse_hunk_header(line) do
-              {o, n} -> {o, n, acc}
-              _ -> {old_ln, new_ln, acc}
-            end
-
-          true ->
-            consume_line(line, old_ln, new_ln, acc, file_idx, side_char)
-        end
-      end)
+      |> Enum.reduce({0, 0, []}, &collect_hunk_line(&1, &2, file_idx, side_char))
 
     Enum.reverse(acc)
+  end
+
+  defp collect_hunk_line(line, {old_ln, new_ln, acc}, file_idx, side_char) do
+    cond do
+      line == "" ->
+        {old_ln, new_ln, acc}
+
+      String.starts_with?(line, "@@ ") ->
+        case parse_hunk_header(line) do
+          {o, n} -> {o, n, acc}
+          _ -> {old_ln, new_ln, acc}
+        end
+
+      true ->
+        consume_line(line, old_ln, new_ln, acc, file_idx, side_char)
+    end
   end
 
   defp consume_line("-" <> rest, old_ln, new_ln, acc, file_idx, side_char) do

@@ -92,7 +92,7 @@ export function languageFor(fileName: string): string {
 	const direct = shikiIdByAlias.get(ext);
 	if (direct) return direct;
 
-	for (const lang of linguistByExtension.get("." + ext) ?? []) {
+	for (const lang of linguistByExtension.get(`.${ext}`) ?? []) {
 		const id = shikiIdForLinguist(lang);
 		if (id) return id;
 	}

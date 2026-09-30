@@ -76,9 +76,9 @@
 </script>
 
 <script lang="ts">
-  import { DiffFile, DiffView, DiffModeEnum, SplitSide } from "@git-diff-view/svelte";
+  import { DiffFile, DiffView, DiffModeEnum } from "@git-diff-view/svelte";
   import "@git-diff-view/svelte/styles/diff-view.css";
-  import { mount, unmount, tick } from "svelte";
+  import { mount, unmount } from "svelte";
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
@@ -525,7 +525,9 @@
       const wantSide = c.side === "old" ? "old" : "new";
       for (let n = c.start_line; n <= c.end_line; n++) {
         const rows = rowsBySideLine.get(`${wantSide}:${n}`);
-        rows?.forEach((row) => row.classList.add("has-inline-comment"));
+        rows?.forEach((row) => {
+          row.classList.add("has-inline-comment");
+        });
       }
     }
   }
@@ -626,9 +628,9 @@
     // Final sweep: any stamped row not in our list (e.g. cloned by
     // @git-diff-view's virtualisation) goes too. They carry a stable
     // attribute we set on creation.
-    diffContainer
-      .querySelectorAll("tr.meerkat-comment-row")
-      .forEach((tr) => tr.parentNode?.removeChild(tr));
+    diffContainer.querySelectorAll("tr.meerkat-comment-row").forEach((tr) => {
+      tr.parentNode?.removeChild(tr);
+    });
 
     for (const group of commentGroups()) {
       const rows = anchorRowsFor(group.side, group.line);
@@ -830,7 +832,9 @@
     diffContainer.querySelectorAll(".moved-line").forEach((el) => {
       el.classList.remove("moved-line", "moved-pair-0", "moved-pair-1", "moved-pair-2", "moved-pair-3");
     });
-    diffContainer.querySelectorAll(".moved-badge").forEach((el) => el.remove());
+    diffContainer.querySelectorAll(".moved-badge").forEach((el) => {
+      el.remove();
+    });
   }
 
   function applyMovedHighlights(blocks: MovedBlock[]) {
@@ -898,11 +902,15 @@
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       // Flash highlight for 1.6s.
       for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-        anchorRowsFor(ev.detail.side, ln).forEach((r) => r.classList.add("moved-flash"));
+        anchorRowsFor(ev.detail.side, ln).forEach((r) => {
+          r.classList.add("moved-flash");
+        });
       }
       setTimeout(() => {
         for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-          anchorRowsFor(ev.detail.side, ln).forEach((r) => r.classList.remove("moved-flash"));
+          anchorRowsFor(ev.detail.side, ln).forEach((r) => {
+            r.classList.remove("moved-flash");
+          });
         }
       }, 1600);
     };
@@ -1018,17 +1026,14 @@
      between dragStart and dragCurrent so the reviewer can see the
      range they're about to anchor a comment on. Cleared on
      pointerup / pointercancel via the $effect that drives it. */
-  /* `!important` so the highlight wins over the diff library's
-     per-row `.diff-line-add` / `.diff-line-del` backgrounds —
-     without it the green/red add/del shading completely masks
-     the drag indicator. */
   :global(.diff-content td.diff-line-old-num.drag-selecting),
   :global(.diff-content td.diff-line-new-num.drag-selecting),
   :global(.diff-content td.diff-line-num.drag-selecting) {
-    background: #1f6feb !important;
+    /* biome-ignore lint/complexity/noImportantStyles: the diff library sets the line number's color inline, which only `!important` can override. */
     color: #ffffff !important;
   }
   :global(.diff-content tr.diff-line.drag-selecting > td) {
+    /* biome-ignore lint/complexity/noImportantStyles: the diff library sets each cell's background-color inline, which only `!important` can override; without it the add/del shading masks the drag indicator. */
     background: rgba(31, 111, 235, 0.32) !important;
     box-shadow: inset 0 0 0 9999px rgba(31, 111, 235, 0.18);
   }

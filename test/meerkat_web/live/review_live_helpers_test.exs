@@ -222,6 +222,11 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert ReviewLive.visible_indices_for_test(@rs, "", 0) == MapSet.new([0])
     end
 
+    test "only_file_index and the substring filter must both match" do
+      assert ReviewLive.visible_indices_for_test(@rs, "widget", 0) == MapSet.new([0])
+      assert ReviewLive.visible_indices_for_test(@rs, "read", 0) == MapSet.new([])
+    end
+
     test "substring filter matches on the base name, case-insensitive" do
       assert ReviewLive.visible_indices_for_test(@rs, "WIDGET", nil) == MapSet.new([0])
       assert ReviewLive.visible_indices_for_test(@rs, "read", nil) == MapSet.new([1])

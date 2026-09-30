@@ -127,27 +127,25 @@ defmodule Meerkat.CLI do
   end
 
   defp run_live_review_safe(target, opts) do
-    try do
-      run_live_review(target, opts)
-    rescue
-      e ->
-        IO.puts(
-          :stderr,
-          "meerkat: live-review crashed — defaulting to REJECT (commit aborted).\n" <>
-            Exception.format(:error, e, __STACKTRACE__)
-        )
+    run_live_review(target, opts)
+  rescue
+    e ->
+      IO.puts(
+        :stderr,
+        "meerkat: live-review crashed — defaulting to REJECT (commit aborted).\n" <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
 
-        2
-    catch
-      kind, reason ->
-        IO.puts(
-          :stderr,
-          "meerkat: live-review caught #{inspect(kind)} #{inspect(reason)} — " <>
-            "defaulting to REJECT (commit aborted)."
-        )
+      2
+  catch
+    kind, reason ->
+      IO.puts(
+        :stderr,
+        "meerkat: live-review caught #{inspect(kind)} #{inspect(reason)} — " <>
+          "defaulting to REJECT (commit aborted)."
+      )
 
-        2
-    end
+      2
   end
 
   defp run_live_review(target, opts) do
