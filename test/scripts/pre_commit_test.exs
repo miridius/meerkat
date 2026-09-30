@@ -55,8 +55,8 @@ defmodule Meerkat.PreCommitHookTest do
 
     Meerkat.TestHelpers.install_lefthook(work)
 
-    # The compile stub records what the snapshot holds and which git
-    # variables leak into it.
+    # The compile stub records where it runs and which git variables leak
+    # into it.
     File.mkdir_p!(stubs)
 
     File.write!(Path.join(stubs, "stub"), """
@@ -66,8 +66,6 @@ defmodule Meerkat.PreCommitHookTest do
     if [ "$cmd" = "mix compile --warnings-as-errors" ]; then
       {
         echo "pwd=$PWD"
-        echo "code=$(cat code.txt)"
-        echo "untracked=$([ -e untracked.txt ] && echo yes || echo no)"
         env | grep '^GIT_' | sed 's/^/env=/'
       } > '#{seen}'
     fi
@@ -80,30 +78,26 @@ defmodule Meerkat.PreCommitHookTest do
     {:ok, work: work, stubs: stubs, log: log, seen: seen}
   end
 
-  test "a commit runs every gate against the staged snapshot, not the working tree", ctx do
+  test "a commit runs every gate in the checkout", ctx do
     stage(ctx.work, "code.txt", "staged\n")
-    File.write!(Path.join(ctx.work, "code.txt"), "unstaged\n")
-    File.write!(Path.join(ctx.work, "untracked.txt"), "x\n")
 
     assert {out, 0} = commit(ctx, ["-m", "change code"])
     assert out =~ "all checks passed"
     assert gates_run(ctx) == @gates
 
     seen = seen(ctx)
-    assert "code=staged" in seen
-    assert "untracked=no" in seen
-    refute "pwd=#{ctx.work}" in seen
+    assert "pwd=#{git(ctx.work, ["rev-parse", "--show-toplevel"])}" in seen
 
     for var <- ~w(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX) do
       refute Enum.any?(seen, &String.starts_with?(&1, "env=#{var}=")), "#{var} leaked"
     end
   end
 
-  test "`git commit -a` checks the commit's contents", ctx do
+  test "`git commit -a` runs the checks", ctx do
     File.write!(Path.join(ctx.work, "code.txt"), "all\n")
 
     assert {_, 0} = commit(ctx, ["-am", "change code"])
-    assert "code=all" in seen(ctx)
+    assert gates_run(ctx) == @gates
   end
 
   for gate <- @gates do
@@ -116,15 +110,6 @@ defmodule Meerkat.PreCommitHookTest do
       assert git(ctx.work, ["rev-parse", "HEAD"]) == head
       assert List.last(gates_run(ctx)) == unquote(gate)
     end
-  end
-
-  test "the snapshot worktree is removed after a failing and a passing commit", ctx do
-    stage(ctx.work, "code.txt", "staged\n")
-    assert {_, code} = commit(ctx, ["-m", "fail"], [{"STUB_FAIL", "mix test"}])
-    assert code != 0
-    assert {_, 0} = commit(ctx, ["-m", "pass"])
-
-    assert [_only] = String.split(git(ctx.work, ["worktree", "list"]), "\n")
   end
 
   test "a commit changing only Markdown files skips the checks", ctx do

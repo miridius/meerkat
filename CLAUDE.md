@@ -63,7 +63,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh` first, then `scripts/check.sh`. They are piped, so if the first script refuses the commit, the checks do not run.
 
-`check.sh` checks the exact staged snapshot in a temporary linked worktree; unstaged and untracked files are excluded. It skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
+`check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 
 1. `mix deps.get`
 2. `pnpm install --frozen-lockfile --ignore-scripts --prefer-offline`
