@@ -1,4 +1,20 @@
 defmodule Meerkat.ReviewStateTest do
+  # --- Documented surviving mutants (review-and-merge step 5) ---
+  #
+  # Equivalent (no input distinguishes mutant from original):
+  # * Deleting `split_off_fenced_code/3`'s `[] -> out` case clause:
+  #   the empty chunk then reaches `chunk_paragraphs/1`, which turns
+  #   `[]` into no blocks.
+  #
+  # Thin I/O wiring already covered end-to-end by named Playwright
+  # specs (muex runs ExUnit only and cannot see them):
+  # * The `alias` line and each `from_target/2` clause, which read git
+  #   and GitHub — smoke.spec.ts "renders the page with header, files,
+  #   and decision footer" (staged, via --commit-msg), entry-points.spec.ts "REF~1..REF
+  #   reviews the diff of a single committed change" (single ref) and
+  #   "two-dot range (A..B) shows the diff between two refs" (range),
+  #   and pr-mode.spec.ts (PR).
+
   use ExUnit.Case, async: true
 
   alias Meerkat.ReviewState

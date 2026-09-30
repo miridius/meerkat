@@ -12,7 +12,7 @@ reload causes the LV's WebSocket to reconnect.
 canonical `%ReviewState{}`. Every mutation flows through it via
 `add_*_comment`, `remove_comment`, `set_approved`,
 `set_extension_hidden`, `set_show_generated`, `set_learn_from_this`,
-and `set_open_form`. LiveViews never write state directly.
+`open_form`, and `close_form`. LiveViews never write state directly.
 
 After every mutation, `ReviewServer.update/2`:
 
@@ -30,11 +30,11 @@ After every mutation, `ReviewServer.update/2`:
 when `connected?(socket)`. Every connected tab receives the
 broadcast.
 
-`handle_info({:state_changed, state}, socket)` re-assigns both
-`state` and `open_form` (the latter is derived from
-`state.open_form`). The LV re-renders; LiveSvelte propagates the
-new props to DiffViewer / InlineComment / CommentForm; the diff
-viewer's `$effect` re-injects rows.
+`handle_info({:state_changed, state}, socket)` re-assigns `state`
+and `open_forms` (from `state.open_forms`). The LV re-renders;
+LiveSvelte propagates the new props to DiffViewer / InlineComment /
+CommentForm. DiffViewer reconciles inline form rows by key, keeping
+forms mounted and re-placing rows after a table re-render.
 
 So: tab A adds a comment → ReviewServer broadcasts → tab B's LV
 sees `state_changed` → tab B re-renders with the new comment
@@ -42,18 +42,25 @@ visible.
 
 ## Open-form propagation
 
-A subtle case: when tab A opens an inline comment form, tab B
-also sees the form open (same anchor, same prefilled body). This
-is intentional — `open_form` lives on persisted state so the
-form survives a BEAM restart. The byproduct is multi-tab
-co-editing: typing in one tab's form updates the localStorage
-draft (shared via the `draftKey`), but the textarea content
-doesn't push live across tabs (LV's open_form carries metadata,
-not body text).
+Open-form state is shared through persisted
+`ReviewState.open_forms`. Every tab renders every open form, including
+forms opened by other tabs. If tab 1 opens A and tab 2 opens B, both
+A and B remain open in both tabs. Only an add form's prose is held
+in its localStorage draft; open-form state carries metadata, not
+live textarea content.
 
-If the reviewer opens form A in tab 1, then form B in tab 2, only
-form B is open globally — form A in tab 1 disappears. This is the
-write-through update at work.
+Each form carries a `form_key` derived from its surface, anchor and
+edit target. Submit and cancel act only on the form with that key.
+When another tab closes a form while its submit is in flight, the
+submit saves nothing. The server replies with an error, but the close
+has already reached the submitting tab, so the form is gone before
+the reply arrives and no error is shown. If the other tab closed the
+add form with Cancel, that cancel clears the form's shared
+localStorage draft, so the text typed in the submitting tab is lost.
+The error reply only prevents that tab from taking the success path
+that would clear the draft itself.
+Removing a comment also closes any open form editing it in every tab,
+so saving that form cannot bring the comment back.
 
 ## Tab close
 

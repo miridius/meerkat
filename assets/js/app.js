@@ -202,6 +202,11 @@ const hooks = {
         return { li, start: s, end: e };
       };
 
+      // Once the gutter captures the pointer, every move and up event
+      // targets the <ol> itself, so find the block under the pointer.
+      const lineUnder = (ev) =>
+        lineFor(document.elementFromPoint(ev.clientX, ev.clientY) ?? ev.target);
+
       const clearHighlight = () => {
         for (const el of gutter.querySelectorAll("li.dragging")) {
           el.classList.remove("dragging");
@@ -244,7 +249,7 @@ const hooks = {
 
       this._onPointerMove = (ev) => {
         if (!dragStart) return;
-        const hit = lineFor(ev.target);
+        const hit = lineUnder(ev);
         if (!hit) return;
         if (hit.li === dragEnd?.li) return;
         // First time the pointer enters a different block — this is
@@ -271,7 +276,7 @@ const hooks = {
 
       this._onPointerUp = (ev) => {
         if (!dragStart) return;
-        const finalHit = lineFor(ev.target) ?? dragEnd ?? dragStart;
+        const finalHit = lineUnder(ev) ?? dragEnd ?? dragStart;
         const lo = Math.min(dragStart.start, finalHit.start);
         const hi = Math.max(dragStart.end, finalHit.end);
         const crossedBlocks = finalHit.li !== dragStart.li;
@@ -430,6 +435,30 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (typeof id !== "string") return;
   const el = document.getElementById(id);
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+});
+
+// A footer open-form link: the server has just expanded / unhidden the
+// form's file, so the form may take a few frames to mount (DiffViewer
+// injects inline forms two frames after render).
+window.addEventListener("phx:comment-form:reveal", (e) => {
+  const { key, id } = e.detail ?? {};
+  if (typeof key !== "string" || typeof id !== "string") return;
+  const find = () =>
+    document.getElementById(id) ??
+    document.querySelector(`tr.meerkat-form-row[data-meerkat-form-key="${CSS.escape(key)}"]`);
+  const deadline = performance.now() + 3000;
+  const tick = () => {
+    const el = find();
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      el.querySelector("textarea")?.focus({ preventScroll: true });
+    } else if (performance.now() < deadline) {
+      requestAnimationFrame(tick);
+    } else {
+      console.warn("meerkat: open form not found to reveal", key);
+    }
+  };
+  tick();
 });
 
 // Scroll preservation across a live-restart full reload. When a new

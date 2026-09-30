@@ -608,6 +608,10 @@ a.chip-link:hover .chip-value {
   margin: 8px 0 0;
 }
 
+.commit-msg-form {
+  margin-top: 8px;
+}
+
 /* --- Global comments --- */
 
 .global-comments {
@@ -1133,6 +1137,21 @@ a.chip-link:hover .chip-value {
 .dirty-marker {
   color: var(--warn);
   font-style: italic;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dirty-form-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--warn);
+  font: inherit;
+  font-style: normal;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .decision-actions {

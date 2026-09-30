@@ -6,8 +6,9 @@ defmodule MeerkatWeb.ReviewLive do
   commit-msg gutter, and inline per-line (anchored via pointer-drag
   selection in `DiffViewer.svelte`).
 
-  Form state is in-LV (which surface is open, edit_id if editing
-  vs adding); comment data lives in the ReviewServer. Submissions
+  Several forms can be open at once (`Meerkat.OpenForms`: surface,
+  anchor, edit_id if editing vs adding); each submit and cancel names
+  its form by key. Comment data lives in the ReviewServer. Submissions
   delegate to `ReviewServer.add_*` / `remove_comment` so the
   GenServer stays the single writer. The `LiveSvelte` socket bridge
   round-trips the form's body / finding_type / learn_from_this from
@@ -22,6 +23,7 @@ defmodule MeerkatWeb.ReviewLive do
     Decision,
     Feedback,
     GitHub,
+    OpenForms,
     PendingAnswers,
     ReviewServer,
     ReviewState
@@ -83,7 +85,7 @@ defmodule MeerkatWeb.ReviewLive do
        timeout_action: Meerkat.Timeout.action(),
        # Restore from persisted state — survives DevWatcher restart,
        # crash, or close-and-reopen of the browser tab.
-       open_form: Map.get(state, :open_form, nil),
+       open_forms: state.open_forms,
        # Set when VersionWatcher signals a newer install; the live-restart
        # is deferred until no comment form is open (the @dirty? gate).
        update_pending: false,
@@ -131,17 +133,27 @@ defmodule MeerkatWeb.ReviewLive do
 
   # Write-through: update the LV assign AND persist to ReviewServer
   # so a BEAM restart (DevWatcher hot reload, crash) or a fresh tab
-  # reconnect finds the same form open at the same anchor. Body
+  # reconnect finds the same forms open at the same anchors. Body
   # content is separately preserved by CommentForm's localStorage
   # draft.
-  defp set_open_form(socket, form) do
-    rid = socket.assigns.review_id
-    if rid != "unbound", do: ReviewServer.set_open_form(rid, form)
-    socket |> assign(open_form: form) |> maybe_apply_update()
+  defp open_form(socket, form),
+    do: change_open_forms(socket, &OpenForms.open(&1, form), &ReviewServer.open_form(&1, form))
+
+  defp close_form(socket, key),
+    do: change_open_forms(socket, &OpenForms.close(&1, key), &ReviewServer.close_form(&1, key))
+
+  defp change_open_forms(socket, change, server_change) do
+    forms =
+      case socket.assigns.review_id do
+        "unbound" -> change.(socket.assigns.open_forms)
+        rid -> server_change.(rid).open_forms
+      end
+
+    socket |> assign(open_forms: forms) |> maybe_apply_update()
   end
 
   # Apply a pending live-restart once it's safe (no comment form open).
-  # Called wherever `open_form` changes; a no-op until VersionWatcher
+  # Called wherever `open_forms` changes; a no-op until VersionWatcher
   # signals an update. `Meerkat.Restart.request/0` halts the BEAM, so in
   # prod this never returns; the returned socket covers the deferred and
   # no-update cases (and tests, which capture the restart).
@@ -150,7 +162,7 @@ defmodule MeerkatWeb.ReviewLive do
     # alive briefly after Decision.submit/1 to flush state before halting
     # with the decision's exit code (0/1), and a restart (75) here would
     # preempt that code and lose the reviewer's approve/reject.
-    if socket.assigns[:update_pending] and socket.assigns.open_form == nil and
+    if socket.assigns[:update_pending] and socket.assigns.open_forms == [] and
          is_nil(Decision.current()) do
       Meerkat.Restart.request()
     end
@@ -316,13 +328,13 @@ defmodule MeerkatWeb.ReviewLive do
   ## --- Form open / close ---
 
   def handle_event("comment_form.show_global", _, socket) do
-    {:noreply, set_open_form(socket, %{surface: :global, anchor: %{}})}
+    {:noreply, open_form(socket, %{surface: :global, anchor: %{}})}
   end
 
   def handle_event("comment_form.show_file", %{"file_index" => idx}, socket) do
     case parse_int(idx) do
       {:ok, n} ->
-        {:noreply, set_open_form(socket, %{surface: :file, anchor: %{file_index: n}})}
+        {:noreply, open_form(socket, %{surface: :file, anchor: %{file_index: n}})}
 
       :error ->
         log_ignored_event("comment_form.show_file", "file_index", idx)
@@ -337,7 +349,7 @@ defmodule MeerkatWeb.ReviewLive do
       ) do
     with {:ok, f} <- parse_int(from), {:ok, t} <- parse_int(to) do
       {:noreply,
-       set_open_form(socket, %{
+       open_form(socket, %{
          surface: :commit_msg,
          anchor: %{start_line: f, end_line: t}
        })}
@@ -358,7 +370,7 @@ defmodule MeerkatWeb.ReviewLive do
          {:ok, f} <- parse_int(from),
          {:ok, t} <- parse_int(to) do
       {:noreply,
-       set_open_form(socket, %{
+       open_form(socket, %{
          surface: :inline,
          anchor: %{file_index: i, start_line: f, end_line: t, side: side}
        })}
@@ -381,7 +393,7 @@ defmodule MeerkatWeb.ReviewLive do
 
       comment ->
         {:noreply,
-         set_open_form(socket, %{
+         open_form(socket, %{
            surface: surface_atom(surface),
            edit_id: id,
            initial_body: comment.body,
@@ -395,35 +407,65 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
-  def handle_event("comment_form.hide", _, socket) do
-    {:noreply, set_open_form(socket, nil)}
+  def handle_event("comment_form.hide", %{"form_key" => key}, socket) when is_binary(key) do
+    {:noreply, close_form(socket, key)}
+  end
+
+  def handle_event("comment_form.hide", params, socket) do
+    IO.puts(:stderr, "meerkat: comment_form.hide ignored — no form_key: #{inspect(params)}")
+    {:noreply, socket}
+  end
+
+  def handle_event("comment_form.reveal", %{"form_key" => key}, socket) do
+    case OpenForms.find(socket.assigns.open_forms, key) do
+      nil ->
+        {:noreply, socket}
+
+      form ->
+        {:noreply,
+         socket
+         |> show_form_file(form)
+         |> push_event("comment-form:reveal", %{key: key, id: form_dom_id(form)})}
+    end
   end
 
   ## --- Submit (add / edit) ---
 
-  def handle_event("comment.submit", _payload, %{assigns: %{open_form: nil}} = socket) do
-    {:noreply, socket}
-  end
-
+  # The submitting form names itself by key, so a submit posts at that
+  # form's anchor even while other forms are open. A key that isn't
+  # open (closed from another tab while this submit was in flight)
+  # saves nothing and replies with an error, so the submitting form
+  # doesn't clear its draft as if the comment had posted.
   def handle_event("comment.submit", payload, socket) do
-    %{open_form: form, state: _state, review_id: rid} = socket.assigns
+    %{open_forms: forms, review_id: rid} = socket.assigns
     %{"body" => body, "finding_type" => ft, "learn_from_this" => learn?} = payload
+    key = payload["form_key"]
+    form = OpenForms.find(forms, key)
 
     finding = finding_atom!(ft)
 
     cond do
+      form == nil ->
+        IO.puts(:stderr, "meerkat: comment.submit ignored — form not open: #{inspect(key)}")
+
+        {:reply,
+         %{
+           status: "error",
+           message: "This comment form is no longer open, so the comment wasn't saved."
+         }, socket}
+
       rid == "unbound" ->
-        {:noreply, set_open_form(socket, nil)}
+        {:noreply, close_form(socket, key)}
 
       Map.get(form, :edit_id) ->
         # Edit = remove old + add new (no `edit_comment` server call).
         _ = ReviewServer.remove_comment(rid, form.surface, form.edit_id)
         commit_add(rid, form, body, finding, learn?)
-        {:noreply, set_open_form(socket, nil)}
+        {:noreply, close_form(socket, key)}
 
       true ->
         commit_add(rid, form, body, finding, learn?)
-        {:noreply, set_open_form(socket, nil)}
+        {:noreply, close_form(socket, key)}
     end
   end
 
@@ -860,7 +902,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   @impl true
   def handle_info({:state_changed, %ReviewState{} = state}, socket) do
-    socket = assign(socket, state: state, open_form: Map.get(state, :open_form, nil))
+    socket = assign(socket, state: state, open_forms: state.open_forms)
     {:noreply, maybe_apply_update(socket)}
   end
 
@@ -870,7 +912,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   # A newer version is installed. Defer the live-restart until no comment
   # form is open (the @dirty? gate); if one's open now, maybe_apply_update
-  # fires the moment it closes (see set_open_form/2).
+  # fires the moment the last one closes (see change_open_forms/3).
   def handle_info({:meerkat_version_available, _target}, socket) do
     {:noreply, maybe_apply_update(assign(socket, update_pending: true))}
   end
@@ -939,7 +981,7 @@ defmodule MeerkatWeb.ReviewLive do
         tab_size={@tab_size}
         state={@state}
         repo_path={@repo_path}
-        open_form={@open_form}
+        open_forms={@open_forms}
         version={@version}
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
@@ -948,14 +990,14 @@ defmodule MeerkatWeb.ReviewLive do
         :if={@state.commit_message != ""}
         state={@state}
         rendered_comments={@commit_message_comments_rendered}
-        open_form={@open_form}
+        open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
       />
       <.global_comments_section
         state={@state}
         rendered_comments={@global_comments_rendered}
-        open_form={@open_form}
+        open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
       />
@@ -990,7 +1032,7 @@ defmodule MeerkatWeb.ReviewLive do
           wrap_lines={@wrap_lines}
           font_size_px={@font_size_px}
           tab_size={@tab_size}
-          open_form={@open_form}
+          open_forms={@open_forms}
           visible_indices={@visible_indices}
           expanded_approved={@expanded_approved}
           collapsed_unapproved={@collapsed_unapproved}
@@ -1004,7 +1046,7 @@ defmodule MeerkatWeb.ReviewLive do
       </div>
       <.decision_footer
         state={@state}
-        open_form={@open_form}
+        open_forms={@open_forms}
         deadline_ms={@deadline_ms}
         timeout_action={@timeout_action}
       />
@@ -1128,7 +1170,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   attr :state, ReviewState, required: true
   attr :rendered_comments, :any, required: true
-  attr :open_form, :any, required: true
+  attr :open_forms, :list, required: true
   attr :socket, :any, required: true
   attr :review_id, :string, required: true
 
@@ -1187,27 +1229,35 @@ defmodule MeerkatWeb.ReviewLive do
           </div>
         </li>
       </ul>
-      <.svelte
-        :if={form_for(@open_form, :commit_msg)}
-        id="CommentForm-commit-msg"
-        name="CommentForm"
-        props={commit_msg_form_props(@open_form, @review_id, @state.commit_message)}
-        socket={@socket}
-      />
+      <%!-- Every open commit-message form sits here, below the list,
+      so each names the lines it will post at. --%>
+      <div
+        :for={form <- forms_for(@open_forms, :commit_msg)}
+        :key={OpenForms.key(form)}
+        class="commit-msg-form"
+      >
+        <span class="line-anchor">L{form.anchor.start_line}–{form.anchor.end_line}</span>
+        <.svelte
+          id={form_dom_id(form)}
+          name="CommentForm"
+          props={commit_msg_form_props(form, @review_id, @state.commit_message)}
+          socket={@socket}
+        />
+      </div>
     </section>
     """
   end
 
   attr :state, ReviewState, required: true
   attr :rendered_comments, :any, required: true
-  attr :open_form, :any, required: true
+  attr :open_forms, :list, required: true
   attr :socket, :any, required: true
   attr :review_id, :string, required: true
 
   defp global_comments_section(assigns) do
     ~H"""
     <section
-      :if={@rendered_comments != [] or form_for(@open_form, :global)}
+      :if={@rendered_comments != [] or forms_for(@open_forms, :global) != []}
       class="global-comments"
       aria-label="Global comments"
     >
@@ -1239,7 +1289,7 @@ defmodule MeerkatWeb.ReviewLive do
         </li>
       </ul>
       <button
-        :if={@state.global_comments != [] and not form_for(@open_form, :global)}
+        :if={@state.global_comments != [] and not new_form_open?(@open_forms, :global, %{})}
         type="button"
         class="ghost-btn small"
         phx-click="comment_form.show_global"
@@ -1247,15 +1297,16 @@ defmodule MeerkatWeb.ReviewLive do
         + Add another
       </button>
       <.svelte
-        :if={form_for(@open_form, :global)}
-        id="CommentForm-global"
+        :for={form <- forms_for(@open_forms, :global)}
+        :key={OpenForms.key(form)}
+        id={form_dom_id(form)}
         name="CommentForm"
-        props={global_form_props(@open_form, @review_id)}
+        props={global_form_props(form, @review_id)}
         socket={@socket}
       />
     </section>
     <button
-      :if={@state.global_comments == [] and not form_for(@open_form, :global)}
+      :if={@state.global_comments == [] and forms_for(@open_forms, :global) == []}
       type="button"
       class="ghost-btn add-global-btn"
       phx-click="comment_form.show_global"
@@ -1271,7 +1322,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :wrap_lines, :boolean, required: true
   attr :font_size_px, :integer, required: true
   attr :tab_size, :integer, required: true
-  attr :open_form, :any, required: true
+  attr :open_forms, :list, required: true
   attr :visible_indices, :any, required: true
   attr :expanded_approved, :any, required: true
   attr :collapsed_unapproved, :any, required: true
@@ -1288,6 +1339,7 @@ defmodule MeerkatWeb.ReviewLive do
       <article
         :for={{file, idx} <- Enum.with_index(@state.files)}
         :if={MapSet.member?(@visible_indices, idx)}
+        :key={idx}
         id={"file-#{idx}"}
         class={[
           "file-section",
@@ -1399,7 +1451,7 @@ defmodule MeerkatWeb.ReviewLive do
               font_size_px: @font_size_px,
               tab_size: @tab_size,
               comments: Map.get(@inline_comments_by_file, idx, []),
-              inline_form: inline_form_for_diff(@open_form, idx, @state, @review_id),
+              inline_forms: inline_forms_for_diff(@open_forms, idx, @state, @review_id),
               plantuml_available: @plantuml_available
             }
           }
@@ -1465,7 +1517,7 @@ defmodule MeerkatWeb.ReviewLive do
               @collapsed_unapproved,
               file.file_name
             ) and
-              not file_form_open_for?(@open_form, idx)
+              not new_form_open?(@open_forms, :file, %{file_index: idx})
           }
           type="button"
           phx-click="comment_form.show_file"
@@ -1474,18 +1526,19 @@ defmodule MeerkatWeb.ReviewLive do
           + Add file comment
         </button>
         <.svelte
+          :for={form <- file_forms_for(@open_forms, idx)}
           :if={
             not file_section_collapsed?(
               @state,
               @expanded_approved,
               @collapsed_unapproved,
               file.file_name
-            ) and
-              file_form_open_for?(@open_form, idx)
+            )
           }
-          id={"CommentForm-file-#{idx}"}
+          :key={OpenForms.key(form)}
+          id={form_dom_id(form)}
           name="CommentForm"
-          props={file_form_props(@open_form, idx, @state, @review_id)}
+          props={file_form_props(form, idx, @state, @review_id)}
           socket={@socket}
         />
       </article>
@@ -1676,7 +1729,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :tab_size, :integer, required: true
   attr :state, ReviewState, required: true
   attr :repo_path, :string, required: true
-  attr :open_form, :any, required: true
+  attr :open_forms, :list, required: true
   attr :version, :map, required: true
 
   defp diff_toolbar(assigns) do
@@ -1814,7 +1867,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp toolbar_title(_), do: ""
 
   attr :state, ReviewState, required: true
-  attr :open_form, :any, required: true
+  attr :open_forms, :list, required: true
   attr :deadline_ms, :any, required: true
   attr :timeout_action, :atom, required: true
 
@@ -1823,7 +1876,7 @@ defmodule MeerkatWeb.ReviewLive do
       assign(assigns,
         comments?: comments?(assigns.state),
         comment_count: comment_count(assigns.state),
-        dirty?: assigns.open_form != nil
+        dirty?: assigns.open_forms != []
       )
 
     ~H"""
@@ -1841,11 +1894,21 @@ defmodule MeerkatWeb.ReviewLive do
           data-deadline={@deadline_ms}
           title={countdown_title(@timeout_action)}
         ></span>
-        <%= if @dirty? do %>
-          <span class="dirty-marker" title="Close the open comment form first">
-            unsaved form open
-          </span>
-        <% end %>
+        <%!-- Each link shows its form, even one in a collapsed or
+        filtered-out file, so the reviewer can finish or discard it. --%>
+        <span :if={@dirty?} class="dirty-marker">
+          {length(@open_forms)} unsaved {if length(@open_forms) == 1, do: "form", else: "forms"} open:
+          <button
+            :for={form <- @open_forms}
+            type="button"
+            class="dirty-form-link"
+            phx-click="comment_form.reveal"
+            phx-value-form_key={OpenForms.key(form)}
+            title="Show this form"
+          >
+            {open_form_label(form, @state.files)}
+          </button>
+        </span>
       </div>
       <div class="decision-actions">
         <button
@@ -2127,7 +2190,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   @doc false
   def draft_key_for_test(surface, anchor, review_id, edit_id),
-    do: draft_key_for(surface, anchor, review_id, edit_id)
+    do: draft_key_for(%{surface: surface, anchor: anchor, edit_id: edit_id}, review_id)
 
   @doc false
   def visible_indices_for_test(state, filter_input, only_file_index),
@@ -2334,13 +2397,93 @@ defmodule MeerkatWeb.ReviewLive do
   defp gutter_label(%{start_line: from, end_line: to}),
     do: "Comment on commit message lines #{from} through #{to}"
 
-  defp form_for(nil, _), do: false
-  defp form_for(%{surface: surface}, surface), do: true
-  defp form_for(_, _), do: false
+  defp forms_for(open_forms, surface), do: Enum.filter(open_forms, &(&1.surface == surface))
 
-  defp file_form_open_for?(nil, _idx), do: false
-  defp file_form_open_for?(%{surface: :file, anchor: %{file_index: idx}}, idx), do: true
-  defp file_form_open_for?(_, _), do: false
+  defp file_forms_for(open_forms, idx),
+    do: Enum.filter(forms_for(open_forms, :file), &(&1.anchor.file_index == idx))
+
+  # True while the add (not edit) form at `anchor` is open, which hides
+  # the button that would open it again.
+  defp new_form_open?(open_forms, surface, anchor),
+    do: OpenForms.find(open_forms, OpenForms.key(%{surface: surface, anchor: anchor})) != nil
+
+  defp show_form_file(socket, %{surface: surface, anchor: %{file_index: idx}})
+       when surface in [:file, :inline] do
+    case Enum.at(socket.assigns.state.files, idx) do
+      nil -> socket
+      file -> show_file_for_form(socket, surface, idx, file.file_name)
+    end
+  end
+
+  defp show_form_file(socket, _form), do: socket
+
+  defp show_file_for_form(socket, surface, idx, name) do
+    %{
+      state: state,
+      review_id: rid,
+      filter_input: filter_input,
+      only_file_index: only_file_index,
+      expanded_approved: expanded,
+      collapsed_unapproved: collapsed,
+      rendered_files: rendered
+    } = socket.assigns
+
+    # A :show override beats every filter except show-only and the
+    # substring filter, so clear those too when they hide this file.
+    socket =
+      if MapSet.member?(visible_indices(state, filter_input, only_file_index), idx) do
+        socket
+      else
+        if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, name, :show)
+
+        assign(socket,
+          state: %{state | file_overrides: Map.put(state.file_overrides, name, :show)},
+          only_file_index: if(only_file_index in [nil, idx], do: only_file_index),
+          filter_input: if(matches_filter?(name, filter_input), do: filter_input, else: "")
+        )
+      end
+
+    socket =
+      if MapSet.member?(state.approved_file_names, name),
+        do: assign(socket, expanded_approved: MapSet.put(expanded, name)),
+        else: assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
+
+    if surface == :inline,
+      do: assign(socket, rendered_files: MapSet.delete(rendered, name)),
+      else: socket
+  end
+
+  defp open_form_label(%{surface: :global} = form, _files), do: edit_label("Global", form)
+
+  defp open_form_label(%{surface: :commit_msg, anchor: a} = form, _files),
+    do: edit_label("Commit message L#{a.start_line}–#{a.end_line}", form)
+
+  defp open_form_label(%{surface: :file, anchor: %{file_index: idx}} = form, files),
+    do: edit_label(file_name_at(files, idx), form)
+
+  defp open_form_label(%{surface: :inline, anchor: a} = form, files) do
+    lines =
+      if a.start_line == a.end_line, do: "#{a.end_line}", else: "#{a.start_line}–#{a.end_line}"
+
+    side = if a.side == "old", do: " (old)", else: ""
+    edit_label("#{file_name_at(files, a.file_index)} L#{lines}#{side}", form)
+  end
+
+  defp edit_label(label, form),
+    do: if(Map.get(form, :edit_id), do: "#{label} (editing)", else: label)
+
+  # `comment_form.show_file` takes any integer index, so a form can
+  # name a file the diff doesn't have.
+  defp file_name_at(files, idx) do
+    case Enum.at(files, idx) do
+      nil -> "file #{idx}"
+      file -> file.file_name
+    end
+  end
+
+  # LiveSvelte needs a stable DOM id per mounted form.
+  defp form_dom_id(form),
+    do: "CommentForm-" <> String.replace(OpenForms.key(form), ~r/[^A-Za-z0-9_-]/, "-")
 
   # Whitelist string → atom. Unknown atoms (from a tampered client
   # payload) raise rather than pass through, so downstream
@@ -2446,7 +2589,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp global_form_props(form, review_id) do
     base_form_props(form, %{
       submitLabel: if(Map.get(form, :edit_id), do: "Save", else: "Add Global Comment"),
-      draftKey: draft_key_for(:global, %{}, review_id, Map.get(form, :edit_id))
+      draftKey: draft_key_for(form, review_id)
     })
   end
 
@@ -2457,8 +2600,7 @@ defmodule MeerkatWeb.ReviewLive do
       submitLabel: if(Map.get(form, :edit_id), do: "Save", else: "Add File Comment"),
       extraPayload: %{file_index: file_index},
       fileName: Map.get(file || %{}, :file_name, ""),
-      draftKey:
-        draft_key_for(:file, %{file_index: file_index}, review_id, Map.get(form, :edit_id))
+      draftKey: draft_key_for(form, review_id)
     })
   end
 
@@ -2467,7 +2609,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     base_form_props(form, %{
       submitLabel: if(Map.get(form, :edit_id), do: "Save", else: "Add Commit Message Comment"),
-      draftKey: draft_key_for(:commit_msg, anchor, review_id, Map.get(form, :edit_id)),
+      draftKey: draft_key_for(form, review_id),
       initialCode: commit_msg_seed_code(commit_message, anchor)
     })
   end
@@ -2487,18 +2629,18 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp commit_msg_seed_code(_msg, _anchor), do: ""
 
-  # Build the inline-form descriptor passed to DiffViewer for the
-  # given file index. Nil when no inline form is open for THIS file.
-  # The descriptor carries the props CommentForm needs plus the
-  # anchor coordinates DiffViewer uses to inject the form below the
-  # right diff row.
-  defp inline_form_for_diff(open_form, idx, state, review_id) do
-    case open_form do
-      %{surface: :inline, anchor: %{file_index: ^idx} = anchor} = form ->
-        %{anchor: anchor, props: inline_form_props(form, state, review_id)}
-
-      _ ->
-        nil
+  # Build the inline-form descriptors passed to DiffViewer for the
+  # given file index, one per inline form open on THIS file. Each
+  # descriptor carries the form's key, the props CommentForm needs,
+  # and the anchor coordinates DiffViewer uses to inject the form
+  # below the right diff row.
+  defp inline_forms_for_diff(open_forms, idx, state, review_id) do
+    for %{anchor: %{file_index: ^idx} = anchor} = form <- forms_for(open_forms, :inline) do
+      %{
+        key: OpenForms.key(form),
+        anchor: anchor,
+        props: inline_form_props(form, state, review_id)
+      }
     end
   end
 
@@ -2517,7 +2659,7 @@ defmodule MeerkatWeb.ReviewLive do
       },
       fileName: Map.get(file || %{}, :file_name, ""),
       initialCode: initial_code,
-      draftKey: draft_key_for(:inline, anchor, review_id, Map.get(form, :edit_id))
+      draftKey: draft_key_for(form, review_id)
     })
   end
 
@@ -2557,22 +2699,12 @@ defmodule MeerkatWeb.ReviewLive do
   # the next at the same anchor. Edit mode appends the comment id so
   # editing a comment doesn't share its draft with a new comment at
   # the same anchor.
-  defp draft_key_for(surface, anchor, review_id, edit_id) do
-    base = "meerkat:draft:#{review_id || "unbound"}:#{surface}#{anchor_suffix(anchor)}"
-    if edit_id, do: "#{base}:edit:#{edit_id}", else: base
-  end
-
-  defp anchor_suffix(%{file_index: idx, start_line: f, end_line: t, side: side}),
-    do: ":#{idx}:#{side}:#{f}-#{t}"
-
-  defp anchor_suffix(%{file_index: idx}), do: ":#{idx}"
-
-  defp anchor_suffix(%{start_line: f, end_line: t}), do: ":#{f}-#{t}"
-
-  defp anchor_suffix(_), do: ""
+  defp draft_key_for(form, review_id),
+    do: "meerkat:draft:#{review_id || "unbound"}:#{OpenForms.key(form)}"
 
   defp base_form_props(form, overrides) do
     %{
+      formKey: OpenForms.key(form),
       initialBody: Map.get(form, :initial_body, ""),
       initialFindingType: Map.get(form, :initial_finding_type, "issue"),
       initialLearnFromThis: Map.get(form, :initial_learn_from_this, false)

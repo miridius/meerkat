@@ -39,13 +39,14 @@ exit 75. The browser tab stays put. State survives because:
 - Comments + approvals are persisted to
   `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` and
   reloaded by `ReviewServer.init/1`.
-- The open inline comment form is persisted to the same file via
-  `ReviewState.open_form`. After reconnect, `ReviewLive.mount/3`
-  re-assigns it and `DiffViewer` re-injects the form at the same
-  anchor.
-- Body content typed into the form is held in `localStorage`
-  under a `draftKey` keyed on the anchor; re-opening the same
-  anchor reads it back.
+- Open forms are persisted in `ReviewState.open_forms`. After
+  reconnect, `ReviewLive.mount/3` re-assigns them and `DiffViewer`
+  injects each inline form at its anchor. Prose typed into an add
+  form is kept in `localStorage` under
+  `meerkat:draft:<review_id>:` followed by the form's key, which
+  encodes its surface, anchor and edit target; reopening that form
+  restores the draft. Edit forms ignore drafts and reopen with the
+  saved comment's body.
 
 ## Deterministic port
 

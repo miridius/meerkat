@@ -52,7 +52,10 @@ self-contained, no git dependency.
   <ul class="commit-msg-comments">
     <li class="note commit-msg-note">...</li>
   </ul>
-  <!-- inline form, rendered when open_form.surface == :commit_msg -->
+  <div class="commit-msg-form">
+    <span class="line-anchor">L{start}–{end}</span>
+    <CommentForm />
+  </div>
 </section>
 ```
 
@@ -69,12 +72,11 @@ Same edit/remove/learn-toggle affordances as other comment
 surfaces. Form's anchor carries `{start_line, end_line}` (no
 side, no file_index).
 
-Drag-select across multiple gutter buttons is NOT supported —
-the gutter uses click, not pointer-drag. To comment on a multi-
-block range, the user would have to comment per block. This is
-intentional: drag-select on the gutter would conflict with the
-diff body's pointer handlers and the per-block comments tend to
-read better than range-spanning ones anyway.
+Dragging across gutter blocks selects a range: `CommitMsgGutter`
+pushes one `comment_form.show_commit_msg` event from the earliest
+block's `start_line` to the latest block's `end_line`. Each open
+commit-message form renders below the comment list, labelled with
+the `L{start}–{end}` range it will post at.
 
 ## When the commit message is wrong
 

@@ -1,5 +1,6 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
+import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 
 // Each test in this file goes through the same lifecycle: start
@@ -205,6 +206,40 @@ test.describe("commit-message comments", () => {
 			await expect(
 				page.locator(".note").filter({ hasText: "subject + body together" }),
 			).toBeVisible();
+		} finally {
+			await teardown(meerkat);
+		}
+	});
+
+	test("dragging across four gutter blocks, either way, spans all of them", async ({ page }) => {
+		const fixture = makeFixture({ commitMsg: "Subject\n\nBody paragraph.\n\n- one\n- two\n" });
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const blocks = page.locator("#commit-msg-gutter > li");
+			await expect(blocks).toHaveCount(4);
+			const last = (await blocks.count()) - 1;
+			const startOf = (i: number) => blocks.nth(i).getAttribute("data-start-line");
+			const endOf = (i: number) => blocks.nth(i).getAttribute("data-end-line");
+
+			const drag = async (from: number, to: number) => {
+				const a = await blocks.nth(from).boundingBox();
+				const b = await blocks.nth(to).boundingBox();
+				if (!a || !b) throw new Error("commit-msg blocks not found");
+				await page.mouse.move(a.x + 10, a.y + a.height / 2);
+				await page.mouse.down();
+				await page.mouse.move(b.x + 10, b.y + b.height / 2, { steps: 10 });
+				await page.mouse.up();
+			};
+			const labels = page.locator(".commit-msg-form .line-anchor");
+
+			await drag(0, last);
+			await expect(labels).toHaveText([`L${await startOf(0)}–${await endOf(last)}`]);
+			await page.locator(".commit-msg-form").getByRole("button", { name: /^Cancel$/ }).click();
+			await expect(labels).toHaveCount(0);
+
+			await drag(last, 1);
+			await expect(labels).toHaveText([`L${await startOf(1)}–${await endOf(last)}`]);
 		} finally {
 			await teardown(meerkat);
 		}

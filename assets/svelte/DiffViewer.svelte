@@ -131,6 +131,7 @@
   };
 
   type InlineFormDescriptor = {
+    key: string;
     anchor: {
       file_index: number;
       start_line: number;
@@ -148,7 +149,7 @@
     font_size_px = 13,
     tab_size = 2,
     comments = [],
-    inline_form = null,
+    inline_forms = [],
     plantuml_available = false,
     live,
   }: {
@@ -159,7 +160,7 @@
     font_size_px?: number;
     tab_size?: number;
     comments?: InlineCommentT[];
-    inline_form?: InlineFormDescriptor | null;
+    inline_forms?: InlineFormDescriptor[];
     plantuml_available?: boolean;
     live: LiveBridge;
   } = $props();
@@ -323,15 +324,19 @@
   // Visual indicator: mark every diff-line row covered by a
   // comment range. Also injects a custom `<tr class="meerkat-comment-row">`
   // right after the anchor row to host one InlineComment per comment.
-  // Re-runs whenever the comments prop or diff instance changes;
+  // Re-runs whenever the comments prop, the diff instance, the view
+  // mode or line wrapping changes (the last two swap the diff table);
   // tolerates @git-diff-view's internal re-renders by re-applying.
   let mountedInlineComments: Array<{ component: ReturnType<typeof mount>; host: HTMLElement }> = [];
   let injectedCommentRows: HTMLTableRowElement[] = [];
-  let mountedInlineForm: { component: ReturnType<typeof mount>; row: HTMLTableRowElement } | null = null;
+  type MountedInlineForm = { component: ReturnType<typeof mount>; row: HTMLTableRowElement };
+  let mountedInlineForms = new Map<string, MountedInlineForm>();
 
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     void comments.length;
+    void diffViewMode;
+    void wrap_lines;
     let cancelled = false;
     // Defer two animation frames so @git-diff-view's syntax / extend
     // rendering settles before we walk the rows.
@@ -379,60 +384,130 @@
         scheduled = false;
         applyCommentMarkers();
         renderInlineComments();
-        renderInlineForm(inline_form);
+        renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
       });
     });
     obs.observe(diffContainer, { childList: true, subtree: true });
     return () => obs.disconnect();
   });
 
-  // Inject the inline-comment FORM at its anchor row when the LV's
-  // open_form points at this file. Re-runs whenever inline_form
-  // changes; tears down the previous mount cleanly so a re-anchor
-  // (drag a different range) moves the form instead of stacking it.
+  // Inject one inline-comment FORM per open form on this file, each
+  // at its own anchor row. LiveSvelte applies prop changes as in-place
+  // JSON patches by list index, so the effect snapshots the whole list:
+  // that reads every nested field, and a different form taking an
+  // existing slot re-runs it just as a form opening or closing does.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
-    const desc = inline_form;
+    const descs = $state.snapshot(inline_forms) as InlineFormDescriptor[];
+    // A split/unified or wrap toggle re-renders the table without our
+    // rows.
+    void diffViewMode;
+    void wrap_lines;
+    let handle2 = 0;
     const handle = requestAnimationFrame(() => {
-      const handle2 = requestAnimationFrame(() => renderInlineForm(desc));
-      (window as Window & { __h2?: number }).__h2 = handle2;
+      handle2 = requestAnimationFrame(() => renderInlineForms(descs));
     });
-    return () => cancelAnimationFrame(handle);
+    return () => {
+      cancelAnimationFrame(handle);
+      cancelAnimationFrame(handle2);
+    };
   });
 
-  function renderInlineForm(desc: InlineFormDescriptor | null) {
+  // Reconcile the mounted forms against `descs` by key: forms that
+  // stay open keep their component (and its typed text), closed ones
+  // unmount, new ones mount. Each form row sits after its anchor row,
+  // below that line's comments and the forms listed before it.
+  function renderInlineForms(descs: InlineFormDescriptor[]) {
     if (!diffContainer) return;
-    if (mountedInlineForm) {
-      try {
-        unmount(mountedInlineForm.component);
-      } catch {
-        /* already gone */
-      }
-      mountedInlineForm.row.parentNode?.removeChild(mountedInlineForm.row);
-      mountedInlineForm = null;
+    const wanted = new Set(descs.map((d) => d.key));
+    for (const [key, m] of mountedInlineForms) {
+      if (wanted.has(key)) continue;
+      unmountInlineForm(m);
+      mountedInlineForms.delete(key);
     }
     // Belt-and-braces: any orphan form row gets swept.
-    diffContainer
-      .querySelectorAll("tr.meerkat-form-row")
-      .forEach((tr) => tr.parentNode?.removeChild(tr));
-
-    if (!desc) return;
-    const side = desc.anchor.side === "old" ? "old" : "new";
-    const rows = anchorRowsFor(side, desc.anchor.end_line);
-    if (rows.length === 0) return;
-    const anchor = rows[rows.length - 1];
-
-    const tr = buildSideAwareRow(anchor, side, "meerkat-form-row", "meerkat-form-cell");
-    tr.setAttribute("data-meerkat-form-anchor", String(desc.anchor.end_line));
-    tr.setAttribute("data-meerkat-form-side", side);
-    const contentTd = tr.querySelector("td.meerkat-form-cell") as HTMLTableCellElement;
-    anchor.parentNode?.insertBefore(tr, anchor.nextSibling);
-
-    const cmp = mount(CommentForm, {
-      target: contentTd,
-      props: { ...desc.props, live },
+    const tracked = new Set(Array.from(mountedInlineForms.values(), (m) => m.row));
+    diffContainer.querySelectorAll("tr.meerkat-form-row").forEach((tr) => {
+      if (!tracked.has(tr as HTMLTableRowElement)) tr.parentNode?.removeChild(tr);
     });
-    mountedInlineForm = { component: cmp, row: tr };
+
+    const placed = new Set<Element>();
+    for (const desc of descs) {
+      const side = desc.anchor.side === "old" ? "old" : "new";
+      const rows = anchorRowsFor(side, desc.anchor.end_line);
+      if (rows.length === 0) {
+        expandToShowHiddenAnchor();
+        continue;
+      }
+      const anchor = rows[rows.length - 1];
+      let after: Element = anchor;
+      while (
+        after.nextElementSibling &&
+        (after.nextElementSibling.classList.contains("meerkat-comment-row") ||
+          placed.has(after.nextElementSibling))
+      ) {
+        after = after.nextElementSibling;
+      }
+
+      const buildRow = () => {
+        const tr = buildSideAwareRow(anchor, side, "meerkat-form-row", "meerkat-form-cell");
+        tr.setAttribute("data-meerkat-form-anchor", String(desc.anchor.end_line));
+        tr.setAttribute("data-meerkat-form-side", side);
+        // The footer's open-form links scroll to the form by key.
+        tr.setAttribute("data-meerkat-form-key", desc.key);
+        after.parentNode?.insertBefore(tr, after.nextSibling);
+        return tr;
+      };
+      const formCell = (tr: HTMLTableRowElement) =>
+        tr.querySelector("td.meerkat-form-cell") as HTMLTableCellElement;
+
+      let m = mountedInlineForms.get(desc.key);
+      if (!m) {
+        const tr = buildRow();
+        const component = mount(CommentForm, {
+          target: formCell(tr),
+          props: { ...desc.props, live },
+        });
+        m = { component, row: tr };
+        mountedInlineForms.set(desc.key, m);
+      } else if (m.row.parentNode !== anchor.parentNode) {
+        // The diff table was replaced (split/unified or wrap toggle),
+        // so the row's columns may no longer fit. Rebuild it
+        // for the new table and carry the mounted form across intact.
+        const tr = buildRow();
+        formCell(tr).append(...formCell(m.row).childNodes);
+        m.row.remove();
+        m.row = tr;
+      } else if (after.nextSibling !== m.row) {
+        after.parentNode?.insertBefore(m.row, after.nextSibling);
+      }
+      placed.add(m.row);
+    }
+  }
+
+  // A form or comment can be anchored on a context line the reviewer
+  // expanded, which renders collapsed again after a reload or a view
+  // toggle. It must stay visible (an open form blocks the decision
+  // buttons), so expand the whole file once per diff instance and view
+  // mode; the hunk-expand observer then places it.
+  const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
+  function expandToShowHiddenAnchor() {
+    if (!diffInstance) return;
+    const expandMode = diffViewMode === DiffModeEnum.Unified ? "unified" : "split";
+    const done = expandedForHiddenAnchor.get(diffInstance) ?? new Set<string>();
+    if (done.has(expandMode)) return;
+    done.add(expandMode);
+    expandedForHiddenAnchor.set(diffInstance, done);
+    diffInstance.onAllExpand(expandMode);
+  }
+
+  function unmountInlineForm(m: MountedInlineForm) {
+    try {
+      unmount(m.component);
+    } catch {
+      /* already gone */
+    }
+    m.row.parentNode?.removeChild(m.row);
   }
 
   function applyCommentMarkers() {
@@ -557,7 +632,10 @@
 
     for (const group of commentGroups()) {
       const rows = anchorRowsFor(group.side, group.line);
-      if (rows.length === 0) continue;
+      if (rows.length === 0) {
+        expandToShowHiddenAnchor();
+        continue;
+      }
       const anchor = rows[rows.length - 1];
 
       const tr = buildSideAwareRow(anchor, group.side, "meerkat-comment-row", "meerkat-comment-cell");
@@ -846,15 +924,8 @@
       mountedInlineComments = [];
       for (const tr of injectedCommentRows) tr.parentNode?.removeChild(tr);
       injectedCommentRows = [];
-      if (mountedInlineForm) {
-        try {
-          unmount(mountedInlineForm.component);
-        } catch {
-          /* already gone */
-        }
-        mountedInlineForm.row.parentNode?.removeChild(mountedInlineForm.row);
-        mountedInlineForm = null;
-      }
+      for (const m of mountedInlineForms.values()) unmountInlineForm(m);
+      mountedInlineForms.clear();
     };
   });
 </script>

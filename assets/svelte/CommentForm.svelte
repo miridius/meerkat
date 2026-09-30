@@ -29,6 +29,7 @@
     initialCode = "",
     fileName = "",
     draftKey,
+    formKey,
     live,
   }: {
     submitLabel?: string;
@@ -41,6 +42,9 @@
     initialCode?: string;
     fileName?: string;
     draftKey?: string;
+    // Names this form to the server, so submit and cancel act on it
+    // and not on another open form.
+    formKey: string;
     live: LiveBridge;
   } = $props();
 
@@ -204,6 +208,7 @@
       submitEvent,
       {
         ...extraPayload,
+        form_key: formKey,
         body: composedBody(),
         finding_type: findingType,
         learn_from_this: learnFromThis,
@@ -250,7 +255,7 @@
 
   function cancel() {
     clearDraft();
-    live.pushEvent(cancelEvent, {});
+    live.pushEvent(cancelEvent, { form_key: formKey });
   }
 
   // Cmd/Ctrl+Enter submits, Escape cancels. CodeMirror (suggestion

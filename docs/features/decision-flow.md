@@ -17,9 +17,16 @@ The footer always shows three buttons, left-to-right:
    back out without producing feedback for the calling agent.
 
 2. **Send Feedback** — submit `:reject`. Disabled when there are
-   zero comments or when a comment form is open (the `unsaved
-   form open` marker shows next to it). Exit **1** with the
-   formatted comment payload on stderr.
+   zero comments or when any comment form is open. The footer shows
+   `N unsaved form open:` or `N unsaved forms open:`, with a link for
+   each form. Links are labelled `Global`, a file name, an inline
+   location such as `src/main.rs L3–5` (or `src/main.rs L3` for one
+   line), or `Commit message L1–3`. Inline forms on the old side add
+   ` (old)`; edit forms add ` (editing)`. Clicking a link shows its
+   file if hidden (clearing a filter that hides it and expanding it
+   if collapsed), switches an inline form from rendered markdown
+   back to the diff, then scrolls to the form and focuses its text
+   box. Exit **1** with the formatted comment payload on stderr.
 
 3. **Approve** — submit `:approve` (no comments) or
    `:approve_with_feedback` (any comments). Exit **0**. With no

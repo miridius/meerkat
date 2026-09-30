@@ -61,7 +61,22 @@ defmodule MeerkatWeb.VersionRestartTest do
 
     refute_receive {:restart, _}, 200
 
-    render_hook(view, "comment_form.hide", %{})
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
+    assert_receive {:restart, 75}, 1000
+  end
+
+  test "with two forms open, the restart waits for the last one to close", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_hook(view, "comment_form.show_global", %{})
+    send(view.pid, {:meerkat_version_available, "versions/v2"})
+    _ = render(view)
+
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
+    refute_receive {:restart, _}, 200
+
+    render_hook(view, "comment_form.hide", %{"form_key" => "global"})
     assert_receive {:restart, 75}, 1000
   end
 
@@ -87,7 +102,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     refute_receive {:restart, _}, 200
 
     # A cross-tab state push that carries no open form should apply the
-    # deferred restart (set_open_form is not the only path into the gate).
+    # deferred restart (change_open_forms is not the only path into the gate).
     send(view.pid, {:state_changed, %ReviewState{files: [@rs_file]}})
     assert_receive {:restart, 75}, 1000
   end
