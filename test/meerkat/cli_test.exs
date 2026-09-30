@@ -33,6 +33,12 @@ defmodule Meerkat.CLITest do
   # - `run_live_review/2`'s `if run` (invert) — which run's deadline
   #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
   #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
+  # - `start_app!/2` (deleting the preferred-port clause) and
+  #   `run_live_review_safe/2`'s `PortInUseError` rescue — they boot the
+  #   endpoint, unrunnable under ExUnit. Covered e2e by port.spec.ts
+  #   "without --port, a review binds its stable port", "a review whose
+  #   stable port is taken is served on another port" and "an explicit
+  #   --port that is taken fails to start and names the port".
   # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
