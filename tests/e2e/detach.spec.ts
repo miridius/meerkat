@@ -186,6 +186,25 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
+	test("a decision made after the runs dir is deleted still reaches the caller and ends the backend", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		const backend = backendPid(meerkat);
+		try {
+			await page.goto(meerkat.url);
+			rmSync(meerkat.runsDir, { recursive: true, force: true });
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code, stderr).toBe(0);
+			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("a rerun after the staged diff changed replaces the review its attached caller waits on", async ({
 		page,
 	}) => {
