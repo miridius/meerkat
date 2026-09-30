@@ -1,34 +1,46 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
-# behind its latest release, except declared exemptions and JS
+# behind its latest release, except exempted releases and JS
 # releases younger than the 24h supply-chain floor (minimumReleaseAge
 # in pnpm-workspace.yaml — too young to be installable, so not yet
-# actionable; Hex has no such floor). The gate fails CLOSED on its
-# own breakage: missing tools, unreachable registries, or unparseable
-# probe output block the push rather than skipping a check.
-# Emergency bypass: LEFTHOOK=0 git push.
+# actionable). It also fails on a missing or malformed
+# scripts/dep-exemptions.json, and on a stale entry there. The gate
+# fails CLOSED on its own breakage: missing tools, unreachable
+# registries, or unparseable probe output block the push rather than
+# skipping a check.
 
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-# package name → reason for lagging behind latest; applies to both
-# ecosystems.
-EXEMPT_JSON='{
-  "shiki": "pinned to @git-diff-view/shiki'\''s shiki major; remove when upstream moves to shiki 4",
-  "@playwright/test": "pinned to 1.60.0; 1.61.0 sync loader crashes under Node 24 where context.conditions arrives as a Set lacking Array.includes (microsoft/playwright#41311); unpin when fixed upstream"
-}'
+prefix="scripts/outdated.sh:"
+source scripts/deps-common.sh
 
-for tool in pnpm jq mix python3 curl; do
-  command -v "$tool" >/dev/null || {
-    echo "scripts/outdated.sh: required tool '$tool' missing — cannot verify dependencies."
-    exit 1
-  }
-done
+require_tools pnpm jq mix python3 curl || exit 1
 
-jq empty <<<"$EXEMPT_JSON" 2>/dev/null || {
-  echo "scripts/outdated.sh: EXEMPT_JSON is invalid JSON — fix the exemption table."
-  exit 1
+# An entry applies to both ecosystems, and scripts/bump-deps.sh skips
+# the same releases. Once a newer release is out, or the package is
+# current, the entry is stale and fails the gate.
+load_exemptions || exit 1
+
+# Exemption entries whose package is behind, whether or not the entry
+# names its latest release; any other entry is for a current package.
+matched=()
+
+# exempt NAME LATEST: 0 when an entry covers exactly LATEST. An entry for
+# any other release is reported stale; the caller then treats the
+# package as outdated.
+exempt() {
+  local version reason
+  version=$(exemption_version "$1")
+  [[ -z "$version" ]] && return 1
+  matched+=("$1")
+  if [[ "$version" != "$2" ]]; then
+    echo "stale exemption: $1 covers $version, but latest is $2"
+    return 1
+  fi
+  reason=$(jq -r --arg n "$1" '.[$n].reason' <<<"$EXEMPT_JSON")
+  echo "exempt: $1@$2 ($reason)"
 }
 
 for registry in https://registry.npmjs.org https://hex.pm; do
@@ -41,22 +53,9 @@ done
 fail=0
 
 echo "=== pnpm outdated (workspace) ==="
-# pnpm outdated exits 1 when it FINDS outdated deps, so the exit code
-# alone can't distinguish findings from breakage — valid JSON on
-# stdout is the success signal.
-pnpm_json=$(pnpm -r outdated --format json 2>&1)
-pnpm_rc=$?
-if ! jq empty <<<"$pnpm_json" 2>/dev/null; then
-  echo "$pnpm_json"
-  echo "scripts/outdated.sh: pnpm outdated produced no JSON (exit $pnpm_rc) — cannot verify JS deps."
-  exit 1
-fi
+pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
-  reason=$(jq -r --arg n "$name" '.[$n] // empty' <<<"$EXEMPT_JSON")
-  if [[ -n "$reason" ]]; then
-    echo "exempt: $name ($reason)"
-    continue
-  fi
+  exempt "$name" "$latest" && continue
   if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
     published=""
   fi
@@ -77,34 +76,29 @@ print(int((datetime.datetime.now(datetime.timezone.utc) - pub).total_seconds()))
   fi
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
-done < <(jq -r 'to_entries[] | [.key, .value.latest] | @tsv' <<<"$pnpm_json")
+done < <(grep . <<<"$PNPM_ROWS")
 
 echo
 echo "=== mix hex.outdated ==="
-# hex.outdated exits 1 when updates exist; breakage shows as a
-# missing table header rather than a usable exit code.
-hex_out=$(mix hex.outdated 2>&1)
-hex_rc=$?
-echo "$hex_out"
-if ! grep -q "^Dependency" <<<"$hex_out"; then
-  echo "scripts/outdated.sh: mix hex.outdated produced no dependency table (exit $hex_rc) — cannot verify Hex deps."
-  exit 1
-fi
-while read -r name; do
-  reason=$(jq -r --arg n "$name" '.[$n] // empty' <<<"$EXEMPT_JSON")
-  if [[ -n "$reason" ]]; then
-    echo "exempt: $name ($reason)"
-    continue
-  fi
-  echo "BLOCKED: $name is outdated"
+hex_outdated || exit 1
+echo "$HEX_OUT"
+while read -r name latest _; do
+  exempt "$name" "$latest" && continue
+  echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
-done < <(awk '/Update (not )?possible/ {print $1}' <<<"$hex_out")
+done < <(grep . <<<"$HEX_ROWS")
+
+while IFS= read -r name; do
+  if [[ " ${matched[*]-} " != *" $name "* ]]; then
+    echo "stale exemption: $name is not behind latest; remove its entry"
+    fail=1
+  fi
+done < <(jq -r 'keys[]' <<<"$EXEMPT_JSON")
 
 if [[ "$fail" != 0 ]]; then
   echo
-  echo "scripts/outdated.sh: dependencies are behind latest. Upgrade them,"
-  echo "or add an exemption with a reason in this script if the pin is"
-  echo "deliberate."
+  echo "scripts/outdated.sh: dependencies are behind latest, or an exemption"
+  echo "is stale. Upgrade them and fix the fallout."
   exit 1
 fi
 

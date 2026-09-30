@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@playwright/test": "1.60.0",
+    "@playwright/test": "1.63.0",
     "lefthook": "^2.1.15"
   }
 }

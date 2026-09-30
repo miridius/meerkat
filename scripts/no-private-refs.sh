@@ -16,8 +16,8 @@
 #     from a real review being used as test data.
 #
 # Checks the commits being pushed AND the tree at their tips, since a
-# leak can sit in either. Bypass a false positive with
-# `git push --no-verify`.
+# leak can sit in either. A false positive is fixed by narrowing the
+# pattern that matched.
 #
 # `scripts/no-private-refs.sh --self-test` checks every pattern against
 # a string it must match and one it must not. Run it after editing a
@@ -169,6 +169,6 @@ fi
 
 echo "" >&2
 echo "This repo is public. Rewrite the commit or the file and push again." >&2
-echo "If the match is a false positive, bypass with: git push --no-verify" >&2
-echo "and widen the pattern in scripts/no-private-refs.sh." >&2
+echo "If the match is a false positive, narrow the pattern in" >&2
+echo "scripts/no-private-refs.sh and push again." >&2
 exit 1
