@@ -36,6 +36,12 @@ When the UI does open, the reviewer sees, top-to-bottom:
    (PR title / commit subject / branch), `base ← head` branch chip
    with the repo path on its tooltip, connection pill, Split /
    Unified, Wrap, `⚙` settings popover (font size + tab size).
+   For staged changes, the toolbar shows the current branch and its
+   open PR. During a rebase, it shows the branch being rebased and
+   its PR; when HEAD has no branch (outside a rebase or because the
+   rebase began from detached HEAD), neither appears and no warning
+   is shown, and rebased branch names that look like PR numbers
+   (`28`, `#28`, `+28`) have no PR pill.
 2. **Flash error banner** (only when a handler set `flash_error`,
    e.g. a stale-OID approve or a `gh api` failure).
 3. **Pending answers** banner (only if a prior review had question
