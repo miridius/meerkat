@@ -322,6 +322,43 @@ test.describe("multiple open comment forms", () => {
 		}
 	});
 
+	test("the footer link shows a form whose file the substring filter hid", async ({ page }) => {
+		const fixture = makeFixture({
+			files: {
+				"a_first.rs": "fn a() {}\nfn a2() {}\n",
+				"b_second.rs": "fn b() {}\nfn b2() {}\n",
+				"c_third.rs": "fn c() {}\nfn c2() {}\n",
+			},
+		});
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const section = (name: string) => page.locator(".file-section").filter({ hasText: name });
+			const first = section("a_first.rs");
+
+			await newLine(first, 2).click();
+			await formAt(first, 2).locator("textarea").fill("hidden by the filter");
+
+			// Hiding the first two files moves the third to the top of the list.
+			await page.getByRole("button", { name: /^Toggle file list$/ }).click();
+			await page.locator(".file-filter .filter-input").fill("third");
+			await expect(first).toHaveCount(0);
+			await expect(section("b_second.rs")).toHaveCount(0);
+
+			await page.locator(".decision-footer").getByRole("button", { name: "a_first.rs L2" }).click();
+
+			const form = formAt(first, 2);
+			await expect(form).toBeInViewport();
+			await expect(form.locator("textarea")).toHaveValue("hidden by the filter");
+			// Every file shown again renders its diff, not a blank section.
+			for (const name of ["a_first.rs", "b_second.rs", "c_third.rs"]) {
+				await expect(newLine(section(name), 1)).toBeAttached();
+			}
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("a form on an expanded context line is shown again after a reload", async ({ page }) => {
 		const lines = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`);
 		const fixture = makeFixture({ files: { "src/long.txt": `${lines.join("\n")}\n` } });
@@ -347,6 +384,40 @@ test.describe("multiple open comment forms", () => {
 			await page.reload();
 
 			await expect(formAt(fileSection, 5).locator("textarea")).toHaveValue("on a context line");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a comment posted on an expanded context line survives a view toggle and a reload", async ({
+		page,
+	}) => {
+		const lines = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`);
+		const fixture = makeFixture({ files: { "src/long.txt": `${lines.join("\n")}\n` } });
+		fixture.git("commit", "-q", "-m", "base");
+		lines[29] = "line 30 changed";
+		writeFileSync(join(fixture.dir, "src/long.txt"), `${lines.join("\n")}\n`);
+		fixture.git("add", "src/long.txt");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			await page.getByRole("button", { name: "Unified", exact: true }).click();
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/long.txt" });
+
+			while ((await newLine(fileSection, 5).count()) === 0) {
+				await fileSection.locator("td.diff-line-hunk-action button").first().click();
+			}
+			await newLine(fileSection, 5).click();
+			await formAt(fileSection, 5).locator("textarea").fill("on a context line");
+			await formAt(fileSection, 5).getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(commentRowAt(fileSection, 5)).toContainText("on a context line");
+
+			await page.getByRole("button", { name: "Split", exact: true }).click();
+			await expect(commentRowAt(fileSection, 5)).toContainText("on a context line");
+
+			await page.reload();
+			await expect(commentRowAt(fileSection, 5)).toContainText("on a context line");
 		} finally {
 			await meerkat.kill();
 		}

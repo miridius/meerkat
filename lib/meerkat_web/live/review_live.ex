@@ -1231,7 +1231,11 @@ defmodule MeerkatWeb.ReviewLive do
       </ul>
       <%!-- Every open commit-message form sits here, below the list,
       so each names the lines it will post at. --%>
-      <div :for={form <- forms_for(@open_forms, :commit_msg)} class="commit-msg-form">
+      <div
+        :for={form <- forms_for(@open_forms, :commit_msg)}
+        :key={OpenForms.key(form)}
+        class="commit-msg-form"
+      >
         <span class="line-anchor">L{form.anchor.start_line}–{form.anchor.end_line}</span>
         <.svelte
           id={form_dom_id(form)}
@@ -1294,6 +1298,7 @@ defmodule MeerkatWeb.ReviewLive do
       </button>
       <.svelte
         :for={form <- forms_for(@open_forms, :global)}
+        :key={OpenForms.key(form)}
         id={form_dom_id(form)}
         name="CommentForm"
         props={global_form_props(form, @review_id)}
@@ -1334,6 +1339,7 @@ defmodule MeerkatWeb.ReviewLive do
       <article
         :for={{file, idx} <- Enum.with_index(@state.files)}
         :if={MapSet.member?(@visible_indices, idx)}
+        :key={idx}
         id={"file-#{idx}"}
         class={[
           "file-section",
@@ -1529,6 +1535,7 @@ defmodule MeerkatWeb.ReviewLive do
               file.file_name
             )
           }
+          :key={OpenForms.key(form)}
           id={form_dom_id(form)}
           name="CommentForm"
           props={file_form_props(form, idx, @state, @review_id)}

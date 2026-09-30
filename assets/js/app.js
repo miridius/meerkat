@@ -202,6 +202,11 @@ const hooks = {
         return { li, start: s, end: e };
       };
 
+      // Once the gutter captures the pointer, every move and up event
+      // targets the <ol> itself, so find the block under the pointer.
+      const lineUnder = (ev) =>
+        lineFor(document.elementFromPoint(ev.clientX, ev.clientY) ?? ev.target);
+
       const clearHighlight = () => {
         for (const el of gutter.querySelectorAll("li.dragging")) {
           el.classList.remove("dragging");
@@ -244,7 +249,7 @@ const hooks = {
 
       this._onPointerMove = (ev) => {
         if (!dragStart) return;
-        const hit = lineFor(ev.target);
+        const hit = lineUnder(ev);
         if (!hit) return;
         if (hit.li === dragEnd?.li) return;
         // First time the pointer enters a different block — this is
@@ -271,7 +276,7 @@ const hooks = {
 
       this._onPointerUp = (ev) => {
         if (!dragStart) return;
-        const finalHit = lineFor(ev.target) ?? dragEnd ?? dragStart;
+        const finalHit = lineUnder(ev) ?? dragEnd ?? dragStart;
         const lo = Math.min(dragStart.start, finalHit.start);
         const hi = Math.max(dragStart.end, finalHit.end);
         const crossedBlocks = finalHit.li !== dragStart.li;

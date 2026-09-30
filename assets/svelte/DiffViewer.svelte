@@ -485,11 +485,11 @@
     }
   }
 
-  // A form can be anchored on a context line the reviewer expanded
-  // before a reload, which renders collapsed again. The form must stay
-  // reachable (it blocks the decision buttons), so expand the whole
-  // file once per diff instance and view mode; the hunk-expand
-  // observer then places it.
+  // A form or comment can be anchored on a context line the reviewer
+  // expanded, which renders collapsed again after a reload or a view
+  // toggle. It must stay visible (an open form blocks the decision
+  // buttons), so expand the whole file once per diff instance and view
+  // mode; the hunk-expand observer then places it.
   const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
   function expandToShowHiddenAnchor() {
     if (!diffInstance) return;
@@ -632,7 +632,10 @@
 
     for (const group of commentGroups()) {
       const rows = anchorRowsFor(group.side, group.line);
-      if (rows.length === 0) continue;
+      if (rows.length === 0) {
+        expandToShowHiddenAnchor();
+        continue;
+      }
       const anchor = rows[rows.length - 1];
 
       const tr = buildSideAwareRow(anchor, group.side, "meerkat-comment-row", "meerkat-comment-cell");
