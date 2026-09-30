@@ -31,12 +31,11 @@ Two halves:
    BEAM, and deletes the file. With the default port or `--port 0`,
    the next BEAM tries that port first and falls back to an
    OS-assigned port if it is occupied; an explicit nonzero port is
-   bound again. In `MIX_ENV=dev`, only exit 2 (a crash) gets the
-   stay-alive treatment; exit codes 0, 1, 64, and any other code
-   besides 75 pass straight through and end the loop. For exit 2, the
-   shepherd blocks on `find -newer` until the next source change, then
-   retries. Crash loops are bounded by the file-change wait; CPU stays
-   idle.
+   bound again. In `MIX_ENV=dev`, every exit other than 75 is
+   propagated, including crash exit 2. After a failed compile or asset
+   build, the shepherd waits for a source change before retrying; if
+   its checkout or `$MEERKAT_PWD` is deleted while it waits, it exits
+   2 with a REJECT message.
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
 exit 75. The browser tab stays put. State survives because:
@@ -97,8 +96,9 @@ another.
 
 - Does not install on `main`. Merge → re-runs `scripts/install.sh`
   which overwrites the dev launcher with the prod release.
-- Does not skip the safety try/rescue in CLI main. A crash still
-  exits non-zero; in dev the shepherd just doesn't propagate.
+- Does not skip the safety try/rescue in CLI main. A crash exits 2;
+  the dev shepherd propagates it rather than waiting for a source
+  change.
 - Does not change the LV's view of the world — the dev BEAM and
   the prod release-installed BEAM render identically. The only
   difference is the watch-and-restart loop on the outside.

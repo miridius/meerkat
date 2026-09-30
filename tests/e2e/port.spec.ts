@@ -59,8 +59,7 @@ test.describe("the port a review is served on", () => {
 			const runner = await startMeerkat({ port, awaitUrl: false });
 			try {
 				const { code, stderr } = await runner.awaitExit();
-				// 64, a rejected argument, so the dev launcher exits instead of
-				// waiting for a source change as it does after a crash.
+				// 64, a rejected argument.
 				expect(code).toBe(64);
 				expect(stderr).toContain(`meerkat: port ${port} is in use (--port ${port})`);
 				expect(stderr).not.toContain("Paused for human review");

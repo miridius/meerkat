@@ -118,6 +118,67 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  describe "once the review is removed" do
+    test "a caller whose runs dir is deleted exits 2 instead of retrying" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      runs = Path.join(dir, "runs")
+      rel = Path.join(dir, "rel")
+      File.mkdir_p!(Path.join(rel, "bin"))
+      File.ln_s!(rel, Path.join(dir, "current"))
+      # A BEAM that never binds, so the caller keeps polling its run dir.
+      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+      File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      backend = await_backend_pid(runs)
+      on_exit(fn -> System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true) end)
+
+      File.rm_rf!(runs)
+
+      assert await_exit(port, dir) == 2
+    end
+
+    test "a caller that cannot create its run dir exits 2 instead of retrying" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      File.mkdir_p!(runs)
+      File.chmod!(runs, 0o555)
+      on_exit(fn -> File.chmod!(runs, 0o755) && File.rm_rf!(dir) end)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      assert await_exit(port, dir) == 2
+    end
+
+    test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
+      {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
+
+      assert await_exit(port, dir) == 2
+      assert File.read!(Path.join(dir, "i")) |> String.trim() == "1"
+    end
+
+    for deleted <- ["review", "root"] do
+      test "the dev shepherd exits 2 when its #{deleted} dir is deleted while it waits for a source change" do
+        {port, dir} = open_dev_shepherd(compile_code: 1)
+        await_output(port, dir, "waiting for source change")
+
+        File.rm_rf!(Path.join(dir, unquote(deleted)))
+
+        assert await_exit(port, dir) == 2
+      end
+    end
+  end
+
   # Returns the shepherd's exit code, how many times the fake BEAM ran,
   # and, when `input` is given, what the BEAM read on stdin. On each
   # iteration i, the fake BEAM writes `<i+1> <pid>` to
@@ -259,9 +320,82 @@ defmodule Meerkat.ShepherdTest do
     """
   end
 
+  # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
+  # caller), copied into a checkout at `root` that has no build, from a
+  # fresh `review` dir, with `mix` and `bunx` replaced by stubs: `mix
+  # compile` exits `compile_code`, and each `mix run` exits the next of
+  # `exit_codes`, counting runs in the temp dir's `i`.
+  defp open_dev_shepherd(opts) do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    stubs = Path.join(dir, "stubs")
+
+    Enum.each(
+      ["review", "serve", "stubs", "root/bin", "root/assets"],
+      &File.mkdir_p!(Path.join(dir, &1))
+    )
+
+    launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
+    File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)
+    File.chmod!(launcher, 0o755)
+    File.write!(Path.join(dir, "seq"), Enum.join(Keyword.get(opts, :exit_codes, []), " "))
+    File.write!(Path.join(dir, "i"), "0")
+
+    File.write!(Path.join(stubs, "mix"), """
+    #!/usr/bin/env bash
+    if [[ "$1" == compile ]]; then exit #{Keyword.get(opts, :compile_code, 0)}; fi
+    i=$(cat "$I_FILE"); codes=($(cat "$SEQ_FILE"))
+    echo $((i + 1)) > "$I_FILE"
+    exit "${codes[$i]:-0}"
+    """)
+
+    File.write!(Path.join(stubs, "bunx"), "#!/usr/bin/env bash\nexit 0\n")
+    File.chmod!(Path.join(stubs, "mix"), 0o755)
+    File.chmod!(Path.join(stubs, "bunx"), 0o755)
+
+    port =
+      open_launcher(
+        launcher,
+        ["--commit-msg", Path.join([dir, "review", "COMMIT_MSG"]), "--no-open"],
+        dir,
+        [
+          {"PATH", stubs <> ":" <> System.fetch_env!("PATH")},
+          {"MIX_ENV", "dev"},
+          {"MEERKAT_SERVE_DIR", Path.join(dir, "serve")},
+          {"MEERKAT_SERVE_TOKEN", "t"},
+          {"SEQ_FILE", Path.join(dir, "seq")},
+          {"INPUT_FILE", "/dev/null"}
+        ],
+        cd: Path.join(dir, "review")
+      )
+
+    {port, dir}
+  end
+
+  # The detached shepherd's pid, once the caller has started it.
+  defp await_backend_pid(runs, attempts \\ 100) do
+    case Path.wildcard(Path.join([runs, "*", "pid"])) do
+      [pid_file | _] ->
+        String.trim(File.read!(pid_file))
+
+      [] when attempts > 0 ->
+        Process.sleep(50)
+        await_backend_pid(runs, attempts - 1)
+
+      [] ->
+        flunk("the caller started no backend in #{runs}")
+    end
+  end
+
   # Runs a launcher as a caller with `env`, which adds to or (with nil)
   # removes from the variables every run shares, and returns its exit code.
   defp run_launcher(launcher, args, env, dir) do
+    launcher |> open_launcher(args, dir, env) |> await_exit(dir)
+  end
+
+  # Starts a launcher as `run_launcher/4` does and returns its port;
+  # `opts[:cd]` sets its working directory.
+  defp open_launcher(launcher, args, dir, env, opts \\ []) do
     base = [
       {"MEERKAT_PORT", "44444"},
       # A caller running inside a BEAM inherits its preference; the
@@ -280,16 +414,35 @@ defmodule Meerkat.ShepherdTest do
     cat "$INPUT_FILE" | "$0" "$@"
     """
 
-    port =
-      Port.open({:spawn_executable, "/bin/sh"}, [
+    env = base |> Map.new() |> Map.merge(Map.new(env))
+
+    Port.open(
+      {:spawn_executable, "/bin/sh"},
+      [
         :binary,
         :exit_status,
         :stderr_to_stdout,
         args: ["-c", script, launcher | args],
-        env: Enum.map(base ++ env, fn {k, v} -> {~c"#{k}", if(v, do: ~c"#{v}", else: false)} end)
-      ])
+        env: Enum.map(env, fn {k, v} -> {~c"#{k}", if(v, do: ~c"#{v}", else: false)} end)
+      ] ++ Keyword.take(opts, [:cd])
+    )
+  end
 
-    await_exit(port, dir)
+  # Waits for the launcher to print `text`.
+  defp await_output(port, dir, text, seen \\ "") do
+    receive do
+      {^port, {:data, data}} ->
+        if String.contains?(seen <> data, text),
+          do: :ok,
+          else: await_output(port, dir, text, seen <> data)
+
+      {^port, {:exit_status, code}} ->
+        flunk("the launcher exited #{code} before printing #{inspect(text)}:\n#{seen}")
+    after
+      @timeout_ms ->
+        kill_launcher(port, dir)
+        flunk("the launcher did not print #{inspect(text)} within #{@timeout_ms} ms:\n#{seen}")
+    end
   end
 
   defp await_exit(port, dir) do
@@ -298,14 +451,18 @@ defmodule Meerkat.ShepherdTest do
       {^port, {:exit_status, code}} -> code
     after
       @timeout_ms ->
-        # The caller and the detached shepherd it started, which has its
-        # own session and would outlive the caller.
-        {:os_pid, pid} = Port.info(port, :os_pid)
-        detached = Path.wildcard(Path.join([dir, "runs", "*", "pid"]))
-        pids = [to_string(pid) | Enum.map(detached, &String.trim(File.read!(&1)))]
-        System.cmd("pkill", ["-9", "-P", Enum.join(pids, ",")])
-        System.cmd("kill", ["-9" | pids])
+        kill_launcher(port, dir)
         flunk("meerkat-shepherd did not exit within #{@timeout_ms} ms")
     end
+  end
+
+  # Kills the caller and the detached shepherd it started, which has its
+  # own session and would outlive the caller.
+  defp kill_launcher(port, dir) do
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    detached = Path.wildcard(Path.join([dir, "runs", "*", "pid"]))
+    pids = [to_string(pid) | Enum.map(detached, &String.trim(File.read!(&1)))]
+    System.cmd("pkill", ["-9", "-P", Enum.join(pids, ",")])
+    System.cmd("kill", ["-9" | pids])
   end
 end

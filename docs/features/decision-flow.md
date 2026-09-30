@@ -104,11 +104,15 @@ auto-approve fast path (no meaningful staged changes, so the UI never
 opens), a timeout with `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled, and a
 stored `--answers` payload, which runs no review at all.
 
-In dev mode (`MIX_ENV=dev`), the shepherd loop in `bin/meerkat-beam`
-treats non-zero exits as "wait for source change + restart" so the
-user's review tab doesn't die when the BEAM crashes mid-iteration.
-This applies only to dev; prod (release-installed `meerkat`)
-propagates the exit normally.
+In dev mode (`MIX_ENV=dev`), the `bin/meerkat-beam` shepherd
+restarts the BEAM only for exit 75, preferring the port the exited
+BEAM bound (see [dev-mode.md](dev-mode.md) for when it falls back to
+another port); it propagates every other exit, including crash exit
+2. After a failed compile or asset build, it waits for a source change
+before retrying; if its checkout or `$MEERKAT_PWD` is deleted while
+it waits, it exits 2 with a REJECT message. The prod launcher
+(`bin/meerkat-shepherd`) retries crash exit 2 once, then exits with
+the code.
 
 ## When the caller exits
 

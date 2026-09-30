@@ -46,8 +46,13 @@ meerkat_attach() {
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
-      # A failed mkdir means another caller started one first.
-      _ma_start_server "$self" "$@" || continue
+      if ! _ma_start_server "$self" "$@"; then
+        # Another caller started one first.
+        [[ -d "$_MA_DIR" ]] && continue
+        # Otherwise every retry fails the same way, without pause.
+        echo "meerkat: could not create $_MA_DIR — defaulting to REJECT (commit aborted)." >&2
+        exit 2
+      fi
     elif ! _ma_server_alive; then
       _ma_bury_server
       continue
@@ -173,7 +178,8 @@ _ma_bury_server() {
 _ma_wait_for_exit() {
   local i
   for ((i = 0; i < 150; i++)); do
-    [[ -f "$_MA_DIR/exit" ]] && return 0
+    # A deleted run dir never gets its exit file.
+    [[ -d "$_MA_DIR" && ! -f "$_MA_DIR/exit" ]] || return 0
     _ma_server_alive || return 0
     sleep 0.2
   done
@@ -182,14 +188,18 @@ _ma_wait_for_exit() {
 _ma_request() {
   local method="$1" path="$2"
   shift 2
-  local port beam
-  read -r port beam <"$_MA_DIR/port"
-  curl -sS -X "$method" -H "x-meerkat-token: $(<"$_MA_DIR/token")" \
-    "http://127.0.0.1:$port/api/$path" "$@"
+  curl -sS -X "$method" -H "x-meerkat-token: $_MA_TOKEN" \
+    "http://127.0.0.1:$_MA_PORT/api/$path" "$@"
 }
 
 _ma_attach() {
-  local fd code="" status="" line="" part
+  local fd code="" status="" line="" part beam
+  # Cache these for every request, including the attach/delivered
+  # acknowledgement sent after the decision: the run dir may have
+  # been deleted by then, so rereading its files would fail and leave
+  # the backend running.
+  read -r _MA_PORT beam <"$_MA_DIR/port"
+  _MA_TOKEN="$(<"$_MA_DIR/token")"
   # Through a pipe, a killed caller's curl dies on its next write, and the
   # backend sees the caller gone. Output to a file keeps curl alive.
   exec {fd}< <(_ma_request GET "attach?run=$_MA_RUN&quiet=$_MA_QUIET" -N -w 's %{http_code}\n' 2>/dev/null)

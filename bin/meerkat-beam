@@ -40,10 +40,14 @@ precompile_if_stale() {
   return 0
 }
 
-# Block until something under `lib config assets` changes. Used when
-# precompile fails and we want to retry once the user fixes the
-# broken file. Polls with a 1s `find -newer` instead of pulling in
-# fswatch — small project tree, low cost.
+# Block until a file under `lib`, `config`, `mix.exs`, `mix.lock`,
+# `assets/svelte`, `assets/js`, `assets/ts` or `assets/css` is newer
+# than a marker. The shepherd uses this after a failed compile or
+# asset build so it can retry once the user fixes the broken file.
+# Poll once a second with `find -newer` rather than using fswatch —
+# the project tree is small, so the cost is low. If the checkout
+# (`$ROOT`) or `$MEERKAT_PWD` is deleted, no change can arrive, so
+# exit 2 with a REJECT message instead of waiting.
 wait_for_source_change() {
   local marker
   marker="$(mktemp)"
@@ -52,6 +56,11 @@ wait_for_source_change() {
   echo >&2 "meerkat: waiting for source change before retry…"
   while true; do
     sleep 1
+    if [[ ! -d "$ROOT" || ! -d "$MEERKAT_PWD" ]]; then
+      rm -f "$marker"
+      echo >&2 "meerkat: $ROOT or $MEERKAT_PWD was deleted — defaulting to REJECT (commit aborted)."
+      exit 2
+    fi
     if [[ -n "$(find lib config mix.exs mix.lock assets/svelte assets/js assets/ts assets/css -newer "$marker" -print -quit 2>/dev/null)" ]]; then
       return 0
     fi
@@ -188,15 +197,6 @@ on_signal() {
 }
 trap on_signal TERM INT HUP
 
-# Crash-restart backoff. The shepherd already gates `wait_for_source_change`
-# on stale-build paths so user edits unblock the loop; this counter is
-# the safety net for a BEAM that crashes during boot before file-system
-# events fire (e.g. broken config). After @max_consecutive_crashes
-# crashes in a row we cap the retry sleep at @backoff_max_seconds so the
-# loop doesn't burn CPU on a persistent failure.
-consecutive_crashes=0
-max_backoff_seconds=30
-
 while true; do
   set +e
   precompile_if_stale
@@ -223,9 +223,9 @@ while true; do
   exit_code=$?
   beam_pid=""
   # The port file records "<port> <pid>" for the port this BEAM bound.
-  # Carry it forward after every exit (code-change restart or crash
-  # retry), including runs using explicit --port 0, so the next BEAM
-  # tries it first and the open browser tab can reconnect.
+  # Carry it forward after every exit, including runs using explicit
+  # --port 0, so the BEAM after a code-change restart tries it first
+  # and the open browser tab can reconnect.
   if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
     read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
     export MEERKAT_PREFERRED_PORT="$bound_port"
@@ -236,36 +236,13 @@ while true; do
   set -e
 
   if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
-    consecutive_crashes=0
     echo "meerkat: code change detected — restarting..." >&2
     continue
   fi
 
-  # Exit-code contract (set in lib/meerkat/cli.ex):
-  #   0  — Approve (user's terminal decision)
-  #   1  — Reject / Cancel (user's terminal decision)
-  #   2  — crash / unhandled exception / default-deny
-  #   75 — DevWatcher requested restart (handled above)
-  #
-  # In dev mode, ONLY 2 (crash) gets the stay-alive recovery.
-  # 0 and 1 are explicit user actions — the git-commit hook needs
-  # to see them so it can proceed (0) or abort (1). Wrapping those
-  # in a restart loop strands the hook.
-  if [[ "$MIX_ENV" == "dev" && "$exit_code" == "2" ]]; then
-    consecutive_crashes=$((consecutive_crashes + 1))
-    # Exponential-ish backoff after a streak of failed boots —
-    # prevents the loop from CPU-spinning on a persistent crash
-    # (e.g. broken config) where no file change will rescue it.
-    if (( consecutive_crashes > 1 )); then
-      backoff=$(( consecutive_crashes * 2 ))
-      (( backoff > max_backoff_seconds )) && backoff=$max_backoff_seconds
-      echo "meerkat: BEAM crashed (exit 2) ${consecutive_crashes}× in a row — sleeping ${backoff}s before next attempt…" >&2
-      sleep "$backoff"
-    fi
-    echo "meerkat: BEAM crashed (exit 2) in dev mode — waiting for source change before restart…" >&2
-    wait_for_source_change
-    continue
-  fi
-
+  # Every exit other than 75, including crash exit 2, ends the shepherd
+  # with that code (see docs/features/cli.md for exit codes). Waiting
+  # for a source change after exit 2 could leave it waiting forever
+  # when the exit has no source cause, such as a BEAM killed by a signal.
   exit "$exit_code"
 done
