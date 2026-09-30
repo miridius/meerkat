@@ -6,7 +6,7 @@ import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
 
 // The 80-line fixture edits lines 20 and 60, leaving hidden lines
-// above the first hunk, in the 32-line gap between hunks, and below
+// above the first hunk, in the 33-line gap between hunks, and below
 // the second, so every hunk row has an expand button.
 function twoHunkFixture() {
 	const lines = (edit: boolean) =>
@@ -45,7 +45,7 @@ for (const wrap of [true, false]) {
 				);
 				const visible = expandButtons.filter({ visible: true });
 				// The three visible buttons are Expand Up on the first hunk, Expand All
-				// between hunks, and Expand Down after the last. The 32-line
+				// between hunks, and Expand Down after the last. The 33-line
 				// gap is shorter than @git-diff-view's composeLen (40), so it
 				// offers a single Expand All button.
 				await expect(visible).toHaveCount(3);
@@ -60,12 +60,18 @@ for (const wrap of [true, false]) {
 				}
 
 				// The emptied old-side action cell should match the hunk header background,
-				// rather than look like a blank button tile.
+				// rather than look like a blank button tile, while the right-hand cell
+				// holding the buttons keeps its tile colour.
 				const leftAction = file.locator("td.diff-line-hunk-action").first();
 				const leftHeader = file.locator("td.diff-line-hunk-content").first();
+				const rightAction = file
+					.locator("td.diff-line-hunk-action")
+					.filter({ has: page.locator('button[title^="Expand"]').filter({ visible: true }) })
+					.first();
 				const bg = (cell: Locator) =>
 					cell.evaluate((el) => getComputedStyle(el).backgroundColor);
 				expect(await bg(leftAction)).toBe(await bg(leftHeader));
+				expect(await bg(rightAction)).not.toBe(await bg(leftHeader));
 
 				// Each hunk header should appear once, not once per side, on the
 				// right beside its expand button.

@@ -180,9 +180,9 @@
 
   // Use DiffModeEnum.SplitGitLab instead of DiffModeEnum.Split: it's
   // the only @git-diff-view mode that draws hunk expand buttons in
-  // the new-side (right-hand) gutter. It also draws them, with the
-  // hunk header text, in the old-side gutter; the CSS below hides
-  // that old-side copy.
+  // the new-side (right-hand) gutter. It also draws them in the
+  // old-side gutter, with the hunk header text beside them; the CSS
+  // below hides that old-side copy.
   const diffViewMode = $derived(
     isOneSided
       ? DiffModeEnum.Unified
@@ -1041,14 +1041,14 @@
        old-side cells as spacers that hold their width. */
     visibility: hidden;
   }
-  /* The library gives the old-side action cell an inline background in the
-     hunk line-number colour—the button tile colour. With its button hidden,
-     it would look like a blank tile, so use the hunk content colour to blend
-     it into the emptied header cell beside it. !important overrides the
-     inline style. */
+  /* The library gives the old-side action cell an inline background of
+     var(--diff-hunk-lineNumber--), the button tile colour. With its button
+     hidden, it would look like a blank tile, so point that variable at the
+     hunk content colour on this cell to blend it into the emptied header
+     cell beside it. */
   :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-action),
   :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action)) {
-    background-color: var(--diff-hunk-content--) !important;
+    --diff-hunk-lineNumber--: var(--diff-hunk-content--);
   }
   /* Drag-select highlight — applied to every line-num cell + row
      between dragStart and dragCurrent so the reviewer can see the
