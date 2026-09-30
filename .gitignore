@@ -7,6 +7,7 @@ package-lock.json
 !.claude/settings.json
 !.claude/skills/
 !.claude/agents/
+!.claude/hooks/
 .runtime/
 
 # IDE
