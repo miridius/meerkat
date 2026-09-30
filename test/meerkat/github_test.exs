@@ -109,6 +109,30 @@ defmodule Meerkat.GitHubTest do
       refute File.exists?(calls)
     end
 
+    test "mid-rebase, a branch name mixing digits with other characters is looked up",
+         %{dir: dir, calls: calls} do
+      for branch <- ["28-fix", "fix-28", "#28x"] do
+        git(dir, ["switch", "-q", "-c", branch, "feature/x"])
+
+        git(dir, [
+          "-c",
+          "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
+          "rebase",
+          "-q",
+          "-i",
+          "--root"
+        ])
+
+        assert %{number: 7} = GitHub.current_pr(dir)
+        git(dir, ["rebase", "--abort"])
+      end
+
+      assert File.read!(calls)
+             |> String.split("\n", trim: true)
+             |> Enum.map(&hd(String.split(&1, " --json"))) ==
+               ["pr view 28-fix", "pr view fix-28", "pr view #28x"]
+    end
+
     test "a detached HEAD outside a rebase skips the lookup without a warning",
          %{dir: dir, calls: calls} do
       git(dir, ["checkout", "-q", "--detach"])

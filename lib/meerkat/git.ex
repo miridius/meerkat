@@ -99,8 +99,8 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Return the branch the work belongs to, or `nil` if HEAD is detached
-  outside a rebase / the lookup fails. Mid-rebase HEAD is detached, so
+  Return the branch the work belongs to, or `nil` if no branch is
+  checked out or being rebased / the lookup fails. Mid-rebase HEAD is detached, so
   the answer is the branch being rebased (see `head_branch/1`). Used by
   the page header chip when the review target doesn't carry an
   explicit branch (staged mode), and as the approval cache's key.
