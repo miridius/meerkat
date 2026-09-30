@@ -29,9 +29,9 @@
 // `code` is "head" or "base", so the steps can skip a shot of UI the
 // base code lacks. `shot(name, { locator?, caption? })` saves the
 // viewport, or just `locator` when given. Give a caption only when a
-// reviewer wouldn't otherwise know what to look at, as one short line;
-// it is shown above the image. A base and head shot with the same name
-// are shown as a Before/After pair.
+// reviewer wouldn't otherwise know what to look at, as one short line.
+// Shots are saved as <code>-<name>.png, so a base and head shot with the
+// same name make a before/after pair.
 //
 // Two things the steps file has to do itself:
 // - Import `@playwright/test` only as a type (`import type`). A runtime
@@ -43,11 +43,10 @@
 //   `await line.evaluate((el) => el.scrollIntoView({ block: "center" }))`;
 //   otherwise the header can cover it.
 //
-// `attach` uploads the PNGs with `gh pr edit --attach` and puts them in
-// a Screenshots section at the end of the PR description, replacing the
-// one an earlier run added. After rewriting the rest of the
-// description, run it again rather than writing the section by hand.
-// The uploads are public.
+// `attach` uploads the PNGs to GitHub and prints one line per shot: its
+// file, the uploaded image's URL, and its caption if it has one. It
+// doesn't edit the PR; whoever writes the description decides where
+// each image goes, if anywhere. The uploads are public.
 //
 // --pr defaults to the PR of the current branch, and --out to
 // <tmpdir>/meerkat-pr-<N>-screenshots.
@@ -67,8 +66,6 @@ export type Steps = (ctx: {
 	code: Code;
 }) => Promise<void>;
 
-const START = "<!-- pr-screenshots:start -->";
-const END = "<!-- pr-screenshots:end -->";
 const ROOT = resolve(import.meta.dir, "..");
 
 function run(cmd: string, args: string[], cwd = ROOT): string {
@@ -232,56 +229,31 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 	for (const s of shots) console.log(join(out, s.file));
 }
 
-// Each caption, if any, as a paragraph above its image. A base and head shot of
-// the same name go together, base first, labelled Before and After;
-// the order is that of the head shots, then any base-only ones.
-export function section(shots: Shot[]): string {
-	const names = [...new Set([...shots.filter((s) => s.code === "head"), ...shots].map((s) => s.name))];
-	const blocks = names.map((name) => {
-		const base = shots.find((s) => s.code === "base" && s.name === name);
-		const head = shots.find((s) => s.code === "head" && s.name === name);
-		const label = (s: Shot) => (base && head ? (s === base ? "Before" : "After") : "");
-		const heading = (s: Shot) =>
-			[label(s) && `**${label(s)}${s.caption ? ":" : ""}**`, s.caption].filter(Boolean).join(" ");
-		return [base, head]
-			.filter((s): s is Shot => s !== undefined)
-			.map((s) => [heading(s), `![${label(s) || s.name}](./${s.file})`].filter(Boolean).join("\n\n"))
-			.join("\n\n");
-	});
-	return `${START}\n## Screenshots\n\n${blocks.join("\n\n")}\n${END}`;
-}
-
-// Puts the section last, before a trailing italic line such as
-// `_Written by …_`, dropping the one an earlier run added. Anything
-// after the section would render under its heading.
-export function withScreenshots(body: string, shots: Shot[]): string {
-	const replacement = section(shots);
-	const start = body.indexOf(START);
-	const end = body.indexOf(END);
-	if (start !== -1 && end > start) {
-		body = [body.slice(0, start).trimEnd(), body.slice(end + END.length).trim()].filter(Boolean).join("\n\n");
-	}
-	const trimmed = body.trimEnd();
-	const attribution = trimmed.match(/\n+(_[^\n]+_)$/);
-	if (attribution?.index !== undefined) {
-		return `${trimmed.slice(0, attribution.index)}\n\n${replacement}\n\n${attribution[1]}\n`;
-	}
-	return `${trimmed}\n\n${replacement}\n`;
-}
-
-function attach(pr: number, out: string): void {
+// Uploads to the endpoint `gh pr edit --attach` uses, which returns the
+// image's URL without putting it in a PR description or comment.
+function attach(out: string): void {
 	const shots: Shot[] = JSON.parse(readFileSync(join(out, "shots.json"), "utf8"));
-	const repo = run("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
-	const body = run("gh", ["pr", "view", String(pr), "-R", repo, "--json", "body", "-q", ".body"]);
-	writeFileSync(join(out, "body.md"), withScreenshots(body, shots));
-	// gh uploads each file and rewrites its `./<file>` reference in the
-	// body to the uploaded asset's URL; paths resolve against `out`.
-	const attachArgs = shots.flatMap((s) => ["--attach", `./${s.file}`]);
-	console.log(run("gh", ["pr", "edit", String(pr), "-R", repo, "--body-file", "body.md", ...attachArgs], out));
+	const repoId = run("gh", ["api", "repos/{owner}/{repo}", "-q", ".id"]);
+	for (const s of shots) {
+		const query = new URLSearchParams({ content_type: "image/png", name: s.file, repository_id: repoId });
+		const url = run("gh", [
+			"api",
+			"-X",
+			"POST",
+			`https://uploads.github.com/user-attachments/assets?${query}`,
+			"-H",
+			"Content-Type: application/octet-stream",
+			"--input",
+			join(out, s.file),
+			"-q",
+			".url",
+		]);
+		console.log([s.file, url, s.caption].filter(Boolean).join(" "));
+	}
 }
 
 if (import.meta.main) {
 	const { mode, pr, steps, out, before } = parseArgs(process.argv.slice(2));
 	if (mode === "capture") await capture(pr, steps as string, out, before);
-	else attach(pr, out);
+	else attach(out);
 }

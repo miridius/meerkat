@@ -62,7 +62,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    When a PR changes what meerkat's review page shows, add
    screenshots to its description using
    `bun scripts/pr-screenshots.ts capture` and
-   `bun scripts/pr-screenshots.ts attach`. Capture after opening the
+   `bun scripts/pr-screenshots.ts attach`. `attach` only uploads the
+   images and prints their URLs; whoever writes the description
+   decides where each one goes. Capture after opening the
    draft PR. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after
    pair can help, and `capture --before` additionally captures the

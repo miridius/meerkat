@@ -1,63 +1,44 @@
-import { describe, expect, test } from "bun:test";
-import { type Shot, section, withScreenshots } from "./pr-screenshots.ts";
+import { expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Shot } from "./pr-screenshots.ts";
 
-const shot = (code: Shot["code"], name: string, caption?: string): Shot => ({
-	code,
-	name,
-	file: `${code}-${name}.png`,
-	caption,
-});
+// A stand-in for `gh` that logs each call and answers the repo-id
+// lookup and the uploads.
+const FAKE_GH = `#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  "api repos/{owner}/{repo} -q .id") echo 42 ;;
+  *uploads.github.com*) echo "https://example.test/$(printf '%s' "$*" | sed 's/.*name=\\([^&]*\\).*/\\1/')" ;;
+  *) exit 1 ;;
+esac
+`;
 
-describe("section", () => {
-	test("shows a caption, when given, above its image", () => {
-		expect(section([shot("head", "footer", "the form links"), shot("head", "split")])).toBe(
-			"<!-- pr-screenshots:start -->\n## Screenshots\n\n" +
-				"the form links\n\n![footer](./head-footer.png)\n\n![split](./head-split.png)\n" +
-				"<!-- pr-screenshots:end -->",
-		);
+test("attach uploads each shot and prints its URL and caption, without editing the PR", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pr-screenshots-test-"));
+	const gh = join(dir, "gh");
+	writeFileSync(gh, FAKE_GH);
+	chmodSync(gh, 0o755);
+	const shots: Shot[] = [
+		{ code: "base", name: "gutter", file: "base-gutter.png" },
+		{ code: "head", name: "gutter", file: "head-gutter.png", caption: "now on the right" },
+	];
+	writeFileSync(join(dir, "shots.json"), JSON.stringify(shots));
+	for (const s of shots) writeFileSync(join(dir, s.file), "png");
+	const log = join(dir, "gh.log");
+
+	const proc = Bun.spawnSync(["bun", join(import.meta.dir, "pr-screenshots.ts"), "attach", "--pr", "7", "--out", dir], {
+		env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_LOG: log },
 	});
 
-	test("pairs base and head shots of one name as Before and After, in head order", () => {
-		const out = section([
-			shot("base", "gutter"),
-			shot("base", "removed", "Only before"),
-			shot("head", "new"),
-			shot("head", "gutter", "now on the right"),
-		]);
-		const body = out.split("\n").slice(3, -1).join("\n");
-		expect(body).toBe(
-			[
-				"![new](./head-new.png)",
-				"**Before**\n\n![Before](./base-gutter.png)\n\n" +
-					"**After:** now on the right\n\n![After](./head-gutter.png)",
-				"Only before\n\n![removed](./base-removed.png)",
-			].join("\n\n"),
-		);
-	});
-});
-
-describe("withScreenshots", () => {
-	const shots = [shot("head", "x")];
-
-	test("replaces the section an earlier run added", () => {
-		const body = `Intro\n\n${section([shot("head", "old")])}\n\n_Written by a model_\n`;
-		expect(withScreenshots(body, shots)).toBe(`Intro\n\n${section(shots)}\n\n_Written by a model_\n`);
-	});
-
-	test("moves text written after an earlier section above the new one", () => {
-		const body = `Intro\n\n${section([shot("head", "old")])}\n\n**Notes**\n- more\n\n_Written by a model_\n`;
-		expect(withScreenshots(body, shots)).toBe(
-			`Intro\n\n**Notes**\n- more\n\n${section(shots)}\n\n_Written by a model_\n`,
-		);
-	});
-
-	test("puts a new section before a trailing attribution line", () => {
-		expect(withScreenshots("Intro\n\n_Written by a model_\n", shots)).toBe(
-			`Intro\n\n${section(shots)}\n\n_Written by a model_\n`,
-		);
-	});
-
-	test("appends a new section when there is no attribution line", () => {
-		expect(withScreenshots("Intro\n", shots)).toBe(`Intro\n\n${section(shots)}\n`);
-	});
+	expect(proc.stderr.toString()).toBe("");
+	expect(proc.stdout.toString()).toBe(
+		"base-gutter.png https://example.test/base-gutter.png\n" +
+			"head-gutter.png https://example.test/head-gutter.png now on the right\n",
+	);
+	const calls = readFileSync(log, "utf8").trim().split("\n");
+	expect(calls).toHaveLength(3);
+	expect(calls.every((c) => c.startsWith("api "))).toBe(true);
+	expect(calls[1]).toContain(`--input ${join(dir, "base-gutter.png")}`);
 });
