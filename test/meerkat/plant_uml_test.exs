@@ -92,5 +92,13 @@ defmodule Meerkat.PlantUMLTest do
       assert svg =~ "<svg"
       assert svg =~ "Alice"
     end
+
+    test "a syntax error's reason is plantuml's diagnosis, not its error-image SVG" do
+      assert {:error, reason} =
+               PlantUML.render("@startuml\nAlice -> Bob\nthis is not valid\n@enduml\n")
+
+      assert reason =~ "Syntax Error?"
+      refute reason =~ "<svg"
+    end
   end
 end

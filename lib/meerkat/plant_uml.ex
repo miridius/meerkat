@@ -56,24 +56,27 @@ defmodule Meerkat.PlantUML do
     end
   end
 
-  # `-pipe` reads source from stdin and writes SVG to stdout; stderr
-  # is captured via Port's `:stderr_to_stdout`. plantuml only exits
-  # at stdin EOF, and a Port can't close the child's stdin without
-  # closing the whole port (dropping the output and exit status), so
-  # the source goes through a tmp file that `sh` redirects onto
-  # stdin. The paths are positional args, never interpolated into
-  # the script, and `exec` keeps the OS pid plantuml's for kill_port/1.
+  # `-pipe` reads source from stdin and writes SVG to stdout. plantuml
+  # only exits at stdin EOF, and a Port can't close the child's stdin
+  # without closing the whole port (dropping the output and exit
+  # status), so `sh` redirects a tmp file of the source onto stdin.
+  # stdout goes to a second tmp file and stderr to the port: on a
+  # syntax error plantuml writes an error-image SVG to stdout and the
+  # diagnosis to stderr, and only the diagnosis belongs in the reason.
+  # The paths are positional args, never interpolated into the script,
+  # and `exec` keeps the OS pid plantuml's for kill_port/1.
   defp render_via_port(source) do
     plantuml = System.find_executable("plantuml")
 
     if is_nil(plantuml) do
       {:error, "plantuml binary not found on PATH"}
     else
-      tmp =
-        Path.join(System.tmp_dir!(), "meerkat-puml-#{System.unique_integer([:positive])}.puml")
+      base = Path.join(System.tmp_dir!(), "meerkat-puml-#{System.unique_integer([:positive])}")
+      src_path = base <> ".puml"
+      svg_path = base <> ".svg"
 
       try do
-        File.write!(tmp, source)
+        File.write!(src_path, source)
 
         port =
           Port.open(
@@ -85,17 +88,22 @@ defmodule Meerkat.PlantUML do
               :use_stdio,
               args: [
                 "-c",
-                ~s(exec "$0" -tsvg -pipe -nbthread 1 < "$1"),
+                ~s(exec "$0" -tsvg -pipe -nbthread 1 < "$1" 2>&1 > "$2"),
                 plantuml,
-                tmp
+                src_path,
+                svg_path
               ],
               env: [{~c"PLANTUML_SECURITY_PROFILE", ~c"SANDBOX"}]
             ]
           )
 
-        collect(port, [], @timeout_ms)
+        case collect(port, [], @timeout_ms) do
+          {:ok, _diagnostics} -> {:ok, File.read!(svg_path)}
+          error -> error
+        end
       after
-        File.rm(tmp)
+        File.rm(src_path)
+        File.rm(svg_path)
       end
     end
   end

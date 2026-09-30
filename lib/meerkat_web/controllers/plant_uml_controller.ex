@@ -14,15 +14,6 @@ defmodule MeerkatWeb.PlantUMLController do
   # realistic diagram source.
   @max_src_bytes 64 * 1024
 
-  @doc """
-  Longest request line that can carry a `src` just over the cap:
-  percent-encoding triples each byte, plus the method, path and
-  version. `Meerkat.CLI` raises the HTTP server's limit to this so an
-  oversized `src` reaches the 413 below rather than being refused
-  with a 414 before the router runs.
-  """
-  def max_request_line_length, do: 3 * (@max_src_bytes + 1) + 1024
-
   def svg(conn, %{"src" => src}) when is_binary(src) do
     if byte_size(src) > @max_src_bytes do
       Plug.Conn.send_resp(
