@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # This is the pre-push hook. It runs scripts/no-private-refs.sh and
 # scripts/outdated.sh. Both run from here because Git's list of pushed refs,
-# which lefthook forwards only to a command configured with `use_stdin`, decides
-# whether either runs, and no-private-refs.sh needs the pushed commits from it.
+# which lefthook forwards through `use_stdin`, decides whether either runs,
+# and no-private-refs.sh needs the pushed commits from it.
+#
+# lefthook runs it as a script rather than a command: lefthook skips a
+# pre-push command whenever `git diff HEAD @{push}` lists no files, which
+# is the case for a force-push that only rewrites history, and would let
+# rewritten commit messages out unscanned.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 zero=0000000000000000000000000000000000000000
 pushed=()

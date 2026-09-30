@@ -102,6 +102,48 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
+  Installs this repo's lefthook into the fixture repo `work`, which must
+  already hold a copy of lefthook.yml.
+  """
+  @spec install_lefthook(String.t()) :: :ok
+  def install_lefthook(work) do
+    # Where `pnpm install` puts it, for lefthook.yml's `lefthook:` setting.
+    File.mkdir_p!(Path.join(work, "node_modules/.bin"))
+    File.ln_s!(lefthook_bin(), Path.join(work, "node_modules/.bin/lefthook"))
+
+    {_, 0} =
+      System.cmd(lefthook_bin(), ["install"], cd: work, env: hook_env(), stderr_to_stdout: true)
+
+    :ok
+  end
+
+  defp lefthook_bin do
+    root = Path.expand("../..", __DIR__)
+
+    case Path.wildcard(
+           Path.join(root, "node_modules/.pnpm/lefthook-*/node_modules/lefthook-*/bin/lefthook")
+         ) do
+      [bin | _] ->
+        bin
+
+      [] ->
+        ExUnit.Assertions.flunk(
+          "lefthook binary not found under node_modules; run `pnpm install`"
+        )
+    end
+  end
+
+  @doc """
+  Environment for running git commands that fire the fixture's hooks.
+
+  Git exports GIT_DIR and friends to hooks; clearing them lets a run from
+  inside a hook still act on the fixture. LEFTHOOK=0 would silently disable
+  the hook, and LEFTHOOK_BIN would bypass lefthook.yml's `lefthook:` setting.
+  """
+  @spec hook_env() :: [{String.t(), nil}]
+  def hook_env, do: [{"LEFTHOOK_BIN", nil}, {"LEFTHOOK", nil} | @git_discovery_overrides]
+
+  @doc """
   Like `make_tmp_repo/1`, but the `.git` is a real `git init` so
   `Meerkat.Git` calls that shell out to git succeed.
   """

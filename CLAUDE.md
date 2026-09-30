@@ -61,22 +61,31 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 ## Quality gates
 
-Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
-- `mix format --check-formatted`
-- `mix compile --warnings-as-errors`
+**Pre-commit:** Lefthook runs `scripts/no-main-commits.sh` first, then `scripts/check.sh`. They are piped, so if the first script refuses the commit, the checks do not run.
 
-Pre-push hook: `scripts/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh`, except when all pushed refs are deletions.
+`check.sh` checks the exact staged snapshot in a temporary linked worktree; unstaged and untracked files are excluded. It skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 
-On every PR, CI runs `mix compile --warnings-as-errors`,
-`mix format --check-formatted`, `mix test`, `bun test` in `assets/`,
-and the Playwright e2e suite; run the commands below locally before
-opening a PR.
+1. `mix deps.get`
+2. `pnpm install --frozen-lockfile --ignore-scripts --prefer-offline`
+3. `mix compile --warnings-as-errors`
+4. `mix format --check-formatted`
+5. `mix credo --strict`
+6. `bunx biome lint --error-on-warnings`
+7. `mix test`
+8. `bun test` in `assets/`
+9. The asset build
+10. `bunx playwright install --only-shell chromium`
+11. `bun run test:e2e`
 
-```bash
-mix compile --warnings-as-errors
-mix format
-bun run test                         # mix test, assets bun test, then the Playwright e2e suite
-```
+Credo uses its default configuration; there is no `.credo.exs`. Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, including Svelte templates and styles. Biome warnings and errors fail the check; infos are printed only.
+
+**Pre-push:** `.lefthook/pre-push/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked.
+
+This is a Lefthook script, not a command, so history-only force-pushes still get scanned. Lefthook skips pre-push commands when `git diff HEAD @{push}` is empty, as it is for a force-push that only rewrites history.
+
+**CI:** Every PR runs compile with warnings as errors, the format check, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `mix test`, `bun test` in `assets/`, the asset build, and the Playwright e2e suite. CI runs these checks even when the local hooks skip them.
+
+`bun run test` runs `mix test`, then `bun test` in `assets/`, then the Playwright e2e suite. `git commit --no-verify` and `git push --no-verify` bypass their respective hooks.
 
 When you change behaviour, change or add a test — ExUnit in
 `test/**/*_test.exs`, Playwright e2e in `tests/e2e/*.spec.ts`. The
@@ -90,7 +99,7 @@ at a time and re-runs the test suite — a rewrite the suite still
 passes against is a test gap.
 
 ```bash
-scripts/mutate.sh                # all lib/meerkat/*.ex (slow)
+scripts/mutate.sh                # lib/meerkat/*.ex except application.ex (slow)
 scripts/mutate.sh changed        # only files changed vs origin/main
 scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
 scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
