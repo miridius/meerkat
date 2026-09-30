@@ -28,6 +28,8 @@ export type RunnerOpts = {
 	awaitUrl?: boolean;
 	// Starts meerkat as its own process-group leader, so `signalGroup` can signal it.
 	ownGroup?: boolean;
+	// `--port` value: defaults to 0 (OS-assigned); null omits it so the launcher chooses.
+	port?: number | null;
 };
 
 export type Runner = {
@@ -74,7 +76,8 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}
 
-	const argv = [MEERKAT_BIN, ...args, "--no-open", "--port", "0"];
+	const port = opts.port === undefined ? 0 : opts.port;
+	const argv = [MEERKAT_BIN, ...args, "--no-open", ...(port === null ? [] : ["--port", String(port)])];
 	// sh -c execs its script's last command in place of itself; trailing `exit $?` keeps it alive as meerkat's parent.
 	const [cmd, ...cmdArgs] = opts.underParent ? ["sh", "-c", '"$@"; exit $?', "sh", ...argv] : argv;
 	const proc = spawn(cmd, cmdArgs, {

@@ -527,6 +527,12 @@ defmodule Meerkat.CLI do
   def endpoint_config_for_test(port), do: endpoint_config(port)
 
   @doc false
+  def port_in_use_for_test(reason), do: port_in_use?(reason)
+
+  @doc false
+  def preferred_port_for_test(value), do: preferred_port(value)
+
+  @doc false
   def secret_key_base_for_test, do: secret_key_base()
 
   @doc false
@@ -582,14 +588,56 @@ defmodule Meerkat.CLI do
     Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
     Application.put_env(:meerkat, :review_state, state)
     Application.put_env(:meerkat, :start_endpoint, true)
-    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(requested_port))
 
     # Redirect Phoenix/Bandit/LiveView Logger output to a file BEFORE the
     # endpoint boots — the "Running MeerkatWeb.Endpoint" banner fires
     # inside `ensure_all_started` — so the agent-facing stream carries
     # only the URL + verdict, not 40+ lines of server log.
     Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
+    start_app!(requested_port, preferred_port(System.get_env("MEERKAT_PREFERRED_PORT")))
+  end
+
+  # With --port 0, try a valid MEERKAT_PREFERRED_PORT first. The launcher
+  # initially sets it from MEERKAT_PORT or the stable review port, then
+  # updates it from the previous BEAM's port file after each exit so a
+  # respawn can reconnect the open browser tab. If the port is occupied,
+  # warn and bind an OS-assigned port; explicit nonzero --port binds
+  # exactly that port and still fails if occupied.
+  defp start_app!(0, preferred) when is_integer(preferred) do
+    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(preferred))
+
+    case Application.ensure_all_started(:meerkat) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        if port_in_use?(reason) do
+          start_app!(0, nil)
+          IO.puts(:stderr, "meerkat: port #{preferred} is in use; serving on #{review_url()}")
+        else
+          raise "meerkat failed to start: #{inspect(reason)}"
+        end
+    end
+  end
+
+  defp start_app!(requested_port, _preferred) do
+    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(requested_port))
     {:ok, _} = Application.ensure_all_started(:meerkat)
+  end
+
+  # The listener's :eaddrinuse reason is nested several supervisor
+  # levels deep in the start error, so search recursively through tuples
+  # and lists instead of assuming a particular nesting.
+  defp port_in_use?(:eaddrinuse), do: true
+  defp port_in_use?(term) when is_tuple(term), do: port_in_use?(Tuple.to_list(term))
+  defp port_in_use?([head | tail]), do: port_in_use?(head) or port_in_use?(tail)
+  defp port_in_use?(_term), do: false
+
+  defp preferred_port(value) do
+    case Integer.parse(value || "") do
+      {port, ""} when port in 1..65_535 -> port
+      _ -> nil
+    end
   end
 
   # Route Logger output to `<meerkat_dir>/meerkat.log` and return the

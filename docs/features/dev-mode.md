@@ -25,9 +25,11 @@ Two halves:
    for 150ms and then `System.halt(75)`.
 
 2. **`bin/meerkat-beam` shepherd loop** — the bash wrapper around
-   `mix run --no-start --no-compile`. Exit code 75 means "restart
-   on the same port" (the deterministic port derived from
-   `shasum -a 256 cwd:args`, range 40000–59999). Any other
+   `mix run --no-start --no-compile`. Exit code 75 means "restart".
+   Before each respawn, the shepherd reads the exiting BEAM's
+   `<port> <pid>` file and sets `MEERKAT_PREFERRED_PORT` to that port;
+   a default-port or `--port 0` run therefore tries its last bound port
+   first, so the browser's LiveView can reconnect. Any other
    non-zero exit in `MIX_ENV=dev` is also treated as "stay alive"
    — the shepherd blocks on `find -newer` waiting for the next
    source change and retries. Crash loops are bounded by the file-
@@ -50,23 +52,37 @@ exit 75. The browser tab stays put. State survives because:
 
 ## Deterministic port
 
-The port is `int(shasum256(cwd:args)[:8]) % 20000 + 40000`. The
-same (working directory, args) tuple always maps to the same
-port across:
+The launcher always passes the arguments through unchanged. When no
+`--port` is supplied, it sets `MEERKAT_PREFERRED_PORT` to
+`MEERKAT_PORT` if set, or to the review's stable port:
 
-- A DevWatcher-triggered restart in this shepherd.
-- A fresh `git commit` invocation that re-fires meerkat-beam from
-  the same repo.
+`int(shasum256(cwd:args)[:8]) % 20000 + 40000`
 
-So the user's browser tab keeps working without manual
-re-navigation. Range 40000–59999 keeps us above the privileged
-range but below the OS-ephemeral default start on macOS
-(49152–65535) — collisions with random OS allocations are rare,
-not impossible. If Bandit can't bind, the CLI logs a warning and
-the shepherd retries.
+The stable port means a fresh invocation of the same review from the
+same repo reuses its port, keeping an open browser tab working without
+re-navigation. The 40000–59999 range is above privileged ports; ports
+below 49152 are outside macOS's default ephemeral range
+(49152–65535), so collisions with OS-assigned ports are rare.
+`MEERKAT_PORT` replaces the hash only when no `--port` is supplied
+(useful for tests/debugging).
 
-`MEERKAT_PORT` env var overrides the deterministic computation
-for tests / debugging.
+With no `--port`, the CLI defaults to port 0 and tries a valid
+`MEERKAT_PREFERRED_PORT` (an integer from 1 to 65535). If that port is
+in use, the CLI binds an OS-assigned port, then prints
+`meerkat: port <N> is in use; serving on <url>` to stderr, where
+`<url>` is the full review URL (for example `http://127.0.0.1:54563/`).
+An invalid preferred-port value is ignored;
+without a valid preference, port 0 is OS-assigned.
+
+An explicit `--port N` or `--port=N` is passed through unchanged and
+does not set an initial preferred port. `--port 0` requests an
+OS-assigned port; an explicit nonzero port binds exactly that port and
+fails to start if it is in use. After every BEAM exit, the shepherd
+sets `MEERKAT_PREFERRED_PORT` from its `$MEERKAT_SERVE_DIR/port` file
+(`<port> <pid>`) for the next run. With the default port or explicit
+`--port 0`, a respawn tries the last bound port first so the browser's
+LiveView can reconnect. If that preferred port is now in use, the CLI
+warns and falls back to an OS-assigned port.
 
 ## What dev mode does NOT do
 

@@ -599,6 +599,50 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "port_in_use?/1" do
+    test "finds eaddrinuse however deep the start error nests it" do
+      # The shape `Application.ensure_all_started(:meerkat)` returns when
+      # the endpoint's port is taken.
+      reason =
+        {:meerkat,
+         {{:shutdown,
+           {:failed_to_start_child, MeerkatWeb.Endpoint,
+            {:shutdown,
+             {:failed_to_start_child, {MeerkatWeb.Endpoint, :http},
+              {:shutdown, {:failed_to_start_child, :listener, :eaddrinuse}}}}}},
+          {Meerkat.Application, :start, [:normal, []]}}}
+
+      assert CLI.port_in_use_for_test(reason)
+      assert CLI.port_in_use_for_test([:a, {:b, :eaddrinuse}])
+    end
+
+    test "is false for any other start error" do
+      refute CLI.port_in_use_for_test(
+               {:meerkat, {{:shutdown, {:failed_to_start_child, :listener, :eacces}}, []}}
+             )
+
+      refute CLI.port_in_use_for_test([:a | :b])
+      refute CLI.port_in_use_for_test("eaddrinuse")
+    end
+  end
+
+  describe "preferred_port/1" do
+    test "takes a port number from 1 to 65535" do
+      assert CLI.preferred_port_for_test("1") == 1
+      assert CLI.preferred_port_for_test("44444") == 44_444
+      assert CLI.preferred_port_for_test("65535") == 65_535
+    end
+
+    test "ignores an unset, malformed or out-of-range value" do
+      assert CLI.preferred_port_for_test(nil) == nil
+      assert CLI.preferred_port_for_test("") == nil
+      assert CLI.preferred_port_for_test("0") == nil
+      assert CLI.preferred_port_for_test("65536") == nil
+      assert CLI.preferred_port_for_test("4444x") == nil
+      assert CLI.preferred_port_for_test("abc") == nil
+    end
+  end
+
   describe "secret_key_base/0" do
     test "uses SECRET_KEY_BASE when set, random bytes otherwise" do
       prev = System.get_env("SECRET_KEY_BASE")

@@ -36,9 +36,11 @@ staged files are still reviewed.
 - `--no-open` — don't shell out to `open`/`xdg-open`/`cmd start` to
   open the browser. Use when meerkat is being driven by an
   automated test or remote dev session.
-- `--port <N>` — bind the HTTP server to a specific port. `0` (the
-  default) means "OS-assigned", which is what real users want;
-  hardcoded ports collide between concurrent meerkat instances.
+- `--port <N>` — set the HTTP server port. Without this option, the
+  launcher prefers the review's stable port; if it is occupied, the
+  CLI warns and uses an OS-assigned port. `--port 0` requests an
+  OS-assigned port. A nonzero `N` binds exactly that port and startup
+  fails if it is already in use.
 
 ## Env vars
 
@@ -46,6 +48,13 @@ staged files are still reviewed.
   operations target the user's repo regardless of where the BEAM
   release lives. Inside the BEAM, `Meerkat.CLI.repo_path/0` uses
   this then falls back to `File.cwd!/0`.
+- `MEERKAT_PREFERRED_PORT` — set by the launcher as the preferred
+  port for port-0 binds. On an initial run without `--port`, it is
+  `MEERKAT_PORT` if set, otherwise the review's stable port. After each
+  BEAM exits, it is updated from that BEAM's `<port> <pid>` file for
+  the next run, including explicit `--port 0`. Only integer values
+  from 1 to 65535 are used. If the preferred port is in use, the CLI
+  warns and binds an OS-assigned port instead.
 - `MEERKAT_INSTALL_PREFIX` — defaults to `~/.local/share/meerkat-beam`.
   Where the release directory + `.mode` marker live.
 - `MEERKAT_BIN_DIR` — defaults to `~/.local/bin`. Where the

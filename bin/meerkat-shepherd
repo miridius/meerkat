@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prod shepherd for meerkat. The installed `meerkat` wrapper sets
 # MEERKAT_CURRENT_LINK (the install's `current` symlink) and execs this.
-# It runs the release BEAM in a loop on a deterministic port. The BEAM
+# It runs the release BEAM in a loop. The BEAM
 # self-halts with code 75 when its VersionWatcher sees `current` flip to
 # a newer version; the shepherd re-resolves `current` and respawns on
 # the SAME port, so the browser's LiveView reconnects to the new version
@@ -60,42 +60,27 @@ if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
   meerkat_attach "$0" "$@"
 fi
 
-# Deterministic port from (cwd, args) so a respawn, and a fresh
-# git-commit re-invocation of the same review, reuse the same port and
-# the browser tab reconnects without re-navigation. Same formula and
-# 40000-59999 range as bin/meerkat-beam.
-if [[ -n "${MEERKAT_PORT:-}" ]]; then
-  stable_port="$MEERKAT_PORT"
-else
-  hex8=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 8)
-  stable_port=$(( 16#${hex8} % 20000 + 40000 ))
-fi
-
-# Replace any --port in the args with the stable one, else append it.
-rewrite_port_arg() {
-  local new_port="$1"
-  shift
-  local out=()
-  local i=1
-  local got_port=false
-  while [[ $i -le $# ]]; do
-    local arg="${!i}"
-    if [[ "$arg" == "--port" ]]; then
-      out+=("--port" "$new_port")
-      i=$((i + 2))
-      got_port=true
-    else
-      out+=("$arg")
-      i=$((i + 1))
-    fi
-  done
-  if [[ "$got_port" == "false" ]]; then
-    out+=("--port" "$new_port")
+# Pass explicit --port and --port=N (including --port 0) through
+# unchanged and leave MEERKAT_PREFERRED_PORT unset. Otherwise prefer
+# MEERKAT_PORT (for tests/debugging), or the stable hash so a fresh
+# invocation of the same review keeps its browser tab working. If the
+# preferred port is taken, the CLI warns and uses an OS-assigned port.
+# The shared formula and range are documented in bin/meerkat-beam.
+unset MEERKAT_PREFERRED_PORT
+explicit_port=false
+for arg in "$@"; do
+  if [[ "$arg" == "--port" || "$arg" == --port=* ]]; then
+    explicit_port=true
   fi
-  printf '%s\n' "${out[@]}"
-}
-
-mapfile -t run_args < <(rewrite_port_arg "$stable_port" "$@")
+done
+if [[ "$explicit_port" == "false" ]]; then
+  if [[ -n "${MEERKAT_PORT:-}" ]]; then
+    export MEERKAT_PREFERRED_PORT="$MEERKAT_PORT"
+  else
+    hex8=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 8)
+    export MEERKAT_PREFERRED_PORT=$(( 16#${hex8} % 20000 + 40000 ))
+  fi
+fi
 
 # Browser-open marker: the BEAM opens the review URL only on the first
 # iteration that finds the marker empty, so a respawn doesn't spawn a
@@ -108,7 +93,7 @@ trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp"
 
 # Forward TERM/INT/HUP to the running BEAM. Bash never relays signals to
 # a foreground child, so without this a killed shepherd orphans a BEAM
-# that sits on the deterministic port forever. The BEAM runs as a
+# that sits on its port forever. The BEAM runs as a
 # background job + `wait` so this fires immediately.
 beam_pid=""
 on_signal() {
@@ -130,15 +115,23 @@ while true; do
   rm -f "$MEERKAT_SERVE_DIR/port"
 
   "$RELEASE_DIR/bin/meerkat" \
-    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "${run_args[@]}" &
+    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &
   beam_pid=$!
   wait "$beam_pid"
   exit_code=$?
   beam_pid=""
+  # The port file records "<port> <pid>" for the port this BEAM bound.
+  # Carry it forward after every exit (version-upgrade restart or the
+  # single crash retry), including runs using explicit --port 0, so the
+  # next BEAM tries it first and the open browser tab can reconnect.
+  if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
+    read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
+    export MEERKAT_PREFERRED_PORT="$bound_port"
+  fi
 
   if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
     crashed=0
-    echo "meerkat: new version live; restarting on port $stable_port..." >&2
+    echo "meerkat: new version live; restarting..." >&2
     continue
   fi
 
