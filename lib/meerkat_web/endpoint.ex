@@ -30,10 +30,13 @@ defmodule MeerkatWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # The query-string limit matches the request-line limit set in
+  # `Meerkat.CLI`, so an oversized PlantUML `src` reaches the 413.
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
-    json_decoder: Phoenix.json_library()
+    json_decoder: Phoenix.json_library(),
+    query_string_length: 2 * 1024 * 1024
 
   plug Plug.MethodOverride
   plug Plug.Head

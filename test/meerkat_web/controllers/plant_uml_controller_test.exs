@@ -9,20 +9,24 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
     end
 
     # Over a real socket, with the HTTP options meerkat serves with:
-    # the HTTP server's request-line limit is what stood between the
-    # client and this guard.
-    test "413 when a src of accented text exceeds the 64 KiB cap" do
+    # the HTTP server's request-line limit and the query-string limit
+    # are what stood between the client and this guard.
+    test "413 for any src over the 64 KiB cap that a browser will request" do
       http = Meerkat.CLI.endpoint_config_for_test(0)[:http]
       server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
       {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
-
-      # 70 KiB of two-byte chars: each byte percent-encodes to three.
-      big = URI.encode_www_form(String.duplicate("é", 35 * 1024))
-      url = ~c"http://127.0.0.1:#{port}/api/plantuml/svg?src=#{big}"
-
       {:ok, _} = Application.ensure_all_started(:inets)
-      assert {:ok, {{_, 413, _}, _, body}} = :httpc.request(:get, {url, []}, [], [])
-      assert to_string(body) =~ "src too large"
+
+      # Two-byte chars, each byte percent-encoding to three: 70 KiB
+      # encodes to ~215K chars, 340 KiB to ~1.04M, both under Chrome's
+      # 2 MiB URL limit.
+      for kib <- [70, 340] do
+        big = URI.encode_www_form(String.duplicate("é", div(kib * 1024, 2)))
+        url = ~c"http://127.0.0.1:#{port}/api/plantuml/svg?src=#{big}"
+
+        assert {:ok, {{_, 413, _}, _, body}} = :httpc.request(:get, {url, []}, [], [])
+        assert to_string(body) =~ "src too large"
+      end
     end
 
     # Successful render is exercised in test/meerkat/plant_uml_test.exs;
