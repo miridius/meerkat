@@ -216,9 +216,6 @@ while true; do
     continue
   fi
 
-  # The caller attaches once `port` exists, so it must name the BEAM
-  # about to start, not the one that just exited.
-  rm -f "$MEERKAT_SERVE_DIR/port"
   set +e
   mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" &
   beam_pid=$!
@@ -232,6 +229,9 @@ while true; do
   if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
     read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
     export MEERKAT_PREFERRED_PORT="$bound_port"
+    # Remove the exited BEAM's port so callers can't reattach to it
+    # while the next BEAM is starting.
+    rm -f "$MEERKAT_SERVE_DIR/port"
   fi
   set -e
 

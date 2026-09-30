@@ -110,9 +110,6 @@ trap on_signal TERM INT HUP
 crashed=0
 while true; do
   resolve_release
-  # The caller attaches once `port` exists, so it must name the BEAM
-  # about to start, not the one that just exited.
-  rm -f "$MEERKAT_SERVE_DIR/port"
 
   "$RELEASE_DIR/bin/meerkat" \
     eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &
@@ -127,6 +124,9 @@ while true; do
   if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
     read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
     export MEERKAT_PREFERRED_PORT="$bound_port"
+    # Remove the exited BEAM's port so callers can't reattach to it
+    # while the next BEAM is starting.
+    rm -f "$MEERKAT_SERVE_DIR/port"
   fi
 
   if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
