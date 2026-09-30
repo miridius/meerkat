@@ -194,8 +194,10 @@ _ma_request() {
 
 _ma_attach() {
   local fd code="" status="" line="" part beam
-  # Read once, so the decision still reaches the backend if the run dir is
-  # deleted during the review.
+  # Cache these for every request, including the attach/delivered
+  # acknowledgement sent after the decision: the run dir may have
+  # been deleted by then, so rereading its files would fail and leave
+  # the backend running.
   read -r _MA_PORT beam <"$_MA_DIR/port"
   _MA_TOKEN="$(<"$_MA_DIR/token")"
   # Through a pipe, a killed caller's curl dies on its next write, and the

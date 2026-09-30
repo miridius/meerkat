@@ -40,11 +40,14 @@ precompile_if_stale() {
   return 0
 }
 
-# Block until something under `lib config assets` changes. Used when
-# precompile fails and we want to retry once the user fixes the
-# broken file. Polls with a 1s `find -newer` instead of pulling in
-# fswatch — small project tree, low cost. A deleted checkout or
-# review directory never changes again, so the shepherd exits instead.
+# Block until a file under `lib`, `config`, `mix.exs`, `mix.lock`,
+# `assets/svelte`, `assets/js`, `assets/ts` or `assets/css` is newer
+# than a marker. The shepherd uses this after a failed compile or
+# asset build so it can retry once the user fixes the broken file.
+# Poll once a second with `find -newer` rather than using fswatch —
+# the project tree is small, so the cost is low. If the checkout
+# (`$ROOT`) or `$MEERKAT_PWD` is deleted, no change can arrive, so
+# exit 2 with a REJECT message instead of waiting.
 wait_for_source_change() {
   local marker
   marker="$(mktemp)"
@@ -237,9 +240,9 @@ while true; do
     continue
   fi
 
-  # Any exit other than 75, including crash exit 2, ends the review
-  # (see docs/features/cli.md for exit codes). Waiting for a source
-  # change after a crash can leave the shepherd running indefinitely
-  # when its review directory is gone.
+  # Every exit other than 75, including crash exit 2, ends the shepherd
+  # with that code (see docs/features/cli.md for exit codes). Waiting
+  # for a source change after exit 2 could leave it waiting forever
+  # when the exit has no source cause, such as a BEAM killed by a signal.
   exit "$exit_code"
 done

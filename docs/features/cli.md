@@ -92,13 +92,15 @@ staged files are still reviewed.
 - `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
   outer `try/rescue` defaults to REJECT + exit 2 so a crash never
   silently lands a commit; see [decision-flow.md](decision-flow.md).
-  The dev launcher propagates exit 2; the prod launcher retries a
-  crash (exit 2) once, then exits with the code. A launcher exits 2
-  with a REJECT message if the review's runs dir is deleted; while
-  waiting to retry after a failed build, the dev launcher also exits
-  2 with a REJECT message if the checkout or review directory is
-  deleted. Under `--answers`: the dev launcher could not build
-  meerkat, so it stored nothing.
+  The dev launcher (`bin/meerkat-beam`) propagates exit 2; the prod
+  launcher (`bin/meerkat-shepherd`) retries a crash once, then exits
+  with the code. A caller that cannot create its run dir while not
+  attached to a serving BEAM exits 2 with a REJECT message (`could
+  not create <run dir>`); an already attached caller still receives
+  the decision and exits with it. While waiting to retry after a
+  failed build, the dev launcher exits 2 with a REJECT message if its
+  checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
+  launcher could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`
