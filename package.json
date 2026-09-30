@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.29.2",
   "scripts": {
     "test": "mix test && (cd assets && bun test) && bun run test:e2e",
-    "test:e2e": "MEERKAT_BIN=$PWD/bin/meerkat-beam playwright test --workers=1",
+    "test:e2e": "MEERKAT_BIN=$PWD/bin/meerkat-beam playwright test",
     "prepare": "lefthook install"
   },
   "devDependencies": {

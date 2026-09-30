@@ -18,11 +18,11 @@ export default defineConfig({
 	// 1.7MB JS bundle parse stack up on a busy machine. The retry runs
 	// against a warmed module cache and is reliably green.
 	retries: 1,
-	// Cap workers at 2 even locally. Each meerkat spawn is a fresh
-	// `mix run --no-start` BEAM boot (~4-8s); parallelism beyond two
-	// concurrent boots saturates the system and pushes per-test cold
-	// start past the action timeout.
-	workers: process.env.CI ? 2 : 2,
+	// Tests spend most of their time waiting on a BEAM boot, a page load or
+	// a deadline tick, so workers overlap well: on 18 cores the suite took
+	// 516s on 1 worker, 150s on 6 and 166s on 9 with other work loading the
+	// machine to 40-60. Locally, half the cores (Playwright's own default).
+	workers: process.env.CI ? 2 : "50%",
 	reporter: process.env.CI ? "github" : "list",
 	use: {
 		// 20s per action (Playwright's default `actionTimeout` is 0
