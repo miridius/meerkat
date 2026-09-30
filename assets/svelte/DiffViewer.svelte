@@ -987,7 +987,7 @@
   </div>
 {/if}
 
-{#if !file.is_binary && isPlantUml && file.status !== "deleted"}
+{#if !file.is_binary && isPlantUml}
   <PlantUmlPreview
     oldSource={file.old_content ?? ""}
     newSource={file.new_content ?? ""}

@@ -593,7 +593,8 @@ defmodule Meerkat.CLITest do
       assert config[:code_reloader] == false
       assert config[:watchers] == []
       assert config[:server] == true
-      assert config[:http] == [ip: {127, 0, 0, 1}, port: 4321]
+      assert config[:http][:ip] == {127, 0, 0, 1}
+      assert config[:http][:port] == 4321
       assert is_binary(config[:secret_key_base])
     end
   end

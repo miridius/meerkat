@@ -636,7 +636,15 @@ defmodule Meerkat.CLI do
     ]
 
     always = [
-      http: [ip: {127, 0, 0, 1}, port: requested_port],
+      http: [
+        ip: {127, 0, 0, 1},
+        port: requested_port,
+        # Chrome's maximum URL length. The PlantUML preview carries the
+        # diagram source in the query string, so anything shorter
+        # refuses an oversized source with a 414 before
+        # `MeerkatWeb.PlantUMLController` can answer with its 413.
+        http_1_options: [max_request_line_length: 2 * 1024 * 1024]
+      ],
       server: true,
       secret_key_base: secret_key_base(),
       check_origin: {MeerkatWeb.Loopback, :origin?, []}
