@@ -658,7 +658,8 @@ defmodule Meerkat.Git do
       "-U3",
       "-w",
       "-M",
-      # Lowercase `u` excludes unmerged paths, preventing Git's `* Unmerged path ...` output from entering the hunk parser.
+      # Lowercase `u` excludes unmerged paths, preventing Git's
+      # `* Unmerged path ...` output from entering the hunk parser.
       "--diff-filter=u",
       "--no-textconv",
       "--no-ext-diff"
