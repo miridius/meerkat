@@ -1,6 +1,7 @@
 # File filter sidebar
 
-A collapsible left-side panel that lists every file in the diff
+A collapsible panel in normal page flow, placed above the diff body
+and spanning the full page width, that lists every file in the diff
 with affordances to narrow / hide / focus the main file list.
 
 ## Toggle
@@ -9,10 +10,13 @@ Hidden by default. The toolbar's `☰ Files` button toggles it via
 `toolbar.toggle_files_panel`. State lives on the LV's
 `files_panel_open` socket assign (ephemeral, NOT persisted).
 
-When open, the `.review-body` grid becomes `260px 1fr`; when
-closed, `1fr` (diff body uses the full viewport). The breakpoint
-at `max-width: 900px` collapses to a single column even when the
-panel is open.
+When open, the panel renders above the `.review-body` element, which
+always has one column (`grid-template-columns: 1fr`); opening the
+panel does not change the diff body's width. On opening, the server
+pushes a `scroll-into-view` event for the element with id
+`file-filter`, so the panel scrolls into view if the reviewer has
+scrolled down the page. The toolbar holding the `☰ Files` button is
+sticky, so it can be clicked from anywhere on the page.
 
 ## Sidebar contents
 
@@ -52,8 +56,8 @@ Each row in the file-entries list shows:
   per-file checkbox in the main file list.
 - The file's status, shown as a coloured dot whose tooltip names
   the status.
-- The file's name is a link showing its directory followed by its
-  base name, truncated with an ellipsis at the row boundary.
+- The file's name is a link showing its full path on one line with no
+  truncation; the directory part is dimmed and the base name is bold.
 - A hover-revealed `only` button (shows ONLY this file in the
   main list via `filter.show_only`).
 - A hover-revealed `hide *.<ext>` button (hides all files of this
