@@ -41,6 +41,12 @@ test.describe("the port a review is served on", () => {
 			try {
 				expect(portOf(runner.url)).not.toBe(stable);
 				await page.goto(runner.url);
+				await page.getByRole("button", { name: /^Approve$/ }).click();
+				const { code, stderr } = await runner.awaitExit();
+				expect(code).toBe(0);
+				// A launcher that still preferred the occupied stable port would
+				// also land elsewhere, but only after this fallback warning.
+				expect(stderr).not.toContain("is in use");
 			} finally {
 				await runner.kill();
 			}
@@ -60,6 +66,40 @@ test.describe("the port a review is served on", () => {
 				const { code, stderr } = await runner.awaitExit();
 				expect(code).toBe(0);
 				expect(stderr).toContain(`port ${stable} is in use; serving on ${runner.url}`);
+			} finally {
+				await runner.kill();
+			}
+		} finally {
+			server.close();
+		}
+	});
+
+	test("an invalid MEERKAT_PORT is reported and the review is served on an OS-assigned port", async ({
+		page,
+	}) => {
+		const runner = await startMeerkat({ port: null, env: { MEERKAT_PORT: "abc" } });
+		try {
+			await page.goto(runner.url);
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code, stderr } = await runner.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr).toContain('meerkat: ignoring MEERKAT_PREFERRED_PORT="abc": not a port from 1 to 65535');
+		} finally {
+			await runner.kill();
+		}
+	});
+
+	test("an explicit --port that is taken fails to start and names the port", async () => {
+		const { port, server } = await occupyPort();
+		try {
+			const runner = await startMeerkat({ port, awaitUrl: false });
+			try {
+				const { code, stderr } = await runner.awaitExit();
+				// 64, a rejected argument, so the dev launcher exits instead of
+				// waiting for a source change as it does after a crash.
+				expect(code).toBe(64);
+				expect(stderr).toContain(`meerkat: port ${port} is in use (--port ${port})`);
+				expect(stderr).not.toContain("Paused for human review");
 			} finally {
 				await runner.kill();
 			}

@@ -36,11 +36,14 @@ staged files are still reviewed.
 - `--no-open` — don't shell out to `open`/`xdg-open`/`cmd start` to
   open the browser. Use when meerkat is being driven by an
   automated test or remote dev session.
-- `--port <N>` — set the HTTP server port. Without this option, the
-  launcher prefers the review's stable port; if it is occupied, the
-  CLI warns and uses an OS-assigned port. `--port 0` requests an
-  OS-assigned port. A nonzero `N` binds exactly that port and startup
-  fails if it is already in use.
+- `--port <N>` (or `--port=<N>`) — set the HTTP server's port. The
+  CLI defaults to `0`; with `0`, it binds a valid
+  `MEERKAT_PREFERRED_PORT` if it is free, and binds an OS-assigned
+  port only if there is no valid preferred port or it is in use.
+  Launchers pass explicit options through and ignore `MEERKAT_PORT`
+  for them; on respawn they may supply the last-bound port as a
+  preference. A nonzero `N` binds exactly `N`; if occupied, meerkat
+  reports the conflict and exits `64`.
 
 ## Env vars
 
@@ -48,13 +51,18 @@ staged files are still reviewed.
   operations target the user's repo regardless of where the BEAM
   release lives. Inside the BEAM, `Meerkat.CLI.repo_path/0` uses
   this then falls back to `File.cwd!/0`.
-- `MEERKAT_PREFERRED_PORT` — set by the launcher as the preferred
-  port for port-0 binds. On an initial run without `--port`, it is
-  `MEERKAT_PORT` if set, otherwise the review's stable port. After each
-  BEAM exits, it is updated from that BEAM's `<port> <pid>` file for
-  the next run, including explicit `--port 0`. Only integer values
-  from 1 to 65535 are used. If the preferred port is in use, the CLI
-  warns and binds an OS-assigned port instead.
+- `MEERKAT_PORT` — for tests/debugging, the launcher copies this to
+  `MEERKAT_PREFERRED_PORT` when set and no explicit `--port` is
+  present, instead of using the stable review port. Explicit `--port`
+  options ignore it; invalid values are copied and reported by the
+  CLI as an invalid preferred port.
+- `MEERKAT_PREFERRED_PORT` — the launcher discards any inherited
+  value. With no explicit `--port`, it sets this initially from
+  `MEERKAT_PORT` or the stable review port; after each BEAM exit it
+  sets it to the port in the run dir's `port` file for the next BEAM,
+  then removes the file. The CLI tries it when `--port` is `0`;
+  values outside 1–65535 are ignored with a warning, and an occupied
+  preferred port falls back to OS-assigned.
 - `MEERKAT_INSTALL_PREFIX` — defaults to `~/.local/share/meerkat-beam`.
   Where the release directory + `.mode` marker live.
 - `MEERKAT_BIN_DIR` — defaults to `~/.local/bin`. Where the
@@ -87,10 +95,10 @@ staged files are still reviewed.
   The launchers restart or retry on it. Under `--answers`: the dev
   launcher could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
-  positional, etc.) or the review target didn't resolve (a bad ref,
-  a failed `--pr` fetch). The launchers pass it straight through.
-  Under `--answers`: a terminal on stdin, or a directory that is no
-  git repository.
+  positional, etc.), an explicit nonzero `--port` was already in use,
+  or the review target didn't resolve (a bad ref, a failed `--pr`
+  fetch). The launchers pass it straight through. Under `--answers`:
+  a terminal on stdin, or a directory that is no git repository.
 - `74` — `--answers` could not read stdin, or could not write the
   answers file. Nothing was stored, and the input itself was fine.
 - `75` — DevWatcher restart sentinel. Internal to

@@ -35,6 +35,7 @@ defmodule Meerkat.CLI do
     Git,
     PendingAnswers,
     Persistence,
+    PortInUseError,
     ReviewId,
     ReviewLog,
     ReviewServer,
@@ -137,6 +138,10 @@ defmodule Meerkat.CLI do
   defp run_live_review_safe(target, opts) do
     run_live_review(target, opts)
   rescue
+    e in PortInUseError ->
+      IO.puts(:stderr, Exception.message(e))
+      64
+
     e ->
       IO.puts(
         :stderr,
@@ -533,6 +538,9 @@ defmodule Meerkat.CLI do
   def preferred_port_for_test(value), do: preferred_port(value)
 
   @doc false
+  def preferred_port_from_env_for_test(value), do: preferred_port_from_env(value)
+
+  @doc false
   def secret_key_base_for_test, do: secret_key_base()
 
   @doc false
@@ -594,7 +602,22 @@ defmodule Meerkat.CLI do
     # inside `ensure_all_started` — so the agent-facing stream carries
     # only the URL + verdict, not 40+ lines of server log.
     Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
-    start_app!(requested_port, preferred_port(System.get_env("MEERKAT_PREFERRED_PORT")))
+    start_app!(requested_port, preferred_port_from_env(System.get_env("MEERKAT_PREFERRED_PORT")))
+  end
+
+  # The launcher copies a user-set MEERKAT_PORT here, so say when a value
+  # is ignored instead of silently serving on an OS-assigned port.
+  defp preferred_port_from_env(value) do
+    port = preferred_port(value)
+
+    if value != nil and port == nil do
+      IO.puts(
+        :stderr,
+        "meerkat: ignoring MEERKAT_PREFERRED_PORT=#{inspect(value)}: not a port from 1 to 65535"
+      )
+    end
+
+    port
   end
 
   # With --port 0, try a valid MEERKAT_PREFERRED_PORT first. The launcher
@@ -602,12 +625,10 @@ defmodule Meerkat.CLI do
   # updates it from the previous BEAM's port file after each exit so a
   # respawn can reconnect the open browser tab. If the port is occupied,
   # warn and bind an OS-assigned port; explicit nonzero --port binds
-  # exactly that port and still fails if occupied.
+  # exactly that port and raises PortInUseError if occupied.
   defp start_app!(0, preferred) when is_integer(preferred) do
-    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(preferred))
-
-    case Application.ensure_all_started(:meerkat) do
-      {:ok, _} ->
+    case start_app(preferred) do
+      :ok ->
         :ok
 
       {:error, reason} ->
@@ -621,8 +642,26 @@ defmodule Meerkat.CLI do
   end
 
   defp start_app!(requested_port, _preferred) do
-    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(requested_port))
-    {:ok, _} = Application.ensure_all_started(:meerkat)
+    case start_app(requested_port) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        if port_in_use?(reason) do
+          raise PortInUseError, port: requested_port
+        else
+          raise "meerkat failed to start: #{inspect(reason)}"
+        end
+    end
+  end
+
+  defp start_app(port) do
+    Application.put_env(:meerkat, MeerkatWeb.Endpoint, endpoint_config(port))
+
+    case Application.ensure_all_started(:meerkat) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # The listener's :eaddrinuse reason is nested several supervisor

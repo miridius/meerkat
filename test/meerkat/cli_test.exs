@@ -643,6 +643,28 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "preferred_port_from_env/1" do
+    test "warns about a set value it ignores" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.preferred_port_from_env_for_test("abc") == nil
+        end)
+
+      assert stderr ==
+               ~s(meerkat: ignoring MEERKAT_PREFERRED_PORT="abc": not a port from 1 to 65535\n)
+    end
+
+    test "is silent for a valid or unset value" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.preferred_port_from_env_for_test("44444") == 44_444
+          assert CLI.preferred_port_from_env_for_test(nil) == nil
+        end)
+
+      assert stderr == ""
+    end
+  end
+
   describe "secret_key_base/0" do
     test "uses SECRET_KEY_BASE when set, random bytes otherwise" do
       prev = System.get_env("SECRET_KEY_BASE")

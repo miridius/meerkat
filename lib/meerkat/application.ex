@@ -30,10 +30,12 @@ defmodule Meerkat.Application do
   end
 
   # Dev mode only: watch lib/ + assets/ and halt the BEAM with exit
-  # code 75 on any change. `bin/meerkat-beam` shepherd loop respawns
-  # on the same port; the user's browser tab reconnects to the new
-  # BEAM transparently. Gated on @env so the release supervisor
-  # never tries to start the watcher.
+  # code 75 on any change. After each BEAM exit, `bin/meerkat-beam`
+  # reads and deletes the run dir's `port` file, then sets
+  # `MEERKAT_PREFERRED_PORT` to its recorded port for the next BEAM.
+  # With the default port or `--port 0`, the next BEAM tries that port
+  # first; if occupied, the CLI uses an OS-assigned port. Gated on
+  # @env so the release supervisor never tries to start the watcher.
   defp dev_watcher_child do
     if @env == :dev and Application.get_env(:meerkat, :start_endpoint, false) do
       [Meerkat.DevWatcher]

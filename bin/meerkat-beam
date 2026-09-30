@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Dev launcher for the Phoenix-port meerkat. Wraps `mix run` in a
 # shepherd loop so the BEAM can self-halt with exit code 75 on a
-# file-system change and the launcher respawns it on the SAME
-# port. The user's browser sees a brief WebSocket drop + LV
+# file-system change and the launcher respawns it, preferring the
+# port it bound. The user's browser sees a brief WebSocket drop + LV
 # auto-reconnects to the new BEAM; `ReviewServer.init` reloads
 # in-progress comments via `Meerkat.Persistence`.
 #
