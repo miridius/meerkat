@@ -1,8 +1,8 @@
 defmodule Meerkat.MergeQueueTest do
   # Runs scripts/merge-queue.sh against a stub `gh` on PATH. The stub answers
   # each `gh pr view` with the next JSON line from that PR's fixture (the last
-  # line repeats) and applies the script's own `-q` filter with jq, so the
-  # script's reading of real `gh` JSON is exercised too.
+  # line repeats) and applies the script's own `-q`/`--jq` filters with jq, so
+  # those filters are exercised against gh-shaped JSON.
   use ExUnit.Case, async: true
 
   @script Path.expand("scripts/merge-queue.sh")
@@ -20,6 +20,7 @@ defmodule Meerkat.MergeQueueTest do
     case "$1 $2" in
       "pr view")
         f="$dir/view-$3"
+        [ -f "$f" ] || { echo "GraphQL: Could not resolve to a PullRequest with the number of $3." >&2; exit 1; }
         head -n 1 "$f" > "$dir/line"
         if [ "$(wc -l < "$f")" -gt 1 ]; then tail -n +2 "$f" > "$f.next"; mv "$f.next" "$f"; fi
         q=""; prev=""
@@ -49,12 +50,13 @@ defmodule Meerkat.MergeQueueTest do
             exit "$(cat "$dir/merge-status-$n" 2>/dev/null || echo 0)"
             ;;
         esac
+        exit "$(cat "$dir/delete-status" 2>/dev/null || echo 0)"
         ;;
       "api "*)
         jq=""; prev=""
         for a in "$@"; do [ "$prev" = --jq ] && jq=$a; prev=$a; done
         case "$2" in
-          */commits/*) cat "$dir/verification" 2>/dev/null || echo "verified: true, reason: valid" ;;
+          */commits/*) { cat "$dir/commit-${2##*/}.json" 2>/dev/null || echo '{}'; } | jq -r "$jq" ;;
           */merge-async/*)
             f="$dir/merge-poll"
             head -n 1 "$f"
@@ -78,11 +80,13 @@ defmodule Meerkat.MergeQueueTest do
 
   # `checks` is whether the head has any checks registered yet; their results
   # come from `gh pr checks --watch`, stubbed per PR with a checks-status file.
-  defp view({head, merge_state, checks}) do
+  defp view({head, merge_state, checks}), do: view({head, merge_state, checks, "OPEN"})
+
+  defp view({head, merge_state, checks, state}) do
     checks = if checks, do: [%{name: "test", status: "IN_PROGRESS", conclusion: ""}], else: []
 
     %{
-      state: "OPEN",
+      state: state,
       headRefOid: head,
       headRefName: "claude/#{head}",
       mergeStateStatus: merge_state,
@@ -92,10 +96,27 @@ defmodule Meerkat.MergeQueueTest do
     }
   end
 
-  defp run_queue(dir, prs) do
+  # The commit GitHub's API returns for `sha`, by default GitHub's signed merge
+  # of main into `parent`, as `gh pr update-branch` makes.
+  defp commit(dir, sha, parent, opts \\ []) do
+    json = %{
+      commit: %{
+        verification: %{
+          verified: Keyword.get(opts, :verified, true),
+          reason: Keyword.get(opts, :reason, "valid")
+        }
+      },
+      committer: %{login: Keyword.get(opts, :committer, "web-flow")},
+      parents: [%{sha: parent}, %{sha: "main0"}]
+    }
+
+    File.write!(Path.join(dir, "commit-#{sha}.json"), JSON.encode!(json))
+  end
+
+  defp run_queue(dir, prs, env \\ []) do
     env = [
       {"PATH", Path.join(dir, "bin") <> ":" <> System.get_env("PATH")},
-      {"MERGE_QUEUE_POLL", "0"}
+      {"MERGE_QUEUE_POLL", "0"} | env
     ]
 
     System.cmd("bash", [@script | prs], env: env, stderr_to_stdout: true)
@@ -158,7 +179,7 @@ defmodule Meerkat.MergeQueueTest do
     )
 
     assert run_queue(dir, ["1"]) ==
-             {"#1 has open PRs below it in its stack: #2\nnot attempted: none\n", 1}
+             {"#1 has open PRs below it in its stack: #2\nnot attempted:\n", 1}
 
     assert merges(dir) == []
   end
@@ -187,6 +208,8 @@ defmodule Meerkat.MergeQueueTest do
       {"ccc", "BLOCKED", true}
     ])
 
+    commit(dir, "ccc", "bbb")
+
     assert run_queue(dir, ["1", "2"]) == {"#1 merged sq1\n#2 merged sq2 (updated with main)\n", 0}
 
     assert calls(dir, "pr update-branch") == ["pr update-branch 2"]
@@ -202,9 +225,10 @@ defmodule Meerkat.MergeQueueTest do
              Enum.find_index(log(dir), &(&1 =~ "pr update-branch 2"))
   end
 
-  test "a PR given with its reviewed SHA is updated and merged while its head is that SHA",
+  test "a PR given with its reviewed SHA is accepted at that SHA and merged at GitHub's update of it",
        %{dir: dir} do
     pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
+    commit(dir, "bbb", "aaa")
 
     assert run_queue(dir, ["1@aaa"]) == {"#1 merged sq1 (updated with main)\n", 0}
     assert merges(dir) == [merge(1, "bbb")]
@@ -214,21 +238,107 @@ defmodule Meerkat.MergeQueueTest do
     pr(dir, 1, [{"zzz", "CLEAN", true}])
 
     assert run_queue(dir, ["1@aaa", "2@bbb"]) ==
-             {"#1 head zzz is not the reviewed aaa\nnot attempted: 2@bbb\n", 1}
+             {"#1 head moved from aaa to zzz\nnot attempted: 2@bbb\n", 1}
+
+    assert merges(dir) == []
+  end
+
+  test "a push while GitHub computes mergeability stops the queue unmerged", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "UNKNOWN", true}, {"zzz", "CLEAN", true}])
+
+    assert run_queue(dir, ["1@aaa"]) ==
+             {"#1 head moved from aaa to zzz\nnot attempted:\n", 1}
 
     assert merges(dir) == []
   end
 
   test "an update commit GitHub did not sign stops the queue", %{dir: dir} do
     pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
-    File.write!(Path.join(dir, "verification"), "verified: false, reason: unsigned\n")
+    commit(dir, "bbb", "aaa", verified: false, reason: "unsigned")
 
     assert {out, 1} = run_queue(dir, ["1"])
 
     assert out ==
-             "#1 update commit bbb is not verified\nverified: false, reason: unsigned\nnot attempted: none\n"
+             "#1 update commit bbb is not verified\nfalse\nunsigned\nweb-flow\naaa\nmain0\nnot attempted:\n"
 
     assert merges(dir) == []
+  end
+
+  test "a new head after an update that is not GitHub's merge of the pinned head stops the queue",
+       %{dir: dir} do
+    pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
+    commit(dir, "bbb", "other")
+
+    pr(dir, 2, [{"ccc", "BEHIND", true}, {"ddd", "CLEAN", true}])
+    commit(dir, "ddd", "ccc", committer: "someone")
+
+    assert {"#1 head bbb is not GitHub's update of aaa\n" <> _, 1} = run_queue(dir, ["1@aaa"])
+    assert {"#2 head ddd is not GitHub's update of ccc\n" <> _, 1} = run_queue(dir, ["2"])
+    assert merges(dir) == []
+  end
+
+  test "an update GitHub refuses stops the queue with gh's message", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "BEHIND", true}])
+    File.write!(Path.join(dir, "update-branch-status-1"), "1")
+    File.write!(Path.join(dir, "update-branch-out-1"), "merge conflict between base and head\n")
+
+    assert run_queue(dir, ["1", "2"]) ==
+             {"#1 update with main refused\nmerge conflict between base and head\nnot attempted: 2\n",
+              1}
+
+    assert merges(dir) == []
+  end
+
+  test "a PR that is no longer open stops the queue without watching checks", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "CLEAN", true, "MERGED"}])
+
+    assert run_queue(dir, ["1"]) == {"#1 is MERGED\nnot attempted:\n", 1}
+    assert calls(dir, "pr checks") == []
+    assert merges(dir) == []
+  end
+
+  test "a PR gh cannot read stops the queue with gh's error", %{dir: dir} do
+    assert run_queue(dir, ["9"]) ==
+             {"#9 could not be read\nGraphQL: Could not resolve to a PullRequest with the number of 9.\nnot attempted:\n",
+              1}
+  end
+
+  test "a wait GitHub never finishes times out instead of hanging the queue", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "UNKNOWN", true}])
+    pr(dir, 2, [{"bbb", "CLEAN", false}])
+
+    assert run_queue(dir, ["1", "2"], [{"MERGE_QUEUE_TIMEOUT", "0"}]) ==
+             {"#1 timed out waiting for GitHub to compute mergeability\nnot attempted: 2\n", 1}
+
+    assert run_queue(dir, ["2"], [{"MERGE_QUEUE_TIMEOUT", "0"}]) ==
+             {"#2 timed out waiting for checks to register\nnot attempted:\n", 1}
+  end
+
+  test "a merge still pending when the wait runs out stops the queue", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "CLEAN", true}])
+    File.write!(Path.join(dir, "merge-out-1"), ~s({"status":"pending","details":{"uuid":"u1"}}\n))
+
+    assert run_queue(dir, ["1"], [{"MERGE_QUEUE_TIMEOUT", "0"}]) ==
+             {"#1 timed out waiting for GitHub to finish the merge\nnot attempted:\n", 1}
+  end
+
+  test "a merge response that is not JSON is not reported as refused", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "CLEAN", true}])
+    File.write!(Path.join(dir, "merge-out-1"), "warning: something odd\n")
+
+    assert run_queue(dir, ["1"]) ==
+             {"#1 merge result could not be read\nwarning: something odd\nnot attempted:\n", 1}
+  end
+
+  test "a merged PR whose remote branch cannot be deleted still lets the queue continue",
+       %{dir: dir} do
+    pr(dir, 1, [{"aaa", "CLEAN", true}])
+    pr(dir, 2, [{"bbb", "CLEAN", true}])
+    File.write!(Path.join(dir, "delete-status"), "1")
+
+    assert run_queue(dir, ["1", "2"]) ==
+             {"#1 merged sq1 (remote branch claude/aaa not deleted)\n" <>
+                "#2 merged sq2 (remote branch claude/bbb not deleted)\n", 0}
   end
 
   test "a conflict with main stops the queue before later PRs", %{dir: dir} do
@@ -263,7 +373,7 @@ defmodule Meerkat.MergeQueueTest do
     File.write!(Path.join(dir, "checks-table-5"), "test\tpending\t0\thttps://x\n")
 
     assert run_queue(dir, ["5"]) ==
-             {"#5 checks could not be watched\nHTTP 502: Bad Gateway\nnot attempted: none\n", 1}
+             {"#5 checks could not be watched\nHTTP 502: Bad Gateway\nnot attempted:\n", 1}
 
     assert merges(dir) == []
   end
@@ -272,7 +382,7 @@ defmodule Meerkat.MergeQueueTest do
     pr(dir, 7, [{"hhh", "BLOCKED", true}, {"iii", "BLOCKED", true}])
 
     assert run_queue(dir, ["7@hhh"]) ==
-             {"#7 head iii is not the reviewed hhh\nnot attempted: none\n", 1}
+             {"#7 head moved from hhh to iii\nnot attempted:\n", 1}
 
     assert merges(dir) == []
   end
@@ -287,7 +397,7 @@ defmodule Meerkat.MergeQueueTest do
     )
 
     assert run_queue(dir, ["6"]) ==
-             {"#6 merge refused\ngh: Head branch was modified. Review and try the merge again. (HTTP 409)\nnot attempted: none\n",
+             {"#6 merge refused\ngh: Head branch was modified. Review and try the merge again. (HTTP 409)\nnot attempted:\n",
               1}
 
     assert calls(dir, "api -X DELETE") == []
@@ -298,7 +408,7 @@ defmodule Meerkat.MergeQueueTest do
     out = ~s({"status":"failed","details":{"message":"Required status check failed"}})
     File.write!(Path.join(dir, "merge-out-6"), out <> "\n")
 
-    assert run_queue(dir, ["6"]) == {"#6 merge refused\n#{out}\nnot attempted: none\n", 1}
+    assert run_queue(dir, ["6"]) == {"#6 merge refused\n#{out}\nnot attempted:\n", 1}
     assert calls(dir, "api -X DELETE") == []
   end
 end
