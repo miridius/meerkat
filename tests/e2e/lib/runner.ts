@@ -119,7 +119,9 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			}
 		};
 		proc.stderr?.on("data", onErr);
-		proc.once("exit", (code) => {
+		// "close" rather than "exit": "exit" can fire before the last of
+		// stderr has been read, which would drop why meerkat exited.
+		proc.once("close", (code) => {
 			clearTimeout(timeoutHandle);
 			reject(
 				new Error(
