@@ -52,14 +52,16 @@ defmodule Meerkat.Git do
         }
 
   @doc """
-  Return the staged-vs-HEAD changed-file list. If the working dir has
-  no commits yet, every staged file is reported as `:added`.
+  Return the staged-vs-HEAD changed-file list, excluding paths with
+  unresolved merge conflicts. If the working dir has no commits yet,
+  every staged file is reported as `:added`.
   """
   @spec staged_files(String.t()) :: {:ok, [file_entry]} | {:error, String.t()}
   def staged_files(repo_path) do
     # `-z` produces NUL-separated output so file names with spaces work
     # without shell quoting. Match the rename policy used by the patch
     # and binary classification, even when diff.renames is disabled.
+    # The lowercase `u` excludes unmerged paths from the staged file list.
     case run_git_unmerged(repo_path, [
            "diff",
            "--cached",
@@ -645,6 +647,7 @@ defmodule Meerkat.Git do
       "-U3",
       "-w",
       "-M",
+      # Lowercase `u` excludes unmerged paths, preventing Git's `* Unmerged path ...` output from entering the hunk parser.
       "--diff-filter=u",
       "--no-textconv",
       "--no-ext-diff"
