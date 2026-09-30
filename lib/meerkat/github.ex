@@ -167,43 +167,51 @@ defmodule Meerkat.GitHub do
     try do
       case File.write(tmp, body_json) do
         :ok ->
-          case System.find_executable("gh") do
-            nil ->
-              {:error, "gh binary not found on PATH"}
-
-            _gh ->
-              args = [
-                "api",
-                "-X",
-                "POST",
-                "/repos/{owner}/{repo}/pulls/#{pr_number}/reviews",
-                "--input",
-                tmp
-              ]
-
-              case System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true) do
-                {output, 0} ->
-                  case Jason.decode(output) do
-                    {:ok, %{"html_url" => url}} when is_binary(url) ->
-                      {:ok, url}
-
-                    {:ok, _} ->
-                      {:error, "gh api response missing html_url: #{output}"}
-
-                    {:error, e} ->
-                      {:error, "could not parse gh api response: #{Exception.message(e)}"}
-                  end
-
-                {output, code} ->
-                  {:error, "gh api exited #{code}: #{String.trim(output)}"}
-              end
-          end
+          gh_post_review(repo_path, pr_number, tmp)
 
         {:error, reason} ->
           {:error, "couldn't stage gh request body at #{tmp}: #{inspect(reason)}"}
       end
     after
       _ = File.rm(tmp)
+    end
+  end
+
+  defp gh_post_review(repo_path, pr_number, tmp) do
+    case System.find_executable("gh") do
+      nil ->
+        {:error, "gh binary not found on PATH"}
+
+      _gh ->
+        args = [
+          "api",
+          "-X",
+          "POST",
+          "/repos/{owner}/{repo}/pulls/#{pr_number}/reviews",
+          "--input",
+          tmp
+        ]
+
+        case System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true) do
+          {output, 0} ->
+            review_url(output)
+
+          {output, code} ->
+            {:error, "gh api exited #{code}: #{String.trim(output)}"}
+        end
+    end
+  end
+
+  defp review_url(output) do
+    case Jason.decode(output) do
+      {:ok, %{"html_url" => url}} when is_binary(url) ->
+        {:ok, url}
+
+      {:ok, _} ->
+        {:error, "gh api response missing html_url: #{output}"}
+
+      {:error, e} ->
+        {:error, "could not parse gh api response: #{Exception.message(e)}"}
     end
   end
 end

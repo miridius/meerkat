@@ -15,16 +15,14 @@ defmodule MeerkatWeb.PlantUMLController do
   @max_src_bytes 64 * 1024
 
   def svg(conn, %{"src" => src}) when is_binary(src) do
-    cond do
-      byte_size(src) > @max_src_bytes ->
-        Plug.Conn.send_resp(
-          conn,
-          413,
-          "src too large (#{byte_size(src)} bytes; limit is #{@max_src_bytes})"
-        )
-
-      true ->
-        render_svg(conn, src)
+    if byte_size(src) > @max_src_bytes do
+      Plug.Conn.send_resp(
+        conn,
+        413,
+        "src too large (#{byte_size(src)} bytes; limit is #{@max_src_bytes})"
+      )
+    else
+      render_svg(conn, src)
     end
   end
 

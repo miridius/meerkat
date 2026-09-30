@@ -202,7 +202,7 @@ defmodule Meerkat.ReviewState do
       %{
         start_line: first_idx,
         end_line: last_idx,
-        text: lines |> Enum.map(fn {t, _} -> t end) |> Enum.join("\n")
+        text: Enum.map_join(lines, "\n", fn {t, _} -> t end)
       }
     end)
   end

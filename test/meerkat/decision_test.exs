@@ -288,7 +288,7 @@ defmodule Meerkat.DecisionTest do
 
     test "an outcome without an integer exit code and a text is refused" do
       for outcome <- [{"1", "feedback\n"}, {1, :feedback}] do
-        assert_raise FunctionClauseError, fn -> apply(Decision, :publish, [outcome]) end
+        assert_raise FunctionClauseError, fn -> Decision.publish(outcome) end
       end
     end
 

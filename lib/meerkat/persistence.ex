@@ -63,44 +63,7 @@ defmodule Meerkat.Persistence do
 
     case File.read(path) do
       {:ok, json} ->
-        case safe_decode(json) do
-          {:ok, decoded} ->
-            case Map.get(decoded, :state_signature) do
-              ^current_sig ->
-                merge(state, decoded)
-
-              nil ->
-                # Legacy snapshot without a signature — keep the prior
-                # restore-on-restart behaviour. New saves will write
-                # the signature so the next mismatch can be detected.
-                merge(state, decoded)
-
-              _other ->
-                # Stale snapshot — staged content differs from what
-                # this session is reviewing. Drop the file so the
-                # previous session's comments don't leak into this
-                # one. If the rm fails (permissions / NFS replay /
-                # another process holding the file), quarantine
-                # under .corrupt.<ts> so the next boot doesn't loop
-                # on the same mismatch and re-print "discarded".
-                case File.rm(path) do
-                  :ok ->
-                    IO.puts(
-                      :stderr,
-                      "meerkat: discarding stale in-progress snapshot at #{path} (different staged state)"
-                    )
-
-                  {:error, rm_reason} ->
-                    quarantine(path, "stale snapshot rm failed: #{inspect(rm_reason)}")
-                end
-
-                state
-            end
-
-          {:error, reason} ->
-            quarantine(path, reason)
-            state
-        end
+        restore(state, path, json, current_sig)
 
       {:error, :enoent} ->
         state
@@ -110,6 +73,51 @@ defmodule Meerkat.Persistence do
           :stderr,
           "meerkat: warning — couldn't read in-progress snapshot at #{path}: #{inspect(reason)}"
         )
+
+        state
+    end
+  end
+
+  defp restore(state, path, json, current_sig) do
+    case safe_decode(json) do
+      {:ok, decoded} ->
+        restore_decoded(state, path, decoded, current_sig)
+
+      {:error, reason} ->
+        quarantine(path, reason)
+        state
+    end
+  end
+
+  defp restore_decoded(state, path, decoded, current_sig) do
+    case Map.get(decoded, :state_signature) do
+      ^current_sig ->
+        merge(state, decoded)
+
+      nil ->
+        # Legacy snapshot without a signature — keep the prior
+        # restore-on-restart behaviour. New saves will write
+        # the signature so the next mismatch can be detected.
+        merge(state, decoded)
+
+      _other ->
+        # Stale snapshot — staged content differs from what
+        # this session is reviewing. Drop the file so the
+        # previous session's comments don't leak into this
+        # one. If the rm fails (permissions / NFS replay /
+        # another process holding the file), quarantine
+        # under .corrupt.<ts> so the next boot doesn't loop
+        # on the same mismatch and re-print "discarded".
+        case File.rm(path) do
+          :ok ->
+            IO.puts(
+              :stderr,
+              "meerkat: discarding stale in-progress snapshot at #{path} (different staged state)"
+            )
+
+          {:error, rm_reason} ->
+            quarantine(path, "stale snapshot rm failed: #{inspect(rm_reason)}")
+        end
 
         state
     end

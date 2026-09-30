@@ -172,13 +172,7 @@ defmodule Meerkat.Git do
         map =
           output
           |> String.split("\n", trim: true)
-          |> Enum.reduce(%{}, fn line, acc ->
-            # `<mode> <oid> <stage>\t<path>`
-            case String.split(line, [" ", "\t"], parts: 4) do
-              [_mode, oid, _stage, path] -> Map.put(acc, path, oid)
-              _ -> acc
-            end
-          end)
+          |> Enum.reduce(%{}, &put_staged_oid/2)
 
         {:ok, map}
 
@@ -189,6 +183,14 @@ defmodule Meerkat.Git do
 
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
+    end
+  end
+
+  defp put_staged_oid(line, acc) do
+    # `<mode> <oid> <stage>\t<path>`
+    case String.split(line, [" ", "\t"], parts: 4) do
+      [_mode, oid, _stage, path] -> Map.put(acc, path, oid)
+      _ -> acc
     end
   end
 
@@ -210,13 +212,7 @@ defmodule Meerkat.Git do
         map =
           output
           |> String.split("\n", trim: true)
-          |> Enum.reduce(%{}, fn line, acc ->
-            # `<mode> <type> <oid>\t<path>`
-            case String.split(line, [" ", "\t"], parts: 4) do
-              [_mode, _type, oid, path] -> Map.put(acc, path, oid)
-              _ -> acc
-            end
-          end)
+          |> Enum.reduce(%{}, &put_head_oid/2)
 
         {:ok, map}
 
@@ -226,6 +222,14 @@ defmodule Meerkat.Git do
 
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
+    end
+  end
+
+  defp put_head_oid(line, acc) do
+    # `<mode> <type> <oid>\t<path>`
+    case String.split(line, [" ", "\t"], parts: 4) do
+      [_mode, _type, oid, path] -> Map.put(acc, path, oid)
+      _ -> acc
     end
   end
 
@@ -467,31 +471,9 @@ defmodule Meerkat.Git do
       # On batched-call failure we surface the error into every
       # file's `read_errors` (red banner) — silently empty hunks
       # would let a reviewer approve what looks like an empty diff.
-      {hunks_map, batched_hunks_error} =
-        case staged_hunks_many(repo_path) do
-          {:ok, map} -> {map, []}
-          {:partial, map, reason} -> {map, [reason]}
-          {:error, reason} -> {%{}, [reason]}
-        end
-
-      {oid_map, batched_oids_error} =
-        case effective_oids_many(repo_path, entries) do
-          {:ok, map} -> {map, []}
-          {:error, reason} -> {%{}, [reason]}
-        end
-
-      # Without the numstat answer a binary change can't be flagged, but
-      # the review still lists every file with the reason — aborting the
-      # load would hide the whole diff behind one failed probe.
-      {binary_paths, binary_paths_error} =
-        case staged_binary_paths(repo_path) do
-          {:ok, paths} ->
-            {paths, []}
-
-          {:error, reason} ->
-            IO.puts(:stderr, "meerkat: warning — #{reason}")
-            {MapSet.new(), [reason]}
-        end
+      {hunks_map, batched_hunks_error} = staged_hunks_or_error(repo_path)
+      {oid_map, batched_oids_error} = effective_oids_or_error(repo_path, entries)
+      {binary_paths, binary_paths_error} = staged_binary_paths_or_error(repo_path)
 
       global_read_errors = batched_hunks_error ++ batched_oids_error ++ binary_paths_error
 
@@ -513,6 +495,35 @@ defmodule Meerkat.Git do
         {:ok, _} -> {:error, "staged files changed while loading; reload the review"}
         {:error, _} = error -> error
       end
+    end
+  end
+
+  defp staged_hunks_or_error(repo_path) do
+    case staged_hunks_many(repo_path) do
+      {:ok, map} -> {map, []}
+      {:partial, map, reason} -> {map, [reason]}
+      {:error, reason} -> {%{}, [reason]}
+    end
+  end
+
+  defp effective_oids_or_error(repo_path, entries) do
+    case effective_oids_many(repo_path, entries) do
+      {:ok, map} -> {map, []}
+      {:error, reason} -> {%{}, [reason]}
+    end
+  end
+
+  # Without the numstat answer a binary change can't be flagged, but
+  # the review still lists every file with the reason — aborting the
+  # load would hide the whole diff behind one failed probe.
+  defp staged_binary_paths_or_error(repo_path) do
+    case staged_binary_paths(repo_path) do
+      {:ok, paths} ->
+        {paths, []}
+
+      {:error, reason} ->
+        IO.puts(:stderr, "meerkat: warning — #{reason}")
+        {MapSet.new(), [reason]}
     end
   end
 

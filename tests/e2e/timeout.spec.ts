@@ -81,7 +81,7 @@ test.describe("the review timeout", () => {
 				"the countdown's tooltip says the review stays open",
 			).toHaveAttribute("title", /stays open/);
 			const overdueSeconds = async () => {
-				const [mm, ss] = (await countdown.textContent())!.split(" ")[0].split(":");
+				const [mm, ss] = ((await countdown.textContent()) ?? "").split(" ")[0].split(":");
 				return Number(mm) * 60 + Number(ss);
 			};
 			const firstOver = await overdueSeconds();

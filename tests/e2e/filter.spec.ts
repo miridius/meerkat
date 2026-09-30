@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
@@ -137,8 +137,9 @@ test.describe("file filter", () => {
 			await expect
 				.poll(() =>
 					page.evaluate(() => {
-						const header = document.querySelector(".file-filter-header")!.getBoundingClientRect();
-						const toolbar = document.querySelector(".diff-toolbar")!.getBoundingClientRect();
+						const header = document.querySelector(".file-filter-header")?.getBoundingClientRect();
+						const toolbar = document.querySelector(".diff-toolbar")?.getBoundingClientRect();
+						if (!header || !toolbar) return false;
 						return (
 							header.top >= toolbar.bottom - 1 && header.top >= 0 && header.bottom <= window.innerHeight
 						);

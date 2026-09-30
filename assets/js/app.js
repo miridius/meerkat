@@ -75,7 +75,7 @@ const hooks = {
           const stale = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && k.startsWith(prefix)) stale.push(k);
+            if (k?.startsWith(prefix)) stale.push(k);
           }
           for (const k of stale) localStorage.removeItem(k);
         } catch (_e) {

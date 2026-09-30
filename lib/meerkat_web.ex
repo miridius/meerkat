@@ -71,8 +71,8 @@ defmodule MeerkatWeb do
       import LiveSvelte
 
       # Common modules used in templates
-      alias Phoenix.LiveView.JS
       alias MeerkatWeb.Layouts
+      alias Phoenix.LiveView.JS
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

@@ -141,11 +141,11 @@ defmodule Meerkat.ApprovalCache do
   @spec approve(t, branch, file_name, oid) :: t
   def approve(cache, branch, file_name, oid) do
     Map.update(cache, branch, %{file_name => [oid]}, fn files ->
-      Map.update(files, file_name, [oid], fn oids ->
-        if oid in oids, do: oids, else: [oid | oids]
-      end)
+      Map.update(files, file_name, [oid], &add_oid(&1, oid))
     end)
   end
+
+  defp add_oid(oids, oid), do: if(oid in oids, do: oids, else: [oid | oids])
 
   @doc """
   Remove every approval for `(branch, file_name)`. Used when the user
@@ -255,18 +255,7 @@ defmodule Meerkat.ApprovalCache do
 
       {:error, :eexist} ->
         if System.monotonic_time(:millisecond) > deadline do
-          IO.puts(
-            :stderr,
-            "meerkat: warning — approval-cache lock at #{lock_dir} held for >10s. " <>
-              "Likely stale (killed meerkat). Forcing take."
-          )
-
-          _ = File.rmdir(lock_dir)
-          # One more try; if it still EEXISTs, give up acquiring.
-          case File.mkdir(lock_dir) do
-            :ok -> {:ok, :acquired}
-            {:error, reason} -> {:error, {:lock_failed, reason}}
-          end
+          force_take(lock_dir)
         else
           Process.sleep(25)
           acquire_loop(lock_dir, deadline)
@@ -280,6 +269,21 @@ defmodule Meerkat.ApprovalCache do
         )
 
         {:error, {:lock_failed, reason}}
+    end
+  end
+
+  defp force_take(lock_dir) do
+    IO.puts(
+      :stderr,
+      "meerkat: warning — approval-cache lock at #{lock_dir} held for >10s. " <>
+        "Likely stale (killed meerkat). Forcing take."
+    )
+
+    _ = File.rmdir(lock_dir)
+    # One more try; if it still EEXISTs, give up acquiring.
+    case File.mkdir(lock_dir) do
+      :ok -> {:ok, :acquired}
+      {:error, reason} -> {:error, {:lock_failed, reason}}
     end
   end
 end

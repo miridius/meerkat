@@ -135,24 +135,28 @@ defmodule MeerkatWeb.AttachController do
         send_resp(conn, 503, "closing\n")
 
       {:ok, nil} ->
-        conn = send_chunked(conn, 200)
-        # The CLI publishes the outcome 750 ms after a click so the tab can
-        # render the done view first. A caller can attach in that window
-        # before an outcome is held; Decision.current/0 catches it.
-        quiet? = quiet? or Decision.current() != nil
-        banner = if quiet?, do: "", else: Application.get_env(:meerkat, :review_banner, "")
-
-        case chunk(conn, frames(banner)) do
-          {:ok, conn} ->
-            unless quiet?, do: open_browser_if_unwatched(conn, run)
-            await_outcome(conn)
-
-          {:error, _} ->
-            conn
-        end
+        stream_pending(conn, run, quiet?)
 
       {:ok, held} ->
         conn |> send_chunked(200) |> send_outcome(held)
+    end
+  end
+
+  defp stream_pending(conn, run, quiet?) do
+    conn = send_chunked(conn, 200)
+    # The CLI publishes the outcome 750 ms after a click so the tab can
+    # render the done view first. A caller can attach in that window
+    # before an outcome is held; Decision.current/0 catches it.
+    quiet? = quiet? or Decision.current() != nil
+    banner = if quiet?, do: "", else: Application.get_env(:meerkat, :review_banner, "")
+
+    case chunk(conn, frames(banner)) do
+      {:ok, conn} ->
+        unless quiet?, do: open_browser_if_unwatched(conn, run)
+        await_outcome(conn)
+
+      {:error, _} ->
+        conn
     end
   end
 

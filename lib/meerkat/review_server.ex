@@ -234,7 +234,7 @@ defmodule Meerkat.ReviewServer do
 
     update(ctx, fn state ->
       state
-      |> Map.update!(key, fn list -> Enum.reject(list, fn c -> c.id == id end) end)
+      |> Map.update!(key, &reject_comment(&1, id))
       |> Map.update!(:open_forms, fn forms ->
         Enum.reject(forms, &(Map.get(&1, :edit_id) == id))
       end)
@@ -245,11 +245,7 @@ defmodule Meerkat.ReviewServer do
     key = surface_key(surface)
 
     update(ctx, fn state ->
-      Map.update!(state, key, fn list ->
-        Enum.map(list, fn c ->
-          if c.id == id, do: Map.put(c, :learn_from_this, learn?), else: c
-        end)
-      end)
+      Map.update!(state, key, &set_learn_from_this(&1, id, learn?))
     end)
   end
 
@@ -298,6 +294,14 @@ defmodule Meerkat.ReviewServer do
   defp surface_key(:file), do: :file_comments
   defp surface_key(:global), do: :global_comments
   defp surface_key(:commit_msg), do: :commit_message_comments
+
+  defp reject_comment(comments, id), do: Enum.reject(comments, fn c -> c.id == id end)
+
+  defp set_learn_from_this(comments, id, learn?) do
+    Enum.map(comments, fn c ->
+      if c.id == id, do: Map.put(c, :learn_from_this, learn?), else: c
+    end)
+  end
 
   # Run the state mutation, persist, broadcast, reply with the new
   # state — keeps the four side effects in one place so no mutation

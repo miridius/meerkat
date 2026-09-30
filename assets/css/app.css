@@ -75,10 +75,6 @@ main.review.done {
   text-align: center;
 }
 
-main.review.done h1 {
-  font-size: 2rem;
-}
-
 /* --- Buttons --- */
 
 button {
@@ -255,9 +251,6 @@ a.chip-link:hover {
   background: var(--panel);
   border-color: var(--accent);
 }
-a.chip-link:hover .chip-value {
-  color: var(--accent);
-}
 
 .chip-label {
   text-transform: uppercase;
@@ -278,6 +271,10 @@ a.chip-link:hover .chip-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+a.chip-link:hover .chip-value {
+  color: var(--accent);
 }
 
 .version-chip-wrap {
@@ -544,21 +541,6 @@ a.chip-link:hover .chip-value {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
-.commit-msg-gutter > li.dragging {
-  background: var(--accent-soft);
-}
-.commit-msg-gutter > li.dragging .gutter-line-num {
-  background: var(--accent-strong);
-  color: #ffffff;
-  border-color: var(--accent-strong);
-}
-.commit-msg-gutter,
-.commit-msg-gutter > li,
-.commit-msg-gutter > li .gutter-line-num {
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 .gutter-line-num {
   flex: 0 0 auto;
   width: 28px;
@@ -573,6 +555,22 @@ a.chip-link:hover .chip-value {
   cursor: pointer;
 }
 .gutter-line-num:hover {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border-color: var(--accent-strong);
+}
+
+.commit-msg-gutter,
+.commit-msg-gutter > li,
+.commit-msg-gutter > li .gutter-line-num {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.commit-msg-gutter > li.dragging {
+  background: var(--accent-soft);
+}
+.commit-msg-gutter > li.dragging .gutter-line-num {
   background: var(--accent-strong);
   color: #ffffff;
   border-color: var(--accent-strong);
@@ -593,13 +591,6 @@ a.chip-link:hover .chip-value {
 .commit-msg-gutter > li:first-child .gutter-text {
   font-size: 1.05rem;
   font-weight: 600;
-}
-
-.gutter-text.markdown > :first-child {
-  margin-top: 0;
-}
-.gutter-text.markdown > :last-child {
-  margin-bottom: 0;
 }
 
 .commit-msg-comments {
@@ -690,22 +681,13 @@ a.chip-link:hover .chip-value {
   user-select: none;
   margin-left: auto;
 }
-.note header .learn-toggle input[type="checkbox"] {
-  /* Tiny baseline shift on Chrome — `vertical-align: middle` and a
-     flush margin keeps the checkbox visually centred with the label
-     text instead of sitting one pixel high. */
-  margin: 0;
-  padding: 0;
-  vertical-align: middle;
-  cursor: pointer;
-}
-.note header .learn-toggle + button {
-  margin-left: 4px;
-}
 .note header button {
   margin-left: 4px;
   font-size: 0.8rem;
   padding: 2px 8px;
+}
+.note header .learn-toggle + button {
+  margin-left: 4px;
 }
 /* First button only — the learn-toggle absorbs the margin-left:auto
    when present so Edit/Remove cluster on the right. */
@@ -732,17 +714,10 @@ a.chip-link:hover .chip-value {
   padding: 8px;
   overflow-x: auto;
 }
-.comment-body pre code {
-  background: transparent;
-  padding: 0;
-}
 .comment-body ul,
 .comment-body ol {
   margin: 4px 0;
   padding-left: 20px;
-}
-.comment-body a {
-  color: var(--accent);
 }
 
 /* --- Diff toolbar --- */
@@ -922,9 +897,6 @@ a.chip-link:hover .chip-value {
 .file-entry.hidden-by-other {
   opacity: 0.45;
 }
-.file-entry.hidden-by-other .file-path .base-name {
-  font-style: italic;
-}
 
 .file-entry input[type="checkbox"] {
   margin: 0;
@@ -965,6 +937,9 @@ a.chip-link:hover .chip-value {
 .file-entry .file-path .base-name {
   color: inherit;
   font-weight: 500;
+}
+.file-entry.hidden-by-other .file-path .base-name {
+  font-style: italic;
 }
 
 .file-entry .only-btn,
@@ -1027,13 +1002,6 @@ a.chip-link:hover .chip-value {
 .file-section.approved {
   opacity: 0.7;
 }
-/* Approved-and-collapsed: header only, diff body suppressed via
-   the LV :if. The caret rotates to point right as a hint. */
-.file-section.collapsed .caret {
-  display: inline-block;
-  transform: rotate(-90deg);
-  transition: transform 120ms ease;
-}
 .caret {
   display: inline-block;
   transition: transform 120ms ease;
@@ -1071,6 +1039,13 @@ a.chip-link:hover .chip-value {
 .file-row .caret {
   color: var(--muted);
 }
+/* Approved-and-collapsed: header only, diff body suppressed via
+   the LV :if. The caret rotates to point right as a hint. */
+.file-section.collapsed .caret {
+  display: inline-block;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
 .file-row .file-name {
   font-family: ui-monospace, monospace;
 }
@@ -1091,6 +1066,16 @@ a.chip-link:hover .chip-value {
 
 .approved-toggle input[type="checkbox"] {
   margin: 0;
+}
+
+.note header .learn-toggle input[type="checkbox"] {
+  /* Tiny baseline shift on Chrome — `vertical-align: middle` and a
+     flush margin keeps the checkbox visually centred with the label
+     text instead of sitting one pixel high. */
+  margin: 0;
+  padding: 0;
+  vertical-align: middle;
+  cursor: pointer;
 }
 
 .diff-content {
@@ -1212,14 +1197,6 @@ a.chip-link:hover .chip-value {
   font-size: 0.85rem;
   color: var(--muted);
   cursor: pointer;
-}
-
-/* --- Done view --- */
-
-main.review.done {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 /* --- Rendered markdown view (per-file Diff ⇄ Rendered toggle) --- */
@@ -1347,7 +1324,8 @@ main.review.done {
   border-radius: var(--radius-sm);
   overflow-x: auto;
 }
-.md-body pre code { background: transparent; padding: 0; }
+.md-body pre code,
+.comment-body pre code { background: transparent; padding: 0; }
 .md-body blockquote {
   margin: 0 0 8px;
   padding: 0 12px;
@@ -1364,5 +1342,23 @@ main.review.done {
 }
 .md-body th { background: var(--panel-2); }
 .md-body img { max-width: 100%; height: auto; }
-.md-body a { color: var(--accent); }
 .md-body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+.gutter-text.markdown > :first-child {
+  margin-top: 0;
+}
+.gutter-text.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- Done view --- */
+
+main.review.done {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+main.review.done h1 {
+  font-size: 2rem;
+}

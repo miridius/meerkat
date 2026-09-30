@@ -327,7 +327,7 @@ test.describe("decision flow", () => {
 			// per-review name under reviews/, not a clobberable fixed name.
 			const m = stderr.match(/full feedback saved to (\S+) in case truncated/);
 			expect(m).not.toBeNull();
-			const feedbackPath = m![1];
+			const feedbackPath = m?.[1] ?? "";
 			expect(feedbackPath).toContain(join("meerkat-precommit", "reviews"));
 			expect(existsSync(feedbackPath)).toBe(true);
 			const saved = readFileSync(feedbackPath, "utf8");
