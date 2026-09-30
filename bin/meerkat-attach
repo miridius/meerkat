@@ -46,6 +46,12 @@ meerkat_attach() {
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
+      # Without the runs dir every mkdir below fails, and the loop would
+      # retry it without pause.
+      if [[ ! -d "$runs" ]]; then
+        echo "meerkat: $runs was deleted — defaulting to REJECT (commit aborted)." >&2
+        exit 2
+      fi
       # A failed mkdir means another caller started one first.
       _ma_start_server "$self" "$@" || continue
     elif ! _ma_server_alive; then
