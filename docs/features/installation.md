@@ -32,8 +32,11 @@ scripts/dev-install.sh
 Iterating on the UI:
 
 - Edit `lib/meerkat/*.ex` / `lib/meerkat_web/**/*.ex` →
-  DevWatcher fires → BEAM halts(75) → shepherd respawns on the
-  same port → LV auto-reconnects.
+  DevWatcher fires → BEAM halts (75) → shepherd reads and removes the
+  old port file, then tries that port first on respawn. With the
+  default port or `--port 0`, if it is busy the CLI uses an
+  OS-assigned port; an explicit nonzero `--port N` is bound again and
+  exits 64 if busy.
 - Edit `assets/svelte/*.svelte` / `assets/css/*.css` →
   DevWatcher fires → shepherd's `build_assets_if_stale` runs
   Vite → BEAM restarts → new assets serve. No HMR (Vite HMR is
@@ -81,8 +84,10 @@ No marker file; the launcher script content IS the mode. Cat
 - `MEERKAT_PWD` — set by the launcher to the caller's cwd, so
   the BEAM reads git state from the user's repo, not the worktree
   the launcher lives in.
-- `MEERKAT_PORT` — override the deterministic port computation
-  for tests / debugging.
+- `MEERKAT_PORT` — when set and no explicit `--port` is supplied, the
+  launcher copies this to `MEERKAT_PREFERRED_PORT` instead of using
+  the stable review port. Intended for tests/debugging; invalid
+  values are reported by the CLI as an invalid preferred port.
 - `MEERKAT_RUNS_DIR` — where review backends keep their run dirs
   (default `$TMPDIR/meerkat-runs`). The e2e runner gives each test
   its own.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Dev launcher for the Phoenix-port meerkat. Wraps `mix run` in a
 # shepherd loop so the BEAM can self-halt with exit code 75 on a
-# file-system change and the launcher respawns it on the SAME
-# port. The user's browser sees a brief WebSocket drop + LV
+# file-system change and the launcher respawns it, preferring the
+# port it bound. The user's browser sees a brief WebSocket drop + LV
 # auto-reconnects to the new BEAM; `ReviewServer.init` reloads
 # in-progress comments via `Meerkat.Persistence`.
 #
@@ -109,57 +109,37 @@ if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
   meerkat_attach "$SCRIPT_DIR/meerkat-beam" "$@"
 fi
 
-# Deterministic port derived from (cwd, args). Same review session
-# from the SAME repo + SAME target = same port across:
-#   * DevWatcher-triggered restarts in this shepherd
-#   * AND a fresh git-commit invocation that re-fires meerkat-beam
-# So the user's browser tab keeps working without manual
-# re-navigation. Port range 40000-59999 — above the privileged
-# 0-1023 range and chosen so the bottom half of the window sits
-# BELOW macOS's ephemeral-port range (default 49152-65535) to
-# minimise OS-allocation collisions. If Bandit can't bind the
-# deterministic port (collision or other failure), the CLI logs a
-# warning and falls back to OS-assigned.
-if [[ -n "${MEERKAT_PORT:-}" ]]; then
-  stable_port="$MEERKAT_PORT"
-else
-  hash_input="${ORIG_PWD}:$*"
-  hex8=$(printf '%s' "$hash_input" | shasum -a 256 | head -c 8)
-  # Convert lowercase-hex 8 chars → decimal → modulo 20000 + 40000.
-  stable_port=$(( 16#${hex8} % 20000 + 40000 ))
-fi
-
-# Replace --port argument in $@ with the stable one (preserve every
-# other arg verbatim). Append --port if not already present.
-rewrite_port_arg() {
-  local new_port="$1"
-  shift
-  local out=()
-  local i=1
-  local got_port=false
-  while [[ $i -le $# ]]; do
-    local arg="${!i}"
-    if [[ "$arg" == "--port" ]]; then
-      out+=("--port" "$new_port")
-      i=$((i + 2))
-      got_port=true
-    else
-      out+=("$arg")
-      i=$((i + 1))
-    fi
-  done
-  if [[ "$got_port" == "false" ]]; then
-    out+=("--port" "$new_port")
+# Explicit --port and --port=N (including --port 0) pass through
+# unchanged and leave MEERKAT_PREFERRED_PORT unset. Without an explicit
+# port, prefer MEERKAT_PORT (useful for tests/debugging) or hash
+# (cwd,args) to int(shasum256(cwd:args)[:8]) % 20000 + 40000. This
+# stable port keeps a fresh invocation of the same review, with the
+# same args in the same repo, on the same port so its browser tab needs
+# no re-navigation. The 40000-59999 range is above privileged ports;
+# its portion below 49152 is outside macOS's default ephemeral range,
+# making OS-allocation collisions rare. If the preferred port is taken,
+# the CLI warns and uses an OS-assigned port.
+unset MEERKAT_PREFERRED_PORT
+explicit_port=false
+for arg in "$@"; do
+  if [[ "$arg" == "--port" || "$arg" == --port=* ]]; then
+    explicit_port=true
   fi
-  printf '%s\n' "${out[@]}"
-}
+done
+if [[ "$explicit_port" == "false" ]]; then
+  if [[ -n "${MEERKAT_PORT:-}" ]]; then
+    export MEERKAT_PREFERRED_PORT="$MEERKAT_PORT"
+  else
+    hash_input="${ORIG_PWD}:$*"
+    hex8=$(printf '%s' "$hash_input" | shasum -a 256 | head -c 8)
+    # Convert lowercase-hex 8 chars → decimal → modulo 20000 + 40000.
+    export MEERKAT_PREFERRED_PORT=$(( 16#${hex8} % 20000 + 40000 ))
+  fi
+fi
 
 # `--no-start` keeps the OTP app stopped so `Meerkat.CLI.main` can
 # put_env dynamic config BEFORE the endpoint binds.
 RESTART_EXIT_CODE=75
-
-original_args=("$@")
-mapfile -t this_args < <(rewrite_port_arg "$stable_port" "${original_args[@]}")
 
 # Browser-open marker: a temp file the BEAM creates the FIRST time
 # it successfully calls `open` on the review URL. Subsequent
@@ -180,14 +160,13 @@ trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp"
 # Forward TERM/INT to the running BEAM. Bash never relays signals to
 # a foreground child, so without this a killed shepherd (e2e runner
 # teardown, Ctrl-C wrappers) orphans a BEAM that sits on its
-# deterministic port forever — enough accumulated orphans and fresh
-# reviews start dying with eaddrinuse. The BEAM runs as a background
+# port forever. The BEAM runs as a background
 # job + `wait` below precisely so this trap fires immediately.
 beam_pid=""
 on_signal() {
   # `jobs -p` fallback covers the window where the signal lands
   # between the spawn and `beam_pid=$!` — without it that race
-  # orphans the just-forked BEAM on its deterministic port.
+  # orphans the just-forked BEAM on its port.
   local pids="${beam_pid:-$(jobs -p)}"
   if [[ -n "$pids" ]]; then
     # SIGKILL, not SIGTERM: a TERM'd shepherd means the review is
@@ -237,20 +216,28 @@ while true; do
     continue
   fi
 
-  # The caller attaches once `port` exists, so it must name the BEAM
-  # about to start, not the one that just exited.
-  rm -f "$MEERKAT_SERVE_DIR/port"
   set +e
-  mix run --no-start --no-compile -e "$CLI_EVAL" -- "${this_args[@]}" &
+  mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" &
   beam_pid=$!
   wait "$beam_pid"
   exit_code=$?
   beam_pid=""
+  # The port file records "<port> <pid>" for the port this BEAM bound.
+  # Carry it forward after every exit (code-change restart or crash
+  # retry), including runs using explicit --port 0, so the next BEAM
+  # tries it first and the open browser tab can reconnect.
+  if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
+    read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
+    export MEERKAT_PREFERRED_PORT="$bound_port"
+    # Remove the exited BEAM's port so callers can't reattach to it
+    # while the next BEAM is starting.
+    rm -f "$MEERKAT_SERVE_DIR/port"
+  fi
   set -e
 
   if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
     consecutive_crashes=0
-    echo "meerkat: code change detected — restarting on port $stable_port..." >&2
+    echo "meerkat: code change detected — restarting..." >&2
     continue
   fi
 

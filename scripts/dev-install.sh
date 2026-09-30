@@ -3,8 +3,8 @@
 # `bin/meerkat-beam` from THIS checkout with `MIX_ENV=dev`. Every
 # `meerkat` invocation from any repo boots a BEAM whose code is read
 # directly from this tree. `lib/` edits trigger a DevWatcher-driven
-# BEAM restart on the same port; `assets/` edits need a fresh
-# meerkat boot so `bin/meerkat-beam` rebuilds via `vite build`.
+# BEAM restart that prefers the last-bound port; `assets/` edits need
+# a fresh meerkat boot so `bin/meerkat-beam` rebuilds via `vite build`.
 #
 # Branch-only by design. The launcher's only purpose is fast
 # iteration on UNMERGED work; merging to main always installs the

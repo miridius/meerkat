@@ -134,8 +134,9 @@ request changes / comment) from github.com.
 ## Architecture
 
 Phoenix LiveView + LiveSvelte on the BEAM. The CLI parses args, starts
-an OTP supervisor, binds the Phoenix endpoint on a random port, and
-blocks on a `Meerkat.Decision` GenServer. The LiveView reflects state
+an OTP supervisor, binds the Phoenix endpoint on the requested port
+(trying a valid preferred port first when the port is `0`), and blocks
+on a `Meerkat.Decision` GenServer. The LiveView reflects state
 held in `Meerkat.ReviewServer` (one per review_id, single-writer);
 mutations go through PubSub broadcasts. The diff body is rendered by
 `@git-diff-view/svelte` mounted via LiveSvelte; comment forms live in

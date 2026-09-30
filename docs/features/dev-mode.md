@@ -25,13 +25,18 @@ Two halves:
    for 150ms and then `System.halt(75)`.
 
 2. **`bin/meerkat-beam` shepherd loop** — the bash wrapper around
-   `mix run --no-start --no-compile`. Exit code 75 means "restart
-   on the same port" (the deterministic port derived from
-   `shasum -a 256 cwd:args`, range 40000–59999). Any other
-   non-zero exit in `MIX_ENV=dev` is also treated as "stay alive"
-   — the shepherd blocks on `find -newer` waiting for the next
-   source change and retries. Crash loops are bounded by the file-
-   change wait; CPU stays idle.
+   `mix run --no-start --no-compile`. Exit code 75 restarts after a
+   code change; after every BEAM exit, the loop reads the run dir's
+   `port` file, sets `MEERKAT_PREFERRED_PORT` to its port for the next
+   BEAM, and deletes the file. With the default port or `--port 0`,
+   the next BEAM tries that port first and falls back to an
+   OS-assigned port if it is occupied; an explicit nonzero port is
+   bound again. In `MIX_ENV=dev`, only exit 2 (a crash) gets the
+   stay-alive treatment; exit codes 0, 1, 64, and any other code
+   besides 75 pass straight through and end the loop. For exit 2, the
+   shepherd blocks on `find -newer` until the next source change, then
+   retries. Crash loops are bounded by the file-change wait; CPU stays
+   idle.
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
 exit 75. The browser tab stays put. State survives because:
@@ -48,25 +53,45 @@ exit 75. The browser tab stays put. State survives because:
   restores the draft. Edit forms ignore drafts and reopen with the
   saved comment's body.
 
-## Deterministic port
+## Preferred port
 
-The port is `int(shasum256(cwd:args)[:8]) % 20000 + 40000`. The
-same (working directory, args) tuple always maps to the same
-port across:
+With no explicit `--port N` or `--port=N`, both launchers discard any
+inherited `MEERKAT_PREFERRED_PORT` and set it to `MEERKAT_PORT` if
+nonempty, or to the review's stable port:
+`int(shasum256(cwd:args)[:8]) % 20000 + 40000`. The CLI's `--port`
+defaults to `0`; with port `0`, it tries a valid preferred port first.
 
-- A DevWatcher-triggered restart in this shepherd.
-- A fresh `git commit` invocation that re-fires meerkat-beam from
-  the same repo.
+Absent a `MEERKAT_PORT` override, a fresh invocation of the same review
+(same repo and args) that starts a new server uses the same port when
+available, so a browser tab left open on that port needs no
+re-navigation. The 40000–59999 range is above privileged ports; its
+portion below 49152 is outside macOS's default ephemeral range
+(49152–65535), so OS-assigned port collisions are rare. `MEERKAT_PORT`
+exists for tests and debugging.
 
-So the user's browser tab keeps working without manual
-re-navigation. Range 40000–59999 keeps us above the privileged
-range but below the OS-ephemeral default start on macOS
-(49152–65535) — collisions with random OS allocations are rare,
-not impossible. If Bandit can't bind, the CLI logs a warning and
-the shepherd retries.
+If the preferred port is occupied, the CLI binds an OS-assigned port
+and prints `meerkat: port <N> is in use; serving on <url>` to stderr,
+with the full review URL (for example, `http://127.0.0.1:54563/`).
+A preferred value must be an integer from 1 to 65535; otherwise the
+CLI prints `meerkat: ignoring MEERKAT_PREFERRED_PORT="<value>": not a
+port from 1 to 65535` to stderr and uses an OS-assigned port.
 
-`MEERKAT_PORT` env var overrides the deterministic computation
-for tests / debugging.
+An explicit `--port N` or `--port=N` reaches the CLI unchanged. On the
+initial BEAM, the launcher sets no preferred port and ignores
+`MEERKAT_PORT`; explicit `--port 0` therefore requests an OS-assigned
+port. A nonzero `N` binds exactly `N`; if occupied, the CLI prints
+`meerkat: port N is in use (--port N); pick another port or omit
+--port` and exits `64`.
+
+After every BEAM exit, the launcher reads the run dir's `port` file
+(`<port> <BEAM pid>`), sets `MEERKAT_PREFERRED_PORT` to that port for
+the next BEAM, and immediately deletes the file. With the default port
+or `--port 0`, the next BEAM tries that port first; if it is occupied,
+the CLI falls back to an OS-assigned port. An explicit nonzero port is
+bound again. Removing the file prevents callers from attaching to the
+exited BEAM while the next one starts; a rerun while a server is alive
+attaches to the port in its run dir's `port` file rather than binding
+another.
 
 ## What dev mode does NOT do
 

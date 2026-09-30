@@ -135,11 +135,12 @@ read directly from this tree, so:
 - Edits to `lib/meerkat/*.ex` / `lib/meerkat_web/**/*.ex` are
   picked up by `Meerkat.DevWatcher` — it halts the BEAM with exit
   code 75 on any file change under `lib/`, the shepherd loop in
-  `bin/meerkat-beam` respawns on the same port, and LiveView's
-  client auto-reconnects. Phoenix's request-time code reloader is
-  off in dev (it fought `Meerkat.CLI`'s `Application.put_env` +
-  manual-supervisor startup pattern); the DevWatcher restart is
-  the dev-iteration story.
+  `bin/meerkat-beam` respawns, preferring the port its previous BEAM
+  bound, and LiveView's client auto-reconnects to the new BEAM only
+  when it binds the port the previous BEAM bound.
+  Phoenix's request-time code reloader is off in dev (it fought
+  `Meerkat.CLI`'s `Application.put_env` + manual-supervisor startup
+  pattern).
 
 ```bash
 scripts/dev-install.sh        # ~/.local/bin/meerkat → this branch

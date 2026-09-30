@@ -33,6 +33,12 @@ defmodule Meerkat.CLITest do
   # - `run_live_review/2`'s `if run` (invert) — which run's deadline
   #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
   #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
+  # - `start_app!/2` (deleting the preferred-port clause) and
+  #   `run_live_review_safe/2`'s `PortInUseError` rescue — they boot the
+  #   endpoint, unrunnable under ExUnit. Covered e2e by port.spec.ts
+  #   "without --port, a review binds its stable port", "a review whose
+  #   stable port is taken is served on another port" and "an explicit
+  #   --port that is taken fails to start and names the port".
   # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
@@ -596,6 +602,72 @@ defmodule Meerkat.CLITest do
       assert config[:http][:ip] == {127, 0, 0, 1}
       assert config[:http][:port] == 4321
       assert is_binary(config[:secret_key_base])
+    end
+  end
+
+  describe "port_in_use?/1" do
+    test "finds eaddrinuse however deep the start error nests it" do
+      # The shape `Application.ensure_all_started(:meerkat)` returns when
+      # the endpoint's port is taken.
+      reason =
+        {:meerkat,
+         {{:shutdown,
+           {:failed_to_start_child, MeerkatWeb.Endpoint,
+            {:shutdown,
+             {:failed_to_start_child, {MeerkatWeb.Endpoint, :http},
+              {:shutdown, {:failed_to_start_child, :listener, :eaddrinuse}}}}}},
+          {Meerkat.Application, :start, [:normal, []]}}}
+
+      assert CLI.port_in_use_for_test(reason)
+      assert CLI.port_in_use_for_test([:a, {:b, :eaddrinuse}])
+    end
+
+    test "is false for any other start error" do
+      refute CLI.port_in_use_for_test(
+               {:meerkat, {{:shutdown, {:failed_to_start_child, :listener, :eacces}}, []}}
+             )
+
+      refute CLI.port_in_use_for_test([:a | :b])
+      refute CLI.port_in_use_for_test("eaddrinuse")
+    end
+  end
+
+  describe "preferred_port/1" do
+    test "takes a port number from 1 to 65535" do
+      assert CLI.preferred_port_for_test("1") == 1
+      assert CLI.preferred_port_for_test("44444") == 44_444
+      assert CLI.preferred_port_for_test("65535") == 65_535
+    end
+
+    test "ignores an unset, malformed or out-of-range value" do
+      assert CLI.preferred_port_for_test(nil) == nil
+      assert CLI.preferred_port_for_test("") == nil
+      assert CLI.preferred_port_for_test("0") == nil
+      assert CLI.preferred_port_for_test("65536") == nil
+      assert CLI.preferred_port_for_test("4444x") == nil
+      assert CLI.preferred_port_for_test("abc") == nil
+    end
+  end
+
+  describe "preferred_port_from_env/1" do
+    test "warns about a set value it ignores" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.preferred_port_from_env_for_test("abc") == nil
+        end)
+
+      assert stderr ==
+               ~s(meerkat: ignoring MEERKAT_PREFERRED_PORT="abc": not a port from 1 to 65535\n)
+    end
+
+    test "is silent for a valid or unset value" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.preferred_port_from_env_for_test("44444") == 44_444
+          assert CLI.preferred_port_from_env_for_test(nil) == nil
+        end)
+
+      assert stderr == ""
     end
   end
 

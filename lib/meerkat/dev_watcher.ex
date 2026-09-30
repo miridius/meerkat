@@ -3,11 +3,11 @@ if Mix.env() == :dev do
     @moduledoc """
     Dev-only file watcher. Halts the BEAM with exit code 75 when a
     source file changes under `lib/`, `assets/{css,svelte,js,ts}/`,
-    or `config/`. The `bin/meerkat-beam` shepherd loop interprets 75
-    as "restart on the same port"; Phoenix LiveView's client
-    auto-reconnect picks up the new BEAM transparently, `ReviewServer`
-    reloads in-progress state from `Meerkat.Persistence`, the user's
-    browser tab stays where it was.
+    or `config/`. The `bin/meerkat-beam` shepherd loop prefers the
+    last-bound port on respawn. Phoenix LiveView's client auto-reconnect
+    picks up the new BEAM when it returns on that port, and the user's
+    browser tab stays where it was. `ReviewServer` reloads in-progress
+    state from `Meerkat.Persistence`.
 
     Only started under `MIX_ENV=dev` when the CLI flips
     `:start_endpoint` on (i.e. the review UI is actually rendering —
@@ -82,7 +82,7 @@ if Mix.env() == :dev do
       # so the BEAM halts with the decision's exit code instead of a restart
       # (75). Clear the timer so a later change re-arms.
       if is_nil(Meerkat.Decision.current()) do
-        Logger.info("Meerkat.DevWatcher: change detected; restarting on the same port.")
+        Logger.info("Meerkat.DevWatcher: change detected; restarting.")
         Meerkat.Restart.request()
         {:noreply, state}
       else
