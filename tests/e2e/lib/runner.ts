@@ -125,10 +125,15 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	}).catch(async (e) => {
 		// No Runner reaches the caller, so nothing else would stop the
 		// backend, which can sit waiting for a source change forever.
-		await stopBackends(runsDir);
-		if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
-		if (!opts.keepFixture) fixture.cleanup?.();
-		if (opts.runsDir === undefined) rmSync(runsDir, { recursive: true, force: true });
+		try {
+			await stopBackends(runsDir);
+		} catch (cleanup) {
+			throw new AggregateError([e, cleanup], `${e}\nand stopping its backends failed: ${cleanup}`);
+		} finally {
+			if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
+			if (!opts.keepFixture) fixture.cleanup?.();
+			if (opts.runsDir === undefined) rmSync(runsDir, { recursive: true, force: true });
+		}
 		throw e;
 	});
 

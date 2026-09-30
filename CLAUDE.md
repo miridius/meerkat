@@ -67,34 +67,25 @@ The end-to-end loop for a meerkat bug report or feature request:
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
 
+   Before opening the draft PR, do a quick self-review of the diff
+   and the PR description you are about to post, so unchecked work
+   does not reach the user when the PR opens. Does it do what was
+   asked? Is it sensible? Does it avoid unnecessary changes or
+   complexity? Fix every finding from any review you run before
+   opening the PR, regardless of which review found it. Keep this
+   pass cheap: no review agents, mutation-testing runs, or extra
+   test suites. The thorough review still happens at merge through
+   `/review-and-merge`; this self-review does not replace it.
+
    When a PR changes what meerkat's review page shows, add
    screenshots to its description using
    `bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N]
-   [--out DIR]`. Capture after opening the draft PR. It prints one
-   line per screenshot with the PNG's absolute path and, if present,
-   its caption. Attach screenshots with
-   `gh pr edit <N> --body-file <file> --attach <path1> --attach <path2>`.
-   gh uploads each file and rewrites body references to attached files,
-   whether absolute or relative, to point to the uploaded asset while
-   preserving alt text. Files the body doesn't reference are appended
-   to its end. Place each screenshot by putting its printed path in the
-   body as a Markdown image, such as `![alt](<path>)`, where it should
-   appear. Use judgement to choose whichever
-   screenshots, and how many, will help review that PR; for changed UI,
-   a before/after pair can help, and with `--before`, the script
-   additionally captures the same steps against a build from the PR's
-   branch point. Inspect every image before attaching it. Confirm each
+   [--out DIR]`. Capture after opening the draft PR. Use judgement to
+   choose whichever screenshots, and how many, will help review that
+   PR; for changed UI, a before/after pair can help. Confirm each
    image shows what you meant to capture. Uploads are public and
    permanent. Confirm no image contains private data (such as local
    absolute paths).
-
-   After the draft PR is open and any screenshots are attached, do a
-   quick self-review of the whole PR—diff, description, and
-   screenshots. Does it do what was asked, make sense, and avoid
-   unnecessary changes or complexity? Fix anything you find. Keep
-   this pass cheap: no review agents, mutation-testing runs, or extra
-   test suites. The thorough review happens at merge through
-   `/review-and-merge`; this pass does not replace it.
 
 ## Quality gates
 
@@ -182,4 +173,5 @@ for unmerged work. Bringing local `main` up to date — via `git pull`,
 or by `git switch`/`git checkout main` after a GitHub squash-merge —
 fires the lefthook `post-merge` / `post-checkout` hooks, which run
 `scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
-dev launcher with the prod release.
+dev launcher with the prod release. There is no state marker file;
+the launcher script content IS the mode.

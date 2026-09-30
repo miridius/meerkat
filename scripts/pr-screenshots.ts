@@ -4,7 +4,7 @@
 //
 // This reviews the PR with `meerkat --pr <N>`, so the page shows
 // the PR's own diff, rendered by meerkat built from the PR's head
-// commit. With `--before` it also runs the same steps against meerkat
+// commit as pushed to GitHub. With `--before` it also runs the same steps against meerkat
 // built from the commit the PR branches from, for a before/after pair.
 // Both builds are fresh clones in a temp dir, so the PR branch needn't
 // be checked out here, and the reviews run in throwaway clones, so
@@ -20,7 +20,7 @@
 //     await page.getByRole("button", { name: "Split" }).click();
 //     await shot("split-view");
 //     if (code === "head") {
-//       await shot("footer", { locator: page.locator("footer"), caption: "the form links" });
+//       await shot("footer", { locator: page.locator("footer"), caption: "the decision buttons" });
 //     }
 //   };
 //
@@ -54,7 +54,7 @@
 // <tmpdir>/meerkat-pr-<N>-screenshots.
 
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Locator, type Page } from "@playwright/test";
@@ -75,25 +75,43 @@ function run(cmd: string, args: string[], cwd = ROOT): string {
 }
 
 // Like `run`, but lets two builds proceed at once, and shows the
-// command's output only if it fails.
-function runAsync(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+// command's output only if it fails. Aborting `signal` stops the
+// command, and the promise settles once it has exited.
+function runAsync(
+	cmd: string,
+	args: string[],
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+	signal: AbortSignal,
+): Promise<void> {
 	return new Promise((done, fail) => {
+		signal.throwIfAborted();
 		const proc = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+		const stop = () => proc.kill("SIGTERM");
+		signal.addEventListener("abort", stop, { once: true });
 		let output = "";
 		proc.stdout.on("data", (chunk) => (output += chunk));
 		proc.stderr.on("data", (chunk) => (output += chunk));
 		proc.on("error", fail);
-		proc.on("close", (code) =>
-			code === 0 ? done() : fail(new Error(`${cmd} ${args.join(" ")} failed in ${cwd}:\n${output}`)),
-		);
+		proc.on("close", (code) => {
+			signal.removeEventListener("abort", stop);
+			if (code === 0) done();
+			else if (signal.aborted) fail(signal.reason);
+			else fail(new Error(`${cmd} ${args.join(" ")} failed in ${cwd}:\n${output}`));
+		});
 	});
 }
 
 function parseArgs(argv: string[]) {
 	const opts: { pr?: number; out?: string; steps?: string; before: boolean } = { before: false };
+	const value = (i: number): string => {
+		const v = argv[i + 1];
+		if (v === undefined || v.startsWith("--")) throw new Error(`${argv[i]} needs a value`);
+		return v;
+	};
 	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] === "--pr") opts.pr = Number(argv[++i]);
-		else if (argv[i] === "--out") opts.out = resolve(argv[++i]);
+		if (argv[i] === "--pr") opts.pr = Number(value(i++));
+		else if (argv[i] === "--out") opts.out = resolve(value(i++));
 		else if (argv[i] === "--before") opts.before = true;
 		else if (!opts.steps) opts.steps = resolve(argv[i]);
 		else throw new Error(`unexpected argument: ${argv[i]}`);
@@ -114,25 +132,50 @@ function parseArgs(argv: string[]) {
 // Clones meerkat at `sha` into `dir`, on a branch named `branch` so the
 // page's version chip reads `dev: <branch>`, and builds it the way
 // bin/meerkat-beam would, so its first launch doesn't compile.
-async function build(src: string, sha: string, branch: string, dir: string): Promise<void> {
+async function build(src: string, sha: string, branch: string, dir: string, signal: AbortSignal): Promise<void> {
 	run("git", ["clone", "--quiet", "--no-checkout", src, dir]);
 	run("git", ["-C", dir, "checkout", "--quiet", "-B", branch, sha]);
 	const env = { ...process.env, MIX_ENV: "dev" };
-	await runAsync("mix", ["deps.get"], dir, env);
+	await runAsync("mix", ["deps.get"], dir, env, signal);
 	// --ignore-scripts skips `lefthook install`, whose hooks would run
 	// on this clone's git operations.
-	await runAsync("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts"], dir, env);
-	await runAsync("mix", ["compile", "--no-warnings-as-errors"], dir, env);
-	await runAsync("bunx", ["vite", "build"], join(dir, "assets"), {
-		...env,
-		MIX_BUILD_PATH: join(dir, "_build", "dev"),
-	});
+	await runAsync("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts"], dir, env, signal);
+	await runAsync("mix", ["compile", "--no-warnings-as-errors"], dir, env, signal);
+	await runAsync(
+		"bunx",
+		["vite", "build"],
+		join(dir, "assets"),
+		{ ...env, MIX_BUILD_PATH: join(dir, "_build", "dev") },
+		signal,
+	);
+}
+
+// Builds every commit at once. When one build fails, stops the others
+// and waits for them to exit before rethrowing, so none outlives the
+// temp dir it writes into.
+async function buildAll(src: string, work: string, commits: { code: Code; sha: string; branch: string }[]) {
+	const abort = new AbortController();
+	const results = await Promise.allSettled(
+		commits.map((c) =>
+			build(src, c.sha, c.branch, join(work, c.code), abort.signal).catch((e) => {
+				abort.abort();
+				throw e;
+			}),
+		),
+	);
+	const failed = results.find((r) => r.status === "rejected" && r.reason?.name !== "AbortError");
+	if (failed) throw (failed as PromiseRejectedResult).reason;
 }
 
 async function capture(pr: number, stepsPath: string, out: string, before: boolean): Promise<void> {
 	const steps: Steps = (await import(stepsPath)).default;
-	rmSync(out, { recursive: true, force: true });
+	if (typeof steps !== "function") throw new Error(`${stepsPath} has no default export function`);
+	// Removes only earlier shots, so `--out` can name a directory that
+	// holds other files.
 	mkdirSync(out, { recursive: true });
+	for (const file of readdirSync(out)) {
+		if (/^(base|head)-[\w-]+\.png$/.test(file)) rmSync(join(out, file));
+	}
 
 	// Meerkat reads MEERKAT_* settings from the environment it inherits,
 	// such as a review timeout that would show in the page's countdown.
@@ -162,15 +205,19 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 			`+refs/pull/${pr}/head:refs/pr/head`,
 			`+refs/heads/${baseRefName}:refs/pr/base`,
 		]);
+		const headSha = run("git", ["-C", src, "rev-parse", "refs/pr/head"]);
+		if (run("git", ["branch", "--show-current"]) === headRefName && run("git", ["rev-parse", "HEAD"]) !== headSha) {
+			throw new Error(`${headRefName} differs from PR #${pr}'s head on GitHub; push it first`);
+		}
 		const commits: { code: Code; sha: string; branch: string }[] = [
-			{ code: "head", sha: run("git", ["-C", src, "rev-parse", "refs/pr/head"]), branch: headRefName },
+			{ code: "head", sha: headSha, branch: headRefName },
 		];
 		if (before) {
 			const sha = run("git", ["-C", src, "merge-base", "refs/pr/base", "refs/pr/head"]);
 			commits.unshift({ code: "base", sha, branch: baseRefName });
 		}
 		console.error(`building meerkat at ${commits.map((c) => `${c.code} ${c.sha.slice(0, 7)}`).join(", ")}…`);
-		await Promise.all(commits.map((c) => build(src, c.sha, c.branch, join(work, c.code))));
+		await buildAll(src, work, commits);
 
 		const { startMeerkat } = await import("../tests/e2e/lib/runner.ts");
 		browser = await chromium.launch({ headless: true });
@@ -185,8 +232,6 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 				fixture: { dir: reviewDir },
 				env: { MIX_ENV: "dev" },
 			});
-			// A context of its own, so settings the base review saves in
-			// the browser don't carry over to the head one.
 			const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
 			try {
 				const page = await context.newPage();
@@ -213,8 +258,11 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 					},
 				});
 			} finally {
-				await context.close();
-				await meerkat.kill();
+				try {
+					await context.close();
+				} finally {
+					await meerkat.kill();
+				}
 			}
 		}
 	} finally {
