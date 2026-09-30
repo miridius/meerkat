@@ -54,10 +54,15 @@ The end-to-end loop for a meerkat bug report or feature request:
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
-4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
-   Do not ask before pushing or opening the PR. `main` is
-   branch-protected on GitHub — no direct pushes, no force-pushes;
-   changes land via PR.
+4. **Ship.** Branch off `main`, commit, and push; open a
+   **draft** PR. Do not ask before pushing or opening the PR. Before
+   every push, run `git fetch origin main` and rebase your branch onto
+   `origin/main`. If the branch was already pushed, push the rebased
+   branch with `git push --force-with-lease`. `main` is protected on
+   GitHub: no direct pushes; changes require a PR with signed commits
+   and the required `test` status check passing on a branch up to date
+   with `main`. On `main`, force-pushes and deletions are disabled;
+   protection includes admins, and no approvals are required.
 
 ## Quality gates
 
