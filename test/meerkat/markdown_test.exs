@@ -33,6 +33,10 @@ defmodule Meerkat.MarkdownTest do
       assert Markdown.to_safe_html("**bold**") =~ "<strong>bold</strong>"
     end
 
+    test "renders inline code" do
+      assert Markdown.to_safe_html("and `inline code`") =~ "<code>inline code</code>"
+    end
+
     test "renders fenced code" do
       html = Markdown.to_safe_html("```\ncode\n```")
       assert html =~ "<pre>"

@@ -67,11 +67,7 @@ jobs:
       - working-directory: assets
         run: bun test
 
-      # Built ahead, as bin/meerkat-beam would, so the first e2e test's wait
-      # for meerkat's URL does not include a vite build.
-      - name: Build assets
-        working-directory: assets
-        run: MIX_BUILD_PATH="$GITHUB_WORKSPACE/_build/dev" bun run build
+      - run: bun test tests/e2e/lib
 
       - run: bunx playwright install --only-shell chromium
       - run: bun run test:e2e

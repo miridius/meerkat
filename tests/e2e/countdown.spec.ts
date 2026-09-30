@@ -7,12 +7,14 @@ function secondsLeft(text: string | null): number {
 	return Number(match[1]) * 60 + Number(match[2]);
 }
 
+// The seam is the Countdown hook ticking in the browser from the deadline
+// the server renders. What it shows for a given time left, the warning
+// and urgent thresholds and the time over, is covered by
+// assets/ts/countdown.test.ts.
 test.describe("review countdown", () => {
-	test("counts down towards the review's timeout", async ({
-		page,
-	}) => {
+	test("counts down towards the review's timeout in the footer", async ({ page }) => {
 		const meerkat = await startMeerkat({
-			env: { MEERKAT_REVIEW_TIMEOUT: "1800" },
+			env: { MEERKAT_REVIEW_TIMEOUT: "45" },
 		});
 		try {
 			await page.goto(meerkat.url);
@@ -24,13 +26,8 @@ test.describe("review countdown", () => {
 			).toHaveText(/^\d{2}:\d{2} left$/);
 
 			const first = secondsLeft(await countdown.textContent());
-			expect(
-				first,
-				"a 1800 second limit starts the clock just under 30 minutes",
-			).toBeGreaterThan(1740);
-			expect(first, "the clock never starts above the limit").toBeLessThanOrEqual(
-				1800,
-			);
+			expect(first, "a 45 second limit starts the clock just under 45 seconds").toBeGreaterThan(30);
+			expect(first, "the clock never starts above the limit").toBeLessThanOrEqual(45);
 
 			await expect
 				.poll(async () => secondsLeft(await countdown.textContent()), {
@@ -41,38 +38,10 @@ test.describe("review countdown", () => {
 
 			await expect(
 				countdown,
-				"a 30 minute review is not styled as running out with 29 minutes left",
-			).not.toHaveClass(/warn|urgent/);
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("turns amber under five minutes and red under one", async ({ page }) => {
-		const meerkat = await startMeerkat({
-			env: { MEERKAT_REVIEW_TIMEOUT: "240" },
-		});
-		try {
-			await page.goto(meerkat.url);
-			await expect(
-				page.locator(".review-countdown"),
-				"under five minutes left the countdown is styled as a warning",
-			).toHaveClass(/warn/);
-		} finally {
-			await meerkat.kill();
-		}
-
-		const urgent = await startMeerkat({
-			env: { MEERKAT_REVIEW_TIMEOUT: "45" },
-		});
-		try {
-			await page.goto(urgent.url);
-			await expect(
-				page.locator(".review-countdown"),
 				"under one minute left the countdown is styled as urgent",
 			).toHaveClass(/urgent/);
 		} finally {
-			await urgent.kill();
+			await meerkat.kill();
 		}
 	});
 });

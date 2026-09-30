@@ -5,17 +5,12 @@ defmodule Meerkat.ReviewStateTest do
   # * Deleting `split_off_fenced_code/3`'s `[] -> out` case clause:
   #   the empty chunk then reaches `chunk_paragraphs/1`, which turns
   #   `[]` into no blocks.
-  #
-  # Thin I/O wiring already covered end-to-end by named Playwright
-  # specs (muex runs ExUnit only and cannot see them):
-  # * The `alias` line and each `from_target/2` clause, which read git
-  #   and GitHub — smoke.spec.ts "renders the page with header, files,
-  #   and decision footer" (staged, via --commit-msg), entry-points.spec.ts "REF~1..REF
-  #   reviews the diff of a single committed change" (single ref) and
-  #   "two-dot range (A..B) shows the diff between two refs" (range),
-  #   and pr-mode.spec.ts (PR).
 
-  use ExUnit.Case, async: true
+  # Not async: the `from_target/2` tests put a `gh` stub on PATH, which
+  # is process-global.
+  use ExUnit.Case, async: false
+
+  import Meerkat.TestHelpers, only: [git: 2, isolate_git_config: 0, make_tmp_repo: 1, stage: 3]
 
   alias Meerkat.ReviewState
 
@@ -138,6 +133,111 @@ defmodule Meerkat.ReviewStateTest do
                %{start_line: 1, end_line: 1, text: "Subject"},
                %{start_line: 3, end_line: 3, text: "Body"}
              ] = ReviewState.blocks("Subject\n \nBody")
+    end
+  end
+
+  describe "from_target/2 — real git, `gh` stubbed on PATH" do
+    setup do
+      isolate_git_config()
+      base = make_tmp_repo("meerkat-review-state")
+      File.rm_rf!(Path.join(base, ".git"))
+      old_path = System.fetch_env!("PATH")
+
+      on_exit(fn ->
+        System.put_env("PATH", old_path)
+        File.rm_rf!(base)
+      end)
+
+      {:ok, base: base}
+    end
+
+    test "'#' comment lines in the commit-msg file are stripped, the message kept", %{base: base} do
+      repo = Path.join(base, "repo")
+      File.mkdir_p!(repo)
+      init_repo(repo)
+      git(repo, ["commit", "--allow-empty", "-qm", "initial"])
+      stage(repo, "a.rs", "fn a() {}\n")
+
+      commit_msg = Path.join(base, "COMMIT_MSG")
+
+      File.write!(commit_msg, """
+      Subject
+
+      Real body line.
+
+      # Please enter the commit message for your changes. Lines starting
+      # with '#' will be ignored, and an empty message aborts the commit.
+      # On branch main
+      """)
+
+      # The branch has no PR, as `gh` reports it.
+      stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
+
+      assert {:ok, state} = ReviewState.from_target({:staged, commit_msg}, repo)
+      assert state.commit_message == "Subject\n\nReal body line."
+
+      assert [%{start_line: 1, text: "Subject"}, %{start_line: 3, text: "Real body line."}] =
+               state.commit_message_blocks
+    end
+
+    test "--pr reviews the PR head against its base, with the PR's metadata", %{base: base} do
+      # Mirrors how GitHub publishes a PR: a remote holding the base
+      # branch and `refs/pull/<N>/head`, cloned locally.
+      remote = Path.join(base, "remote.git")
+      staging = Path.join(base, "staging")
+      clone = Path.join(base, "clone")
+      Enum.each([remote, staging, clone], &File.mkdir_p!/1)
+
+      git(remote, ["init", "-q", "--bare", "-b", "main"])
+      init_repo(staging)
+      stage(staging, "base.txt", "shared base content\n")
+      git(staging, ["commit", "-qm", "Initial base"])
+      git(staging, ["remote", "add", "origin", remote])
+      git(staging, ["push", "-q", "origin", "main"])
+      stage(staging, "feature.rs", "fn feature() {}\n")
+      git(staging, ["commit", "-qm", "Add feature"])
+      git(staging, ["push", "-q", "origin", "HEAD:refs/pull/123/head"])
+      git(clone, ["clone", "-q", remote, "."])
+
+      pr = %{
+        number: 123,
+        baseRefName: "main",
+        headRefName: "feat/the-feature",
+        title: "Feature: a wonderful feature",
+        body: "This PR adds the wonderful feature, see linked issue.",
+        url: "https://github.com/example/example/pull/123"
+      }
+
+      stub_gh(base, """
+      if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+        cat <<'EOF_JSON'
+      #{Jason.encode!(pr)}
+      EOF_JSON
+        exit 0
+      fi
+      echo "gh stub: unsupported invocation: $*" >&2
+      exit 1
+      """)
+
+      assert {:ok, state} = ReviewState.from_target({:pr, "123"}, clone)
+      assert Enum.map(state.files, &{&1.file_name, &1.status}) == [{"feature.rs", :added}]
+      assert state.pr == %{number: 123, title: pr.title, url: pr.url}
+      assert state.commit_message == pr.body
+      assert {state.head_branch, state.base_branch} == {"feat/the-feature", "main"}
+    end
+
+    defp init_repo(dir) do
+      git(dir, ["init", "-q", "-b", "main"])
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+    end
+
+    defp stub_gh(dir, body) do
+      bin = Path.join(dir, "gh-stub")
+      File.mkdir_p!(bin)
+      File.write!(Path.join(bin, "gh"), "#!/bin/sh\n#{body}")
+      File.chmod!(Path.join(bin, "gh"), 0o755)
+      System.put_env("PATH", bin <> ":" <> System.fetch_env!("PATH"))
     end
   end
 

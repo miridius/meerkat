@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
-import { elapsedSeconds, reapOrphanedBackends } from "./lib/runner.js";
+import { describe, expect, test } from "bun:test";
+import { elapsedSeconds, reapOrphanedBackends } from "./runner.js";
 
 async function exitedPid(): Promise<number> {
 	const proc = spawn("true");
@@ -29,11 +29,10 @@ function alive(pid: number): boolean {
 	}
 }
 
-test.describe("orphaned backend reaper", () => {
-	// Each reap scans the whole temp dir, so one test's reap must not run while
-	// another is still arranging its runs dirs.
-	test.describe.configure({ mode: "serial" });
-
+// bun runs a file's tests one at a time, which the reaper tests need: each
+// reap scans the whole temp dir, so one test's reap must not run while
+// another is still arranging its runs dirs.
+describe("orphaned backend reaper", () => {
 	test("stops backends whose owning test process has exited and keeps those of a live one", async () => {
 		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${await exitedPid()}-`));
 		const owned = mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
@@ -96,7 +95,7 @@ test.describe("orphaned backend reaper", () => {
 	});
 });
 
-test.describe("ps elapsed-time parsing", () => {
+describe("ps elapsed-time parsing", () => {
 	for (const [etime, seconds] of [
 		["00:07", 7],
 		["12:34", 12 * 60 + 34],

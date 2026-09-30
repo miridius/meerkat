@@ -7,45 +7,55 @@ defmodule Meerkat.CLITest do
   # only thing that can see most of this glue):
   #
   # - `main/1`'s answers/review branch, auto/live dispatch, invert +
-  #   case-clause deletions — the CLI entry point boots the endpoint and
-  #   reads stdin, unrunnable under ExUnit. Covered e2e by
-  #   answers.spec.ts "stores answers from stdin and the next review
-  #   pins them above the diff" (true branch), decision.spec.ts
-  #   "staged-diff with no file changes auto-approves and exits 0
-  #   immediately" + "Approve → meerkat exits 0" (auto clause),
-  #   smoke.spec.ts "renders the page with header, files, and decision
-  #   footer" (live clause).
+  #   case-clause deletions — a live review boots the endpoint and
+  #   `--answers` reads stdin, unrunnable under ExUnit. The auto clause
+  #   and a live dispatch that stops at target resolution are covered by
+  #   cli_main_test.exs; the rest e2e by answers.spec.ts "--answers
+  #   stores the answers piped on stdin" (true branch) and
+  #   decision.spec.ts "Send Feedback reaches the caller as exit 1 with
+  #   the comments bracketed, saved to a file, and no server logs" (live
+  #   clause).
   # - `flush_logs/0`'s handler-absent `_ -> :ok` clause — equivalent:
   #   flush_logs' own `rescue _ -> :ok catch _, _ -> :ok` swallows the
   #   CaseClauseError the deletion raises, so no input distinguishes the
   #   mutant from the original.
-  # - `run_live_review/2`'s case on `ReviewState.from_target` — boots
-  #   the live review UI; covered e2e by smoke.spec.ts "renders the page
-  #   with header, files, and decision footer".
+  # - `run_live_review/2`'s case on `ReviewState.from_target` — the
+  #   `{:ok, _}` clause boots the live review UI; covered e2e by
+  #   decision.spec.ts "Send Feedback reaches the caller as exit 1 with
+  #   the comments bracketed, saved to a file, and no server logs". The
+  #   `{:error, _}` clause is covered by cli_main_test.exs.
   # - `run_live_review/2`'s deadline setup (swap the put_env arguments,
   #   invert `is_nil(serve_dir)`) — equivalent under a launcher:
   #   `Meerkat.Decision` re-arms the deadline when the first caller
   #   attaches, milliseconds after boot, and disarms it when the caller
-  #   leaves. detach.spec.ts "a review whose caller exited does not time
-  #   out before a rerun collects it" pins that behaviour.
+  #   leaves. decision_test.exs "a review whose caller has left does not
+  #   time out" pins that behaviour.
   # - `run_live_review/2`'s `if run` (invert) — which run's deadline
   #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
   #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
   # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
-  #   exits 64 and names the option" and "a ref that does not resolve
-  #   exits 64 and says the target could not be resolved".
+  #   exits 64 and names the option".
   # - The staged-diff auto-approve path in `auto_approve_staged/1`
   #   (statement deletion among the Git shell-outs) — real-git I/O
-  #   wiring; covered e2e by decision.spec.ts "staged-diff with only
-  #   linguist-generated files auto-approves".
+  #   wiring; covered by the real-git `auto_approve_decision/2` tests
+  #   below.
 
   import Meerkat.TestHelpers
 
   require Logger
 
-  alias Meerkat.{ApprovalCache, CLI, PendingAnswers, ReviewLog}
+  alias Meerkat.{
+    ApprovalCache,
+    CLI,
+    Comment,
+    Feedback,
+    PendingAnswers,
+    ReviewLog,
+    ReviewServer,
+    ReviewState
+  }
 
   defp write_pending_answers(repo) do
     path = PendingAnswers.path_for(repo)
@@ -820,6 +830,45 @@ defmodule Meerkat.CLITest do
       assert out =~ "PAYLOAD-BODY"
     end
 
+    test "a live review's comments are counted in the banner and saved beside its review log" do
+      repo = make_git_repo("meerkat-cli-live-fb")
+      id = "cli-live-fb-#{System.unique_integer([:positive])}"
+
+      on_exit(fn ->
+        with [{pid, _}] <- Registry.lookup(Meerkat.ReviewRegistry, id),
+             do: DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, pid)
+
+        File.rm_rf!(repo)
+      end)
+
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      for body <- ["first finding here", "second finding here"] do
+        ReviewServer.add_comment(id, :global, %{
+          id: Comment.new_id(),
+          body: body,
+          finding_type: :issue,
+          learn_from_this: false,
+          created_at: Comment.now()
+        })
+      end
+
+      assert CLI.comment_count_for_test(id) == 2
+
+      # A per-review name under reviews/, not a clobberable fixed name.
+      path = CLI.feedback_file_path_for_test(ReviewLog.start(repo, %ReviewState{}))
+      assert path =~ Path.join(["meerkat-precommit", "reviews", ""])
+
+      payload = Feedback.format(ReviewServer.get_state(id))
+      out = CLI.write_feedback_for_test(:reject, payload, id, path)
+
+      assert length(Regex.scan(~r/User requested changes — 2 comments —/, out)) == 2
+      assert out =~ "full feedback saved to #{path} in case truncated"
+      assert File.read!(path) =~ "first finding here"
+      assert File.read!(path) =~ "second finding here"
+    end
+
     test "a timed-out review's comments reach the agent under the unread banner" do
       path = Path.join(make_tmp_repo("meerkat-cli-timeout-fb"), "fb.txt")
 
@@ -874,6 +923,36 @@ defmodule Meerkat.CLITest do
       File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
       git(dir, ["add", "a.rs"])
       assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    # A binary diff shows no content, but it is still an unreviewed file,
+    # so it must reach the UI whether attributes or its bytes make it binary.
+    for {classification, attrs, old, new} <- [
+          {"attributes", "BUILD.bazel -diff\n", "old target\n", "new target\n"},
+          {"bytes", nil, <<0, 255, 1>>, <<0, 254, 2>>}
+        ] do
+      test "staged binary-only change (#{classification}) + no pending answers → live review",
+           %{dir: dir} do
+        if unquote(attrs), do: stage(dir, ".gitattributes", unquote(attrs))
+        stage(dir, "BUILD.bazel", unquote(old))
+        git(dir, ["commit", "-qm", "base"])
+        stage(dir, "BUILD.bazel", unquote(new))
+        assert git(dir, ["diff", "--cached", "--stat"]) =~ "Bin"
+
+        assert CLI.auto_approve_decision_for_test(dir) == :live
+      end
+    end
+
+    test "staged linguist-generated files only + no pending answers → auto-approves",
+         %{dir: dir} do
+      # The attribute must be committed, so it is not itself part of the
+      # staged diff under review.
+      stage(dir, ".gitattributes", "*.lock linguist-generated=true\n")
+      git(dir, ["commit", "-qm", "seed attrs"])
+      stage(dir, "bun.lock", "fresh lockfile\n")
+
+      assert CLI.auto_approve_decision_for_test(dir) ==
+               {:auto, "meerkat: all 1 staged file(s) are linguist-generated — auto-approving.\n"}
     end
 
     test "empty staged diff + pending answers → live review, never auto-approve", %{dir: dir} do

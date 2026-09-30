@@ -10,58 +10,39 @@ const PROD_MANIFEST = [
 	"Install versioned releases (#10)",
 ];
 
+// The chip's browser seam: the popover and the localStorage-backed
+// badge. What a dev and a prod build render is covered by the LiveView
+// tests.
 test.describe("version chip", () => {
-	test("a dev build shows a dev label and no changelog", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-			const chip = page.locator(".version-chip-btn");
-			await expect(chip.locator(".chip-value")).toHaveText(/^dev: /);
-			await expect(chip).toBeDisabled();
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("a prod build shows the version and a changelog popover", async ({ page }) => {
+	test("a prod build's chip opens a changelog popover, and its badge counts entries newer than last seen until opened", async ({
+		page,
+	}) => {
 		const releaseRoot = manifestRoot(PROD_MANIFEST);
 		const meerkat = await startMeerkat({ env: { RELEASE_ROOT: releaseRoot } });
 		try {
 			await page.goto(meerkat.url);
 			const chip = page.locator(".version-chip-btn");
+			const popover = page.locator(".version-popover");
+			const badge = page.locator(".version-badge");
 			await expect(chip.locator(".chip-value")).toHaveText("abc1234");
-			await expect(page.locator(".version-popover")).toBeHidden();
+			await expect(badge, "a first visit treats the current version as seen").toBeHidden();
+			await expect(popover).toBeHidden();
 
 			await chip.click();
-			const popover = page.locator(".version-popover");
 			await expect(popover).toBeVisible();
 			await expect(
 				popover.getByRole("link", { name: /#11.*Live-restart/ }),
 			).toHaveAttribute("href", "https://github.com/miridius/meerkat/pull/11");
 			await expect(popover.getByRole("link", { name: /#10/ })).toBeVisible();
-		} finally {
-			await meerkat.kill();
-			rmSync(releaseRoot, { recursive: true, force: true });
-		}
-	});
-
-	test("the badge counts entries newer than last seen and clears on open", async ({ page }) => {
-		const releaseRoot = manifestRoot(PROD_MANIFEST);
-		const meerkat = await startMeerkat({ env: { RELEASE_ROOT: releaseRoot } });
-		try {
-			await page.goto(meerkat.url);
-			// First visit treats the current version as seen: no badge.
-			await expect(page.locator(".version-badge")).toBeHidden();
 
 			// Simulate having last acknowledged up to #10, then re-mount.
 			await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
 			await page.reload();
-			const badge = page.locator(".version-badge");
 			await expect(badge).toBeVisible();
 			await expect(badge).toHaveText("1");
 
-			await page.locator(".version-chip-btn").click();
-			await expect(badge).toBeHidden();
+			await chip.click();
+			await expect(badge, "opening the changelog clears the badge").toBeHidden();
 		} finally {
 			await meerkat.kill();
 			rmSync(releaseRoot, { recursive: true, force: true });

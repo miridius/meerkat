@@ -16,8 +16,7 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
       assert conn.resp_body =~ "src too large"
     end
 
-    # Successful render is exercised end-to-end via the Playwright suite;
-    # this controller test focuses on the validation paths that don't
-    # require a live plantuml binary.
+    # A successful render needs a live plantuml binary, so this
+    # controller test covers only the validation paths.
   end
 end
