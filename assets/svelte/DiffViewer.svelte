@@ -1027,31 +1027,28 @@
     user-select: none;
     cursor: pointer;
   }
-  /* With line wrap off, split view draws each side in its own table;
+  /* The library draws each hunk row's expand buttons and header text on
+     both sides. Hide the old-side (left) copies so both appear once, on
+     the new side.
+     With line wrap off, split view draws each side in its own table;
      hunk rows carry data-side="old" or data-side="new". */
-  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-action > *),
-  /* With line wrap on, each hunk is one row with both action cells,
-     old side first; this matches the cell with another action cell
-     after it, i.e. the old-side cell. */
-  :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action) > *) {
+  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td > *),
+  /* With line wrap on, each hunk is one row of four cells: old action,
+     old header, new action, new header. The old-side cells are the ones
+     with an action cell after them. */
+  :global(.diff-content tr.diff-line-hunk > td:has(~ td.diff-line-hunk-action) > *) {
     /* Hiding the contents instead of removing them keeps the
-       old-side cell as a spacer that holds its width. */
+       old-side cells as spacers that hold their width. */
     visibility: hidden;
   }
   /* The library gives the old-side action cell an inline background in the
      hunk line-number colour—the button tile colour. With its button hidden,
      it would look like a blank tile, so use the hunk content colour to blend
-     it into the header. !important overrides the inline style. */
+     it into the emptied header cell beside it. !important overrides the
+     inline style. */
   :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-action),
   :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action)) {
     background-color: var(--diff-hunk-content--) !important;
-  }
-  /* The library prints each hunk header on both sides. Hide the new-side
-     copy so each header appears once, on the left. With wrapping on, the
-     content cell after both action cells belongs to the new side. */
-  :global(.diff-content tr.diff-line-hunk[data-side="new"] > td.diff-line-hunk-content > *),
-  :global(.diff-content td.diff-line-hunk-action ~ td.diff-line-hunk-action ~ td.diff-line-hunk-content > *) {
-    visibility: hidden;
   }
   /* Drag-select highlight — applied to every line-num cell + row
      between dragStart and dragCurrent so the reviewer can see the

@@ -67,10 +67,13 @@ for (const wrap of [true, false]) {
 					cell.evaluate((el) => getComputedStyle(el).backgroundColor);
 				expect(await bg(leftAction)).toBe(await bg(leftHeader));
 
-				// Each hunk header should appear once, not once per side.
-				await expect(
-					file.getByText(/^@@ -17,7 \+17,7 @@$/).filter({ visible: true }),
-				).toHaveCount(1);
+				// Each hunk header should appear once, not once per side, on the
+				// right beside its expand button.
+				const header = file.getByText(/^@@ -17,7 \+17,7 @@$/).filter({ visible: true });
+				await expect(header).toHaveCount(1);
+				const headerBox = await header.boundingBox();
+				if (!headerBox) throw new Error("hunk header has no box");
+				expect(headerBox.x).toBeGreaterThanOrEqual(gutter.right);
 
 				await expect(file.getByText("line 40", { exact: true }).first()).toBeHidden();
 				await file.locator('button[title="Expand All"]').filter({ visible: true }).click();
