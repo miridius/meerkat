@@ -5,10 +5,6 @@
 # on a branch that goes through review — not on main. This check catches
 # accidental direct-to-main commits (the usual failure mode: finishing a
 # task without remembering to branch first).
-#
-# Intentional direct-to-main commits (e.g. a trivial one-line fix right
-# after a merge) can bypass with `git commit --no-verify` — the standard
-# "I know what I'm doing" escape hatch.
 
 set -euo pipefail
 
@@ -19,7 +15,7 @@ PROTECTED_BRANCH="main"
 # is exactly when a surprise commit to main would be worst.
 if ! current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); then
   echo "ERROR: could not determine current branch — refusing commit." >&2
-  echo "(Run \`git status\` to diagnose; use \`--no-verify\` to force-commit if you know what you're doing.)" >&2
+  echo "(Run \`git status\` to diagnose.)" >&2
   exit 1
 fi
 
@@ -31,7 +27,4 @@ echo "ERROR: Direct commits to '$PROTECTED_BRANCH' are blocked." >&2
 echo "Create a branch first:" >&2
 echo "    git switch -c <branch-name>" >&2
 echo "    git commit ..." >&2
-echo "" >&2
-echo "If this commit genuinely belongs on '$PROTECTED_BRANCH', bypass" >&2
-echo "with: git commit --no-verify" >&2
 exit 1

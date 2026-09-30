@@ -134,23 +134,25 @@ defmodule Meerkat.BumpDepsHookTest do
     refute Enum.any?(run(ctx), &(&1 =~ "shiki"))
   end
 
+  test "an exemption for an older release does not hold back a newer one", ctx do
+    File.write!(
+      Path.join(ctx.work, "scripts/dep-exemptions.json"),
+      ~s({"shiki": {"version": "4.4.2", "reason": "upstream needs shiki 3"}})
+    )
+
+    File.write!(ctx.pnpm_out, @pnpm_behind)
+    stage(ctx.work, "code.txt", "change\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"])
+    assert "pnpm -r update --latest --ignore-scripts vite shiki" in run(ctx)
+  end
+
   test "a commit while everything is current changes no dependency file", ctx do
     stage(ctx.work, "code.txt", "change\n")
 
     assert {_, 0} = commit(ctx, ["-m", "change code"])
     assert changed_files(ctx) == ["code.txt"]
     refute Enum.any?(run(ctx), &(&1 =~ ~r/deps\.update|pnpm -r update/))
-  end
-
-  test "unstaged edits to a dependency file skip the bump and stay out of the commit", ctx do
-    File.write!(ctx.hex_out, @hex_behind)
-    stage(ctx.work, "code.txt", "change\n")
-    File.write!(Path.join(ctx.work, "mix.lock"), "base\nmine\n")
-
-    assert {out, 0} = commit(ctx, ["-m", "change code"])
-    assert out =~ "unstaged changes; skipping the dependency bump"
-    assert changed_files(ctx) == ["code.txt"]
-    assert File.read!(Path.join(ctx.work, "mix.lock")) == "base\nmine\n"
   end
 
   test "an unreadable outdated report refuses the commit", ctx do

@@ -6,7 +6,6 @@
 # actionable; Hex has no such floor). The gate fails CLOSED on its
 # own breakage: missing tools, unreachable registries, or unparseable
 # probe output block the push rather than skipping a check.
-# Emergency bypass: LEFTHOOK=0 git push.
 
 set -uo pipefail
 
@@ -19,12 +18,37 @@ for tool in pnpm jq mix python3 curl; do
   }
 done
 
-# package name → reason for lagging behind latest; applies to both
-# ecosystems. scripts/bump-deps.sh skips the same packages.
+# package name → {version, reason}: the one latest release the package
+# may stay behind, and why; applies to both ecosystems.
+# scripts/bump-deps.sh skips the same releases. Once a newer release is
+# out, or the package is current, the entry is stale and fails the gate.
 EXEMPT_JSON=$(cat scripts/dep-exemptions.json 2>/dev/null)
-jq -e 'type == "object"' <<<"$EXEMPT_JSON" >/dev/null 2>&1 || {
-  echo "scripts/outdated.sh: scripts/dep-exemptions.json is missing or not a JSON object — fix the exemption table."
+jq -e 'type == "object" and all(.[];
+         type == "object"
+         and (.version | type) == "string" and (.version | length) > 0
+         and (.reason | type) == "string" and (.reason | length) > 0)' \
+  <<<"$EXEMPT_JSON" >/dev/null 2>&1 || {
+  echo "scripts/outdated.sh: scripts/dep-exemptions.json is missing or malformed — each entry needs a \"version\" and a \"reason\"."
   exit 1
+}
+
+# Exemption entries that matched a package's latest release.
+matched=()
+
+# exempt NAME LATEST: 0 when an entry covers exactly LATEST. An entry for
+# an older release is reported stale; the caller then treats the package
+# as outdated.
+exempt() {
+  local version reason
+  version=$(jq -r --arg n "$1" '.[$n].version // empty' <<<"$EXEMPT_JSON")
+  [[ -z "$version" ]] && return 1
+  matched+=("$1")
+  if [[ "$version" != "$2" ]]; then
+    echo "stale exemption: $1 covers $version, but latest is $2"
+    return 1
+  fi
+  reason=$(jq -r --arg n "$1" '.[$n].reason' <<<"$EXEMPT_JSON")
+  echo "exempt: $1@$2 ($reason)"
 }
 
 for registry in https://registry.npmjs.org https://hex.pm; do
@@ -48,11 +72,7 @@ if ! jq empty <<<"$pnpm_json" 2>/dev/null; then
   exit 1
 fi
 while IFS=$'\t' read -r name latest; do
-  reason=$(jq -r --arg n "$name" '.[$n] // empty' <<<"$EXEMPT_JSON")
-  if [[ -n "$reason" ]]; then
-    echo "exempt: $name ($reason)"
-    continue
-  fi
+  exempt "$name" "$latest" && continue
   if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
     published=""
   fi
@@ -86,21 +106,24 @@ if ! grep -q "^Dependency" <<<"$hex_out"; then
   echo "scripts/outdated.sh: mix hex.outdated produced no dependency table (exit $hex_rc) — cannot verify Hex deps."
   exit 1
 fi
-while read -r name; do
-  reason=$(jq -r --arg n "$name" '.[$n] // empty' <<<"$EXEMPT_JSON")
-  if [[ -n "$reason" ]]; then
-    echo "exempt: $name ($reason)"
-    continue
-  fi
-  echo "BLOCKED: $name is outdated"
+while read -r name latest; do
+  exempt "$name" "$latest" && continue
+  echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
-done < <(awk '/Update (not )?possible/ {print $1}' <<<"$hex_out")
+done < <(awk '/Update possible/ {print $1, $(NF - 2)}
+              /Update not possible/ {print $1, $(NF - 3)}' <<<"$hex_out")
+
+while IFS= read -r name; do
+  if [[ " ${matched[*]-} " != *" $name "* ]]; then
+    echo "stale exemption: $name is not behind latest; remove its entry"
+    fail=1
+  fi
+done < <(jq -r 'keys[]' <<<"$EXEMPT_JSON")
 
 if [[ "$fail" != 0 ]]; then
   echo
-  echo "scripts/outdated.sh: dependencies are behind latest. Upgrade them,"
-  echo "or add an exemption with a reason in scripts/dep-exemptions.json"
-  echo "if the pin is deliberate."
+  echo "scripts/outdated.sh: dependencies are behind latest, or an exemption"
+  echo "is stale. Upgrade them and fix the fallout."
   exit 1
 fi
 

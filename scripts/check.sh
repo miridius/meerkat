@@ -5,8 +5,6 @@
 #
 # A commit that changes only Markdown files, or nothing, skips the checks;
 # CI still runs them on the PR.
-#
-# Emergency bypass: git commit --no-verify.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
