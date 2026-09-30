@@ -2,5 +2,9 @@
   "shiki": {
     "version": "4.4.3",
     "reason": "@git-diff-view/shiki 0.1.7 depends on shiki ^3.23.0"
+  },
+  "muex": {
+    "version": "0.11.2",
+    "reason": "pinned to a fork commit pending upstream muex PR https://github.com/miridius/muex/tree/fix-test-selection"
   }
 }

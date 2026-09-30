@@ -68,8 +68,14 @@ defmodule Meerkat.MixProject do
       # Mutation testing — `mix muex` rewrites operators / literals
       # in `lib/` and runs the test suite against each rewrite. A
       # mutation that ALL tests pass against = a test gap. See
-      # `scripts/mutate.sh` for the entry point.
-      {:muex, "~> 0.11", only: [:dev, :test], runtime: false},
+      # `scripts/mutate.sh` for the entry point. Pinned to a fork commit
+      # until its test-selection fix is released; see
+      # scripts/dep-exemptions.json.
+      {:muex,
+       github: "miridius/muex",
+       ref: "a628d48b883239c7d47574c99770122341a1356f",
+       only: [:dev, :test],
+       runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end

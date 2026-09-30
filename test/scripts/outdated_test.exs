@@ -8,6 +8,19 @@ defmodule Meerkat.OutdatedGateTest do
 
   @hex_header "Dependency  Only  Current  Latest  Status\n"
 
+  @hex_lock """
+  %{
+    "mdex": {:hex, :mdex, "0.14.1", "abc", [:mix], [], "hexpm", "def"},
+  }
+  """
+
+  @git_lock """
+  %{
+    "mdex": {:hex, :mdex, "0.14.1", "abc", [:mix], [], "hexpm", "def"},
+    "muex": {:git, "https://github.com/someone/muex.git", "a628d48", [ref: "a628d48"]},
+  }
+  """
+
   setup do
     base = Meerkat.TestHelpers.make_tmp_repo("meerkat-outdated")
     on_exit(fn -> File.rm_rf!(base) end)
@@ -15,8 +28,10 @@ defmodule Meerkat.OutdatedGateTest do
     stubs = Path.join(base, "stubs")
     hex_out = Path.join(base, "hex.out")
     pnpm_out = Path.join(base, "pnpm.json")
+    hex_api_out = Path.join(base, "hex-api.json")
 
     File.mkdir_p!(Path.join(base, "scripts"))
+    File.write!(Path.join(base, "mix.lock"), @hex_lock)
 
     for script <- ~w(outdated.sh deps-common.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
@@ -33,13 +48,15 @@ defmodule Meerkat.OutdatedGateTest do
       "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
       "pnpm -r outdated --format json") cat '#{pnpm_out}'; exit 1 ;;
       "pnpm view "*) echo '{}' ;;
+      "curl "*/api/packages/*) cat '#{hex_api_out}' ;;
     esac
     """)
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm curl), do: File.ln_s!("stub", Path.join(stubs, tool))
 
-    {:ok, base: base, stubs: stubs, hex_out: hex_out, pnpm_out: pnpm_out}
+    {:ok,
+     base: base, stubs: stubs, hex_out: hex_out, pnpm_out: pnpm_out, hex_api_out: hex_api_out}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -116,6 +133,44 @@ defmodule Meerkat.OutdatedGateTest do
 
       assert {out, 1} = run(ctx)
       assert out =~ ~s(each entry needs a "version" and a "reason")
+    end
+  end
+
+  describe "a Hex package taken from git" do
+    setup ctx do
+      File.write!(Path.join(ctx.base, "mix.lock"), @git_lock)
+      File.write!(ctx.hex_api_out, ~s({"latest_stable_version": "0.11.2"}))
+    end
+
+    test "blocks the push without an exemption", ctx do
+      exempt(ctx, %{})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "BLOCKED: muex is a git dependency (latest Hex release: 0.11.2)"
+    end
+
+    test "passes with an exemption naming its latest Hex release", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2")})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "exempt: muex@0.11.2"
+    end
+
+    test "fails once a newer Hex release is out", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.1")})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "stale exemption: muex covers 0.11.1, but latest is 0.11.2"
+    end
+
+    test "fails closed when Hex reports no release", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2")})
+
+      for report <- ["", "{}", "not json"] do
+        File.write!(ctx.hex_api_out, report)
+        assert {out, 1} = run(ctx)
+        assert out =~ "BLOCKED: muex — no latest Hex release found"
+      end
     end
   end
 
