@@ -9,6 +9,12 @@ test.describe("Post to GitHub from --pr mode", () => {
 		page,
 	}) => {
 		const fixture = makePrFixture({ prNumber: 456 });
+		// The new tab's "page" event waits for its first navigation, so a
+		// slow or failing lookup of the real github.com would time the test
+		// out. Serve the review URL locally instead.
+		await context.route("https://github.com/**", (route) =>
+			route.fulfill({ contentType: "text/html", body: "<title>review</title>" }),
+		);
 
 		const meerkat = await startMeerkat({
 			fixture,

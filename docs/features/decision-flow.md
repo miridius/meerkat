@@ -7,7 +7,11 @@ and an auto-approved timeout can end an unanswered review.
 
 ## Buttons
 
-The footer always shows three buttons, left-to-right:
+The footer buttons appear left to right as follows. **Post to GitHub**
+appears only when the review has an attached PR and is not a staged
+(pre-commit hook) review. `--pr` reviews have an attached PR; so do
+single-commit and range reviews when the current branch has an open
+GitHub PR.
 
 1. **Cancel** — abandon the review. Wipes every in-progress
    comment, submits a `:cancel` decision. The BEAM exits **1** and
@@ -16,7 +20,13 @@ The footer always shows three buttons, left-to-right:
    payload — just the verdict line). Use when the reviewer wants to
    back out without producing feedback for the calling agent.
 
-2. **Send Feedback** — submit `:reject`. Disabled when there are
+2. **Post to GitHub** — export the review's comments to the PR as a
+   GitHub PENDING review. Disabled while any comment form is open.
+   Posting does not end the review: on success, the browser opens the
+   pending review's URL in a new tab; on failure, the page shows an
+   error banner.
+
+3. **Send Feedback** — submit `:reject`. Disabled when there are
    zero comments or when any comment form is open. The footer shows
    `N unsaved form open:` or `N unsaved forms open:`, with a link for
    each form. Links are labelled `Global`, a file name, an inline
@@ -28,8 +38,10 @@ The footer always shows three buttons, left-to-right:
    back to the diff, then scrolls to the form and focuses its text
    box. Exit **1** with the formatted comment payload on stderr.
 
-3. **Approve** — submit `:approve` (no comments) or
-   `:approve_with_feedback` (any comments). Exit **0**. With no
+4. **Approve** — labelled **Approve with feedback** when the review
+   has any comments, and **Approve** otherwise. Submits `:approve`
+   (no comments) or `:approve_with_feedback` (any comments).
+   Disabled while any comment form is open. Exit **0**. With no
    comments, stderr prints `The user approved your commit.
    Proceeding.` With comments, stderr prints the formatted feedback
    (so the calling agent sees the approving feedback too).
@@ -92,11 +104,15 @@ auto-approve fast path (no meaningful staged changes, so the UI never
 opens), a timeout with `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled, and a
 stored `--answers` payload, which runs no review at all.
 
-In dev mode (`MIX_ENV=dev`), the shepherd loop in `bin/meerkat-beam`
-treats non-zero exits as "wait for source change + restart" so the
-user's review tab doesn't die when the BEAM crashes mid-iteration.
-This applies only to dev; prod (release-installed `meerkat`)
-propagates the exit normally.
+In dev mode (`MIX_ENV=dev`), the `bin/meerkat-beam` shepherd
+restarts the BEAM only for exit 75, preferring the port the exited
+BEAM bound (see [dev-mode.md](dev-mode.md) for when it falls back to
+another port); it propagates every other exit, including crash exit
+2. After a failed compile or asset build, it waits for a source change
+before retrying; if its checkout or `$MEERKAT_PWD` is deleted while
+it waits, it exits 2 with a REJECT message. The prod launcher
+(`bin/meerkat-shepherd`) retries crash exit 2 once, then exits with
+the code.
 
 ## When the caller exits
 

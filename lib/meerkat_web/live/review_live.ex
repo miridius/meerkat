@@ -280,12 +280,13 @@ defmodule MeerkatWeb.ReviewLive do
           _ = ReviewServer.set_approved(rid, file_name, becoming_approved?)
         end
 
-        # Mirror into the global per-branch approval cache so future
-        # hook runs on this branch can short-circuit the UI via the
-        # staged-diff fast path. Best-effort: a write failure just
-        # means the user re-ticks Approved next round — but we
-        # surface the failure as a flash so the user knows the tick
-        # isn't durable instead of finding out next session.
+        # In a staged review, mirror into the global per-branch
+        # approval cache so future hook runs on this branch can
+        # short-circuit the UI via the staged-diff fast path.
+        # Best-effort: a write failure just means the user re-ticks
+        # Approved next round — but we surface the failure as a flash
+        # so the user knows the tick isn't durable instead of finding
+        # out next session.
         persist_result =
           persist_approval_cache_toggle(
             repo_path,
@@ -622,8 +623,14 @@ defmodule MeerkatWeb.ReviewLive do
         # wins over hidden_extensions / show_generated / any other
         # default filter; pre-existing extension filter stays in
         # place for OTHER files of the same type.
+        # A :show override does not bypass only_file_index ("show only"),
+        # so a different file shown alone would keep this file hidden.
+        # Clear that filter only when it points to another file; keep it
+        # when it is nil or already points to this file.
         if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, file_name, :show)
-        {:noreply, socket}
+
+        {:noreply,
+         assign(socket, only_file_index: if(only_file_index in [nil, idx], do: only_file_index))}
     end
   end
 
@@ -815,6 +822,16 @@ defmodule MeerkatWeb.ReviewLive do
          "#{file_name} changed since you opened the review — refresh to see the new content before approving."}
     end
   end
+
+  # Only the staged pre-commit flow matches approvals against the
+  # cache, and only it has blob OIDs to content-address against. A
+  # PR, range or single-ref review has neither, and its `head_branch`
+  # can name the same branch whose staged approvals the cache holds —
+  # so it leaves the cache alone.
+  defp persist_approval_cache_toggle(_repo_path, _file_name, _approved?, _branch, %ReviewState{
+         precommit?: false
+       }),
+       do: :ok
 
   defp persist_approval_cache_toggle(repo_path, file_name, approved?, branch, state) do
     with path when is_binary(path) <- ApprovalCache.path_for(repo_path),
@@ -2327,10 +2344,9 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # Directory prefix with a trailing slash, or "" for files in the
-  # repo root. Sidebar renders this in muted grey before the bold
-  # base name so deep paths show their tree context without
-  # consuming a row each.
+  # Directory prefix with a trailing slash, or "" for files in the repo root.
+  # The file filter panel renders it dimmed before the medium-weight (500)
+  # base name.
   defp file_path_dir(file_name) do
     case Path.dirname(file_name) do
       "." -> ""

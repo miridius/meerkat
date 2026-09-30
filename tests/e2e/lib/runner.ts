@@ -54,6 +54,11 @@ export type Runner = {
 
 const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 
+// Specs that spawn meerkat directly, without `startMeerkat`, would otherwise start
+// their backends in the user's own runs dir, which the reaper leaves alone.
+// meerkat creates the dir on first use.
+process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
+
 const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
