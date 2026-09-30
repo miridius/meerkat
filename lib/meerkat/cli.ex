@@ -14,10 +14,18 @@ defmodule Meerkat.CLI do
 
   Flags: `--no-open`, `--port <N>`.
 
-  Behaviour is locked in by the Playwright spec suite in `tests/e2e/`.
-  Empty-staged-diff auto-approve (the binary exits 0 before binding
-  the server) only fires for `--commit-msg`-and-no-positional
-  invocations — the commit-msg hook path.
+  Most CLI behavior is covered by ExUnit tests in `test/meerkat/cli_test.exs`.
+  Playwright specs in `tests/e2e/` cover `main/1` booting the endpoint and
+  reading stdin, the live review UI, and `System.halt` exit paths, alongside
+  some coverage that overlaps with ExUnit.
+  Staged-diff auto-approve prints a message to stderr and exits 0 without
+  starting the review server or opening the UI when there are no staged files,
+  or when every staged file is approved on the current branch by content or
+  marked as linguist-generated. It applies to plain `meerkat` and
+  `meerkat --commit-msg <PATH>`, unless answers to a previous review's
+  question comments are pending on disk, which forces a live review. Supplying
+  a ref/range positional argument or `--pr` takes precedence over
+  `--commit-msg` and always opens the review UI, even for an empty diff.
   """
 
   alias Meerkat.{
