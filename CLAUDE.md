@@ -67,6 +67,27 @@ The end-to-end loop for a meerkat bug report or feature request:
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
 
+   Before opening the draft PR, do a quick self-review of the diff
+   and the PR description you are about to post, so unchecked work
+   does not reach the user when the PR opens. Does it do what was
+   asked? Is it sensible? Does it avoid unnecessary changes or
+   complexity? Fix every finding from any review you run before
+   opening the PR, regardless of which review found it. Keep this
+   self-review cheap: it must not add review agents,
+   mutation-testing runs, or extra test suites of its own. The
+   thorough review still happens at merge through
+   `/review-and-merge`; this self-review does not replace it.
+
+   When a PR changes what meerkat's review page shows, add
+   screenshots to its description using
+   `bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N]
+   [--out DIR]`. Capture after opening the draft PR. Use judgement to
+   choose whichever screenshots, and how many, will help review that
+   PR; for changed UI, a before/after pair can help. Confirm each
+   image shows what you meant to capture. Uploads are public and
+   permanent. Confirm no image contains private data (such as local
+   absolute paths).
+
 ## Quality gates
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, then `scripts/bump-deps.sh`, then `scripts/check.sh`. They are piped, so if one script refuses the commit, the later ones do not run.

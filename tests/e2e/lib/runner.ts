@@ -30,6 +30,8 @@ export type RunnerOpts = {
 	ownGroup?: boolean;
 	// `--port` value: defaults to 0 (OS-assigned); null omits it so the launcher chooses.
 	port?: number | null;
+	// The meerkat launcher to run, in place of MEERKAT_BIN.
+	bin?: string;
 };
 
 export type Runner = {
@@ -77,7 +79,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	}
 
 	const port = opts.port === undefined ? 0 : opts.port;
-	const argv = [MEERKAT_BIN, ...args, "--no-open", ...(port === null ? [] : ["--port", String(port)])];
+	const argv = [opts.bin ?? MEERKAT_BIN, ...args, "--no-open", ...(port === null ? [] : ["--port", String(port)])];
 	// sh -c execs its script's last command in place of itself; trailing `exit $?` keeps it alive as meerkat's parent.
 	const [cmd, ...cmdArgs] = opts.underParent ? ["sh", "-c", '"$@"; exit $?', "sh", ...argv] : argv;
 	const proc = spawn(cmd, cmdArgs, {
@@ -120,6 +122,30 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 				),
 			);
 		});
+	}).catch(async (e) => {
+		// Stops meerkat first, so it can't record a backend after
+		// stopBackends has read the runs dir.
+		if (proc.exitCode === null && proc.signalCode === null) {
+			const exited = new Promise((resolve) => proc.once("exit", resolve));
+			proc.kill("SIGTERM");
+			await exited;
+		}
+		if (!opts.keepFixture) fixture.cleanup?.();
+		// A runs dir passed in belongs to the runner that made it, whose
+		// kill() stops its backends.
+		if (opts.runsDir !== undefined) throw e;
+		// No Runner reaches the caller, so nothing else would stop a
+		// backend this call started, which can outlive it indefinitely.
+		try {
+			await stopBackends(runsDir);
+		} catch (cleanup) {
+			throw new AggregateError(
+				[e, cleanup],
+				`${e}\nand stopping its backends failed, so ${runsDir} is left for reapOrphanedBackends: ${cleanup}`,
+			);
+		}
+		rmSync(runsDir, { recursive: true, force: true });
+		throw e;
 	});
 
 	// Once the URL is captured, keep buffering stderr so the test can

@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { elapsedSeconds, reapOrphanedBackends } from "./runner.js";
+import { elapsedSeconds, reapOrphanedBackends, startMeerkat } from "./runner.js";
 
 // spawnSync rather than awaiting spawn's "exit": under load bun sometimes
 // sets exitCode on a child without ever emitting "exit".
@@ -93,6 +93,46 @@ describe("orphaned backend reaper", () => {
 			rmSync(unowned, { recursive: true, force: true });
 		}
 	});
+});
+
+test("a meerkat that exits before printing its URL leaves no backend, fixture or runs dir behind", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	const seen = join(dir, "seen");
+	// Starts a backend and records it the way meerkat-attach does, then
+	// exits without a review URL.
+	const bin = join(dir, "meerkat");
+	writeFileSync(
+		bin,
+		`#!/bin/sh
+mkdir -p "$MEERKAT_RUNS_DIR/run"
+sleep 60 </dev/null >/dev/null 2>&1 &
+echo $! > "$MEERKAT_RUNS_DIR/run/pid"
+echo "$MEERKAT_RUNS_DIR $!" > "$SEEN"
+echo boom >&2
+exit 1
+`,
+		{ mode: 0o755 },
+	);
+	let cleaned = false;
+	let pid = 0;
+	try {
+		const start = startMeerkat({
+			bin,
+			args: [],
+			fixture: { dir, cleanup: () => (cleaned = true) },
+			env: { SEEN: seen },
+		});
+
+		await expect(start).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
+		const [runsDir, recorded] = readFileSync(seen, "utf8").trim().split(" ");
+		pid = Number(recorded);
+		expect(alive(pid), "backend is stopped").toBe(false);
+		expect(existsSync(runsDir), "runs dir is removed").toBe(false);
+		expect(cleaned, "fixture is cleaned up").toBe(true);
+	} finally {
+		if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");
+		rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 describe("ps elapsed-time parsing", () => {

@@ -15,7 +15,8 @@
 # Invoked automatically by the lefthook post-merge / post-checkout
 # hooks (via scripts/auto-install.sh) whenever local `main` advances.
 # Idempotent: skips the rebuild when `current` already points at this
-# commit's version and the tree is clean. Run by hand any time via
+# commit's version, the tree is clean, and the prod launcher is in
+# place. Run by hand any time via
 # `bash scripts/install.sh` (or `--force` to rebuild even when
 # unchanged).
 
@@ -79,14 +80,41 @@ write_version_manifest() {
   } > "$out"
 }
 
+# The launcher is thin: it execs the shepherd, which loops the release
+# BEAM, resolving `current` to a concrete version dir on each spawn so a
+# review can live-restart onto a new version. The paths are baked in
+# rather than hardcoded to $HOME, so a custom MEERKAT_INSTALL_PREFIX is
+# honored end-to-end; printf %q keeps them safe if they contain spaces.
+launcher() {
+  echo '#!/usr/bin/env bash'
+  cat <<'WRAPPER_EOF'
+# meerkat launcher (installed by scripts/install.sh). Forwards the
+# user's cwd as $MEERKAT_PWD and hands off to the shepherd.
+set -euo pipefail
+export MEERKAT_PWD="${MEERKAT_PWD:-$PWD}"
+WRAPPER_EOF
+  printf 'export MEERKAT_CURRENT_LINK=%q\n' "$CURRENT_LINK"
+  printf 'SHEPHERD=%q\n' "$SHEPHERD_DEST"
+  cat <<'WRAPPER_EOF'
+if [[ ! -x "$SHEPHERD" ]]; then
+  echo "meerkat: shepherd missing at $SHEPHERD; re-run scripts/install.sh from the meerkat repo." >&2
+  exit 127
+fi
+exec "$SHEPHERD" "$@"
+WRAPPER_EOF
+}
+
 # Idempotency: the post-merge / post-checkout hooks fire this on every
 # `main` checkout, but a rebuild takes minutes, so skip when `current`
 # is already a clean build of this commit. Keyed on the commit stamp in
 # the current version dir, not its name, so a forced rebuild can land in
-# a fresh immutable dir without making every later run rebuild.
+# a fresh immutable dir without making every later run rebuild. The
+# launcher must also be this script's, so a dev launcher from
+# scripts/dev-install.sh is still replaced.
 CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \
+      && "$(cat "$WRAPPER")" == "$(launcher)" \
       && "$CURRENT_STAMP" == "$HEAD_COMMIT" \
       && -x "$CURRENT_TARGET/bin/meerkat" && -x "$SHEPHERD_DEST" && -f "$ATTACH_DEST" ]]; then
   echo "meerkat: current already built from ${HEAD_COMMIT:0:12} (clean tree); skipping. Pass --force to rebuild."
@@ -201,29 +229,7 @@ cp bin/meerkat-shepherd "$SHEPHERD_DEST.tmp.$$"
 chmod +x "$SHEPHERD_DEST.tmp.$$"
 mv -f "$SHEPHERD_DEST.tmp.$$" "$SHEPHERD_DEST"
 
-# The launcher is thin: it execs the shepherd, which loops the release
-# BEAM, resolving `current` to a concrete version dir on each spawn so a
-# review can live-restart onto a new version. The paths are baked in
-# rather than hardcoded to $HOME, so a custom MEERKAT_INSTALL_PREFIX is
-# honored end-to-end; printf %q keeps them safe if they contain spaces.
-{
-  echo '#!/usr/bin/env bash'
-  cat <<'WRAPPER_EOF'
-# meerkat launcher (installed by scripts/install.sh). Forwards the
-# user's cwd as $MEERKAT_PWD and hands off to the shepherd.
-set -euo pipefail
-export MEERKAT_PWD="${MEERKAT_PWD:-$PWD}"
-WRAPPER_EOF
-  printf 'export MEERKAT_CURRENT_LINK=%q\n' "$CURRENT_LINK"
-  printf 'SHEPHERD=%q\n' "$SHEPHERD_DEST"
-  cat <<'WRAPPER_EOF'
-if [[ ! -x "$SHEPHERD" ]]; then
-  echo "meerkat: shepherd missing at $SHEPHERD; re-run scripts/install.sh from the meerkat repo." >&2
-  exit 127
-fi
-exec "$SHEPHERD" "$@"
-WRAPPER_EOF
-} > "$WRAPPER"
+launcher > "$WRAPPER"
 chmod +x "$WRAPPER"
 
 echo "meerkat: installed $WRAPPER -> $SHEPHERD_DEST -> $CURRENT_LINK"
