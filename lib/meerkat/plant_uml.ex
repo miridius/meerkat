@@ -9,7 +9,7 @@ defmodule Meerkat.PlantUML do
 
   `available?/0` probes `plantuml -version` once per BEAM and caches
   the answer: the probe starts a JVM, about half a second, and every
-  LiveView mount asks.
+  render of a review with a PlantUML file asks.
   """
 
   @timeout_ms 30_000

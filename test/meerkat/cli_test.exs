@@ -3,8 +3,8 @@ defmodule Meerkat.CLITest do
 
   # Surviving muex mutants in lib/meerkat/cli.ex, with why they are not
   # test gaps (see .claude/skills/review-and-merge — every survivor is
-  # fixed or documented; muex runs ExUnit only, so the e2e suite is the
-  # only thing that can see most of this glue):
+  # fixed or documented; muex runs ExUnit only, so it cannot see the
+  # e2e suite's coverage of the glue ExUnit cannot reach):
   #
   # - `main/1`'s answers/review branch, auto/live dispatch, invert +
   #   case-clause deletions — a live review boots the endpoint and

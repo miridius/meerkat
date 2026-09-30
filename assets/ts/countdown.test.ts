@@ -19,7 +19,7 @@ describe("countdownView", () => {
 		expect(at(-75).text).toBe("01:15 over");
 	});
 
-	test("is plain above five minutes, a warning up to one minute, and urgent from there on", () => {
+	test("is plain above five minutes, a warning down to 61 seconds, and urgent from one minute on", () => {
 		expect(at(1800)).toMatchObject({ warn: false, urgent: false });
 		expect(at(301)).toMatchObject({ warn: false, urgent: false });
 		expect(at(300)).toMatchObject({ warn: true, urgent: false });

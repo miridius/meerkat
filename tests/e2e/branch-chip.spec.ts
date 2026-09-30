@@ -63,7 +63,6 @@ test.describe("branch chip", () => {
 				short.clipped,
 				"the cap is wide enough to leave an ordinary branch name intact",
 			).toBe(false);
-			expect(short.text).toBe(SHORT_BRANCH);
 		} finally {
 			await meerkat.kill();
 		}

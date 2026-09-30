@@ -945,15 +945,15 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def render(assigns) do
-    # Backfill assigns added since this socket mounted — needed for
-    # the DevWatcher hot-reload path where a previously-mounted LV
-    # keeps its socket but new code expects new assigns.
     assigns =
       assigns
-      # Drives the inline `.puml` preview: the diff preview when true, an
-      # "install plantuml" hint when false. Only a `.puml` file reads it,
-      # so a review without one skips the probe's JVM start.
+      # Drives the inline PlantUML preview: the diff preview when true, an
+      # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
+      # file reads it, so a review without one skips the probe's JVM start.
       |> assign(:plantuml_available, plantuml_available?(assigns.state.files))
+      # Backfill assigns added since this socket mounted — needed for
+      # the DevWatcher hot-reload path where a previously-mounted LV
+      # keeps its socket but new code expects new assigns.
       |> assign_new(:version, fn -> Meerkat.Version.info() end)
       |> assign_new(:timeout_action, fn -> Meerkat.Timeout.action() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)

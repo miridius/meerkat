@@ -1,22 +1,20 @@
 import { execFileSync } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { basename } from "node:path";
 import { MEERKAT_BIN, reapOrphanedBackends } from "./runner.js";
 
-// Each test boots its own bin/meerkat-beam, whose pre-flight compiles the
-// Elixir code and builds the assets when either is stale. Parallel workers
-// booting a stale checkout would run those builds at once and collide in
-// priv/static, so build once here, before any worker starts.
+// With MEERKAT_BIN at bin/meerkat-beam, each test boots its own launcher,
+// whose pre-flight compiles the Elixir code and builds the assets when
+// either is stale. Parallel workers booting a stale checkout would run
+// those builds at once and collide in priv/static, so run the launcher's
+// own pre-flight once here, before any worker starts.
 export default async function globalSetup(): Promise<void> {
 	await reapOrphanedBackends();
-	if (basename(MEERKAT_BIN) !== "meerkat-beam") return;
-
-	const root = dirname(dirname(MEERKAT_BIN));
-	const mixEnv = process.env.MIX_ENV ?? "dev";
-	const env = { ...process.env, MIX_ENV: mixEnv };
-	execFileSync("mix", ["compile", "--no-warnings-as-errors"], { cwd: root, env, stdio: "inherit" });
-	execFileSync("bunx", ["vite", "build"], {
-		cwd: join(root, "assets"),
-		env: { ...env, MIX_BUILD_PATH: join(root, "_build", mixEnv) },
+	if (basename(MEERKAT_BIN) !== "meerkat-beam") {
+		console.log(`e2e setup: not pre-building, MEERKAT_BIN=${MEERKAT_BIN} is not bin/meerkat-beam`);
+		return;
+	}
+	execFileSync(MEERKAT_BIN, [], {
+		env: { ...process.env, MEERKAT_BUILD_ONLY: "1" },
 		stdio: "inherit",
 	});
 }

@@ -130,7 +130,9 @@ read directly from this tree, so:
   code 75 on any file change under `lib/`, the shepherd loop in
   `bin/meerkat-beam` respawns on the same port, and LiveView's
   client auto-reconnects. Phoenix's request-time code reloader is
-  off in dev. The DevWatcher restart replaces it.
+  off in dev (it fought `Meerkat.CLI`'s `Application.put_env` +
+  manual-supervisor startup pattern); the DevWatcher restart is
+  the dev-iteration story.
 
 ```bash
 scripts/dev-install.sh        # ~/.local/bin/meerkat → this branch
