@@ -781,8 +781,8 @@
   // `dragStart` returns to null.
   $effect(() => {
     if (!diffContainer) return;
-    for (const el of diffContainer.querySelectorAll(".drag-selecting")) {
-      el.classList.remove("drag-selecting");
+    for (const el of diffContainer.querySelectorAll(".drag-selecting, .drag-selecting-side")) {
+      el.classList.remove("drag-selecting", "drag-selecting-side");
     }
     if (!dragStart || !dragCurrent) return;
 
@@ -805,7 +805,14 @@
       const td = (hit as HTMLElement).closest("td");
       if (!td) continue;
       td.classList.add("drag-selecting");
-      td.closest("tr.diff-line")?.classList.add("drag-selecting");
+      // A split row holds both sides, so shade only this side's
+      // number and content cells rather than the whole row.
+      if (td.classList.contains("diff-line-num")) {
+        td.closest("tr.diff-line")?.classList.add("drag-selecting");
+      } else {
+        td.classList.add("drag-selecting-side");
+        td.nextElementSibling?.classList.add("drag-selecting-side");
+      }
     }
   });
 
@@ -1060,7 +1067,8 @@
     /* biome-ignore lint/complexity/noImportantStyles: the diff library sets the line number's color inline, which only `!important` can override. */
     color: #ffffff !important;
   }
-  :global(.diff-content tr.diff-line.drag-selecting > td) {
+  :global(.diff-content tr.diff-line.drag-selecting > td),
+  :global(.diff-content tr.diff-line > td.drag-selecting-side) {
     /* biome-ignore lint/complexity/noImportantStyles: the diff library sets each cell's background-color inline, which only `!important` can override; without it the add/del shading masks the drag indicator. */
     background: rgba(31, 111, 235, 0.32) !important;
     box-shadow: inset 0 0 0 9999px rgba(31, 111, 235, 0.18);
