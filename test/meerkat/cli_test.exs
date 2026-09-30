@@ -905,4 +905,21 @@ defmodule Meerkat.CLITest do
       assert CLI.auto_approve_decision_for_test(dir) == :live
     end
   end
+
+  describe "auto_approve_decision/2 — mid-rebase (real git fixture)" do
+    test "each half of a split approved commit auto-approves" do
+      dir = split_approved_commit_mid_rebase("meerkat-cli-rebase")
+
+      git(dir, ["add", "one.rs"])
+
+      assert {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"} =
+               CLI.auto_approve_decision_for_test(dir)
+
+      git(dir, ["commit", "-qm", "one"])
+      git(dir, ["add", "two.rs"])
+
+      assert {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"} =
+               CLI.auto_approve_decision_for_test(dir)
+    end
+  end
 end

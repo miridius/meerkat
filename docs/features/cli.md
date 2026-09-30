@@ -21,6 +21,9 @@ supplied (no error, the highest-precedence one wins):
   `.git/COMMIT_EDITMSG`).
 - *(no target)* — staged-diff review without a commit-msg gutter.
 
+Staged-diff reviews omit paths with unresolved merge conflicts; other
+staged files are still reviewed.
+
 ## Flags
 
 - `--answers` — no review. Read the agent's answers to a prior

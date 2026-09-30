@@ -156,4 +156,50 @@ defmodule Meerkat.TestHelpers do
 
     dir
   end
+
+  @doc """
+  Builds a temporary Git repo named with `prefix` via `make_git_repo/1` and
+  removes it when the test exits. On branch `feature`, it creates a commit
+  changing `one.rs` to `fn one() -> i32 { 1 }\\n` and `two.rs` to
+  `fn two() -> i32 { 2 }\\n`; both contents are recorded as approved in
+  Meerkat's approval cache for `feature`.
+
+  It starts an interactive rebase, stops at an `edit` of that commit, then
+  runs `git reset HEAD~`. The returned repo is detached mid-rebase, with both
+  changes unstaged in the worktree—the state used when splitting a commit.
+
+  Returns the repo directory.
+  """
+  @spec split_approved_commit_mid_rebase(String.t()) :: String.t()
+  def split_approved_commit_mid_rebase(prefix) do
+    dir = make_git_repo(prefix)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    git(dir, ["config", "user.email", "t@t.t"])
+    git(dir, ["config", "user.name", "t"])
+    stage(dir, "one.rs", "fn one() {}\n")
+    stage(dir, "two.rs", "fn two() {}\n")
+    git(dir, ["commit", "-qm", "seed"])
+    git(dir, ["switch", "-qc", "feature"])
+    stage(dir, "one.rs", "fn one() -> i32 { 1 }\n")
+    stage(dir, "two.rs", "fn two() -> i32 { 2 }\n")
+
+    {:ok, _} =
+      Meerkat.ApprovalCache.modify(Meerkat.ApprovalCache.path_for(dir), fn cache ->
+        Enum.reduce(["one.rs", "two.rs"], cache, fn name, acc ->
+          Meerkat.ApprovalCache.approve(
+            acc,
+            "feature",
+            name,
+            git(dir, ["rev-parse", ":" <> name])
+          )
+        end)
+      end)
+
+    git(dir, ["commit", "-qm", "both"])
+
+    git(dir, ["-c", "sequence.editor=sed -i.bak -e 1s/^pick/edit/", "rebase", "-q", "-i", "HEAD~"])
+
+    git(dir, ["reset", "-q", "HEAD~"])
+    dir
+  end
 end

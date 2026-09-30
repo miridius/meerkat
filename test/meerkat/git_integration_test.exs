@@ -58,6 +58,55 @@ defmodule Meerkat.GitIntegrationTest do
     assert Git.current_branch(dir) == nil
   end
 
+  test "mid interactive rebase, the branch is the one being rebased", %{dir: dir} do
+    git(dir, ["commit", "--allow-empty", "-qm", "base"])
+    git(dir, ["switch", "-q", "-c", "feature/x"])
+    stop_at_edit(dir)
+
+    assert Git.head_branch(dir) == {:rebasing, "feature/x"}
+    assert Git.current_branch(dir) == "feature/x"
+  end
+
+  test "a linked worktree mid-rebase reads its own rebase state", %{dir: dir} do
+    git(dir, ["commit", "--allow-empty", "-qm", "base"])
+    linked = dir <> "-linked"
+    on_exit(fn -> File.rm_rf!(linked) end)
+    git(dir, ["worktree", "add", "-q", "-b", "feature/linked", linked])
+    stop_at_edit(linked)
+
+    assert Git.head_branch(linked) == {:rebasing, "feature/linked"}
+    assert Git.head_branch(dir) == {:checked_out, "main"}
+  end
+
+  test "an --apply rebase stopped on a conflict names the branch being rebased", %{dir: dir} do
+    stage(dir, "file.txt", "base\n")
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["switch", "-q", "-c", "feature/x"])
+    stage(dir, "file.txt", "feature\n")
+    git(dir, ["commit", "-qm", "feature"])
+    git(dir, ["switch", "-q", "main"])
+    stage(dir, "file.txt", "main\n")
+    git(dir, ["commit", "-qm", "main"])
+    git(dir, ["switch", "-q", "feature/x"])
+
+    # A hook-exported GIT_DIR would point this at meerkat's own repo.
+    unset = Enum.map(~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE), &{&1, nil})
+    opts = [cd: dir, stderr_to_stdout: true, env: unset]
+    assert {_, code} = System.cmd("git", ["rebase", "-q", "--apply", "main"], opts)
+    assert code != 0
+    assert File.exists?(Path.join(dir, ".git/rebase-apply/head-name"))
+    assert Git.head_branch(dir) == {:rebasing, "feature/x"}
+  end
+
+  test "a rebase started from a detached HEAD belongs to no branch", %{dir: dir} do
+    git(dir, ["commit", "--allow-empty", "-qm", "base"])
+    git(dir, ["checkout", "-q", "--detach"])
+    stop_at_edit(dir)
+
+    assert Git.head_branch(dir) == :detached
+    assert Git.current_branch(dir) == nil
+  end
+
   test "an empty successful branch lookup is still unnamed", %{dir: dir} do
     intercept_git(dir, "symbolic-ref", "printf '\\n'; exit 0")
     assert Git.current_branch(dir) == nil
@@ -125,6 +174,34 @@ defmodule Meerkat.GitIntegrationTest do
     assert file.new_content == after_text
     assert Enum.join(file.hunks) =~ "+sixth"
     assert file.read_errors == []
+  end
+
+  test "an unresolved conflict is left out and the other staged files remain", %{dir: dir} do
+    stage(dir, "file.txt", "base\n")
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["switch", "-q", "-c", "feature/x"])
+    stage(dir, "file.txt", "feature\n")
+    git(dir, ["commit", "-qm", "feature"])
+    git(dir, ["switch", "-q", "main"])
+    stage(dir, "file.txt", "main\n")
+    git(dir, ["commit", "-qm", "main"])
+
+    # A hook-exported GIT_DIR would point this at meerkat's own repo.
+    unset = Enum.map(~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE), &{&1, nil})
+    opts = [cd: dir, stderr_to_stdout: true, env: unset]
+    assert {_, code} = System.cmd("git", ["merge", "-q", "feature/x"], opts)
+    assert code != 0
+    assert git(dir, ["diff", "--cached", "--name-status"]) =~ ~r/^U\tfile\.txt$/m
+    # Staged files on both sides of it in path order.
+    stage(dir, "a.txt", "a\n")
+    stage(dir, "z.txt", "z\n")
+
+    assert {:ok, entries} = Git.staged_files(dir)
+    assert Enum.map(entries, & &1.file_name) == ["a.txt", "z.txt"]
+    assert {:ok, [a, z]} = Git.staged_file_diffs(dir)
+    assert {a.file_name, Enum.join(a.hunks)} == {"a.txt", "@@ -0,0 +1,1 @@\n+a\n"}
+    assert {z.file_name, Enum.join(z.hunks)} == {"z.txt", "@@ -0,0 +1,1 @@\n+z\n"}
+    assert a.read_errors == [] and z.read_errors == []
   end
 
   test "range materialisation preserves additions, deletions, modifications and rename context",
@@ -311,4 +388,14 @@ defmodule Meerkat.GitIntegrationTest do
   end
 
   defp git(dir, args), do: dir |> Meerkat.TestHelpers.git(args) |> String.trim()
+
+  # Two more commits, then `git rebase -i` stopped at an `edit` of the
+  # first: HEAD detached, rebase in progress.
+  defp stop_at_edit(dir) do
+    git(dir, ["commit", "--allow-empty", "-qm", "one"])
+    git(dir, ["commit", "--allow-empty", "-qm", "two"])
+    editor = "sequence.editor=sed -i.bak -e '1s/^pick/edit/'"
+    git(dir, ["-c", editor, "rebase", "-q", "-i", "HEAD~2"])
+    assert git(dir, ["status", "--short", "--branch"]) =~ "## HEAD (no branch)"
+  end
 end

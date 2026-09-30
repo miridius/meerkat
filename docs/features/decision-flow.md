@@ -36,13 +36,19 @@ The footer always shows three buttons, left-to-right:
 
 ## Auto-approve fast path
 
-For `--commit-msg` (pre-commit hook) invocations with zero meaningful
-staged changes, meerkat exits **0** before binding the server:
+For staged-diff reviews (`meerkat` with no target or
+`meerkat --commit-msg <PATH>`) with zero meaningful staged changes,
+meerkat exits **0** before binding the server:
 
 - All staged files are linguist-generated → auto-approve with
   `meerkat: all <N> staged file(s) are linguist-generated — auto-approving.`
 - All staged files are already approved-by-branch-and-OID + any
-  linguist-generated → auto-approve with the matching message.
+  linguist-generated → auto-approve. With no generated files, print
+  `meerkat: all <N> staged file(s) already approved — auto-approving.`;
+  if any are generated, print
+  `meerkat: all <N> staged file(s) already approved (<A>) or linguist-generated (<G>) — auto-approving.`
+  During a rebase, lookup uses the branch being rebased, so split or
+  regrouped commits whose files were approved before still auto-approve.
 - No staged files at all (e.g. `git commit --amend` for message only)
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 

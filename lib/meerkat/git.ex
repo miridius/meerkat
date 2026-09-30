@@ -52,15 +52,24 @@ defmodule Meerkat.Git do
         }
 
   @doc """
-  Return the staged-vs-HEAD changed-file list. If the working dir has
-  no commits yet, every staged file is reported as `:added`.
+  Return the staged-vs-HEAD changed-file list, excluding paths with
+  unresolved merge conflicts. If the working dir has no commits yet,
+  every staged file is reported as `:added`.
   """
   @spec staged_files(String.t()) :: {:ok, [file_entry]} | {:error, String.t()}
   def staged_files(repo_path) do
     # `-z` produces NUL-separated output so file names with spaces work
     # without shell quoting. Match the rename policy used by the patch
     # and binary classification, even when diff.renames is disabled.
-    case run_git_unmerged(repo_path, ["diff", "--cached", "--name-status", "-z", "-M"]) do
+    # The lowercase `u` excludes unmerged paths from the staged file list.
+    case run_git_unmerged(repo_path, [
+           "diff",
+           "--cached",
+           "--name-status",
+           "-z",
+           "-M",
+           "--diff-filter=u"
+         ]) do
       {:ok, output} -> {:ok, parse_name_status(output)}
       {:error, _} = err -> err
     end
@@ -90,21 +99,66 @@ defmodule Meerkat.Git do
   end
 
   @doc """
-  Return the current symbolic branch name, or `nil` if HEAD is
-  detached / the lookup fails. Used by the page header chip when the
-  review target doesn't carry an explicit branch (staged mode).
+  Return the branch the work belongs to, or `nil` if no branch is
+  checked out or being rebased / the lookup fails. Mid-rebase HEAD is detached, so
+  the answer is the branch being rebased (see `head_branch/1`). Used by
+  the page header chip when the review target doesn't carry an
+  explicit branch (staged mode), and as the approval cache's key.
   """
   @spec current_branch(String.t()) :: String.t() | nil
   def current_branch(repo_path) do
+    case head_branch(repo_path) do
+      {_, name} -> name
+      :detached -> nil
+    end
+  end
+
+  @doc """
+  Where HEAD stands: `{:checked_out, name}` when HEAD is a branch,
+  `{:rebasing, name}` when HEAD is detached by a rebase of branch
+  `name`, else `:detached`. The rebased branch comes from the
+  `head-name` file `git rebase` keeps in the worktree's own gitdir, the
+  same file `git status` reads to say "rebasing branch …".
+  """
+  @spec head_branch(String.t()) ::
+          {:checked_out, String.t()} | {:rebasing, String.t()} | :detached
+  def head_branch(repo_path) do
     case run_git(repo_path, ["symbolic-ref", "--short", "-q", "HEAD"]) do
       {:ok, output} ->
         case String.trim(output) do
-          "" -> nil
-          name -> name
+          "" -> rebasing_branch(repo_path)
+          name -> {:checked_out, name}
         end
 
       {:error, _} ->
-        nil
+        rebasing_branch(repo_path)
+    end
+  end
+
+  # `rebase-merge/` is the default (interactive / merge) backend,
+  # `rebase-apply/` the `--apply` one. `--git-path` resolves both to the
+  # current worktree's gitdir, so a linked worktree reads its own.
+  # `head-name` holds `refs/heads/<branch>`, or `detached HEAD` when the
+  # rebase started detached.
+  defp rebasing_branch(repo_path) do
+    args =
+      ~w(rev-parse --path-format=absolute --git-path rebase-merge/head-name
+         --git-path rebase-apply/head-name)
+
+    with {:ok, output} <- run_git(repo_path, args),
+         "refs/heads/" <> name <-
+           output |> String.split("\n", trim: true) |> Enum.find_value(&read_head_name/1),
+         true <- name != "" do
+      {:rebasing, name}
+    else
+      _ -> :detached
+    end
+  end
+
+  defp read_head_name(path) do
+    case File.read(path) do
+      {:ok, content} -> String.trim(content)
+      {:error, _} -> nil
     end
   end
 
@@ -604,6 +658,8 @@ defmodule Meerkat.Git do
       "-U3",
       "-w",
       "-M",
+      # Lowercase `u` excludes unmerged paths, preventing Git's `* Unmerged path ...` output from entering the hunk parser.
+      "--diff-filter=u",
       "--no-textconv",
       "--no-ext-diff"
     ]

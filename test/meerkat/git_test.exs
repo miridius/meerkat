@@ -455,7 +455,7 @@ defmodule Meerkat.GitTest do
 
       diff_error =
         "couldn't compute batched staged diff (git -c core.quotePath=false diff --cached " <>
-          "-U3 -w -M --no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}); " <>
+          "-U3 -w -M --diff-filter=u --no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}); " <>
           "per-file content may render empty"
 
       binary_error =
@@ -839,7 +839,7 @@ defmodule Meerkat.GitTest do
 
     test "staged_files/1 returns git's error", %{dir: dir} do
       assert {:error,
-              "git diff --cached --name-status -z -M exited 129: error: unknown option `cached'\n" <>
+              "git diff --cached --name-status -z -M --diff-filter=u exited 129: error: unknown option `cached'\n" <>
                 _usage} = Git.staged_files(dir)
     end
 
