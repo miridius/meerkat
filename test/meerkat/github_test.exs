@@ -63,6 +63,28 @@ defmodule Meerkat.GitHubTest do
       assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
     end
 
+    test "mid-rebase, a branch gh would read as a PR number is not looked up",
+         %{dir: dir, calls: calls} do
+      for branch <- ["28", "#28", "+28"] do
+        git(dir, ["switch", "-q", "-c", branch, "feature/x"])
+
+        git(dir, [
+          "-c",
+          "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
+          "rebase",
+          "-q",
+          "-i",
+          "--root"
+        ])
+
+        assert Meerkat.Git.head_branch(dir) == {:rebasing, branch}
+        assert GitHub.current_pr(dir) == nil
+        git(dir, ["rebase", "--abort"])
+      end
+
+      refute File.exists?(calls)
+    end
+
     test "a detached HEAD outside a rebase skips the lookup without a warning",
          %{dir: dir, calls: calls} do
       git(dir, ["checkout", "-q", "--detach"])

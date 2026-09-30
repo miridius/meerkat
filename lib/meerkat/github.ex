@@ -67,9 +67,16 @@ defmodule Meerkat.GitHub do
   @spec current_pr(String.t()) :: pr | nil
   def current_pr(repo_path) do
     case Git.head_branch(repo_path) do
-      {:checked_out, _} -> lookup_current_pr(repo_path, [])
-      {:rebasing, branch} -> lookup_current_pr(repo_path, [branch])
-      :detached -> nil
+      {:checked_out, _} ->
+        lookup_current_pr(repo_path, [])
+
+      {:rebasing, branch} ->
+        # gh reads a selector like `28` or `#28` as a PR number, so a
+        # branch named that way would show some other branch's PR.
+        if branch =~ ~r/\A#?[+-]?\d+\z/, do: nil, else: lookup_current_pr(repo_path, [branch])
+
+      :detached ->
+        nil
     end
   end
 

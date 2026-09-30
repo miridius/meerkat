@@ -7,24 +7,34 @@ import { expect, test } from "./lib/test";
 
 const BRANCH = "feature/rebased";
 const PR_NUMBER = 77;
+// gh reads a selector like this as a PR number, not a branch name.
+const NUMERIC_BRANCH = "28";
 
-// Answers like gh: a PR for `gh pr view feature/rebased`, and gh's own
-// failure for a bare `gh pr view` while HEAD is detached.
+function prJson(number: number, headRefName: string): string {
+	return JSON.stringify({
+		number,
+		baseRefName: "main",
+		headRefName,
+		title: `PR ${number}`,
+		body: "",
+		url: `https://github.com/example/example/pull/${number}`,
+	});
+}
+
+// Answers like gh: a PR for `gh pr view feature/rebased`, some other
+// branch's PR for `gh pr view 28`, and gh's own failure for a bare
+// `gh pr view` while HEAD is detached.
 function ghStub(): string {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
-	const pr = JSON.stringify({
-		number: PR_NUMBER,
-		baseRefName: "main",
-		headRefName: BRANCH,
-		title: "Rebased feature",
-		body: "",
-		url: `https://github.com/example/example/pull/${PR_NUMBER}`,
-	});
 	writeFileSync(
 		join(dir, "gh"),
 		`#!/bin/sh
 if [ "$1 $2 $3" = "pr view ${BRANCH}" ]; then
-  echo '${pr}'
+  echo '${prJson(PR_NUMBER, BRANCH)}'
+  exit 0
+fi
+if [ "$1 $2 $3" = "pr view ${NUMERIC_BRANCH}" ]; then
+  echo '${prJson(Number(NUMERIC_BRANCH), "someone-else")}'
   exit 0
 fi
 echo 'could not determine current branch: failed to run git: not on any branch' >&2
@@ -57,6 +67,27 @@ test.describe("committing mid-rebase", () => {
 			await page.goto(meerkat.url);
 			await expect(page.getByRole("link", { name: `PR #${PR_NUMBER}` })).toBeVisible();
 			await expect(page.locator(".branch-chip .chip-value").last()).toHaveText(BRANCH);
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr).not.toContain("warning");
+		} finally {
+			await meerkat.kill();
+			rmSync(gh, { recursive: true, force: true });
+		}
+	});
+
+	test("a branch named like a PR number shows no other branch's PR", async ({ page }) => {
+		const gh = ghStub();
+		const meerkat = await startMeerkat({
+			fixture: fixtureMidRebase(NUMERIC_BRANCH),
+			pathPrefixes: [gh],
+		});
+		try {
+			await page.goto(meerkat.url);
+			await expect(page.locator(".branch-chip .chip-value").last()).toHaveText(NUMERIC_BRANCH);
+			await expect(page.getByRole("link", { name: /^PR #/ })).toHaveCount(0);
 
 			await page.getByRole("button", { name: /^Approve$/ }).click();
 			const { code, stderr } = await meerkat.awaitExit();
