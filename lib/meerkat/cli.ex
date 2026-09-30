@@ -636,7 +636,13 @@ defmodule Meerkat.CLI do
     ]
 
     always = [
-      http: [ip: {127, 0, 0, 1}, port: requested_port],
+      http: [
+        ip: {127, 0, 0, 1},
+        port: requested_port,
+        http_1_options: [
+          max_request_line_length: MeerkatWeb.PlantUMLController.max_request_line_length()
+        ]
+      ],
       server: true,
       secret_key_base: secret_key_base(),
       check_origin: {MeerkatWeb.Loopback, :origin?, []}

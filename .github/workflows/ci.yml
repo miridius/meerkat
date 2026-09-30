@@ -49,11 +49,12 @@ jobs:
           bun-version: latest
 
       # bin/meerkat-beam uses mapfile, which the image's bash 3.2 lacks.
-      - name: Install bash
+      # test/meerkat/plant_uml_test.exs renders with the real plantuml.
+      - name: Install bash and plantuml
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install bash
+          brew install bash plantuml
           [[ "$(bash -c 'echo "${BASH_VERSINFO[0]}"')" -ge 4 ]]
 
       - run: mix deps.get

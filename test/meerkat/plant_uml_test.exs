@@ -84,4 +84,13 @@ defmodule Meerkat.PlantUMLTest do
                  "plantuml output before the timeout:\nSyntax error?"
     end
   end
+
+  # Runs the real `plantuml` binary; CI installs it.
+  describe "render/1" do
+    test "returns the SVG for valid source" do
+      assert {:ok, svg} = PlantUML.render("@startuml\nAlice -> Bob\n@enduml\n")
+      assert svg =~ "<svg"
+      assert svg =~ "Alice"
+    end
+  end
 end

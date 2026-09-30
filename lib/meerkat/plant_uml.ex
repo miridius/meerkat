@@ -56,33 +56,47 @@ defmodule Meerkat.PlantUML do
     end
   end
 
-  # Spawn plantuml directly via Port so stdin can be fed the source
-  # without shell-string interpolation. `-pipe` reads source from
-  # stdin and writes SVG to stdout. `2>&1` captured via Port's
-  # `:stderr_to_stdout`.
+  # `-pipe` reads source from stdin and writes SVG to stdout; stderr
+  # is captured via Port's `:stderr_to_stdout`. plantuml only exits
+  # at stdin EOF, and a Port can't close the child's stdin without
+  # closing the whole port (dropping the output and exit status), so
+  # the source goes through a tmp file that `sh` redirects onto
+  # stdin. The paths are positional args, never interpolated into
+  # the script, and `exec` keeps the OS pid plantuml's for kill_port/1.
   defp render_via_port(source) do
     plantuml = System.find_executable("plantuml")
 
     if is_nil(plantuml) do
       {:error, "plantuml binary not found on PATH"}
     else
-      port =
-        Port.open(
-          {:spawn_executable, plantuml},
-          [
-            :binary,
-            :exit_status,
-            :stderr_to_stdout,
-            :use_stdio,
-            args: ["-tsvg", "-pipe", "-nbthread", "1"],
-            env: [{~c"PLANTUML_SECURITY_PROFILE", ~c"SANDBOX"}]
-          ]
-        )
+      tmp =
+        Path.join(System.tmp_dir!(), "meerkat-puml-#{System.unique_integer([:positive])}.puml")
 
-      send(port, {self(), {:command, source}})
-      send(port, {self(), :close})
+      try do
+        File.write!(tmp, source)
 
-      collect(port, [], @timeout_ms)
+        port =
+          Port.open(
+            {:spawn_executable, "/bin/sh"},
+            [
+              :binary,
+              :exit_status,
+              :stderr_to_stdout,
+              :use_stdio,
+              args: [
+                "-c",
+                ~s(exec "$0" -tsvg -pipe -nbthread 1 < "$1"),
+                plantuml,
+                tmp
+              ],
+              env: [{~c"PLANTUML_SECURITY_PROFILE", ~c"SANDBOX"}]
+            ]
+          )
+
+        collect(port, [], @timeout_ms)
+      after
+        File.rm(tmp)
+      end
     end
   end
 
