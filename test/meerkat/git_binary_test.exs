@@ -140,9 +140,9 @@ defmodule Meerkat.GitBinaryTest do
 
     # A rename entry cut off before the trailing NUL makes the parser run
     # off the end of the entry list instead of seeing the empty tail.
-    intercept_git(dir, "--numstat", '''
+    intercept_git(dir, "--numstat", """
     printf '1\\t2\\t\\0old.bin\\0new.bin'; exit 0
-    ''')
+    """)
 
     stderr =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->

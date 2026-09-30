@@ -21,9 +21,11 @@ defmodule Meerkat.MarkdownTest do
   # and an empty body renders to zero bytes through the full pipeline.
   # These tests pin the documented contract, not the mutant kills.
   describe "render_diff_sides/3 — guard contract" do
-    test "a non-binary side is rejected" do
-      assert_raise FunctionClauseError, fn ->
-        Markdown.render_diff_sides(nil, "# New", :modified)
+    property "a non-binary side is rejected" do
+      check all(side <- filter(term(), &(not is_binary(&1)))) do
+        assert_raise FunctionClauseError, fn ->
+          Markdown.render_diff_sides(side, "# New", :modified)
+        end
       end
     end
   end

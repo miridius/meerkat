@@ -96,4 +96,51 @@ test.describe("diff gutter drag selection", () => {
 			await meerkat.kill();
 		}
 	});
+
+	test("split-mode gutter drag shades only the dragged side", async ({ page }) => {
+		const fixture = makeFixture({ files: { "src/lib.rs": "fn a() {}\nfn b() {}\nfn c() {}\n" } });
+		fixture.git("commit", "-q", "-m", "base");
+		writeFileSync(join(fixture.dir, "src/lib.rs"), "fn a() {}\nfn b2() {}\nfn c() {}\n");
+		fixture.git("add", "src/lib.rs");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/lib.rs" });
+			const cell = (line: number) =>
+				fileSection.locator(`td.diff-line-new-num:has(span[data-line-num="${line}"])`);
+			await cell(1).hover();
+			await page.mouse.down();
+			await cell(3).hover();
+
+			const row = fileSection.locator(
+				'tr.diff-line:has(td.diff-line-new-num span[data-line-num="1"])',
+			);
+			const shade = "rgba(31, 111, 235, 0.32)";
+			await expect(row.locator("td.diff-line-new-content")).toHaveCSS("background-color", shade);
+			await expect(row.locator("td.diff-line-old-num")).not.toHaveCSS("background-color", shade);
+			await expect(row.locator("td.diff-line-old-content")).not.toHaveCSS(
+				"background-color",
+				shade,
+			);
+
+			const lastRow = fileSection.locator(
+				'tr.diff-line:has(td.diff-line-new-num span[data-line-num="3"])',
+			);
+			await expect(lastRow.locator("td.diff-line-new-content")).toHaveCSS("background-color", shade);
+			await cell(1).hover();
+			await expect(
+				lastRow.locator("td.diff-line-new-content"),
+				"shrinking the drag unshades the rows it leaves",
+			).not.toHaveCSS("background-color", shade);
+			await page.mouse.up();
+			await expect(
+				row.locator("td.diff-line-new-content"),
+				"releasing the drag unshades its rows",
+			).not.toHaveCSS("background-color", shade);
+		} finally {
+			await meerkat.kill();
+		}
+	});
 });

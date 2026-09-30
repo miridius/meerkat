@@ -174,6 +174,7 @@ defmodule Meerkat.ReviewStateTest do
       stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
 
       assert {:ok, state} = ReviewState.from_target({:staged, commit_msg}, repo)
+      assert state.precommit?
       assert state.commit_message == "Subject\n\nReal body line."
 
       assert [%{start_line: 1, text: "Subject"}, %{start_line: 3, text: "Real body line."}] =
@@ -224,6 +225,7 @@ defmodule Meerkat.ReviewStateTest do
       assert state.pr == %{number: 123, title: pr.title, url: pr.url}
       assert state.commit_message == pr.body
       assert {state.head_branch, state.base_branch} == {"feat/the-feature", "main"}
+      refute state.precommit?
     end
 
     defp init_repo(dir) do
