@@ -41,7 +41,7 @@ defmodule Meerkat.GitHubTest do
         File.rm_rf!(dir)
       end)
 
-      {:ok, dir: dir, calls: calls}
+      {:ok, dir: dir, bin: bin, calls: calls}
     end
 
     test "on a branch, gh resolves the current branch itself", %{dir: dir, calls: calls} do
@@ -60,6 +60,30 @@ defmodule Meerkat.GitHubTest do
       ])
 
       assert %{number: 7} = GitHub.current_pr(dir)
+      assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
+    end
+
+    test "mid-rebase, a branch whose PR comes from a fork has no PR and no warning",
+         %{dir: dir, bin: bin, calls: calls} do
+      # A bare branch name matches only same-repo PRs, so gh answers
+      # this way for a branch whose PR's head lives on a fork.
+      File.write!(Path.join(bin, "gh"), """
+      #!/bin/sh
+      echo "$*" >> '#{calls}'
+      echo 'no pull requests found for branch "feature/x"' >&2
+      exit 1
+      """)
+
+      git(dir, [
+        "-c",
+        "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
+        "rebase",
+        "-q",
+        "-i",
+        "--root"
+      ])
+
+      assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
       assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
     end
 
