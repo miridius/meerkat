@@ -411,7 +411,7 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     @oid_file %{file_name: "f.ex", effective_oid: "abc123"}
 
     test "un-approving always proceeds" do
-      assert ReviewLive.stale_oid_check_for_test("/repo", @file, false) == :ok
+      assert ReviewLive.stale_oid_check_for_test("/repo", @oid_file, false) == :ok
     end
 
     test "nil effective_oid (range/PR mode) skips the check" do

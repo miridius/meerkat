@@ -1653,7 +1653,7 @@ defmodule MeerkatWeb.ReviewLive do
         </button>
       </header>
 
-      <form phx-change="filter.set_input">
+      <form id="file-filter-form" phx-change="filter.set_input">
         <input
           type="text"
           name="value"
