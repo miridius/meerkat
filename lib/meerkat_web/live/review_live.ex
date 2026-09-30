@@ -434,8 +434,8 @@ defmodule MeerkatWeb.ReviewLive do
   # The submitting form names itself by key, so a submit posts at that
   # form's anchor even while other forms are open. A key that isn't
   # open (closed from another tab while this submit was in flight)
-  # saves nothing and replies with an error, so the form keeps its
-  # draft instead of clearing it as if the comment had posted.
+  # saves nothing and replies with an error, so the submitting form
+  # doesn't clear its draft as if the comment had posted.
   def handle_event("comment.submit", payload, socket) do
     %{open_forms: forms, review_id: rid} = socket.assigns
     %{"body" => body, "finding_type" => ft, "learn_from_this" => learn?} = payload
