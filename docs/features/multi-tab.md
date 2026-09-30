@@ -51,10 +51,14 @@ live textarea content.
 
 Each form carries a `form_key` derived from its surface, anchor and
 edit target. Submit and cancel act only on the form with that key.
-A submit for a key that is no longer open (for example, after it was
-closed in another tab while the submit was in flight) saves nothing
-and replies with an error the form shows: "This comment form is no
-longer open, so the comment wasn't saved." The form keeps its draft.
+When another tab closes a form while its submit is in flight, the
+submit saves nothing. The server replies with an error, but the close
+has already reached the submitting tab, so the form is gone before
+the reply arrives and no error is shown. If the other tab closed the
+add form with Cancel, that cancel clears the form's shared
+localStorage draft, so the text typed in the submitting tab is lost.
+The error reply only prevents that tab from taking the success path
+that would clear the draft itself.
 Removing a comment also closes any open form editing it in every tab,
 so saving that form cannot bring the comment back.
 

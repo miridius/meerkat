@@ -25,9 +25,12 @@ Opening another form leaves existing forms and their typed text in
 place. After a split/unified or line-wrap toggle, open forms and
 posted comment rows are placed again in the new table, and each
 form keeps its mounted state: typed text, finding type and learn
-flag. After reload, if a form's anchor is on a context line that
-was expanded and renders collapsed again, DiffViewer expands the
-whole file once so the form shows.
+flag. If an open form or posted inline comment is anchored on a context
+line the reviewer expanded, that line can render collapsed again
+after a reload or split/unified toggle. DiffViewer expands the whole
+file once per diff and view mode so the form or comment stays
+visible: a collapsed hunk would hide the comment, and an open form
+blocks the decision buttons.
 
 ## Form contents
 
