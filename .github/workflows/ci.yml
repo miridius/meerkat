@@ -65,6 +65,8 @@ jobs:
       - working-directory: assets
         run: bun test
 
+      - run: bun test ./scripts
+
       # Built ahead, as bin/meerkat-beam would, so the first e2e test's wait
       # for meerkat's URL does not include a vite build.
       - name: Build assets
