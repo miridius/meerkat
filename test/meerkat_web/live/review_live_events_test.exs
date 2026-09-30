@@ -1319,6 +1319,17 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert ReviewServer.get_state(rid).file_overrides == %{"src/widget.rs" => :show}
   end
 
+  test "filter.toggle_file shows a file that show-only hides", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    refute render_hook(view, "filter.show_only", %{"file_index" => "1"}) =~ "src/widget.rs"
+
+    render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
+    assert render(view) =~ "src/widget.rs"
+  end
+
   test "filter.toggle_file ignores unknown file names", %{conn: conn} do
     repo = tmp_git_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)

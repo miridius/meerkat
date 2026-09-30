@@ -40,11 +40,20 @@ Top to bottom:
 
 Each row in the file-entries list shows:
 
-- An `Approved` checkbox (mirrors the per-file checkbox in the
-  main file list — share one assign).
-- The file's status badge (A/M/D/R).
-- The file's base name (truncated with ellipsis at the row
-  boundary).
+- A file-visibility checkbox. Its tooltip is `Show / hide <file>
+  in the diff list`; it is checked when the file is visible.
+  Unticking a visible file records a `:hide` override in
+  `state.file_overrides`; ticking a hidden file records a `:show`
+  override. If another file is shown alone, ticking a hidden file
+  also clears the “only” filter so the main list returns to all
+  files still allowed by hidden-extension and generated-file
+  filters, per-file overrides, and the filter text. This is not an
+  approval checkbox; approving a file is done only with the
+  per-file checkbox in the main file list.
+- The file's status, shown as a coloured dot whose tooltip names
+  the status.
+- The file's name is a link showing its directory followed by its
+  base name, truncated with an ellipsis at the row boundary.
 - A hover-revealed `only` button (shows ONLY this file in the
   main list via `filter.show_only`).
 - A hover-revealed `hide *.<ext>` button (hides all files of this
@@ -65,7 +74,8 @@ Each row in the file-entries list shows:
 - `only_file_index` (int | nil, in-LV ephemeral) — "show only
   this file" override.
 - `state.approved_file_names` (MapSet, persisted) — driven by
-  the per-row Approved checkbox.
+  the per-file Approved checkbox in the main file list, not by
+  the sidebar row.
 
 Hidden / show_generated / file_overrides / approved-files survive
 a BEAM restart. `filter_input` and `only_file_index` don't —

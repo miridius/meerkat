@@ -622,8 +622,12 @@ defmodule MeerkatWeb.ReviewLive do
         # wins over hidden_extensions / show_generated / any other
         # default filter; pre-existing extension filter stays in
         # place for OTHER files of the same type.
+        # A :show override doesn't beat show-only, so clear it when it
+        # hides this file.
         if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, file_name, :show)
-        {:noreply, socket}
+
+        {:noreply,
+         assign(socket, only_file_index: if(only_file_index in [nil, idx], do: only_file_index))}
     end
   end
 
