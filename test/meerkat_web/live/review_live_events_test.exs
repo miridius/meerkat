@@ -1235,7 +1235,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     dir = Path.join(System.tmp_dir!(), "meerkat-lv-nogit-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
 
-    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}]})
+    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}], precommit?: true})
     Application.put_env(:meerkat, :repo_path, dir)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 

@@ -283,10 +283,10 @@ defmodule MeerkatWeb.ReviewLive do
         # In a staged review, mirror into the global per-branch
         # approval cache so future hook runs on this branch can
         # short-circuit the UI via the staged-diff fast path.
-        # Best-effort: a write failure just means the user
-        # re-ticks Approved next round — but we
-        # surface the failure as a flash so the user knows the tick
-        # isn't durable instead of finding out next session.
+        # Best-effort: a write failure just means the user re-ticks
+        # Approved next round — but we surface the failure as a flash
+        # so the user knows the tick isn't durable instead of finding
+        # out next session.
         persist_result =
           persist_approval_cache_toggle(
             repo_path,
@@ -817,10 +817,11 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
-  # Only the staged pre-commit flow reads the cache back, and only it
-  # has blob OIDs to content-address against. A PR / range review has
-  # neither, and its `head_branch` can name the same branch whose
-  # staged approvals the cache holds — so it leaves the cache alone.
+  # Only the staged pre-commit flow matches approvals against the
+  # cache, and only it has blob OIDs to content-address against. A
+  # PR, range or single-ref review has neither, and its `head_branch`
+  # can name the same branch whose staged approvals the cache holds —
+  # so it leaves the cache alone.
   defp persist_approval_cache_toggle(_repo_path, _file_name, _approved?, _branch, %ReviewState{
          precommit?: false
        }),

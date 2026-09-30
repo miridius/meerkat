@@ -48,11 +48,12 @@ defmodule Meerkat.ReviewState do
             # `draftKey`, so re-opening at the same anchor restores
             # the typed text too.
             open_forms: [],
-            # True for the `--commit-msg` staged-diff hook flow. False
-            # for ad-hoc PR / range / single-ref reviews. Drives "is
-            # Approve blocking a commit?" copy + hides the
-            # Post-to-GitHub button, which doesn't make sense before
-            # the commit even exists.
+            # True for staged-diff reviews: the `--commit-msg` hook
+            # flow and a plain `meerkat` run. False for ad-hoc PR /
+            # range / single-ref reviews. Drives "is Approve blocking
+            # a commit?" copy + hides the Post-to-GitHub button, which
+            # doesn't make sense before the commit even exists. Also
+            # gates approval-cache writes on Approved toggles.
             precommit?: false,
             # SHA-256 over `(file_name, effective_oid)` per file —
             # computed once at construction so Persistence.save/3
