@@ -835,6 +835,16 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert_push_event(view, "comment-form:reveal", %{key: "file:0", id: "CommentForm-file-0"})
   end
 
+  test "revealing a form on a file already shown pins no :show override", %{conn: conn} do
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, tmp_git_repo())
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_click(view, "comment_form.reveal", %{"form_key" => "file:0"})
+
+    assert has_element?(view, "#file-0")
+    assert ReviewServer.get_state(rid).file_overrides == %{}
+  end
+
   test "revealing a file form expands a file collapsed by hand, keeping it rendered",
        %{conn: conn} do
     view = mount_unbound(conn, %ReviewState{files: [@md_file]})

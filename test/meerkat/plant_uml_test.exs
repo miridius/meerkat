@@ -52,4 +52,36 @@ defmodule Meerkat.PlantUMLTest do
     refute PlantUML.available?()
     assert runs(ctx) == 1
   end
+
+  describe "a render that runs out of time" do
+    # A real child that outlives the time budget; 0ms makes it time out at once.
+    defp stuck_port do
+      Port.open(
+        {:spawn_executable, System.find_executable("sleep")},
+        [:binary, :exit_status, :stderr_to_stdout, :use_stdio, args: ["30"]]
+      )
+    end
+
+    test "with no output says only that plantuml was killed" do
+      assert {:error, msg} = PlantUML.collect_for_test(stuck_port(), [], 0)
+      assert msg == "plantuml did not finish within 30000ms; the process was killed."
+    end
+
+    # The killed child's port can close before or after the cleanup closes
+    # it; repeating the timeout covers both orders.
+    test "returns the timeout error however soon the killed child's port closes" do
+      for _ <- 1..20 do
+        assert {:error, "plantuml did not finish" <> _} =
+                 PlantUML.collect_for_test(stuck_port(), [], 0)
+      end
+    end
+
+    test "with output also shows what plantuml printed before the timeout" do
+      assert {:error, msg} = PlantUML.collect_for_test(stuck_port(), ["  Syntax error?\n"], 0)
+
+      assert msg ==
+               "plantuml did not finish within 30000ms; the process was killed.\n" <>
+                 "plantuml output before the timeout:\nSyntax error?"
+    end
+  end
 end

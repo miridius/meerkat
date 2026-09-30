@@ -127,7 +127,19 @@ defmodule Meerkat.PlantUML do
         :ok
     end
 
-    _ = Port.close(port)
+    # The killed child can close the port first, and Port.close raises
+    # ArgumentError on a closed port.
+    try do
+      Port.close(port)
+    rescue
+      ArgumentError -> :ok
+    end
+
     :ok
   end
+
+  # Test seam: plantuml_test.exs times a render out against a stuck child
+  # without waiting the 30s budget.
+  @doc false
+  def collect_for_test(port, acc, remaining_ms), do: collect(port, acc, remaining_ms)
 end
