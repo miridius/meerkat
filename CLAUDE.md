@@ -25,9 +25,16 @@ remove commits a merged PR still references). Before committing:
 - **Keep dependencies current — enforced.** `scripts/outdated.sh`
   FAILS while any JS or Hex package is behind its latest
   release. The pre-commit hook bumps outdated packages. Don't bump
-  them by hand. Fix the fallout rather than pin old versions. A deliberate pin is a narrow, per-release record of a specific upstream breakage: each entry in `scripts/dep-exemptions.json` must include a `version` and non-empty `reason`, and exempts only that release while it is latest. When a newer release appears, the pre-commit hook bumps to it as usual; a missing or malformed `scripts/dep-exemptions.json` file, or a stale entry, fails `scripts/outdated.sh`. JS releases younger than the 24h
-  min-age floor get an automatic grace pass (Hex has no floor, so no
-  grace). The gate fails closed on its own breakage.
+  them by hand. Fix the fallout rather than pin old versions. A
+  deliberate pin is a narrow, per-release record of a specific
+  upstream breakage: each entry in `scripts/dep-exemptions.json` must
+  include a `version` and non-empty `reason`, and exempts only that
+  release while it is latest. When a newer release appears, the
+  pre-commit hook bumps to it as usual; a missing or malformed
+  `scripts/dep-exemptions.json` file, or a stale entry, fails
+  `scripts/outdated.sh`. JS releases younger than the 24h min-age
+  floor get an automatic grace pass (Hex has no floor, so no grace).
+  The gate fails closed on its own breakage.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 
