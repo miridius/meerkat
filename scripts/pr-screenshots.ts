@@ -6,12 +6,12 @@
 // the PR's own diff, rendered by meerkat built from the PR's head
 // commit as pushed to GitHub. With `--before` it also runs the same steps against meerkat
 // built from the commit the PR branches from, for a before/after pair.
-// Both builds are fresh clones in a temp dir, so the PR branch needn't
-// be checked out here, and the reviews run in throwaway clones, so
-// review state and approvals never land in this checkout. Settings
-// from MEERKAT_* variables in your environment are dropped, so the page
-// looks the way it does by default. Each run builds meerkat from
-// scratch, which takes about a minute.
+// Each build is a fresh clone in a temp dir, so the PR branch needn't
+// be checked out here; if it is, it must match what is pushed. The
+// reviews run in throwaway clones, so review state and approvals never
+// land in this checkout. Settings from MEERKAT_* variables in your
+// environment are dropped, so the page looks the way it does by
+// default. Each run builds meerkat from scratch.
 //
 // A headless Chromium opens each review and calls the default export
 // of <steps.ts>:
@@ -119,7 +119,7 @@ function parseArgs(argv: string[]) {
 	if (!opts.steps) {
 		throw new Error("usage: bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N] [--out DIR]");
 	}
-	const pr = opts.pr ?? Number(run("gh", ["pr", "view", "--json", "number", "-q", ".number"], process.cwd()));
+	const pr = opts.pr ?? Number(run("gh", ["pr", "view", "--json", "number", "-q", ".number"]));
 	if (!Number.isInteger(pr) || pr <= 0) throw new Error(`not a PR number: ${pr}`);
 	return {
 		pr,
@@ -232,42 +232,45 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 				fixture: { dir: reviewDir },
 				env: { MIX_ENV: "dev" },
 			});
-			const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
 			try {
-				const page = await context.newPage();
-				await page.goto(meerkat.url);
-				// Clicks before LiveView joins its channel are dropped.
-				await page.waitForFunction(
-					() => document.querySelector("[data-phx-main]")?.classList.contains("phx-connected") === true,
-					undefined,
-					{ timeout: 45_000 },
-				);
-				await steps({
-					page,
-					expect,
-					code,
-					shot: async (name, { locator, caption } = {}) => {
-						if (!/^[\w-]+$/.test(name)) throw new Error(`shot name must be [A-Za-z0-9_-]+: ${name}`);
-						if (caption?.includes("\n")) throw new Error(`caption of ${name} must be one line`);
-						if (shots.some((s) => s.code === code && s.name === name)) {
-							throw new Error(`two ${code} shots named ${name}`);
-						}
-						const file = `${code}-${name}.png`;
-						await (locator ?? page).screenshot({ path: join(out, file) });
-						shots.push({ name, code, file, caption });
-					},
-				});
-			} finally {
+				const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
 				try {
-					await context.close();
+					const page = await context.newPage();
+					await page.goto(meerkat.url);
+					// Clicks before LiveView joins its channel are dropped.
+					await page.waitForFunction(
+						() => document.querySelector("[data-phx-main]")?.classList.contains("phx-connected") === true,
+						undefined,
+						{ timeout: 45_000 },
+					);
+					await steps({
+						page,
+						expect,
+						code,
+						shot: async (name, { locator, caption } = {}) => {
+							if (!/^[\w-]+$/.test(name)) throw new Error(`shot name must be [A-Za-z0-9_-]+: ${name}`);
+							if (caption?.includes("\n")) throw new Error(`caption of ${name} must be one line`);
+							if (shots.some((s) => s.code === code && s.name === name)) {
+								throw new Error(`two ${code} shots named ${name}`);
+							}
+							const file = `${code}-${name}.png`;
+							await (locator ?? page).screenshot({ path: join(out, file) });
+							shots.push({ name, code, file, caption });
+						},
+					});
 				} finally {
-					await meerkat.kill();
+					await context.close();
 				}
+			} finally {
+				await meerkat.kill();
 			}
 		}
 	} finally {
-		await browser?.close();
-		rmSync(work, { recursive: true, force: true });
+		try {
+			await browser?.close();
+		} finally {
+			rmSync(work, { recursive: true, force: true });
+		}
 	}
 	if (shots.length === 0) throw new Error("the steps file took no screenshots");
 	for (const s of shots) console.log([join(out, s.file), s.caption].filter(Boolean).join(" "));

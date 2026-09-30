@@ -123,17 +123,28 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			);
 		});
 	}).catch(async (e) => {
-		// No Runner reaches the caller, so nothing else would stop the
-		// backend, which can sit waiting for a source change forever.
+		// Stops meerkat first, so it can't record a backend after
+		// stopBackends has read the runs dir.
+		if (proc.exitCode === null && proc.signalCode === null) {
+			const exited = new Promise((resolve) => proc.once("exit", resolve));
+			proc.kill("SIGTERM");
+			await exited;
+		}
+		if (!opts.keepFixture) fixture.cleanup?.();
+		// A runs dir passed in belongs to the runner that made it, whose
+		// kill() stops its backends.
+		if (opts.runsDir !== undefined) throw e;
+		// No Runner reaches the caller, so nothing else would stop a
+		// backend this call started, which can outlive it indefinitely.
 		try {
 			await stopBackends(runsDir);
 		} catch (cleanup) {
-			throw new AggregateError([e, cleanup], `${e}\nand stopping its backends failed: ${cleanup}`);
-		} finally {
-			if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
-			if (!opts.keepFixture) fixture.cleanup?.();
-			if (opts.runsDir === undefined) rmSync(runsDir, { recursive: true, force: true });
+			throw new AggregateError(
+				[e, cleanup],
+				`${e}\nand stopping its backends failed, so ${runsDir} is left for reapOrphanedBackends: ${cleanup}`,
+			);
 		}
+		rmSync(runsDir, { recursive: true, force: true });
 		throw e;
 	});
 

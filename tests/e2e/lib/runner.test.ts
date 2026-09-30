@@ -114,6 +114,7 @@ exit 1
 		{ mode: 0o755 },
 	);
 	let cleaned = false;
+	let pid = 0;
 	try {
 		const start = startMeerkat({
 			bin,
@@ -123,11 +124,13 @@ exit 1
 		});
 
 		await expect(start).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
-		const [runsDir, pid] = readFileSync(seen, "utf8").trim().split(" ");
-		expect(alive(Number(pid)), "backend is stopped").toBe(false);
+		const [runsDir, recorded] = readFileSync(seen, "utf8").trim().split(" ");
+		pid = Number(recorded);
+		expect(alive(pid), "backend is stopped").toBe(false);
 		expect(existsSync(runsDir), "runs dir is removed").toBe(false);
 		expect(cleaned, "fixture is cleaned up").toBe(true);
 	} finally {
+		if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

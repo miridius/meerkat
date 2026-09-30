@@ -73,8 +73,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    asked? Is it sensible? Does it avoid unnecessary changes or
    complexity? Fix every finding from any review you run before
    opening the PR, regardless of which review found it. Keep this
-   pass cheap: no review agents, mutation-testing runs, or extra
-   test suites. The thorough review still happens at merge through
+   self-review cheap: it must not add review agents,
+   mutation-testing runs, or extra test suites of its own. The
+   thorough review still happens at merge through
    `/review-and-merge`; this self-review does not replace it.
 
    When a PR changes what meerkat's review page shows, add
