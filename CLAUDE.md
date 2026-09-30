@@ -59,6 +59,29 @@ The end-to-end loop for a meerkat bug report or feature request:
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
 
+   When a PR changes what meerkat's review page shows, add
+   screenshots to its description using
+   `bun scripts/pr-screenshots.ts capture` and
+   `bun scripts/pr-screenshots.ts attach`. Capture after opening the
+   draft PR. Use judgement to choose whichever screenshots, and how
+   many, will help review that PR; for changed UI, a before/after
+   pair can help, and `capture --before` additionally captures the
+   same steps against a build from the PR's branch point (the
+   merge-base of its head and base branch), not the base branch tip.
+   Caption each image with what it shows, adding what
+   to look at when that isn't obvious. Before attaching, inspect
+   every image: uploads are public and permanent, so confirm it
+   matches its caption and contains no private data (such as local
+   absolute paths).
+
+   After the draft PR is open and any screenshots are attached, do a
+   quick self-review of the whole PR—diff, description, and
+   screenshots. Does it do what was asked, make sense, and avoid
+   unnecessary changes or complexity? Fix anything you find. Keep
+   this pass cheap: no review agents, mutation-testing runs, or extra
+   test suites. The thorough review happens at merge through
+   `/review-and-merge`; this pass does not replace it.
+
 ## Quality gates
 
 Pre-commit hook: `scripts/no-main-commits.sh`, then `scripts/check.sh`:
@@ -69,13 +92,13 @@ Pre-push hook: `scripts/pre-push.sh` runs `scripts/no-private-refs.sh` and `scri
 
 On every PR, CI runs `mix compile --warnings-as-errors`,
 `mix format --check-formatted`, `mix test`, `bun test` in `assets/`,
-and the Playwright e2e suite; run the commands below locally before
-opening a PR.
+`bun test ./scripts`, and the Playwright e2e suite; run the commands
+below locally before opening a PR.
 
 ```bash
 mix compile --warnings-as-errors
 mix format
-bun run test                         # mix test, assets bun test, then the Playwright e2e suite
+bun run test                         # mix test, bun test in assets/, bun test ./scripts, then the Playwright e2e suite
 ```
 
 When you change behaviour, change or add a test — ExUnit in
@@ -130,5 +153,4 @@ for unmerged work. Bringing local `main` up to date — via `git pull`,
 or by `git switch`/`git checkout main` after a GitHub squash-merge —
 fires the lefthook `post-merge` / `post-checkout` hooks, which run
 `scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
-dev launcher with the prod release. There is no state marker file;
-the launcher script content IS the mode.
+dev launcher with the prod release.
