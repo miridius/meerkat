@@ -144,22 +144,38 @@ defmodule Meerkat.ShepherdTest do
       assert await_exit(port, dir) == 2
     end
 
+    test "a caller that cannot create its run dir exits 2 instead of retrying" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      File.mkdir_p!(runs)
+      File.chmod!(runs, 0o555)
+      on_exit(fn -> File.chmod!(runs, 0o755) && File.rm_rf!(dir) end)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      assert await_exit(port, dir) == 2
+    end
+
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
-      {port, dir} = open_dev_shepherd(exit_codes: [2, 0], mix_env: "dev")
+      {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
 
       assert await_exit(port, dir) == 2
       assert File.read!(Path.join(dir, "i")) |> String.trim() == "1"
     end
 
-    test "the dev shepherd exits 2 when the review dir is deleted while it waits for a source change" do
-      # An env with no build makes the shepherd compile, and the failing
-      # compile sends it to wait for a source change.
-      {port, dir} = open_dev_shepherd(compile_code: 1, mix_env: "shepherd_test")
-      await_output(port, dir, "waiting for source change")
+    for deleted <- ["review", "root"] do
+      test "the dev shepherd exits 2 when its #{deleted} dir is deleted while it waits for a source change" do
+        {port, dir} = open_dev_shepherd(compile_code: 1)
+        await_output(port, dir, "waiting for source change")
 
-      File.rm_rf!(Path.join(dir, "review"))
+        File.rm_rf!(Path.join(dir, unquote(deleted)))
 
-      assert await_exit(port, dir) == 2
+        assert await_exit(port, dir) == 2
+      end
     end
   end
 
@@ -305,14 +321,23 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
-  # caller) from a fresh review dir, with `mix` and `bunx` replaced by
-  # stubs: `mix compile` exits `compile_code`, and each `mix run` exits
-  # the next of `exit_codes`, counting runs in the temp dir's `i`.
+  # caller), copied into a checkout at `root` that has no build, from a
+  # fresh `review` dir, with `mix` and `bunx` replaced by stubs: `mix
+  # compile` exits `compile_code`, and each `mix run` exits the next of
+  # `exit_codes`, counting runs in the temp dir's `i`.
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
     stubs = Path.join(dir, "stubs")
-    Enum.each(["review", "serve", "stubs"], &File.mkdir_p!(Path.join(dir, &1)))
+
+    Enum.each(
+      ["review", "serve", "stubs", "root/bin", "root/assets"],
+      &File.mkdir_p!(Path.join(dir, &1))
+    )
+
+    launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
+    File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)
+    File.chmod!(launcher, 0o755)
     File.write!(Path.join(dir, "seq"), Enum.join(Keyword.get(opts, :exit_codes, []), " "))
     File.write!(Path.join(dir, "i"), "0")
 
@@ -330,12 +355,12 @@ defmodule Meerkat.ShepherdTest do
 
     port =
       open_launcher(
-        Path.join(File.cwd!(), "bin/meerkat-beam"),
+        launcher,
         ["--commit-msg", Path.join([dir, "review", "COMMIT_MSG"]), "--no-open"],
         dir,
         [
           {"PATH", stubs <> ":" <> System.fetch_env!("PATH")},
-          {"MIX_ENV", Keyword.fetch!(opts, :mix_env)},
+          {"MIX_ENV", "dev"},
           {"MEERKAT_SERVE_DIR", Path.join(dir, "serve")},
           {"MEERKAT_SERVE_TOKEN", "t"},
           {"SEQ_FILE", Path.join(dir, "seq")},

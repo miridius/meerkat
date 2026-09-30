@@ -196,12 +196,18 @@ test.describe("a review outlives the process that invoked it", () => {
 			rmSync(meerkat.runsDir, { recursive: true, force: true });
 
 			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const clicked = Date.now();
 
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code, stderr).toBe(0);
+			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(5_000);
 			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
 		} finally {
 			await meerkat.kill();
+			// With its run dir gone, `kill` cannot find the backend.
+			try {
+				process.kill(backend, "SIGTERM");
+			} catch {}
 		}
 	});
 

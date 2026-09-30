@@ -46,14 +46,13 @@ meerkat_attach() {
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
-      # Without the runs dir every mkdir below fails, and the loop would
-      # retry it without pause.
-      if [[ ! -d "$runs" ]]; then
-        echo "meerkat: $runs was deleted — defaulting to REJECT (commit aborted)." >&2
+      if ! _ma_start_server "$self" "$@"; then
+        # Another caller started one first.
+        [[ -d "$_MA_DIR" ]] && continue
+        # Otherwise every retry fails the same way, without pause.
+        echo "meerkat: could not create $_MA_DIR — defaulting to REJECT (commit aborted)." >&2
         exit 2
       fi
-      # A failed mkdir means another caller started one first.
-      _ma_start_server "$self" "$@" || continue
     elif ! _ma_server_alive; then
       _ma_bury_server
       continue
@@ -179,7 +178,8 @@ _ma_bury_server() {
 _ma_wait_for_exit() {
   local i
   for ((i = 0; i < 150; i++)); do
-    [[ -f "$_MA_DIR/exit" ]] && return 0
+    # A deleted run dir never gets its exit file.
+    [[ -d "$_MA_DIR" && ! -f "$_MA_DIR/exit" ]] || return 0
     _ma_server_alive || return 0
     sleep 0.2
   done
