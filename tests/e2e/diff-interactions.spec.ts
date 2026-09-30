@@ -124,7 +124,21 @@ test.describe("diff gutter drag selection", () => {
 				"background-color",
 				shade,
 			);
+
+			const lastRow = fileSection.locator(
+				'tr.diff-line:has(td.diff-line-new-num span[data-line-num="3"])',
+			);
+			await expect(lastRow.locator("td.diff-line-new-content")).toHaveCSS("background-color", shade);
+			await cell(1).hover();
+			await expect(
+				lastRow.locator("td.diff-line-new-content"),
+				"shrinking the drag unshades the rows it leaves",
+			).not.toHaveCSS("background-color", shade);
 			await page.mouse.up();
+			await expect(
+				row.locator("td.diff-line-new-content"),
+				"releasing the drag unshades its rows",
+			).not.toHaveCSS("background-color", shade);
 		} finally {
 			await meerkat.kill();
 		}
