@@ -18,6 +18,7 @@ defmodule Meerkat.PreCommitHookTest do
     "bunx biome lint --error-on-warnings",
     "mix test",
     "bun test",
+    "bun test tests/e2e/lib",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"

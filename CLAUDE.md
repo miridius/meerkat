@@ -75,19 +75,20 @@ The end-to-end loop for a meerkat bug report or feature request:
 6. `bunx biome lint --error-on-warnings`
 7. `mix test`
 8. `bun test` in `assets/`
-9. The asset build
-10. `bunx playwright install --only-shell chromium`
-11. `bun run test:e2e`
+9. `bun test tests/e2e/lib` from the repo root
+10. `bun run build` in `assets/`
+11. `bunx playwright install --only-shell chromium`
+12. `bun run test:e2e`
 
-Credo uses its default configuration; there is no `.credo.exs`. Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, including Svelte templates and styles. Biome warnings and errors fail the check; infos are printed only.
+Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, including Svelte templates and styles. Biome warnings and errors fail the check; infos are printed only.
 
 **Pre-push:** `.lefthook/pre-push/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked.
 
 This is a Lefthook script, not a command, so history-only force-pushes still get scanned. Lefthook skips pre-push commands when `git diff HEAD @{push}` is empty, as it is for a force-push that only rewrites history.
 
-**CI:** Every PR runs compile with warnings as errors, the format check, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `mix test`, `bun test` in `assets/`, the asset build, and the Playwright e2e suite. CI runs these checks even when the local hooks skip them.
+**CI:** Every PR runs, in order, `mix deps.get`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `mix test`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
-`bun run test` runs `mix test`, then `bun test` in `assets/`, then the Playwright e2e suite. `git commit --no-verify` and `git push --no-verify` bypass their respective hooks.
+`bun run test` runs `mix test`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`. `git commit --no-verify` and `git push --no-verify` bypass their respective hooks.
 
 When behaviour changes, choose the lowest layer that exercises it:
 - Use ExUnit (`test/**/*_test.exs`, including LiveViewTest) or asset
