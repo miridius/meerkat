@@ -38,9 +38,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   #   generated-files.spec.ts.
   # * `decision.cancel`'s ReviewServer wipe — decision.spec.ts "Cancel
   #   wipes comments, prints a cancelled sentence, exits 1".
-  # * `comment.toggle_learn`'s `if rid != "unbound"` ReviewServer
-  #   delegation — inline-comments-rendering.spec.ts "learn-from-this
-  #   defaults off; toggle on rendered comment flips it".
+  # * The whole `comment.toggle_learn` handler, including its
+  #   `if rid != "unbound"` ReviewServer delegation —
+  #   inline-comments-rendering.spec.ts "learn-from-this defaults off;
+  #   toggle on rendered comment flips it".
 
   use MeerkatWeb.ConnCase, async: false
 

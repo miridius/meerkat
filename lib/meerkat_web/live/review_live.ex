@@ -2437,16 +2437,9 @@ defmodule MeerkatWeb.ReviewLive do
       end
 
     socket =
-      cond do
-        not file_section_collapsed?(state, expanded, collapsed, name) ->
-          socket
-
-        MapSet.member?(state.approved_file_names, name) ->
-          assign(socket, expanded_approved: MapSet.put(expanded, name))
-
-        true ->
-          assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
-      end
+      if MapSet.member?(state.approved_file_names, name),
+        do: assign(socket, expanded_approved: MapSet.put(expanded, name)),
+        else: assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
 
     if surface == :inline,
       do: assign(socket, rendered_files: MapSet.delete(rendered, name)),
