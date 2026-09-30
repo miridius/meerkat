@@ -19,19 +19,19 @@
 //
 //   export default async ({ page, shot, expect, code }) => {
 //     await page.getByRole("button", { name: "Split" }).click();
-//     await shot("split-view", "Expand buttons sit in the right-hand gutter");
+//     await shot("split-view");
 //     if (code === "head") {
-//       await shot("footer", "Each open form is a link", page.locator("footer"));
+//       await shot("footer", { locator: page.locator("footer"), caption: "the form links" });
 //     }
 //   };
 //
 // This file exports the `Steps` type of that function.
 // `code` is "head" or "base", so the steps can skip a shot of UI the
-// base code lacks or word a caption for each. `shot(name, caption,
-// locator?)` saves the viewport, or just `locator` when given. The
-// caption is shown above the image in the description: say what the
-// image shows and, where it isn't obvious, what to look at. A base and
-// head shot with the same name are shown as a Before/After pair.
+// base code lacks. `shot(name, { locator?, caption? })` saves the
+// viewport, or just `locator` when given. Give a caption only when a
+// reviewer wouldn't otherwise know what to look at, as one short line;
+// it is shown above the image. A base and head shot with the same name
+// are shown as a Before/After pair.
 //
 // Two things the steps file has to do itself:
 // - Import `@playwright/test` only as a type (`import type`). A runtime
@@ -44,8 +44,10 @@
 //   otherwise the header can cover it.
 //
 // `attach` uploads the PNGs with `gh pr edit --attach` and puts them in
-// a Screenshots section of the PR description, replacing the one an
-// earlier run added. The uploads are public.
+// a Screenshots section at the end of the PR description, replacing the
+// one an earlier run added. After rewriting the rest of the
+// description, run it again rather than writing the section by hand.
+// The uploads are public.
 //
 // --pr defaults to the PR of the current branch, and --out to
 // <tmpdir>/meerkat-pr-<N>-screenshots.
@@ -57,10 +59,10 @@ import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Locator, type Page } from "@playwright/test";
 
 export type Code = "base" | "head";
-export type Shot = { name: string; code: Code; file: string; caption: string };
+export type Shot = { name: string; code: Code; file: string; caption?: string };
 export type Steps = (ctx: {
 	page: Page;
-	shot: (name: string, caption: string, locator?: Locator) => Promise<void>;
+	shot: (name: string, opts?: { locator?: Locator; caption?: string }) => Promise<void>;
 	expect: typeof expect;
 	code: Code;
 }) => Promise<void>;
@@ -205,8 +207,9 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 					page,
 					expect,
 					code,
-					shot: async (name, caption, locator) => {
+					shot: async (name, { locator, caption } = {}) => {
 						if (!/^[\w-]+$/.test(name)) throw new Error(`shot name must be [A-Za-z0-9_-]+: ${name}`);
+						if (caption?.includes("\n")) throw new Error(`caption of ${name} must be one line`);
 						if (shots.some((s) => s.code === code && s.name === name)) {
 							throw new Error(`two ${code} shots named ${name}`);
 						}
@@ -229,7 +232,7 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 	for (const s of shots) console.log(join(out, s.file));
 }
 
-// Each caption as a paragraph above its image. A base and head shot of
+// Each caption, if any, as a paragraph above its image. A base and head shot of
 // the same name go together, base first, labelled Before and After;
 // the order is that of the head shots, then any base-only ones.
 export function section(shots: Shot[]): string {
@@ -237,26 +240,27 @@ export function section(shots: Shot[]): string {
 	const blocks = names.map((name) => {
 		const base = shots.find((s) => s.code === "base" && s.name === name);
 		const head = shots.find((s) => s.code === "head" && s.name === name);
-		const label = (s: Shot) => (base && head ? `**${s === base ? "Before" : "After"}:** ` : "");
+		const label = (s: Shot) => (base && head ? (s === base ? "Before" : "After") : "");
+		const heading = (s: Shot) =>
+			[label(s) && `**${label(s)}${s.caption ? ":" : ""}**`, s.caption].filter(Boolean).join(" ");
 		return [base, head]
 			.filter((s): s is Shot => s !== undefined)
-			.map((s) => `${label(s)}${s.caption}\n\n![${alt(s.caption)}](./${s.file})`)
+			.map((s) => [heading(s), `![${label(s) || s.name}](./${s.file})`].filter(Boolean).join("\n\n"))
 			.join("\n\n");
 	});
 	return `${START}\n## Screenshots\n\n${blocks.join("\n\n")}\n${END}`;
 }
 
-function alt(caption: string): string {
-	return caption.replace(/\s+/g, " ").replace(/[[\]`]/g, "");
-}
-
-// Replaces the section between the markers, or puts a new one before a
-// trailing italic line such as `_Written by …_`, or at the end.
+// Puts the section last, before a trailing italic line such as
+// `_Written by …_`, dropping the one an earlier run added. Anything
+// after the section would render under its heading.
 export function withScreenshots(body: string, shots: Shot[]): string {
 	const replacement = section(shots);
 	const start = body.indexOf(START);
 	const end = body.indexOf(END);
-	if (start !== -1 && end > start) return body.slice(0, start) + replacement + body.slice(end + END.length);
+	if (start !== -1 && end > start) {
+		body = [body.slice(0, start).trimEnd(), body.slice(end + END.length).trim()].filter(Boolean).join("\n\n");
+	}
 	const trimmed = body.trimEnd();
 	const attribution = trimmed.match(/\n+(_[^\n]+_)$/);
 	if (attribution?.index !== undefined) {

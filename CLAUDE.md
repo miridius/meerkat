@@ -66,13 +66,10 @@ The end-to-end loop for a meerkat bug report or feature request:
    draft PR. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after
    pair can help, and `capture --before` additionally captures the
-   same steps against a build from the PR's branch point (the
-   merge-base of its head and base branch), not the base branch tip.
-   Caption each image with what it shows, adding what
-   to look at when that isn't obvious. Before attaching, inspect
-   every image: uploads are public and permanent, so confirm it
-   matches its caption and contains no private data (such as local
-   absolute paths).
+   same steps against a build from the PR's branch point. Inspect
+   every image before attaching it. Confirm each image shows what you
+   meant to capture. Uploads are public and permanent. Confirm no
+   image contains private data (such as local absolute paths).
 
    After the draft PR is open and any screenshots are attached, do a
    quick self-review of the whole PR—diff, description, and
