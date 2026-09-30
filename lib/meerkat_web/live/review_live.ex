@@ -111,10 +111,6 @@ defmodule MeerkatWeb.ReviewLive do
        # `rendered_html` (content is static for the review session).
        rendered_files: MapSet.new(),
        rendered_html: %{},
-       # Cached at mount — drives the inline `.puml` preview's
-       # available state. Component shows the diff preview when
-       # true, an "install plantuml" hint when false.
-       plantuml_available: Meerkat.PlantUML.available?(),
        done: done,
        # Transient error banner. Set by handlers that failed in a way
        # the user needs to see (gh api failure, stale-OID rejected
@@ -954,7 +950,10 @@ defmodule MeerkatWeb.ReviewLive do
     # keeps its socket but new code expects new assigns.
     assigns =
       assigns
-      |> assign_new(:plantuml_available, fn -> Meerkat.PlantUML.available?() end)
+      # Drives the inline `.puml` preview: the diff preview when true, an
+      # "install plantuml" hint when false. Only a `.puml` file reads it,
+      # so a review without one skips the probe's JVM start.
+      |> assign(:plantuml_available, plantuml_available?(assigns.state.files))
       |> assign_new(:version, fn -> Meerkat.Version.info() end)
       |> assign_new(:timeout_action, fn -> Meerkat.Timeout.action() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)
@@ -1591,6 +1590,12 @@ defmodule MeerkatWeb.ReviewLive do
   defp markdown_file?(file) do
     ext = file.file_name |> Path.extname() |> String.downcase()
     not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
+  end
+
+  # The extensions DiffViewer.svelte's `isPlantUml` previews.
+  defp plantuml_available?(files) do
+    Enum.any?(files, &(String.downcase(Path.extname(&1.file_name)) in [".puml", ".plantuml"])) and
+      Meerkat.PlantUML.available?()
   end
 
   attr :state, ReviewState, required: true
