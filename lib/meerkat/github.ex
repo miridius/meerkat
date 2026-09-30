@@ -5,6 +5,8 @@ defmodule Meerkat.GitHub do
   metadata. `post_review/3` posts a PENDING review back via `gh api`.
   """
 
+  alias Meerkat.Git
+
   @typedoc "Subset of the PR JSON we care about."
   @type pr :: %{
           number: pos_integer(),
@@ -57,10 +59,22 @@ defmodule Meerkat.GitHub do
   chip shows it and the decision footer offers Post-to-GitHub. Returns
   `nil` on any failure (gh missing, not authed, no open PR, malformed
   JSON, …) so the caller can fall through to the no-PR rendering.
+
+  gh finds the current branch only while HEAD is on it, so mid-rebase
+  the branch being rebased is named explicitly, and a HEAD detached
+  outside a rebase belongs to no branch: no lookup, no warning.
   """
   @spec current_pr(String.t()) :: pr | nil
   def current_pr(repo_path) do
-    case run_pr_view(repo_path, []) do
+    case Git.head_branch(repo_path) do
+      {:checked_out, _} -> lookup_current_pr(repo_path, [])
+      {:rebasing, branch} -> lookup_current_pr(repo_path, [branch])
+      :detached -> nil
+    end
+  end
+
+  defp lookup_current_pr(repo_path, extra_args) do
+    case run_pr_view(repo_path, extra_args) do
       {:ok, output} ->
         case Jason.decode(output) do
           {:ok, json} ->
