@@ -9,6 +9,7 @@ import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
+import { countdownView } from "../ts/countdown";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -90,15 +91,13 @@ const hooks = {
   Countdown: {
     mounted() {
       this._tick = () => {
-        const left = Math.ceil(
-          (Number(this.el.dataset.deadline) - Date.now()) / 1000,
+        const { text, warn, urgent } = countdownView(
+          Number(this.el.dataset.deadline),
+          Date.now(),
         );
-        const secs = Math.abs(left);
-        const mm = String(Math.floor(secs / 60)).padStart(2, "0");
-        const ss = String(secs % 60).padStart(2, "0");
-        this.el.textContent = left > 0 ? `${mm}:${ss} left` : `${mm}:${ss} over`;
-        this.el.classList.toggle("urgent", left <= 60);
-        this.el.classList.toggle("warn", left > 60 && left <= 300);
+        this.el.textContent = text;
+        this.el.classList.toggle("urgent", urgent);
+        this.el.classList.toggle("warn", warn);
       };
       this._tick();
       this._timer = setInterval(this._tick, 1000);
