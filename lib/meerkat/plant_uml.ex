@@ -7,15 +7,29 @@ defmodule Meerkat.PlantUML do
   back to the LV (the user sees the actual diagnosis, not just "exit
   code 1").
 
-  `available?/0` probes `plantuml -version` once per call — the LV
-  caches the result via socket assigns (per-LV-session).
+  `available?/0` probes `plantuml -version` once per BEAM and caches
+  the answer: the probe starts a JVM, about half a second, and every
+  render of a review with a PlantUML file asks.
   """
 
   @timeout_ms 30_000
+  @available_key {__MODULE__, :available?}
 
-  @doc "True iff `plantuml -version` succeeds. Cached by `MeerkatWeb.ReviewLive` on mount."
+  @doc "True iff `plantuml -version` succeeded the first time this BEAM asked."
   @spec available?() :: boolean()
   def available? do
+    case :persistent_term.get(@available_key, nil) do
+      nil ->
+        available = probe()
+        :persistent_term.put(@available_key, available)
+        available
+
+      available ->
+        available
+    end
+  end
+
+  defp probe do
     case System.cmd("plantuml", ["-version"], stderr_to_stdout: true) do
       {_, 0} -> true
       _ -> false
@@ -113,7 +127,19 @@ defmodule Meerkat.PlantUML do
         :ok
     end
 
-    _ = Port.close(port)
+    # The killed child can close the port first, and Port.close raises
+    # ArgumentError on a closed port.
+    try do
+      Port.close(port)
+    rescue
+      ArgumentError -> :ok
+    end
+
     :ok
   end
+
+  # Test seam: plantuml_test.exs times a render out against a stuck child
+  # without waiting the 30s budget.
+  @doc false
+  def collect_for_test(port, acc, remaining_ms), do: collect(port, acc, remaining_ms)
 end

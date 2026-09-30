@@ -9,7 +9,9 @@ import { makeFixture } from "./lib/fixture";
 test.describe("scroll preservation across reload", () => {
 	const tallFile = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
 
-	test("restores the scroll position after a reload", async ({ page }) => {
+	test("a fresh review starts at the top, and a reload restores the scroll position", async ({
+		page,
+	}) => {
 		const meerkat = await startMeerkat({
 			fixture: makeFixture({ files: { "tall.txt": tallFile } }),
 		});
@@ -18,6 +20,11 @@ test.describe("scroll preservation across reload", () => {
 			await expect(
 				page.getByRole("button", { name: /tall\.txt/ }),
 			).toBeVisible();
+
+			// No prior scroll was stashed for this origin, so the restore is a
+			// no-op and the page stays at the top.
+			await page.waitForTimeout(350);
+			expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(0);
 
 			// The reload the scroll code preserves across is triggered by
 			// phx-track-static (LiveView full-reloads on reconnect when the
@@ -41,27 +48,6 @@ test.describe("scroll preservation across reload", () => {
 					timeout: 5000,
 				})
 				.toBeGreaterThan(before - 100);
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("a fresh review with no stashed position starts at the top", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat({
-			fixture: makeFixture({ files: { "tall.txt": tallFile } }),
-		});
-		try {
-			await page.goto(meerkat.url);
-			await expect(
-				page.getByRole("button", { name: /tall\.txt/ }),
-			).toBeVisible();
-
-			// No prior scroll was stashed for this origin, so the restore is a
-			// no-op and the page stays at the top.
-			await page.waitForTimeout(350);
-			expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(0);
 		} finally {
 			await meerkat.kill();
 		}

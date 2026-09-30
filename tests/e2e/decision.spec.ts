@@ -1,314 +1,40 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "./lib/test";
-import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 
+// The seam from a decision clicked in the browser, through the CLI and the
+// launcher's attach stream, to what the calling agent reads: stderr and the
+// exit code. How each decision maps to its code and text is covered by
+// test/meerkat/cli_test.exs; the view's handlers by the LiveView tests.
 test.describe("decision flow", () => {
-	test("Approve → meerkat exits 0", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeVisible();
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(0);
-			// Approval without comments prints a plain user-attributed sentence.
-			expect(stderr).toContain("The user approved your commit");
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("Approve renders the post-decision 'Approved' view (window.close fallback)", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-
-			// The done view shows the user-facing confirmation.
-			// window.close() also fires from the same effect 500ms
-			// later — Chromium blocks it for tabs not opened via
-			// window.open(), so this assertion proves the
-			// "you can close this tab" fallback path renders (not
-			// the auto-close itself).
-			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("staged-diff with no file changes auto-approves and exits 0 immediately", async () => {
-		// This is the "empty diff stalls" bug that historically triggered
-		// the rewrite — Rust's behaviour is short-circuit auto-approve
-		// BEFORE binding the review server, so meerkat never prints a
-		// URL and never blocks. The default startMeerkat() helper waits
-		// on a URL that never arrives, so we spawn meerkat directly here
-		// (and hard-cap the exit wait to surface a regression as a
-		// failed test rather than a 30s suite-timeout hang).
-		const fixture = makeFixture({ files: {} });
-		try {
-			const proc = spawn(
-				process.env.MEERKAT_BIN ?? "meerkat",
-				["--commit-msg", fixture.commitMsgPath, "--no-open", "--port", "0"],
-				{ cwd: fixture.dir, stdio: ["ignore", "pipe", "pipe"] },
-			);
-
-			let stderrBuf = "";
-			proc.stderr?.on("data", (c: Buffer) => {
-				stderrBuf += c.toString("utf8");
-			});
-
-			const exitCode = await new Promise<number | null>((resolve, reject) => {
-				const timer = setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGTERM");
-					reject(new Error(`auto-approve did not finish within 5s\nstderr:\n${stderrBuf}`));
-				}, 5_000);
-				proc.once("exit", (code) => {
-					clearTimeout(timer);
-					resolve(code);
-				});
-			});
-
-			expect(exitCode).toBe(0);
-			expect(stderrBuf).toContain("no staged file changes — auto-approving");
-			// No URL was ever printed — meerkat short-circuits before binding.
-			expect(stderrBuf).not.toMatch(/Paused for human review at http/);
-		} finally {
-			fixture.cleanup();
-		}
-	});
-
-	test("pending answers on a clean staged tree reopen the review instead of auto-approving", async ({
-		page,
-	}) => {
-		// The reviewer approved the last commit but also left a
-		// **question:** comment. The agent writes pending-answers.json,
-		// then runs `meerkat` (no args) AFTER the commit consumed the
-		// staged diff — the normal state for a question left on the last
-		// commit of a branch. That must reopen the review with the
-		// answers pinned (over an empty diff), NOT auto-approve and
-		// delete the file, silently discarding the answers.
-		const fixture = makeFixture({ files: {} });
-		const pendingPath = join(
-			fixture.dir,
-			".git",
-			"meerkat-precommit",
-			"pending-answers.json",
-		);
-		mkdirSync(join(pendingPath, ".."), { recursive: true });
-		writeFileSync(
-			pendingPath,
-			JSON.stringify({
-				version: 1,
-				createdAt: "2026-05-14T00:00:00Z",
-				answers: [
-					{
-						location: "src/main.rs:1",
-						question: "why did you do that?",
-						answer: "because it is correct",
-					},
-				],
-			}),
-		);
-
-		const meerkat = await startMeerkat({ fixture, args: [] });
-		try {
-			await page.goto(meerkat.url);
-
-			// A live review came up (no auto-approve): the answers are
-			// pinned above the empty diff.
-			await expect(
-				page.getByRole("heading", { name: /Pending answers \(1\)/ }),
-			).toBeVisible();
-			await expect(page.getByText("why did you do that?")).toBeVisible();
-			await expect(page.getByText("because it is correct")).toBeVisible();
-
-			// The reviewer sees the answers and approves. Approval with no
-			// comments is a plain approve (exit 0).
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(0);
-			expect(stderr).toContain("The user approved your commit");
-			// A terminal decision clears the pending-answers file — the
-			// answers reached the reviewer, so the file must not linger
-			// and re-pin on the next review.
-			expect(existsSync(pendingPath)).toBe(false);
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("Send Feedback with a global comment → exits 1, stderr contains the comment body", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			// Scope to the form root — both the form and the page have a
-			// "Cancel" button.
-			const form = page.locator(".comment-form");
-			await expect(form).toBeVisible();
-			await form.locator("textarea").fill("please rename this variable to something clearer");
-			await form.getByRole("button", { name: /^Issue$/ }).click();
-			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
-
-			// Form closes once the comment lands.
-			await expect(form).toBeHidden();
-
-			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(1);
-			expect(stderr).toContain("please rename this variable to something clearer");
-			// The outcome is stated in the output, not left to the exit code.
-			expect(stderr).toContain("User requested changes");
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("Approve with a global comment → exits 0, stderr contains the comment body", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			await expect(form).toBeVisible();
-			await form.locator("textarea").fill("consider extracting this into a helper");
-			await form.getByRole("button", { name: /^Issue$/ }).click();
-			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
-			await expect(form).toBeHidden();
-
-			// With a comment present, Approve becomes "Approve with feedback":
-			// the commit still proceeds (exit 0) AND the feedback reaches the
-			// calling agent — the fourth terminal decision the exit-code
-			// mapping covers.
-			await page.getByRole("button", { name: /^Approve with feedback$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(0);
-			expect(stderr).toContain("consider extracting this into a helper");
-			// The outcome is stated in the output, not left to the exit code.
-			expect(stderr).toContain("User approved your commit");
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("staged-diff with only linguist-generated files auto-approves", async () => {
-		// `*.lock linguist-generated=true` in a committed `.gitattributes`
-		// marks the staged lockfile as generated. The fast path treats
-		// generated files as approved-for-short-circuit, so a
-		// lockfile-only commit skips the UI entirely — no URL is ever
-		// printed.
-		const fixture = makeFixture({ files: {} });
-		try {
-			fixture.git("config", "user.email", "t@t.t");
-			fixture.git("config", "user.name", "t");
-			// Commit `.gitattributes` first — it must be in HEAD, not just
-			// staged, so it's not part of the staged-diff under review.
-			require("node:fs").writeFileSync(
-				`${fixture.dir}/.gitattributes`,
-				"*.lock linguist-generated=true\n",
-			);
-			fixture.git("add", ".gitattributes");
-			fixture.git("commit", "-q", "-m", "seed attrs");
-			require("node:fs").writeFileSync(`${fixture.dir}/bun.lock`, "fresh lockfile\n");
-			fixture.git("add", "bun.lock");
-
-			const proc = spawn(
-				process.env.MEERKAT_BIN ?? "meerkat",
-				["--commit-msg", fixture.commitMsgPath, "--no-open", "--port", "0"],
-				{ cwd: fixture.dir, stdio: ["ignore", "pipe", "pipe"] },
-			);
-
-			let stderrBuf = "";
-			proc.stderr?.on("data", (c: Buffer) => {
-				stderrBuf += c.toString("utf8");
-			});
-
-			const exitCode = await new Promise<number | null>((resolve, reject) => {
-				const timer = setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGTERM");
-					reject(new Error(`generated-only auto-approve did not finish within 10s\nstderr:\n${stderrBuf}`));
-				}, 10_000);
-				proc.once("exit", (code) => {
-					clearTimeout(timer);
-					resolve(code);
-				});
-			});
-
-			expect(exitCode).toBe(0);
-			expect(stderrBuf).toMatch(/linguist-generated.*auto-approving/);
-			expect(stderrBuf).not.toMatch(/Paused for human review at http/);
-		} finally {
-			fixture.cleanup();
-		}
-	});
-
-	test("Cancel wipes comments, prints a cancelled sentence, exits 1", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			await form.locator("textarea").fill("this should be wiped on cancel");
-			await form.getByRole("button", { name: /^Issue$/ }).click();
-			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
-			await expect(form).toBeHidden();
-
-			// Cancel wipes comments and submits a silent reject.
-			// Multiple "Cancel" buttons would exist if the form were open;
-			// closed form leaves only the page-level Cancel.
-			await page.getByRole("button", { name: /^Cancel$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(1);
-			// The comment was wiped before submission, so stderr does not
-			// echo it — but cancel is no longer silent: it prints a plain
-			// sentence so the agent can tell a deliberate cancel from a crash.
-			expect(stderr).not.toContain("this should be wiped on cancel");
-			expect(stderr).toContain("Review cancelled");
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("feedback is bracketed with a count+path banner and saved to a per-review file", async ({
+	test("Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs", async ({
 		page,
 	}) => {
 		// The agent commonly head/tail's the feedback stream and sees only
 		// a few comments. The banner (top and bottom, so either truncation
 		// end survives) reports the true count and a path to the full copy
-		// so the agent can recover everything it missed.
+		// so the agent can recover everything it missed. keepFixture so the
+		// log and feedback files survive meerkat's exit for inspection.
 		const meerkat = await startMeerkat({ keepFixture: true });
+		const logPath = join(meerkat.fixture.dir, ".git", "meerkat-precommit", "meerkat.log");
 		try {
 			await page.goto(meerkat.url);
+			await expect(page).toHaveTitle("meerkat commit review");
 
 			// First global comment uses "+ Add global comment"; once one
 			// exists the control becomes "+ Add another".
 			const addButtons = [/^\+ Add global comment$/, /^\+ Add another$/];
 			for (const [i, body] of ["first finding here", "second finding here"].entries()) {
 				await page.getByRole("button", { name: addButtons[i] }).click();
+				// Scope to the form root — both the form and the page have a
+				// "Cancel" button.
 				const form = page.locator(".comment-form");
 				await expect(form).toBeVisible();
 				await form.locator("textarea").fill(body);
 				await form.getByRole("button", { name: /^Issue$/ }).click();
 				await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
+				// Form closes once the comment lands.
 				await expect(form).toBeHidden();
 			}
 
@@ -317,11 +43,13 @@ test.describe("decision flow", () => {
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(1);
 
-			// Banner states the verdict and the true count, bracketed top and
-			// bottom so it survives at either truncation end.
-			expect(stderr).toContain("User requested changes");
+			// The outcome is stated in the output, not left to the exit code:
+			// the banner states the verdict and the true count, bracketed top
+			// and bottom so it survives at either truncation end.
 			expect(stderr).toContain("2 comments");
 			expect(stderr.match(/User requested changes/g)?.length).toBe(2);
+			expect(stderr).toContain("first finding here");
+			expect(stderr).toContain("second finding here");
 
 			// The recovery file lives at the exact path the banner prints — a
 			// per-review name under reviews/, not a clobberable fixed name.
@@ -333,28 +61,9 @@ test.describe("decision flow", () => {
 			const saved = readFileSync(feedbackPath, "utf8");
 			expect(saved).toContain("first finding here");
 			expect(saved).toContain("second finding here");
-		} finally {
-			await meerkat.kill();
-			meerkat.fixture.cleanup?.();
-		}
-	});
 
-	test("server logs are redirected to meerkat.log, not the agent-facing stream", async ({
-		page,
-	}) => {
-		// keepFixture so the logfile survives meerkat's exit for
-		// inspection; we tear the fixture down by hand in the finally.
-		const meerkat = await startMeerkat({ keepFixture: true });
-		const logPath = join(meerkat.fixture.dir, ".git", "meerkat-precommit", "meerkat.log");
-		try {
-			await page.goto(meerkat.url);
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(0);
-
-			// The Phoenix/Bandit endpoint banner is the canonical noise
-			// line. It must NOT reach the agent-facing stream...
+			// The Phoenix/Bandit endpoint banner is the canonical noise line.
+			// It must NOT reach the agent-facing stream...
 			expect(stderr).not.toContain("MeerkatWeb.Endpoint");
 			expect(stderr).not.toContain("[info]");
 			// ...it was redirected to the logfile instead.

@@ -111,10 +111,6 @@ defmodule MeerkatWeb.ReviewLive do
        # `rendered_html` (content is static for the review session).
        rendered_files: MapSet.new(),
        rendered_html: %{},
-       # Cached at mount — drives the inline `.puml` preview's
-       # available state. Component shows the diff preview when
-       # true, an "install plantuml" hint when false.
-       plantuml_available: Meerkat.PlantUML.available?(),
        done: done,
        # Transient error banner. Set by handlers that failed in a way
        # the user needs to see (gh api failure, stale-OID rejected
@@ -949,12 +945,15 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def render(assigns) do
-    # Backfill assigns added since this socket mounted — needed for
-    # the DevWatcher hot-reload path where a previously-mounted LV
-    # keeps its socket but new code expects new assigns.
     assigns =
       assigns
-      |> assign_new(:plantuml_available, fn -> Meerkat.PlantUML.available?() end)
+      # Drives the inline PlantUML preview: the diff preview when true, an
+      # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
+      # file reads it, so a review without one skips the probe's JVM start.
+      |> assign(:plantuml_available, plantuml_available?(assigns.state.files))
+      # Backfill assigns added since this socket mounted — needed for
+      # the DevWatcher hot-reload path where a previously-mounted LV
+      # keeps its socket but new code expects new assigns.
       |> assign_new(:version, fn -> Meerkat.Version.info() end)
       |> assign_new(:timeout_action, fn -> Meerkat.Timeout.action() end)
       |> assign_new(:expanded_approved, fn -> MapSet.new() end)
@@ -1593,6 +1592,12 @@ defmodule MeerkatWeb.ReviewLive do
     not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
   end
 
+  # The extensions DiffViewer.svelte's `isPlantUml` previews.
+  defp plantuml_available?(files) do
+    Enum.any?(files, &(String.downcase(Path.extname(&1.file_name)) in [".puml", ".plantuml"])) and
+      Meerkat.PlantUML.available?()
+  end
+
   attr :state, ReviewState, required: true
   attr :filter_input, :string, required: true
   attr :only_file_index, :any, required: true
@@ -1648,7 +1653,7 @@ defmodule MeerkatWeb.ReviewLive do
         </button>
       </header>
 
-      <form phx-change="filter.set_input">
+      <form id="file-filter-form" phx-change="filter.set_input">
         <input
           type="text"
           name="value"

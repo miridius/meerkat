@@ -146,15 +146,12 @@ See `CLAUDE.md` for the development workflow.
 ## Quality gates
 
 ```bash
-mix test                             # ExUnit (unit + LiveView)
-bun run test:e2e                     # Playwright suite — drives a real meerkat binary
+bun run test                         # mix test, assets bun tests, e2e/lib bun tests, then Playwright
 mix format --check-formatted         # Elixir formatting
 mix compile --warnings-as-errors     # strict compile
 ```
 
-The Playwright suite in `tests/e2e/` is the behavioural-parity gate —
-30 specs covering the full review UI lifecycle, plus 2 multi-tab
-consistency tests that prove the BEAM port's central state model.
+ExUnit (including LiveViewTest) and the assets bun tests cover behaviour they can reach. The Playwright suite in `tests/e2e/` drives a real meerkat binary and covers only seams those tests cannot reach: browser Svelte/JS to LiveView, CLI to BEAM exit code and stdout, and process lifecycle.
 
 ## License
 

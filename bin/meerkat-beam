@@ -68,6 +68,14 @@ build_assets_if_stale() {
   fi
 }
 
+# The e2e suite's global setup builds once through the same guards
+# before its parallel workers each boot this launcher.
+if [[ -n "${MEERKAT_BUILD_ONLY:-}" ]]; then
+  precompile_if_stale
+  build_assets_if_stale
+  exit 0
+fi
+
 CLI_EVAL='File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))'
 
 # `--answers` reads the answers from stdin, and the loop below starts

@@ -1,14 +1,14 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
-import { elapsedSeconds, reapOrphanedBackends } from "./lib/runner.js";
+import { describe, expect, test } from "bun:test";
+import { elapsedSeconds, reapOrphanedBackends } from "./runner.js";
 
-async function exitedPid(): Promise<number> {
-	const proc = spawn("true");
-	await new Promise((resolve) => proc.once("exit", resolve));
-	return proc.pid as number;
+// spawnSync rather than awaiting spawn's "exit": under load bun sometimes
+// sets exitCode on a child without ever emitting "exit".
+function exitedPid(): number {
+	return spawnSync("true").pid;
 }
 
 function backend(runsDir: string): number {
@@ -29,13 +29,12 @@ function alive(pid: number): boolean {
 	}
 }
 
-test.describe("orphaned backend reaper", () => {
-	// Each reap scans the whole temp dir, so one test's reap must not run while
-	// another is still arranging its runs dirs.
-	test.describe.configure({ mode: "serial" });
-
+// bun runs a file's tests one at a time, which the reaper tests need: each
+// reap scans the whole temp dir, so one test's reap must not run while
+// another is still arranging its runs dirs.
+describe("orphaned backend reaper", () => {
 	test("stops backends whose owning test process has exited and keeps those of a live one", async () => {
-		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${await exitedPid()}-`));
+		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`));
 		const owned = mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
 		const orphan = backend(orphaned);
 		const kept = backend(owned);
@@ -58,7 +57,7 @@ test.describe("orphaned backend reaper", () => {
 	});
 
 	test("leaves alone a process that took over a dead backend's pid", async () => {
-		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${await exitedPid()}-`));
+		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`));
 		const bystander = backend(orphaned);
 		// The pid file predates the process now holding its pid, as when the
 		// backend exited long ago and the OS reused its pid.
@@ -96,7 +95,7 @@ test.describe("orphaned backend reaper", () => {
 	});
 });
 
-test.describe("ps elapsed-time parsing", () => {
+describe("ps elapsed-time parsing", () => {
 	for (const [etime, seconds] of [
 		["00:07", 7],
 		["12:34", 12 * 60 + 34],

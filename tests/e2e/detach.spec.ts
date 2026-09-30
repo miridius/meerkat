@@ -30,24 +30,50 @@ function alive(pid: number): boolean {
 }
 
 test.describe("a review outlives the process that invoked it", () => {
-	test("comments typed after the caller is killed reach the backend, and a rerun receives the decision", async ({
+	// The backend leaves the caller's process group and session with setsid,
+	// which keeps every signal to the group from reaching it, so one signal
+	// stands for SIGINT, SIGTERM and SIGHUP alike.
+	test("a SIGTERM to the caller's whole process group stops the countdown and leaves the review, with comments typed meanwhile, for a rerun", async ({
 		page,
 	}) => {
 		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
+		const first = await startMeerkat({ fixture, keepFixture: true, ownGroup: true });
 		let second: Runner | undefined;
 		try {
 			await page.goto(first.url);
-			await first.killCaller();
-			expect(alive(backendPid(first)), "the backend survives its caller's SIGKILL").toBe(true);
+			const countdown = page.locator(".review-countdown");
+			await expect(countdown).toBeVisible();
+
+			const backend = backendPid(first);
+			first.signalGroup("SIGTERM");
+			await first.awaitExit();
+			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(
+				0,
+				{ timeout: 3_000 },
+			);
+			expect(alive(backend), "the backend survives the signal to its caller's group").toBe(true);
 
 			await addGlobalComment(page, "typed after the caller died");
 
 			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
 			expect(second.url, "the rerun attaches to the same backend").toBe(first.url);
+			expect(backendPid(second), "the rerun attaches to the backend the signal missed").toBe(
+				backend,
+			);
 			await expect(page.locator(".global-comments .note")).toContainText(
 				"typed after the caller died",
 			);
+
+			// Each launcher run passes its own run id, so the rerun's deadline
+			// is anchored apart from the first run's and gets a full window.
+			const deadlines = join(fixture.dir, ".git", "meerkat-precommit", "deadlines");
+			await expect
+				.poll(() => readdirSync(deadlines).length, {
+					message: "the rerun anchored its deadline under its own directory",
+				})
+				.toBe(2);
+			const [one, two] = readdirSync(deadlines);
+			expect(one, "the two runs are keyed apart").not.toBe(two);
 
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			const { code, stderr } = await second.awaitExit();
@@ -61,47 +87,7 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
-	test("a decision clicked while no caller is attached is replayed to the next invocation", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
-		let second: Runner | undefined;
-		try {
-			await page.goto(first.url);
-			await first.killCaller();
-			await addGlobalComment(page, "held while nobody waited");
-			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
-			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
-
-			second = await startMeerkat({
-				fixture,
-				keepFixture: true,
-				runsDir: first.runsDir,
-				awaitUrl: false,
-			});
-			const { code, stderr } = await second.awaitExit();
-			expect(code).toBe(1);
-			expect(stderr, "a rerun collecting a held decision is not told to wait for a review").not.toContain(
-				"Paused for human review",
-			);
-
-			const saved = /full feedback saved to (\S+) in case truncated/.exec(stderr);
-			expect(saved, "the replayed outcome names the saved feedback file").not.toBeNull();
-			const payload = readFileSync(saved?.[1] ?? "", "utf8");
-			expect(payload).toContain("held while nobody waited");
-			expect(
-				stderr,
-				"the replay prints the outcome the decision produced, verdict banner on both sides",
-			).toContain(`${saved?.[0]} ──\n${payload}\n── `);
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a decision clicked after the process that ran meerkat is killed is held for the rerun", async ({
+	test("a decision clicked after the process that ran meerkat is killed is replayed whole to the rerun", async ({
 		page,
 	}) => {
 		const fixture = makeFixture();
@@ -124,29 +110,20 @@ test.describe("a review outlives the process that invoked it", () => {
 			});
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun receives the decision, not a fresh review").toBe(1);
-			expect(stderr).toContain("User requested changes");
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
+			expect(stderr, "a rerun collecting a held decision is not told to wait for a review").not.toContain(
+				"Paused for human review",
+			);
 
-	test("a second invocation of the same review takes it over from the first", async ({ page }) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
-		let second: Runner | undefined;
-		try {
-			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
-			const displaced = await first.awaitExit();
-			expect(displaced.code, "the first invocation aborts its commit").toBe(1);
-			expect(displaced.stderr).toContain("a later invocation of this review took it over");
-
-			await page.goto(second.url);
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-			const { code, stderr } = await second.awaitExit();
-			expect(code).toBe(0);
-			expect(stderr).toContain("The user approved your commit. Proceeding.");
+			const banner = /── (User requested changes — 1 comment — full feedback saved to (\S+) in case truncated) ──/.exec(
+				stderr,
+			);
+			expect(banner, "the replayed outcome names the saved feedback file").not.toBeNull();
+			const payload = readFileSync(banner?.[2] ?? "", "utf8");
+			expect(payload).toContain("sent after git was killed");
+			expect(
+				stderr.endsWith(`── ${banner?.[1]} ──\n${payload}\n── ${banner?.[1]} ──\n`),
+				"the replay prints the outcome the decision produced, whole and last, verdict banner on both sides",
+			).toBe(true);
 		} finally {
 			await second?.kill();
 			await first.kill();
@@ -179,68 +156,6 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-		test(`a ${signal} to the caller's whole process group leaves the review for a rerun`, async ({
-			page,
-		}) => {
-			const fixture = makeFixture();
-			const first = await startMeerkat({ fixture, keepFixture: true, ownGroup: true });
-			let second: Runner | undefined;
-			try {
-				const backend = backendPid(first);
-				first.signalGroup(signal);
-				await first.awaitExit();
-
-				second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
-				expect(backendPid(second), "the rerun attaches to the backend the signal missed").toBe(
-					backend,
-				);
-				await page.goto(second.url);
-				await page.getByRole("button", { name: /^Approve$/ }).click();
-				const { code, stderr } = await second.awaitExit();
-				expect(code).toBe(0);
-				expect(stderr).toContain("The user approved your commit. Proceeding.");
-			} finally {
-				await second?.kill();
-				await first.kill();
-				rmSync(fixture.dir, { recursive: true, force: true });
-			}
-		});
-	}
-
-	test("a Cancel clicked while no caller is attached is replayed to the next invocation", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
-		let second: Runner | undefined;
-		try {
-			await page.goto(first.url);
-			await first.killCaller();
-			await page.getByRole("button", { name: /^Cancel$/ }).click();
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeHidden();
-
-			second = await startMeerkat({
-				fixture,
-				keepFixture: true,
-				runsDir: first.runsDir,
-				awaitUrl: false,
-			});
-			const { code, stderr } = await second.awaitExit();
-			expect(code).toBe(1);
-			expect(stderr, "the replayed outcome is the cancelled sentence, last and whole").toMatch(
-				/(^|\n)Review cancelled — commit aborted, no feedback to act on\.\n$/,
-			);
-			expect(stderr, "a rerun collecting a held Cancel is not told to wait for a review").not.toContain(
-				"Paused for human review",
-			);
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
 	test("a caller whose backend dies exits 2 and rejects the commit", async () => {
 		const fixture = makeFixture();
 		const first = await startMeerkat({ fixture, keepFixture: true });
@@ -261,113 +176,6 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
-	test("a review whose caller exited does not time out before a rerun collects it", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		const env = { MEERKAT_REVIEW_TIMEOUT: "3", MEERKAT_AUTO_APPROVE_ON_TIMEOUT: "true" };
-		const first = await startMeerkat({ fixture, keepFixture: true, env });
-		let second: Runner | undefined;
-		try {
-			await page.goto(first.url);
-			await first.killCaller();
-			// The backend checks the review deadline every 15 s. With a 3 s timeout
-			// and auto-approve on, an armed deadline would approve by the first
-			// check; this wait outlasts it.
-			await page.waitForTimeout(17_000);
-			await expect(
-				page.getByRole("button", { name: /^Approve$/ }),
-				"the orphaned review is still waiting for a decision",
-			).toBeEnabled();
-
-			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir, env });
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-			const { code, stderr } = await second.awaitExit();
-			expect(code).toBe(0);
-			expect(stderr).toContain("The user approved your commit. Proceeding.");
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("the countdown stops within three seconds of the caller being killed", async ({ page }) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({
-			fixture,
-			keepFixture: true,
-			env: { MEERKAT_REVIEW_TIMEOUT: "1800" },
-		});
-		try {
-			await page.goto(first.url);
-			const countdown = page.locator(".review-countdown");
-			await expect(countdown).toBeVisible();
-
-			await first.killCaller();
-			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(
-				0,
-				{ timeout: 3_000 },
-			);
-		} finally {
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a rerun started right after the click collects the decision without the banner", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
-		let second: Runner | undefined;
-		try {
-			await page.goto(first.url);
-			await first.killCaller();
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-
-			second = await startMeerkat({
-				fixture,
-				keepFixture: true,
-				runsDir: first.runsDir,
-				awaitUrl: false,
-			});
-			const { code, stderr } = await second.awaitExit();
-			expect(code).toBe(0);
-			expect(stderr).toContain("The user approved your commit. Proceeding.");
-			expect(stderr, "a rerun collecting a decision is not told to wait for a review").not.toContain(
-				"Paused for human review",
-			);
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a rerun after the staged diff changed replaces the orphaned review", async ({ page }) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true });
-		let second: Runner | undefined;
-		try {
-			await first.killCaller();
-			const orphan = backendPid(first);
-
-			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten after the caller died\n");
-			fixture.git("add", "NOTES.md");
-
-			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
-			expect(alive(orphan), "the orphaned backend has exited").toBe(false);
-
-			await page.goto(second.url);
-			await expect(page.locator("body")).toContainText("rewritten after the caller died");
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
 	test("a rerun after the staged diff changed replaces the review its attached caller waits on", async ({
 		page,
 	}) => {
@@ -375,10 +183,12 @@ test.describe("a review outlives the process that invoked it", () => {
 		const first = await startMeerkat({ fixture, keepFixture: true });
 		let second: Runner | undefined;
 		try {
+			const replacedBackend = backendPid(first);
 			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten while the first caller waits\n");
 			fixture.git("add", "NOTES.md");
 
 			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
+			expect(alive(replacedBackend), "the replaced review's backend has exited").toBe(false);
 			const replaced = await first.awaitExit();
 			expect(replaced.code, "the first invocation aborts its commit").toBe(1);
 			expect(replaced.stderr).toContain("this review's diff or commit message changed");

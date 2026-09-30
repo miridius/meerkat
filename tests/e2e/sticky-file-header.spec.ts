@@ -69,86 +69,58 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	});
 	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
 
-	test(`the toolbar fits one row at ${ONE_ROW_WIDTH}px and wraps at ${WRAPPED_WIDTHS.join("px and ")}px`, async ({
+	test(`the review spans the window, and narrowing it from ${ONE_ROW_WIDTH}px to ${WRAPPED_WIDTHS.join("px and ")}px re-pins the header below the wrapped toolbar`, async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 		try {
+			// The BEAM port once shipped a 1400px max-width cap that wasted
+			// roughly half a 1920px screen. Allow for the side padding on
+			// `main.review`; the old cap was ~73% of the viewport.
+			await page.setViewportSize({ width: 1920, height: 800 });
 			await page.goto(meerkat.url);
-			await expect(page.getByRole("button", { name: /tall\.ex/ })).toBeVisible();
+			const main = await page.locator("main.review").evaluate((el) => ({
+				computedMaxWidth: getComputedStyle(el).maxWidth,
+				clientWidth: (el as HTMLElement).clientWidth,
+				viewportWidth: window.innerWidth,
+			}));
+			expect(main.computedMaxWidth, "main.review has no max-width cap").toBe("none");
+			expect(main.clientWidth).toBeGreaterThan(main.viewportWidth * 0.95);
 
 			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
-			expect(
-				(await probe(page)).toolbarH,
-				"the widest case under test is the unwrapped toolbar the old hardcoded offset was written for",
-			).toBe(ONE_ROW_H);
-
-			for (const width of WRAPPED_WIDTHS) {
-				await page.setViewportSize({ width, height: 800 });
-				expect(
-					(await probe(page)).toolbarH,
-					`the toolbar is taller than one row at ${width}px, which is what the other cases rest on`,
-				).toBeGreaterThan(ONE_ROW_H);
-			}
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	for (const width of [ONE_ROW_WIDTH, ...WRAPPED_WIDTHS]) {
-		test(`at ${width}px the pinned header is not covered by the toolbar`, async ({
-			page,
-		}) => {
-			const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
-			try {
-				await page.setViewportSize({ width, height: 800 });
-				await page.goto(meerkat.url);
-				await scrollDeepIntoTheFirstFile(page);
-
-				const probed = await probe(page);
-
-				expect(
-					probed.hitCheckbox,
-					`the pinned header's approve checkbox is the topmost element at its own centre, not ${probed.hitTag}`,
-				).toBe(true);
-				expect(
-					probed.headerTop,
-					"the pinned file header sits directly below the toolbar, however many rows the toolbar wrapped onto",
-				).toBe(probed.toolbarH);
-			} finally {
-				await meerkat.kill();
-			}
-		});
-	}
-
-	test("narrowing the window while the review is open re-pins the header", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
-		try {
-			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
-			await page.goto(meerkat.url);
 			await scrollDeepIntoTheFirstFile(page);
 
 			const wide = await probe(page);
-			expect(wide.headerTop).toBe(wide.toolbarH);
-
-			await page.setViewportSize({ width: 900, height: 800 });
-			await expect
-				.poll(async () => (await probe(page)).toolbarH, {
-					message: "the toolbar wrapped onto more rows as the window narrowed",
-				})
-				.toBeGreaterThan(wide.toolbarH);
-
-			const narrow = await probe(page);
 			expect(
-				narrow.headerTop,
-				"the header follows the toolbar's new height without a reload",
-			).toBe(narrow.toolbarH);
+				wide.toolbarH,
+				"the widest case under test is the unwrapped toolbar the old hardcoded offset was written for",
+			).toBe(ONE_ROW_H);
 			expect(
-				narrow.hitCheckbox,
-				`the approve checkbox is still the topmost element at its own centre, not ${narrow.hitTag}`,
+				wide.hitCheckbox,
+				`the pinned header's approve checkbox is the topmost element at its own centre, not ${wide.hitTag}`,
 			).toBe(true);
+			expect(wide.headerTop, "the pinned file header sits directly below the toolbar").toBe(
+				wide.toolbarH,
+			);
+
+			for (const width of WRAPPED_WIDTHS) {
+				await page.setViewportSize({ width, height: 800 });
+				await expect
+					.poll(async () => (await probe(page)).toolbarH, {
+						message: `the toolbar wrapped onto more rows at ${width}px`,
+					})
+					.toBeGreaterThan(ONE_ROW_H);
+
+				const narrow = await probe(page);
+				expect(
+					narrow.headerTop,
+					`at ${width}px the header follows the toolbar's new height without a reload`,
+				).toBe(narrow.toolbarH);
+				expect(
+					narrow.hitCheckbox,
+					`at ${width}px the approve checkbox is still the topmost element at its own centre, not ${narrow.hitTag}`,
+				).toBe(true);
+			}
 		} finally {
 			await meerkat.kill();
 		}

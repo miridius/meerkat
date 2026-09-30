@@ -28,7 +28,7 @@ function chipValue(page: import("@playwright/test").Page) {
 }
 
 test.describe("branch chip", () => {
-	test("a branch name too long for the chip is clipped, and hovering it shows the whole name", async ({
+	test("a branch name too long for the chip is clipped with the whole name on hover, and one that fits is shown whole", async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: branchFixture(LONG_BRANCH) });
@@ -51,25 +51,18 @@ test.describe("branch chip", () => {
 				chip.toolbarH,
 				"the capped chip leaves the toolbar on one row at 1500px",
 			).toBe(41);
-		} finally {
-			await meerkat.kill();
-		}
-	});
 
-	test("a branch name that fits is shown whole", async ({ page }) => {
-		const meerkat = await startMeerkat({ fixture: branchFixture(SHORT_BRANCH) });
-		try {
-			await page.setViewportSize({ width: 1500, height: 800 });
-			await page.goto(meerkat.url);
-			await expect(page.locator(".branch-chip")).toBeVisible();
-
-			const chip = await chipValue(page);
-
+			// The chip's text is the branch name, which the LiveView tests
+			// cover; only its fit is a browser question, so the short name is
+			// put in the same chip rather than a second review.
+			await page.evaluate((name) => {
+				(document.querySelector(".branch-chip .chip-value") as HTMLElement).textContent = name;
+			}, SHORT_BRANCH);
+			const short = await chipValue(page);
 			expect(
-				chip.clipped,
+				short.clipped,
 				"the cap is wide enough to leave an ordinary branch name intact",
 			).toBe(false);
-			expect(chip.text, "the chip carries the branch name").toBe(SHORT_BRANCH);
 		} finally {
 			await meerkat.kill();
 		}

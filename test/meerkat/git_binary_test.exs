@@ -82,6 +82,45 @@ defmodule Meerkat.GitBinaryTest do
     assert renamed.old_file_name == old
   end
 
+  test "mixed text and binary additions, deletions, renames and generated files", %{dir: dir} do
+    stage(
+      dir,
+      ".gitattributes",
+      "*.bin -diff\n*.md -diff\ngenerated.bin linguist-generated=true\n"
+    )
+
+    stage(dir, "gone.bin", "old deleted content\n")
+    stage(dir, "old.bin", "renamed content\n")
+    stage(dir, "query.clj", "(old-query)\n")
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["rm", "-q", "gone.bin"])
+    git(dir, ["mv", "old.bin", "new.bin"])
+    stage(dir, "query.clj", "(new-query)\n")
+    stage(dir, "added.md", "# Binary by attributes\n")
+    stage(dir, "generated.bin", "generated binary content\n")
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:ok, files} = Git.staged_file_diffs(dir)
+        by_name = Map.new(files, &{&1.file_name, &1})
+
+        assert Enum.sort(Map.keys(by_name)) ==
+                 ~w(added.md generated.bin gone.bin new.bin query.clj)
+
+        assert_binary(by_name["gone.bin"], :deleted)
+        assert_binary(by_name["new.bin"], :renamed)
+        assert by_name["new.bin"].old_file_name == "old.bin"
+        assert_binary(by_name["added.md"], :added)
+        assert_binary(by_name["generated.bin"], :added)
+        assert by_name["generated.bin"].is_generated
+        refute by_name["new.bin"].is_generated
+        refute by_name["query.clj"].is_binary
+        assert Enum.join(by_name["query.clj"].hunks) =~ "+(new-query)"
+      end)
+
+    refute stderr =~ "couldn't parse staged-diff block"
+  end
+
   test "numstat failure keeps every file listed with the reason", %{dir: dir} do
     stage(dir, "BUILD.bazel", <<0, 255>>)
     intercept_git(dir, "--numstat", "echo numstat-failed >&2; exit 1")

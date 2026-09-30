@@ -6,8 +6,6 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
   # and the singleton `Meerkat.Decision`.
   use MeerkatWeb.ConnCase, async: false
 
-  alias MeerkatWeb.ReviewLive
-
   import Phoenix.LiveViewTest
 
   alias Meerkat.{Decision, ReviewState}
@@ -53,12 +51,46 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
     assert html =~ ~s(<div class="md-del">)
     refute has_element?(view, "#DiffViewer-0")
 
+    panes = html |> LazyHTML.from_fragment() |> LazyHTML.query(".md-side")
+    assert Enum.count(panes) == 2
+    assert has_element?(view, ".md-side:first-child h1", "Title")
+    assert has_element?(view, ".md-side:last-child h1", "Title")
+
     view
     |> element("button.md-view-toggle[phx-value-file_name='README.md']")
     |> render_click()
 
     assert has_element?(view, "#DiffViewer-0")
     refute has_element?(view, ".md-preview")
+  end
+
+  test "the rendered view counts the line comments it hides", %{conn: conn} do
+    comment = fn id, line ->
+      %{
+        id: id,
+        file_index: 0,
+        start_line: line,
+        end_line: line,
+        side: "new",
+        body: "a line comment",
+        finding_type: :issue,
+        learn_from_this: false,
+        created_at: Meerkat.Comment.now()
+      }
+    end
+
+    for {comments, badge} <- [
+          {[comment.("c1", 1)], "1 comment — switch to Diff"},
+          {[comment.("c1", 1), comment.("c2", 3)], "2 comments — switch to Diff"}
+        ] do
+      state = %ReviewState{files: [@md_file], comments: comments}
+      Application.put_env(:meerkat, :review_state, state)
+      {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+      refute has_element?(view, ".md-comments-hidden")
+
+      view |> element("button.md-view-toggle") |> render_click()
+      assert has_element?(view, "#file-0 .md-comments-hidden", ~r/^\s*#{badge}\s*$/)
+    end
   end
 
   test "non-markdown files have no rendered toggle", %{conn: conn} do

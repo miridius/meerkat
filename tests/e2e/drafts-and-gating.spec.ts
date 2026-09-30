@@ -4,107 +4,50 @@ import { startMeerkat } from "./lib/runner";
 // Drafts use localStorage scoped to the review URL's origin (the
 // random port). Reload (within the same meerkat invocation) re-reads
 // the draft. A fresh meerkat invocation gets a different port and a
-// fresh review_id, so drafts do NOT persist across invocations — the
-// test exercises the same-invocation reload path only.
-test.describe("draft persistence", () => {
-	test("typed text in a global comment form survives a page reload", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			// Open the global comment form, type, but do NOT submit.
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			await form.locator("textarea").fill("draft body that should persist");
-
-			await page.reload();
-
-			// `open_forms` is persisted server-side, so the form is
-			// already open after reload — no re-click needed. The body
-			// is restored from localStorage via `loadFormDraft(draftKey)`
-			// in CommentForm.svelte's onMount.
-			const restoredForm = page.locator(".comment-form");
-			await expect(restoredForm).toBeVisible();
-			await expect(restoredForm.locator("textarea")).toHaveValue("draft body that should persist");
-		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("submitting clears the draft for that key", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			await form.locator("textarea").fill("submit then reload");
-			await form.getByRole("button", { name: /^Issue$/ }).click();
-			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
-			await expect(form).toBeHidden();
-
-			// After submit, reload — the form should NOT auto-open with
-			// the submitted text.
-			await page.reload();
-			await expect(page.locator(".comment-form")).toBeHidden();
-		} finally {
-			await meerkat.kill();
-		}
-	});
-});
-
-test.describe("dirty-form gating", () => {
-	test("Approve and Send Feedback are disabled while a comment form has unsaved text", async ({
+// fresh review_id, so drafts do NOT persist across invocations; the
+// test exercises the same-invocation reload path only. How the view
+// gates the decision buttons on a dirty form, and relabels Approve, is
+// covered by the LiveView tests.
+test.describe("comment drafts", () => {
+	test("typed text gates the decision, survives a reload, and is cleared by submitting", async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat();
 		try {
 			await page.goto(meerkat.url);
+			const approve = page.getByRole("button", { name: /^Approve$/ });
+			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
+			await expect(approve).toBeEnabled();
 
-			// Both buttons start enabled (Approve enabled, Send Feedback
-			// only enabled with feedback — disabled with no comments).
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeEnabled();
-			await expect(page.getByRole("button", { name: /^Send Feedback$/ })).toBeDisabled(); // no feedback yet
-
-			// Open a global form, type something — this flips dirtyFormCount.
+			// Open the global comment form, type, but do NOT submit.
 			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
 			const form = page.locator(".comment-form");
-			await form.locator("textarea").fill("unsaved draft");
+			await form.locator("textarea").fill("draft body that should persist");
+			await expect(approve, "unsaved text disables Approve").toBeDisabled();
+			await expect(sendFeedback, "unsaved text disables Send Feedback").toBeDisabled();
 
-			// Both decision buttons are now disabled with a tooltip
-			// telling the user to add or discard the open comment.
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeDisabled();
-			await expect(page.getByRole("button", { name: /^Send Feedback$/ })).toBeDisabled();
+			await page.reload();
 
-			// Discard via Cancel → buttons re-enable.
+			// `open_forms` is persisted server-side, so the form is already
+			// open after reload. The body is restored from localStorage via
+			// `loadFormDraft(draftKey)` in CommentForm.svelte's onMount.
+			await expect(form).toBeVisible();
+			await expect(form.locator("textarea")).toHaveValue("draft body that should persist");
+
 			await form.getByRole("button", { name: /^Cancel$/ }).click();
 			await expect(form).toBeHidden();
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeEnabled();
-		} finally {
-			await meerkat.kill();
-		}
-	});
+			await expect(approve, "discarding the form re-enables Approve").toBeEnabled();
 
-	test("Approve label flips to 'Approve with feedback' once a comment exists", async ({ page }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-
-			// Bare Approve button to start.
-			await expect(page.getByRole("button", { name: /^Approve$/ })).toBeVisible();
-
-			// Add a global comment.
 			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			await form.locator("textarea").fill("just a follow-up");
-			await form.getByRole("button", { name: /^Follow-up$/ }).click();
+			await form.locator("textarea").fill("submit then reload");
+			await form.getByRole("button", { name: /^Issue$/ }).click();
 			await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
 			await expect(form).toBeHidden();
 
-			// Label flipped.
-			await expect(page.getByRole("button", { name: /^Approve with feedback$/ })).toBeVisible();
-			// And Send Feedback is enabled now.
-			await expect(page.getByRole("button", { name: /^Send Feedback$/ })).toBeEnabled();
+			await page.reload();
+			await expect(form, "a submitted form does not reopen on reload").toBeHidden();
+			await page.getByRole("button", { name: /^\+ Add another$/ }).click();
+			await expect(form.locator("textarea"), "submitting cleared the draft").toHaveValue("");
 		} finally {
 			await meerkat.kill();
 		}
