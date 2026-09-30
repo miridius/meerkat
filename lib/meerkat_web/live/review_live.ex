@@ -623,8 +623,14 @@ defmodule MeerkatWeb.ReviewLive do
         # wins over hidden_extensions / show_generated / any other
         # default filter; pre-existing extension filter stays in
         # place for OTHER files of the same type.
+        # A :show override does not bypass only_file_index ("show only"),
+        # so a different file shown alone would keep this file hidden.
+        # Clear that filter only when it points to another file; keep it
+        # when it is nil or already points to this file.
         if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, file_name, :show)
-        {:noreply, socket}
+
+        {:noreply,
+         assign(socket, only_file_index: if(only_file_index in [nil, idx], do: only_file_index))}
     end
   end
 
@@ -2338,10 +2344,9 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # Directory prefix with a trailing slash, or "" for files in the
-  # repo root. Sidebar renders this in muted grey before the bold
-  # base name so deep paths show their tree context without
-  # consuming a row each.
+  # Directory prefix with a trailing slash, or "" for files in the repo root.
+  # The file filter panel renders it dimmed before the medium-weight (500)
+  # base name.
   defp file_path_dir(file_name) do
     case Path.dirname(file_name) do
       "." -> ""

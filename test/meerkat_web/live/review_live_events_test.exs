@@ -1350,6 +1350,33 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert ReviewServer.get_state(rid).file_overrides == %{"src/widget.rs" => :show}
   end
 
+  test "filter.toggle_file shows a file that show-only hides", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_hook(view, "filter.show_only", %{"file_index" => "1"})
+    refute has_element?(view, ".file-list .file-name", "src/widget.rs")
+
+    render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
+    assert has_element?(view, ".file-list .file-name", "src/widget.rs")
+    assert has_element?(view, ".file-list .file-name", "other.ex")
+  end
+
+  test "filter.toggle_file re-showing the show-only file keeps show-only", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_hook(view, "filter.show_only", %{"file_index" => "0"})
+    render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
+    refute has_element?(view, ".file-list .file-name", "src/widget.rs")
+
+    render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
+    assert has_element?(view, ".file-list .file-name", "src/widget.rs")
+    refute has_element?(view, ".file-list .file-name", "other.ex")
+  end
+
   test "filter.toggle_file ignores unknown file names", %{conn: conn} do
     repo = tmp_git_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
