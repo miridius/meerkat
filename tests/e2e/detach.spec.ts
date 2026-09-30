@@ -55,6 +55,12 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			await addGlobalComment(page, "typed after the caller died");
 
+			const deadlines = join(fixture.dir, ".git", "meerkat-precommit", "deadlines");
+			await expect
+				.poll(() => readdirSync(deadlines).length, { message: "the first run anchored its deadline" })
+				.toBe(1);
+			const [firstRun] = readdirSync(deadlines);
+
 			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
 			expect(second.url, "the rerun attaches to the same backend").toBe(first.url);
 			expect(backendPid(second), "the rerun attaches to the backend the signal missed").toBe(
@@ -66,20 +72,24 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			// Each launcher run passes its own run id, so the rerun's deadline
 			// is anchored apart from the first run's and gets a full window.
-			const deadlines = join(fixture.dir, ".git", "meerkat-precommit", "deadlines");
 			await expect
 				.poll(() => readdirSync(deadlines).length, {
 					message: "the rerun anchored its deadline under its own directory",
 				})
 				.toBe(2);
-			const [one, two] = readdirSync(deadlines);
-			expect(one, "the two runs are keyed apart").not.toBe(two);
+			const secondRun = readdirSync(deadlines).find((run) => run !== firstRun);
+			expect(secondRun, "the two runs are keyed apart").toBeDefined();
 
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun exits with the decision's code").toBe(1);
 			expect(stderr).toContain("User requested changes");
 			expect(stderr).toContain("typed after the caller died");
+			await expect
+				.poll(() => readdirSync(deadlines), {
+					message: "the decided review's deadline is cleared from the run that received it",
+				})
+				.not.toContain(secondRun);
 		} finally {
 			await second?.kill();
 			await first.kill();

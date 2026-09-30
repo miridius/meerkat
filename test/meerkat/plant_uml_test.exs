@@ -101,4 +101,34 @@ defmodule Meerkat.PlantUMLTest do
       refute reason =~ "<svg"
     end
   end
+
+  describe "render/1's tmp files" do
+    setup %{stub_dir: stub_dir} do
+      tmp = Path.join(stub_dir, "tmp")
+      File.mkdir_p!(tmp)
+      prev_tmpdir = System.get_env("TMPDIR")
+      on_exit(fn -> restore_env("TMPDIR", prev_tmpdir) end)
+      System.put_env("TMPDIR", tmp)
+      %{tmp: tmp}
+    end
+
+    test "are removed after a successful render and after a failed one", %{tmp: tmp} do
+      assert {:ok, _} = PlantUML.render("@startuml\nAlice -> Bob\n@enduml\n")
+      assert {:error, _} = PlantUML.render("@startuml\nthis is not valid\n@enduml\n")
+      assert File.ls!(tmp) == []
+    end
+
+    # A plantuml that exits 0 but whose SVG is gone by the time it is read.
+    test "an SVG that cannot be read is an error, not a crash", %{stub_dir: dir, tmp: tmp} do
+      path = Path.join(dir, "plantuml")
+      File.write!(path, "#!/bin/sh\nrm -f '#{tmp}'/meerkat-puml-*.svg\nexit 0\n")
+      File.chmod!(path, 0o755)
+
+      assert {:error, reason} = PlantUML.render("@startuml\nAlice -> Bob\n@enduml\n")
+      assert reason =~ ~r/^reading .*\.svg failed: no such file or directory$/
+    end
+  end
+
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, value), do: System.put_env(name, value)
 end

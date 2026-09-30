@@ -2,8 +2,9 @@ defmodule Meerkat.PlantUML do
   @moduledoc """
   Render `.puml` diagram source to SVG via the locally-installed
   `plantuml` CLI. SANDBOX security profile blocks `!include` of
-  arbitrary files / URLs; 30s timeout; source piped on stdin, SVG on
-  stdout. plantuml's stderr is captured so syntax errors propagate
+  arbitrary files / URLs; 30s timeout; source redirected onto stdin
+  from a tmp file, SVG written from stdout to another tmp file and
+  read back. plantuml's stderr is captured so syntax errors propagate
   back to the LV (the user sees the actual diagnosis, not just "exit
   code 1").
 
@@ -71,35 +72,23 @@ defmodule Meerkat.PlantUML do
     if is_nil(plantuml) do
       {:error, "plantuml binary not found on PATH"}
     else
-      base = Path.join(System.tmp_dir!(), "meerkat-puml-#{System.unique_integer([:positive])}")
+      # System.unique_integer/1 is unique only within this BEAM, and
+      # every meerkat process shares the tmp dir, so the OS pid keeps
+      # concurrent meerkats off each other's files.
+      base =
+        Path.join(
+          System.tmp_dir!(),
+          "meerkat-puml-#{System.pid()}-#{System.unique_integer([:positive])}"
+        )
+
       src_path = base <> ".puml"
       svg_path = base <> ".svg"
 
       try do
-        File.write!(src_path, source)
-
-        port =
-          Port.open(
-            {:spawn_executable, "/bin/sh"},
-            [
-              :binary,
-              :exit_status,
-              :stderr_to_stdout,
-              :use_stdio,
-              args: [
-                "-c",
-                ~s(exec "$0" -tsvg -pipe -nbthread 1 < "$1" 2>&1 > "$2"),
-                plantuml,
-                src_path,
-                svg_path
-              ],
-              env: [{~c"PLANTUML_SECURITY_PROFILE", ~c"SANDBOX"}]
-            ]
-          )
-
-        case collect(port, [], @timeout_ms) do
-          {:ok, _diagnostics} -> {:ok, File.read!(svg_path)}
-          error -> error
+        with :ok <- file_result(File.write(src_path, source), "writing", src_path),
+             {:ok, _diagnostics} <-
+               collect(open_port(plantuml, src_path, svg_path), [], @timeout_ms) do
+          file_result(File.read(svg_path), "reading", svg_path)
         end
       after
         File.rm(src_path)
@@ -107,6 +96,31 @@ defmodule Meerkat.PlantUML do
       end
     end
   end
+
+  defp open_port(plantuml, src_path, svg_path) do
+    Port.open(
+      {:spawn_executable, "/bin/sh"},
+      [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        :use_stdio,
+        args: [
+          "-c",
+          ~s(exec "$0" -tsvg -pipe -nbthread 1 < "$1" 2>&1 > "$2"),
+          plantuml,
+          src_path,
+          svg_path
+        ],
+        env: [{~c"PLANTUML_SECURITY_PROFILE", ~c"SANDBOX"}]
+      ]
+    )
+  end
+
+  defp file_result({:error, posix}, verb, path),
+    do: {:error, "#{verb} #{path} failed: #{:file.format_error(posix)}"}
+
+  defp file_result(result, _verb, _path), do: result
 
   defp collect(port, acc, remaining_ms) do
     started = System.monotonic_time(:millisecond)

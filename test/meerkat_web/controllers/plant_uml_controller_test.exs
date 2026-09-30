@@ -8,10 +8,10 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
       assert conn.resp_body == "missing src"
     end
 
-    # Over a real socket, with the HTTP options meerkat serves with:
-    # the HTTP server's request-line limit and the query-string limit
-    # are what stood between the client and this guard.
-    test "413 for any src over the 64 KiB cap that a browser will request" do
+    # Over a real socket, with the HTTP options meerkat serves with: the
+    # HTTP server's request-line limit and the query-string limit must
+    # both let these through to the guard.
+    test "413 for a src over the 64 KiB cap, well into the size a browser will request" do
       http = Meerkat.CLI.endpoint_config_for_test(0)[:http]
       server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
       {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
