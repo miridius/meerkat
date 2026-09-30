@@ -11,7 +11,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   #
   # Equivalent (no input distinguishes mutant from original):
   # * `attr` declarations in function components `learn_toggle`,
-  #   `version_chip`, `commit_message_section`, `global_comments_section`,
+  #   `pending_answers_banner`, `version_chip`, `commit_message_section`,
+  #   `global_comments_section`,
   #   `file_list`, `markdown_preview`, `file_filter`, and `diff_toolbar` —
   #   deleting an `attr` line removes compile-time validation metadata
   #   only; with every call site passing its assigns, no runtime behaviour
@@ -724,6 +725,17 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     html = render_click(view, "filter.show_all", %{})
     assert html =~ "src/widget.rs"
+  end
+
+  test "filter.show_only keeps the filter string, so both must match", %{conn: conn} do
+    state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
+    view = mount_unbound(conn, state)
+
+    render_hook(view, "filter.set_input", %{"value" => "widget"})
+    render_hook(view, "filter.show_only", %{"file_index" => "1"})
+
+    refute has_element?(view, "#file-0")
+    refute has_element?(view, "#file-1")
   end
 
   test "filter.show_all clears server-side overrides in bound mode", %{conn: conn} do

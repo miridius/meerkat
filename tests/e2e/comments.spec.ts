@@ -258,11 +258,13 @@ test.describe("commit-message comments", () => {
 		}
 	});
 
-	test("the blocks in a gutter drag's range are shaded while dragging", async ({ page }) => {
-		const meerkat = await startMeerkat();
+	test("only the blocks in a gutter drag's range are shaded while dragging", async ({ page }) => {
+		const fixture = makeFixture({ commitMsg: "Subject\n\nBody paragraph.\n\n- one\n- two\n" });
+		const meerkat = await startMeerkat({ fixture });
 		try {
 			await page.goto(meerkat.url);
 			const blocks = page.locator("#commit-msg-gutter > li");
+			await expect(blocks).toHaveCount(4);
 			const a = await blocks.nth(0).boundingBox();
 			const b = await blocks.nth(1).boundingBox();
 			if (!a || !b) throw new Error("commit-msg blocks not found");
@@ -274,6 +276,8 @@ test.describe("commit-message comments", () => {
 			await expect(blocks.nth(0)).toHaveClass(/dragging/);
 			await expect(blocks.nth(0)).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
 			await expect(blocks.nth(1)).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+			await expect(blocks.nth(2)).not.toHaveClass(/dragging/);
+			await expect(blocks.nth(2)).not.toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
 			await page.mouse.up();
 		} finally {
 			await teardown(meerkat);
