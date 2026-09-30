@@ -60,7 +60,14 @@ defmodule Meerkat.Git do
     # `-z` produces NUL-separated output so file names with spaces work
     # without shell quoting. Match the rename policy used by the patch
     # and binary classification, even when diff.renames is disabled.
-    case run_git_unmerged(repo_path, ["diff", "--cached", "--name-status", "-z", "-M"]) do
+    case run_git_unmerged(repo_path, [
+           "diff",
+           "--cached",
+           "--name-status",
+           "-z",
+           "-M",
+           "--diff-filter=u"
+         ]) do
       {:ok, output} -> {:ok, parse_name_status(output)}
       {:error, _} = err -> err
     end
@@ -638,6 +645,7 @@ defmodule Meerkat.Git do
       "-U3",
       "-w",
       "-M",
+      "--diff-filter=u",
       "--no-textconv",
       "--no-ext-diff"
     ]

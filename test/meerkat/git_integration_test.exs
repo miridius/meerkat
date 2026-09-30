@@ -176,6 +176,34 @@ defmodule Meerkat.GitIntegrationTest do
     assert file.read_errors == []
   end
 
+  test "an unresolved conflict is left out and the other staged files remain", %{dir: dir} do
+    stage(dir, "file.txt", "base\n")
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["switch", "-q", "-c", "feature/x"])
+    stage(dir, "file.txt", "feature\n")
+    git(dir, ["commit", "-qm", "feature"])
+    git(dir, ["switch", "-q", "main"])
+    stage(dir, "file.txt", "main\n")
+    git(dir, ["commit", "-qm", "main"])
+
+    # A hook-exported GIT_DIR would point this at meerkat's own repo.
+    unset = Enum.map(~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE), &{&1, nil})
+    opts = [cd: dir, stderr_to_stdout: true, env: unset]
+    assert {_, code} = System.cmd("git", ["merge", "-q", "feature/x"], opts)
+    assert code != 0
+    assert git(dir, ["diff", "--cached", "--name-status"]) =~ ~r/^U\tfile\.txt$/m
+    # Staged files on both sides of it in path order.
+    stage(dir, "a.txt", "a\n")
+    stage(dir, "z.txt", "z\n")
+
+    assert {:ok, entries} = Git.staged_files(dir)
+    assert Enum.map(entries, & &1.file_name) == ["a.txt", "z.txt"]
+    assert {:ok, [a, z]} = Git.staged_file_diffs(dir)
+    assert {a.file_name, Enum.join(a.hunks)} == {"a.txt", "@@ -0,0 +1,1 @@\n+a\n"}
+    assert {z.file_name, Enum.join(z.hunks)} == {"z.txt", "@@ -0,0 +1,1 @@\n+z\n"}
+    assert a.read_errors == [] and z.read_errors == []
+  end
+
   test "range materialisation preserves additions, deletions, modifications and rename context",
        %{dir: dir} do
     before = "first\nsecond\nthird\nfourth\nfifth\n"
