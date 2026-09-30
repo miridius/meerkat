@@ -198,4 +198,18 @@ defmodule Meerkat.ReviewStateTest do
                MapSet.new()
     end
   end
+
+  describe "from_target/2 — staged review mid-rebase (real git fixture)" do
+    import Meerkat.TestHelpers, only: [split_approved_commit_mid_rebase: 1, stage: 3]
+
+    test "approved files come back ticked beside unseen changes" do
+      dir = split_approved_commit_mid_rebase("meerkat-state-rebase")
+      stage(dir, "one.rs", "fn one() -> i32 { 1 }\n")
+      stage(dir, "two.rs", "fn two() -> i32 { 21 }\n")
+
+      assert {:ok, state} = ReviewState.from_target({:staged, nil}, dir)
+      assert state.head_branch == "feature"
+      assert state.approved_file_names == MapSet.new(["one.rs"])
+    end
+  end
 end
