@@ -24,11 +24,12 @@ remove commits a merged PR still references). Before committing:
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh`
   FAILS while any JS or Hex package is behind its latest
-  release. Upgrade and fix the fallout rather than pin
-  old versions. A deliberate pin needs an exemption with a reason
-  in the script; JS releases younger than the 24h min-age floor get
-  an automatic grace pass (Hex has no floor, so no grace). The gate
-  fails closed on its own breakage.
+  release. The pre-commit hook bumps outdated packages. Don't bump
+  them by hand. Fix the fallout rather than pin old versions. A deliberate
+  pin needs an exemption with a reason in
+  `scripts/dep-exemptions.json`. JS releases younger than the 24h
+  min-age floor get an automatic grace pass (Hex has no floor, so no
+  grace). The gate fails closed on its own breakage.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 
@@ -63,7 +64,9 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 ## Quality gates
 
-**Pre-commit:** Lefthook runs `scripts/no-main-commits.sh` first, then `scripts/check.sh`. They are piped, so if the first script refuses the commit, the checks do not run.
+**Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, then `scripts/bump-deps.sh`, then `scripts/check.sh`. They are piped, so if one script refuses the commit, the later ones do not run.
+
+`bump-deps.sh` upgrades each non-exempt Hex and JS package that `scripts/outdated.sh` would report. It stages the changed `mix.exs`, `mix.lock`, `package.json` files and `pnpm-lock.yaml` into the commit. A Hex requirement in `mix.exs` moves when the latest release is outside it. JS ranges move with `pnpm update --latest`, which keeps the 24h release-age floor. When a dependency file has unstaged edits, the hook skips the bump.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 
@@ -88,7 +91,7 @@ This is a Lefthook script, not a command, so history-only force-pushes still get
 
 **CI:** Every PR runs, in order, `mix deps.get`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `mix test`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
-`bun run test` runs `mix test`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`. `git commit --no-verify` and `git push --no-verify` bypass their respective hooks.
+`bun run test` runs `mix test`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
 When behaviour changes, choose the lowest layer that exercises it:
 - Use ExUnit (`test/**/*_test.exs`, including LiveViewTest) or asset

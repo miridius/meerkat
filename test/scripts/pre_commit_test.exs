@@ -47,6 +47,9 @@ defmodule Meerkat.PreCommitHookTest do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
+    # test/scripts/bump_deps_test.exs covers the dependency bump.
+    File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
+
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.mkdir_p!(Path.join(work, "assets"))
     File.write!(Path.join(work, "assets/.keep"), "")

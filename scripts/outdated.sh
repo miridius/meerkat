@@ -12,13 +12,6 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-# package name → reason for lagging behind latest; applies to both
-# ecosystems.
-EXEMPT_JSON='{
-  "shiki": "pinned to @git-diff-view/shiki'\''s shiki major; remove when upstream moves to shiki 4",
-  "@playwright/test": "pinned to 1.60.0; 1.61.0 sync loader crashes under Node 24 where context.conditions arrives as a Set lacking Array.includes (microsoft/playwright#41311); unpin when fixed upstream"
-}'
-
 for tool in pnpm jq mix python3 curl; do
   command -v "$tool" >/dev/null || {
     echo "scripts/outdated.sh: required tool '$tool' missing — cannot verify dependencies."
@@ -26,8 +19,11 @@ for tool in pnpm jq mix python3 curl; do
   }
 done
 
-jq empty <<<"$EXEMPT_JSON" 2>/dev/null || {
-  echo "scripts/outdated.sh: EXEMPT_JSON is invalid JSON — fix the exemption table."
+# package name → reason for lagging behind latest; applies to both
+# ecosystems. scripts/bump-deps.sh skips the same packages.
+EXEMPT_JSON=$(cat scripts/dep-exemptions.json 2>/dev/null)
+jq -e 'type == "object"' <<<"$EXEMPT_JSON" >/dev/null 2>&1 || {
+  echo "scripts/outdated.sh: scripts/dep-exemptions.json is missing or not a JSON object — fix the exemption table."
   exit 1
 }
 
@@ -103,8 +99,8 @@ done < <(awk '/Update (not )?possible/ {print $1}' <<<"$hex_out")
 if [[ "$fail" != 0 ]]; then
   echo
   echo "scripts/outdated.sh: dependencies are behind latest. Upgrade them,"
-  echo "or add an exemption with a reason in this script if the pin is"
-  echo "deliberate."
+  echo "or add an exemption with a reason in scripts/dep-exemptions.json"
+  echo "if the pin is deliberate."
   exit 1
 fi
 
