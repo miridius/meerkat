@@ -30,7 +30,6 @@ defmodule Meerkat.OutdatedGateTest do
     hex_out = Path.join(base, "hex.out")
     pnpm_out = Path.join(base, "pnpm.json")
     registry_out = Path.join(base, "pnpm-registry.json")
-    pnpm_times = Path.join(base, "pnpm-times.json")
     hex_api = Path.join(base, "hex-api")
 
     File.mkdir_p!(Path.join(base, "scripts"))
@@ -42,7 +41,6 @@ defmodule Meerkat.OutdatedGateTest do
 
     File.write!(hex_out, @hex_header <> "mdex  0.14.1  0.14.1  Up-to-date\n")
     File.write!(pnpm_out, "{}")
-    File.write!(pnpm_times, "{}")
 
     File.mkdir_p!(stubs)
     File.mkdir_p!(hex_api)
@@ -55,7 +53,6 @@ defmodule Meerkat.OutdatedGateTest do
       "pnpm -r outdated --format json --config.minimum-release-age=0")
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
         exit 1 ;;
-      "pnpm view "*) cat '#{pnpm_times}' ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
     esac
     """)
@@ -69,7 +66,6 @@ defmodule Meerkat.OutdatedGateTest do
      hex_out: hex_out,
      pnpm_out: pnpm_out,
      registry_out: registry_out,
-     pnpm_times: pnpm_times,
      hex_api: hex_api}
   end
 
@@ -140,22 +136,19 @@ defmodule Meerkat.OutdatedGateTest do
     assert out =~ "BLOCKED: shiki is outdated (latest: 4.4.3)"
   end
 
-  test "a JS release under 24h passes the gate without an exemption", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
-    published = DateTime.utc_now() |> DateTime.add(-3600) |> DateTime.to_iso8601()
-    File.write!(ctx.pnpm_times, Jason.encode!(%{"4.4.3" => published}))
-
-    assert {out, 0} = run(ctx)
-    assert out =~ "grace: shiki@4.4.3 is younger than the 24h release floor"
-  end
-
   # pnpm outdated reports the newest release past minimumReleaseAge as
   # latest, so a release under 24h shows only once the floor is off.
   describe "a JS release under 24h that pnpm outdated does not report" do
     setup ctx do
       File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.2"}}))
       File.write!(ctx.registry_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
+    end
+
+    test "leaves the release pnpm reports required", ctx do
+      exempt(ctx, %{})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "BLOCKED: shiki is outdated (latest: 4.4.2)"
     end
 
     test "makes an exemption for the release pnpm reports stale", ctx do
@@ -175,6 +168,14 @@ defmodule Meerkat.OutdatedGateTest do
 
   # pnpm outdated leaves out a package installed at the newest release
   # past minimumReleaseAge, though a younger release makes it behind.
+  test "a JS release under 24h passes the gate without an exemption", ctx do
+    exempt(ctx, %{})
+    File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
+
+    assert {out, 0} = run(ctx)
+    assert out =~ "all dependencies current."
+  end
+
   test "an exemption naming a JS release under 24h passes when no older release is pending",
        ctx do
     exempt(ctx, %{"shiki" => entry("4.4.3")})

@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 prefix="scripts/outdated.sh:"
 source scripts/deps-common.sh
 
-require_tools pnpm jq mix python3 curl || exit 1
+require_tools pnpm jq mix curl || exit 1
 
 # An entry applies to both ecosystems, and scripts/bump-deps.sh skips
 # the same releases. Once a newer release is out, or the package is
@@ -67,27 +67,11 @@ exempted=()
 while IFS=$'\t' read -r name latest; do
   exempt "$name" "$latest" && exempted+=("$name")
 done < <(grep . <<<"$PNPM_ROWS")
+# With the floor, pnpm reports only releases past it, so a release under
+# 24h never blocks.
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
   [[ " ${exempted[*]-} " == *" $name "* ]] && continue
-  if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
-    published=""
-  fi
-  if [[ -n "$published" ]]; then
-    if ! age_s=$(python3 -c "
-import datetime, sys
-pub = datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
-print(int((datetime.datetime.now(datetime.timezone.utc) - pub).total_seconds()))
-" "$published" 2>&1); then
-      echo "BLOCKED: $name — release-age computation failed ($age_s); failing closed"
-      fail=1
-      continue
-    fi
-    if (( age_s < 86400 )); then
-      echo "grace: $name@$latest is younger than the 24h release floor"
-      continue
-    fi
-  fi
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$PNPM_ROWS")
