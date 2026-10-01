@@ -24,12 +24,19 @@ remove commits a merged PR still references). Before committing:
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
   when a direct JS or Hex dependency trails its latest release unless
-  that release is exempt; Hex releases in cooldown and JS releases under
-  24h are not yet required. It also fails on any git dependency unless
-  an exemption names its latest stable Hex release; one without a stable
-  Hex release cannot be exempted, and a new stable release makes its
-  entry stale immediately. The pre-commit hook bumps registry packages;
-  do not bump them by hand. It never moves git dependencies, so maintain
+  that release is exempt. JS releases under 24h are not required, and a
+  Hex release in cooldown is not required only when all requirements in
+  `mix.exs` and other dependencies admit it; otherwise, it is treated as
+  outdated and blocks the gate unless exempted. In either ecosystem, an
+  exemption is stale if the package is no longer behind or its named
+  version does not match the latest reported version (the JS registry's
+  latest or `Latest` in `mix hex.outdated` for Hex), even if that latest
+  release is not yet required.
+  The gate also fails on any git dependency unless an exemption names
+  its latest stable Hex release; one without a stable Hex release
+  cannot be exempted, and a new stable release makes its entry stale
+  immediately. The pre-commit hook bumps registry packages; do not bump
+  them by hand. It never moves git dependencies, so maintain
   their exemptions by hand. Fix fallout rather than pinning old
   releases. Each `scripts/dep-exemptions.json` entry needs a `version`
   and non-empty `reason`; missing or malformed files and stale entries
@@ -173,5 +180,4 @@ for unmerged work. Bringing local `main` up to date — via `git pull`,
 or by `git switch`/`git checkout main` after a GitHub squash-merge —
 fires the lefthook `post-merge` / `post-checkout` hooks, which run
 `scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
-dev launcher with the prod release. There is no state marker file;
-the launcher script content IS the mode.
+dev launcher with the prod release.

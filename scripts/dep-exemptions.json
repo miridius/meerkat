@@ -1,6 +1,6 @@
 {
   "shiki": {
-    "version": "4.4.3",
+    "version": "4.5.0",
     "reason": "@git-diff-view/shiki 0.1.7 depends on shiki ^3.23.0"
   },
   "muex": {

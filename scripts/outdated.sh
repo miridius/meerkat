@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
-# behind its latest release, except exempted releases, Hex releases in
-# cooldown, and JS releases younger than the 24h supply-chain floor
-# (minimumReleaseAge in pnpm-workspace.yaml) — too young to be
-# installable, so not yet actionable. Such a young release still makes
-# an exemption for an older one stale. It fails on every git dependency
-# unless it has a stable Hex release and an exemption names the latest
-# one. It also fails on a missing or malformed
-# scripts/dep-exemptions.json, and on a stale entry there. The gate fails CLOSED on its own breakage: missing
-# tools, unreachable registries, or unparseable probe output block the
-# push rather than skipping a check.
+# behind its latest release, except exempted releases and releases too
+# young to install, so not yet actionable: JS releases younger than the
+# 24h supply-chain floor (minimumReleaseAge in pnpm-workspace.yaml), and
+# Hex releases in the configured cooldown window that the requirements
+# admit. Hex does not mark a cooldown release the requirements exclude,
+# so that one blocks. A too-young release still makes an exemption for
+# an older one stale. The gate also fails on every git dependency unless
+# it has a stable Hex release and an exemption names the latest one, and
+# on a missing or malformed scripts/dep-exemptions.json or a stale entry
+# there. It fails CLOSED on its own breakage: missing tools, unreachable
+# registries, or unparseable probe output block the push rather than
+# skipping a check.
 
 set -uo pipefail
 
@@ -58,7 +60,16 @@ fail=0
 echo "=== pnpm outdated (workspace) ==="
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
-  exempt "$name" "$latest" && continue
+  # pnpm's latest lags a release younger than the 24h floor, but an
+  # entry must name the registry's latest.
+  if [[ -n "$(exemption_version "$name")" ]]; then
+    if ! registry_latest=$(npm_latest "$name"); then
+      matched+=("$name")
+      fail=1
+      continue
+    fi
+    exempt "$name" "$registry_latest" && continue
+  fi
   if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
     published=""
   fi
@@ -88,7 +99,7 @@ echo "$HEX_OUT"
 while read -r name latest status; do
   exempt "$name" "$latest" && continue
   if [[ "$status" == cooldown ]]; then
-    echo "cooldown: $name@$latest is in Hex's cooldown window"
+    echo "cooldown: $name@$latest is in the configured Hex cooldown window"
     continue
   fi
   echo "BLOCKED: $name is outdated (latest: $latest)"

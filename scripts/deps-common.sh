@@ -36,7 +36,8 @@ exemption_version() {
 }
 
 # pnpm_outdated: sets PNPM_ROWS to one "name<TAB>latest" line per JS
-# dependency behind latest, across the workspace.
+# dependency behind latest, across the workspace. pnpm's latest is the
+# newest release past minimumReleaseAge, so it can trail npm_latest.
 pnpm_outdated() {
   local json err rc
   err=$(mktemp)
@@ -56,11 +57,25 @@ pnpm_outdated() {
   PNPM_ROWS=$(jq -r 'to_entries[] | [.key, .value.latest] | @tsv' <<<"$json")
 }
 
+# npm_latest NAME: prints the release NAME's "latest" dist-tag names on
+# the registry, however young it is. Its failure message goes to stderr,
+# since callers capture stdout.
+npm_latest() {
+  local latest
+  latest=$(pnpm view "$1" dist-tags.latest) && [[ "$latest" =~ ^[^[:space:]]+$ ]] || {
+    echo "$prefix could not read $1's latest release from the registry — cannot check its exemption." >&2
+    return 1
+  }
+  echo "$latest"
+}
+
 # hex_outdated: sets HEX_OUT to the `mix hex.outdated` report and
 # HEX_ROWS to one "name latest status" line per Hex dependency behind
 # latest. status is "possible", "not" when a requirement (in mix.exs
-# or another dependency) excludes latest, or "cooldown" when latest is
-# still in Hex's cooldown window and so not yet installable.
+# or another dependency) excludes latest, or "cooldown" when the
+# requirements admit latest but it is still in the configured Hex
+# cooldown window and so not yet installable. Hex marks no cooldown on a
+# release the requirements exclude, so that one is "not".
 hex_outdated() {
   local rc
   # hex.outdated exits 1 when updates exist.
@@ -75,7 +90,7 @@ hex_outdated() {
         status = $i
         for (j = i + 1; j <= NF; j++) status = status " " $j
         if (status ~ /^Up-to-date/) next
-        if (status ~ /\(cooldown\)$/) print $1, $(i - 1), "cooldown"
+        if (status == "Update possible (cooldown)") print $1, $(i - 1), "cooldown"
         else if (status == "Update possible") print $1, $(i - 1), "possible"
         else if (status == "Update not possible") print $1, $(i - 1), "not"
         else { bad = 1; exit }
