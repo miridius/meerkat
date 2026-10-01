@@ -29,6 +29,7 @@ defmodule Meerkat.OutdatedGateTest do
     stubs = Path.join(base, "stubs")
     hex_out = Path.join(base, "hex.out")
     pnpm_out = Path.join(base, "pnpm.json")
+    pnpm_times = Path.join(base, "pnpm-times.json")
     hex_api = Path.join(base, "hex-api")
 
     File.mkdir_p!(Path.join(base, "scripts"))
@@ -40,6 +41,7 @@ defmodule Meerkat.OutdatedGateTest do
 
     File.write!(hex_out, @hex_header <> "mdex  0.14.1  0.14.1  Up-to-date\n")
     File.write!(pnpm_out, "{}")
+    File.write!(pnpm_times, "{}")
 
     File.mkdir_p!(stubs)
     File.mkdir_p!(hex_api)
@@ -49,7 +51,7 @@ defmodule Meerkat.OutdatedGateTest do
     case "$(basename "$0") $*" in
       "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
       "pnpm -r outdated --format json") cat '#{pnpm_out}'; exit 1 ;;
-      "pnpm view "*) echo '{}' ;;
+      "pnpm view "*) cat '#{pnpm_times}' ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
     esac
     """)
@@ -57,7 +59,13 @@ defmodule Meerkat.OutdatedGateTest do
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm curl), do: File.ln_s!("stub", Path.join(stubs, tool))
 
-    {:ok, base: base, stubs: stubs, hex_out: hex_out, pnpm_out: pnpm_out, hex_api: hex_api}
+    {:ok,
+     base: base,
+     stubs: stubs,
+     hex_out: hex_out,
+     pnpm_out: pnpm_out,
+     pnpm_times: pnpm_times,
+     hex_api: hex_api}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -118,6 +126,49 @@ defmodule Meerkat.OutdatedGateTest do
     assert {out, 1} = run(ctx)
     assert out =~ "stale exemption: shiki covers 4.4.2, but latest is 4.4.3"
     assert out =~ "BLOCKED: shiki is outdated (latest: 4.4.3)"
+  end
+
+  describe "a JS release under 24h" do
+    setup ctx do
+      File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
+      published = DateTime.utc_now() |> DateTime.add(-3600) |> DateTime.to_iso8601()
+      File.write!(ctx.pnpm_times, Jason.encode!(%{"4.4.3" => published}))
+    end
+
+    test "passes the gate without an exemption", ctx do
+      exempt(ctx, %{})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "grace: shiki@4.4.3 is younger than the 24h release floor"
+    end
+
+    test "makes an exemption for an older release stale", ctx do
+      exempt(ctx, %{"shiki" => entry("4.4.2")})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "stale exemption: shiki covers 4.4.2, but latest is 4.4.3"
+    end
+  end
+
+  describe "a Hex release in cooldown" do
+    setup ctx do
+      File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.1  Update possible (cooldown)\n")
+    end
+
+    test "makes an exemption for an older release stale", ctx do
+      exempt(ctx, %{"plug" => entry("2.1.0")})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "stale exemption: plug covers 2.1.0, but latest is 2.1.1"
+      refute out =~ "not behind latest"
+    end
+
+    test "is covered by an exemption naming it", ctx do
+      exempt(ctx, %{"plug" => entry("2.1.1")})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "exempt: plug@2.1.1"
+    end
   end
 
   test "an exemption for a package that is not behind fails the gate", ctx do

@@ -58,9 +58,9 @@ pnpm_outdated() {
 
 # hex_outdated: sets HEX_OUT to the `mix hex.outdated` report and
 # HEX_ROWS to one "name latest status" line per Hex dependency behind
-# latest. status is "possible", or "not" when a requirement (in mix.exs
-# or another dependency) excludes latest. A release in Hex's cooldown
-# window is left out, as pnpm leaves out one under its release-age floor.
+# latest. status is "possible", "not" when a requirement (in mix.exs
+# or another dependency) excludes latest, or "cooldown" when latest is
+# still in Hex's cooldown window and so not yet installable.
 hex_outdated() {
   local rc
   # hex.outdated exits 1 when updates exist.
@@ -74,8 +74,9 @@ hex_outdated() {
         if (i > NF) { bad = 1; exit }
         status = $i
         for (j = i + 1; j <= NF; j++) status = status " " $j
-        if (status ~ /^Up-to-date/ || status ~ /\(cooldown\)$/) next
-        if (status == "Update possible") print $1, $(i - 1), "possible"
+        if (status ~ /^Up-to-date/) next
+        if (status ~ /\(cooldown\)$/) print $1, $(i - 1), "cooldown"
+        else if (status == "Update possible") print $1, $(i - 1), "possible"
         else if (status == "Update not possible") print $1, $(i - 1), "not"
         else { bad = 1; exit }
       }

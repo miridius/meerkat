@@ -91,7 +91,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, then `scripts/bump-deps.sh`, then `scripts/check.sh`. They are piped, so if one script refuses the commit, the later ones do not run.
 
-`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It refuses the commit when it cannot rewrite a requirement or an update fails, never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, and `pnpm-lock.yaml` into the commit.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It refuses the commit when it cannot rewrite a requirement or an update fails, never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 

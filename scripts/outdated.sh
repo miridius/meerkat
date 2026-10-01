@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
-# behind its latest release, except exempted releases and JS
-# releases younger than the 24h supply-chain floor (minimumReleaseAge
-# in pnpm-workspace.yaml — too young to be installable, so not yet
-# actionable). It fails on every git dependency unless it has a stable
-# Hex release and an exemption names the latest one. It also fails on
-# a missing or malformed scripts/dep-exemptions.json, and on a stale
-# entry there. The gate fails CLOSED on its own breakage: missing
+# behind its latest release, except exempted releases, Hex releases in
+# cooldown, and JS releases younger than the 24h supply-chain floor
+# (minimumReleaseAge in pnpm-workspace.yaml) — too young to be
+# installable, so not yet actionable. Such a young release still makes
+# an exemption for an older one stale. It fails on every git dependency
+# unless it has a stable Hex release and an exemption names the latest
+# one. It also fails on a missing or malformed
+# scripts/dep-exemptions.json, and on a stale entry there. The gate fails CLOSED on its own breakage: missing
 # tools, unreachable registries, or unparseable probe output block the
 # push rather than skipping a check.
 
@@ -29,8 +30,8 @@ load_exemptions || exit 1
 matched=()
 
 # exempt NAME LATEST: 0 when an entry covers exactly LATEST. An entry for
-# any other release is reported stale; the caller then treats the
-# package as outdated.
+# any other release is stale and fails the gate, even when LATEST is too
+# young to require; the caller then checks the package as if unexempted.
 exempt() {
   local version reason
   version=$(exemption_version "$1")
@@ -38,6 +39,7 @@ exempt() {
   matched+=("$1")
   if [[ "$version" != "$2" ]]; then
     echo "stale exemption: $1 covers $version, but latest is $2"
+    fail=1
     return 1
   fi
   reason=$(jq -r --arg n "$1" '.[$n].reason' <<<"$EXEMPT_JSON")
@@ -83,8 +85,12 @@ echo
 echo "=== mix hex.outdated ==="
 hex_outdated || exit 1
 echo "$HEX_OUT"
-while read -r name latest _; do
+while read -r name latest status; do
   exempt "$name" "$latest" && continue
+  if [[ "$status" == cooldown ]]; then
+    echo "cooldown: $name@$latest is in Hex's cooldown window"
+    continue
+  fi
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$HEX_ROWS")

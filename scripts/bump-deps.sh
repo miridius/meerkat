@@ -49,6 +49,7 @@ hex_outdated
 hex_names=()
 requirement_bumps=()
 while read -r name latest status; do
+  [[ "$status" == cooldown ]] && continue
   is_exempt "$name" "$latest" && continue
   hex_names+=("$name")
   [[ "$status" == not ]] && requirement_bumps+=("$name" "$latest")
