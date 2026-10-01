@@ -128,8 +128,8 @@ MIX_ENV=test mix compile --warnings-as-errors
 
 # muex's `--files` accepts comma-separated globs/paths.
 joined=$(IFS=,; echo "${files[*]}")
-# Keep --coverage-guided: muex's dependency analysis misses tests that
-# reach modules through multi-aliases, so it may run only a subset and
-# miss mutants those tests kill. Coverage-guided selects tests that
-# execute each mutated line.
+# --coverage-guided runs each mutant against the test files that execute
+# its line, and skips mutants on lines no test executes (reported as
+# no coverage). For lines `:cover` has no data for, it falls back to
+# muex's dependency analysis, then to the full suite.
 mix muex --files "$joined" --coverage-guided "${extra_args[@]}"

@@ -3,11 +3,12 @@
 # behind its latest release, except exempted releases and JS
 # releases younger than the 24h supply-chain floor (minimumReleaseAge
 # in pnpm-workspace.yaml — too young to be installable, so not yet
-# actionable). It also fails on a missing or malformed
-# scripts/dep-exemptions.json, and on a stale entry there. The gate
-# fails CLOSED on its own breakage: missing tools, unreachable
-# registries, or unparseable probe output block the push rather than
-# skipping a check.
+# actionable). It fails on every git dependency unless it has a stable
+# Hex release and an exemption names the latest one. It also fails on
+# a missing or malformed scripts/dep-exemptions.json, and on a stale
+# entry there. The gate fails CLOSED on its own breakage: missing
+# tools, unreachable registries, or unparseable probe output block the
+# push rather than skipping a check.
 
 set -uo pipefail
 
@@ -87,6 +88,32 @@ while read -r name latest _; do
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$HEX_ROWS")
+
+# A git dependency is absent from hex.outdated's table, so nothing above
+# would notice the Hex release that makes its pin unnecessary. Each one
+# needs an entry naming the latest Hex release it replaces; a newer
+# release makes the entry stale. scripts/bump-deps.sh never moves a git
+# dependency, so a stale entry is updated by hand.
+echo
+echo "=== git dependencies ==="
+if ! git_deps=$(sed -nE 's/^  "([a-z0-9_]+)": \{:git,.*/\1/p' mix.lock); then
+  echo "scripts/outdated.sh: could not read mix.lock — cannot check git deps."
+  exit 1
+fi
+while read -r name; do
+  if ! latest=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$name" |
+    jq -er '.latest_stable_version'); then
+    echo "BLOCKED: $name — no latest Hex release found for this git dependency; failing closed"
+    # Its entry was not checked, so it is not stale.
+    matched+=("$name")
+    fail=1
+    continue
+  fi
+  exempt "$name" "$latest" && continue
+  echo "BLOCKED: $name is a git dependency (latest Hex release: $latest);"
+  echo "  add or update its exemption to name $latest, or depend on the Hex release"
+  fail=1
+done < <(grep . <<<"$git_deps")
 
 while IFS= read -r name; do
   if [[ " ${matched[*]-} " != *" $name "* ]]; then

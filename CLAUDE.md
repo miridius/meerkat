@@ -22,19 +22,18 @@ remove commits a merged PR still references). Before committing:
   age as a supply-chain guard). `bun run` / `bunx` for
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
-- **Keep dependencies current — enforced.** `scripts/outdated.sh`
-  FAILS while any JS or Hex package is behind its latest
-  release. The pre-commit hook bumps outdated packages. Don't bump
-  them by hand. Fix the fallout rather than pin old versions. A
-  deliberate pin is a narrow, per-release record of a specific
-  upstream breakage: each entry in `scripts/dep-exemptions.json` must
-  include a `version` and non-empty `reason`, and exempts only that
-  release while it is latest. When a newer release appears, the
-  pre-commit hook bumps to it as usual; a missing or malformed
-  `scripts/dep-exemptions.json` file, or a stale entry, fails
-  `scripts/outdated.sh`. JS releases younger than the 24h min-age
-  floor get an automatic grace pass (Hex has no floor, so no grace).
-  The gate fails closed on its own breakage.
+- **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
+  when a direct JS or Hex dependency trails its latest release unless
+  that release is exempt; Hex releases in cooldown and JS releases under
+  24h are not yet required. It also fails on any git dependency unless
+  an exemption names its latest stable Hex release; one without a stable
+  Hex release cannot be exempted, and a new stable release makes its
+  entry stale immediately. The pre-commit hook bumps registry packages;
+  do not bump them by hand. It never moves git dependencies, so maintain
+  their exemptions by hand. Fix fallout rather than pinning old
+  releases. Each `scripts/dep-exemptions.json` entry needs a `version`
+  and non-empty `reason`; missing or malformed files and stale entries
+  fail the gate. The gate fails closed.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 
@@ -92,7 +91,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, then `scripts/bump-deps.sh`, then `scripts/check.sh`. They are piped, so if one script refuses the commit, the later ones do not run.
 
-`bump-deps.sh` upgrades each non-exempt Hex and JS package that `scripts/outdated.sh` would report. It stages the changed `mix.exs`, `mix.lock`, `package.json` files and `pnpm-lock.yaml` into the commit. A Hex requirement in `mix.exs` moves when the latest release is outside it. JS ranges move with `pnpm update --latest`, which keeps the 24h release-age floor.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It refuses the commit when it cannot rewrite a requirement or an update fails, never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, and `pnpm-lock.yaml` into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 
