@@ -1,5 +1,5 @@
 defmodule Meerkat.ReviewStateTest do
-  # --- Documented surviving mutants (review-and-merge step 5) ---
+  # --- Documented surviving mutants (CLAUDE.md, Review and merge) ---
   #
   # Equivalent (no input distinguishes mutant from original):
   # * Deleting `split_off_fenced_code/3`'s `[] -> out` case clause:

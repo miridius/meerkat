@@ -2,7 +2,7 @@ defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
   # Surviving muex mutants in lib/meerkat/cli.ex, with why they are not
-  # test gaps (see .claude/skills/review-and-merge — every survivor is
+  # test gaps (see CLAUDE.md's Review and merge — every survivor is
   # fixed or documented; muex runs ExUnit only, so it cannot see the
   # e2e suite's coverage of the glue ExUnit cannot reach):
   #

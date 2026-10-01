@@ -2,19 +2,17 @@
 # Mutation testing for meerkat.
 #
 # Runs `mix muex` against the meerkat domain code. muex rewrites
-# operators / literals one at a time and re-runs the test suite
-# against each rewrite. A rewrite the suite still passes against
+# operators / literals one at a time and re-runs the tests that
+# cover each rewrite. A rewrite those tests still pass against
 # is an uncovered behaviour — fix the test or the code.
 #
 # Modes:
 #   scripts/mutate.sh             — mutate every lib/meerkat/*.ex
 #                                   (skips application — supervisor
-#                                   plumbing). Slow; run before
-#                                   opening a PR.
+#                                   plumbing). Slow.
 #   scripts/mutate.sh changed     — mutate ONLY lib/meerkat/*.ex files
 #                                   changed on the current branch vs
-#                                   origin/main. Run during local
-#                                   iteration.
+#                                   origin/main.
 #   scripts/mutate.sh <path…>     — mutate the named files.
 #
 # Pass extra muex flags through after `--`:

@@ -7,7 +7,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # to its dependency analysis. async: false — mount reads the global
   # `:meerkat` app env and the singleton `Meerkat.Decision`.
   #
-  # --- Documented surviving mutants (review-and-merge step 5) ---
+  # --- Documented surviving mutants (CLAUDE.md, Review and merge) ---
   #
   # Equivalent (no input distinguishes mutant from original):
   # * `attr` declarations in function components `learn_toggle`,

@@ -68,21 +68,32 @@ The end-to-end loop for a meerkat bug report or feature request:
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
-4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
-   Do not ask before pushing or opening the PR. `main` is
-   branch-protected on GitHub — no direct pushes, no force-pushes;
-   changes land via PR.
+4. **Ship.** Branch off `main`.
+   The `main` branch is branch-protected on GitHub.
+   Do not push directly to `main`.
+   Do not force-push.
+   Changes land through PRs.
 
-   Before opening the draft PR, do a quick self-review of the diff
-   and the PR description you are about to post, so unchecked work
-   does not reach the user when the PR opens. Does it do what was
-   asked? Is it sensible? Does it avoid unnecessary changes or
-   complexity? Fix every finding from any review you run before
-   opening the PR, regardless of which review found it. Keep this
-   self-review cheap: it must not add review agents,
-   mutation-testing runs, or extra test suites of its own. The
-   thorough review still happens at merge through
-   `/review-and-merge`; this self-review does not replace it.
+   Before committing and pushing, do a cheap self-review of the diff.
+   Check whether it does what was asked.
+   Check whether it is sensible.
+   Check whether it avoids unnecessary changes and complexity.
+   Fix every finding from any review you run.
+   Do not add review agents, mutation-testing runs, or test suites to
+   these self-reviews.
+
+   Commit and push the change.
+   Report after the push.
+   In a manager session, wait for the manager to approve your report.
+   Open the draft PR with `/pr` only after the manager tells you to do
+   so.
+   In a session run directly by the user, open the draft PR yourself
+   without asking.
+   When this session opens the PR, self-review its proposed
+   description for accuracy before opening it.
+   The thorough review runs through
+   `/manager:review-and-merge` only after the user marks the PR ready
+   for review.
 
    When a PR changes what meerkat's review page shows, add
    screenshots to its description using
@@ -131,21 +142,141 @@ When behaviour changes, choose the lowest layer that exercises it:
   CLI to BEAM exit/stdout, and process lifecycle.
 - Keep owned/local behaviour real; mock only boundaries we don't own.
 
-## Mutation testing
+## Review and merge
 
-`scripts/mutate.sh` runs `mix muex` against `lib/meerkat/*.ex` to
-surface untested behaviour: muex rewrites operators / literals one
-at a time and re-runs the test suite — a rewrite the suite still
-passes against is a test gap.
+The `/manager:review-and-merge` skill runs the merge-time checks and
+post-merge steps in this section.
+
+### Mutation testing
+
+By default, `scripts/mutate.sh` runs
+`mix muex --coverage-guided` on `lib/meerkat/*.ex` except
+`application.ex`.
+`mix muex --coverage-guided` runs each mutant against test files that
+execute its line when `:cover` has data.
+When `:cover` has no data for a line, muex falls back to dependency
+analysis and then to the full test suite.
+Mutants on lines no test executes are skipped and reported as
+`no coverage`.
+A mutant is a survivor when the test files run for its line still
+pass against it.
 
 ```bash
 scripts/mutate.sh                # lib/meerkat/*.ex except application.ex (slow)
-scripts/mutate.sh changed        # only files changed vs origin/main
+scripts/mutate.sh changed        # changed lib/meerkat/*.ex vs origin/main
 scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
 scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
 ```
 
-Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
+Run the check on every changed `lib/**/*.ex` file in the PR.
+
+```bash
+set -euo pipefail
+
+CHANGED=$(git diff --name-only --diff-filter=d <base>...HEAD -- 'lib/*.ex')
+if [ -z "$CHANGED" ]; then
+  echo "No changed lib/**/*.ex files; skipping mutation testing."
+else
+  scripts/mutate.sh $CHANGED
+fi
+```
+
+Run `git fetch origin` before the full PR check.
+Use the refreshed `origin/main` as `<base>`.
+Use the commit before the fixes as `<base>` for a rerun on fix
+commits.
+The PR branch must be checked out for this command.
+The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
+The `--diff-filter=d` option omits deleted files.
+This keeps deleted paths out of the file list passed to muex.
+With `set -euo pipefail`, a failing `git diff` aborts instead of
+producing an empty list.
+The empty-list guard prevents an empty file list from invoking the
+default mutation scope.
+
+### Fix every surviving mutant
+
+Do not dismiss surviving mutants under ordinary review triage.
+Fix each survivor with a test or document it under an acceptable
+non-fix below.
+This repository is under our end-to-end control.
+It has no external reviewers, legacy callers, or compatibility
+constraints.
+A surviving mutant is a real gap even when its code predates the PR.
+Fix it now.
+Closing an unrelated test gap is worthwhile.
+
+For a pure-logic survivor, add a test that rejects the behavior
+introduced by the mutation.
+If logic is buried in I/O-bound or server-bound code, extract it
+behind a test seam.
+Test the extracted pure logic.
+
+`mix muex` runs ExUnit only.
+It cannot see Playwright e2e coverage.
+`StatementDeletion` mutants on thin I/O glue are unreliable.
+They can survive despite a direct test.
+The score can vary across runs because slow mutants may time out or
+survive.
+Treat the score as a guide rather than a hard gate.
+Do not chase a zero score on I/O glue.
+Fix or document every survivor under the rules below.
+
+### Acceptable non-fixes
+
+An equivalent mutant is acceptable only when no input, realistic or
+otherwise, distinguishes it from the original.
+Document why it is equivalent.
+Do not remove a real safety guard just to remove a mutation point.
+
+A pure-observability non-fix is allowed only when the mutation changes
+log or `IO.puts` message text.
+
+An unreachable I/O seam is an acceptable non-fix only when ExUnit
+cannot reach the code.
+Explain why ExUnit cannot reach it.
+Name the e2e test that kills the mutant.
+
+### Post-merge deploy
+
+After the plugin updates local `main` successfully, deploy from this
+session's own worktree.
+
+`git fetch` fires no hook.
+A pull that moves `main` fires `post-merge`.
+A pull that changes nothing fires no hook.
+When the hook runs, it invokes `install.sh` in that worktree.
+The hook may deploy a `-wip` build if `git status --porcelain`
+prints anything.
+
+Use only this session's own worktree for the explicit deploy.
+Leave it on `main` if it already has `main` checked out.
+Otherwise, require `git status --porcelain` to print nothing before
+running `git switch --detach main`.
+If the switch fails, report that deployment was skipped and why.
+
+A worktree is clean only when `git status --porcelain` prints
+nothing.
+Untracked non-ignored files make the worktree dirty.
+If the worktree is dirty, do not run the installer.
+Report why deployment was skipped.
+After the worktree is on the updated local `main` and is clean, run
+`bash scripts/install.sh` there.
+
+Check the first 12 characters of that worktree's `HEAD`.
+An explicit install succeeds only when it exits with code 0.
+For a new build, the output must include
+`meerkat: built version <id> at <path>`.
+The `<id>` must start with the expected 12-character prefix.
+The `<id>` must contain no `-wip`.
+The output must end with `meerkat: done.`.
+An up-to-date build succeeds when it prints
+`meerkat: current already built from <prefix> (clean tree); skipping. Pass --force to rebuild.`.
+The prefix in that line must match the expected 12 characters.
+Any other outcome is a deployment failure.
+Report any deployment failure.
+If a pull hook or explicit install ran and the clean install did not
+succeed, report that a `-wip` build may be live.
 
 ## Local dev mode
 
