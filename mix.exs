@@ -66,8 +66,8 @@ defmodule Meerkat.MixProject do
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
       # Mutation testing — `mix muex` rewrites operators / literals
-      # in `lib/` and runs the test suite against each rewrite. A
-      # mutation that ALL tests pass against = a test gap. See
+      # in `lib/` and runs the tests that reach each rewrite. A
+      # mutation that every selected test passes = a test gap. See
       # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
       # with the test-selection fixes; see
       # scripts/dep-exemptions.json.
