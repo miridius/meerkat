@@ -872,17 +872,23 @@ defmodule Meerkat.Git do
 
   ## Internals
 
-  # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR /
-  # GIT_OBJECT_DIRECTORY / GIT_ALTERNATE_OBJECT_DIRECTORIES /
-  # GIT_NAMESPACE all override git's discovery process when set —
-  # making `cd:` and `GIT_CEILING_DIRECTORIES` irrelevant. The
-  # lefthook pre-commit / pre-push / post-merge hooks set these so
+  # GIT_DIR / GIT_WORK_TREE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY /
+  # GIT_ALTERNATE_OBJECT_DIRECTORIES / GIT_NAMESPACE all override git's
+  # discovery process when set — making `cd:` and
+  # `GIT_CEILING_DIRECTORIES` irrelevant. Git exports these to the
+  # pre-commit / pre-push / post-merge hooks it runs, so
   # meerkat-invoked-from-a-hook ends up resolving paths against the
   # parent repo's gitdir instead of the cwd the caller asked for.
   # Pass them as `{key, nil}` to `System.cmd` to strip from the child
-  # env. Same shape as `scripts/install.sh:91-97`'s `unset GIT_*`.
+  # env. Same shape as the `unset GIT_*` in `scripts/install.sh`.
+  #
+  # GIT_INDEX_FILE is not among them: it does not locate the repo, it
+  # names the index git reads. During `git commit -a` or
+  # `git commit <path>` git exports it to the hook as a temporary
+  # index holding what the commit will contain, which the real index
+  # does not yet, so a staged read must see it.
   @git_discovery_env_overrides Enum.map(
-                                 ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+                                 ~w(GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
                                     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
                                     GIT_NAMESPACE),
                                  &{&1, nil}

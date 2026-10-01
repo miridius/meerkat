@@ -84,7 +84,8 @@ defmodule Meerkat.TestHelpers do
 
   # Any test run inside a git hook has GIT_DIR exported by git, pointing at
   # meerkat's own gitdir, which overrides `cd: dir` and would build the
-  # fixture repo in the wrong place. Same set as `Meerkat.Git` strips.
+  # fixture repo in the wrong place. The set `Meerkat.Git` strips, plus
+  # GIT_INDEX_FILE, which it leaves for the staged reads of a review.
   @git_discovery_overrides Enum.map(
                              ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
                                 GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES

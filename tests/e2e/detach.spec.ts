@@ -1,4 +1,12 @@
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -226,7 +234,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			expect(alive(replacedBackend), "the replaced review's backend has exited").toBe(false);
 			const replaced = await first.awaitExit();
 			expect(replaced.code, "the first invocation aborts its commit").toBe(1);
-			expect(replaced.stderr).toContain("this review's diff or commit message changed");
+			expect(replaced.stderr).toContain("this review's diff, commit message or index file changed");
 
 			await page.goto(second.url);
 			await expect(page.locator("body")).toContainText("rewritten while the first caller waits");
@@ -234,6 +242,83 @@ test.describe("a review outlives the process that invoked it", () => {
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun collects the decision on the new review").toBe(0);
 			expect(stderr).toContain("The user approved your commit. Proceeding.");
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	// Git exports GIT_INDEX_FILE to the hook: `.git/index` for `git commit`, a temporary
+	// file holding what `git commit -a` or `git commit <path>` will commit otherwise.
+	test("a rerun given another index file replaces the review, though the staged diff is the same", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		const index = join(fixture.dir, ".git", "index");
+		const temporary = join(fixture.dir, ".git", "next-index-1.lock");
+		copyFileSync(index, temporary);
+		const first = await startMeerkat({ fixture, keepFixture: true, env: { GIT_INDEX_FILE: index } });
+		let second: Runner | undefined;
+		try {
+			const replacedBackend = backendPid(first);
+
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				env: { GIT_INDEX_FILE: temporary },
+			});
+			expect(alive(replacedBackend), "the review of the other index file has exited").toBe(false);
+			const replaced = await first.awaitExit();
+			expect(replaced.code, "the first invocation aborts its commit").toBe(1);
+			expect(replaced.stderr).toContain("index file changed");
+
+			await page.goto(second.url);
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code } = await second.awaitExit();
+			expect(code, "the rerun collects the decision on the new review").toBe(0);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a rerun given the same index file is replayed the decision held for it", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		// Relative, as git hands it to the hook of a plain `git commit`.
+		const index = join(".git", "index");
+		const first = await startMeerkat({
+			fixture,
+			keepFixture: true,
+			underParent: true,
+			env: { GIT_INDEX_FILE: index },
+		});
+		let second: Runner | undefined;
+		try {
+			await page.goto(first.url);
+			await first.killParent();
+			await first.awaitClose();
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
+
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				awaitUrl: false,
+				env: { GIT_INDEX_FILE: index },
+			});
+			const { code, stderr } = await second.awaitExit();
+			expect(code, "the rerun receives the held decision").toBe(0);
+			expect(stderr).toContain("The user approved your commit. Proceeding.");
+			expect(stderr, "it attached to the review, not a fresh one").not.toContain(
+				"Paused for human review",
+			);
 		} finally {
 			await second?.kill();
 			await first.kill();

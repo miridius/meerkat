@@ -22,7 +22,9 @@ supplied (no error, the highest-precedence one wins):
 - *(no target)* — staged-diff review without a commit-msg gutter.
 
 Staged-diff reviews omit paths with unresolved merge conflicts; other
-staged files are still reviewed.
+staged files are still reviewed. They read the index git gave the hook
+(see `GIT_INDEX_FILE` below), so `git commit -a` and `git commit <path>`
+are reviewed as they will be committed.
 
 ## Flags
 
@@ -78,6 +80,20 @@ staged files are still reviewed.
   Unset, empty, `0`, `false`, or `no` leaves it off and the review open
   after timeout. Any other value prints a one-line stderr warning
   naming the value and leaves auto-approval off.
+- `GIT_INDEX_FILE` — git sets it for a commit hook: `.git/index` for
+  `git commit`, a temporary file holding what will be committed for
+  `git commit -a` and `git commit <path>`. A staged review reads the
+  index it names, so what is reviewed is what is committed; the
+  variables that relocate the repo (`GIT_DIR`, `GIT_WORK_TREE`, …) are
+  ignored. The launcher sends it with every attach, and an invocation
+  naming a different index file than the one the running review was
+  started with (a relative name is taken from the repo; none counts as
+  none) replaces that review instead of attaching to it, even when the
+  staged diff and commit message match. A running review whose code
+  predates this check attaches whatever index the invocation names,
+  until the version watcher restarts it onto the current release, and
+  an invocation from an older launcher names none, so it replaces the
+  review of a backend that has an index file.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
 - `FORCE=1` — let `scripts/install.sh` override the dev-mode
