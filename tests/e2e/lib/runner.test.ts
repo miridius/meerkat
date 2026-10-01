@@ -135,6 +135,21 @@ exit 1
 	}
 });
 
+test("a meerkat that exits before printing its URL reports stderr read after it exited", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	// A child holding stderr writes to it after meerkat has exited, standing
+	// in for output still unread in the pipe when "exit" is emitted.
+	const bin = join(dir, "meerkat");
+	writeFileSync(bin, "#!/bin/sh\n(sleep 0.5; echo boom >&2) &\nexit 1\n", { mode: 0o755 });
+	try {
+		await expect(startMeerkat({ bin, args: [], fixture: { dir } })).rejects.toThrow(
+			/exited \(code=1\) before printing review URL[\s\S]*boom/,
+		);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 describe("ps elapsed-time parsing", () => {
 	for (const [etime, seconds] of [
 		["00:07", 7],
