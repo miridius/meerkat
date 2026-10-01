@@ -1,6 +1,6 @@
 // Screenshots of a pull request's UI change, for its description.
 //
-//   bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr <N>] [--out <dir>]
+//   bun scripts/pr-screenshots.ts <steps.ts> [--before] [--attach] [--pr <N>] [--out <dir>]
 //
 // This reviews the PR with `meerkat --pr <N>`, so the page shows
 // the PR's own diff, rendered by meerkat built from the PR's head
@@ -43,24 +43,32 @@
 //   otherwise the header can cover it.
 //
 // It prints one line per shot: the PNG's path, then its caption if it
-// has one. To put shots in the PR description, reference each by that
-// path, as in `![the split view](<path>)`, and post the description
-// with `gh pr edit --body-file <file>` and one `--attach <path>` per
-// shot. gh uploads each attached file and rewrites its references to
-// the uploaded image; it appends a file attached but never referenced.
+// has one. With `--attach` it then uploads the shots into the PR
+// description, so run it once the PR exists and before anyone is shown
+// the PR. The shots go in a block at the end of the description, between
+// <!-- meerkat-screenshots --> markers; a later --attach run replaces
+// that block and leaves the rest of the description as it is. If the
+// description still names a local path afterwards, the run restores the
+// description it started with and fails.
+//
+// To place shots yourself instead, reference each by its printed path,
+// as in `![the split view](<path>)`, and post the description with
+// `gh pr edit --body-file <file>` and one `--attach <path>` per shot.
+// gh uploads each attached file and rewrites its references to the
+// uploaded image; it appends a file attached but never referenced.
 // The uploads are public.
 //
 // --pr defaults to the PR of the current branch, and --out to
 // <tmpdir>/meerkat-pr-<N>-screenshots.
 
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, expect, type Locator, type Page } from "@playwright/test";
 
 export type Code = "base" | "head";
-type Shot = { name: string; code: Code; file: string; caption?: string };
+export type Shot = { name: string; code: Code; file: string; caption?: string };
 export type Steps = (ctx: {
 	page: Page;
 	shot: (name: string, opts?: { locator?: Locator; caption?: string }) => Promise<void>;
@@ -102,8 +110,11 @@ function runAsync(
 	});
 }
 
-function parseArgs(argv: string[]) {
-	const opts: { pr?: number; out?: string; steps?: string; before: boolean } = { before: false };
+export function parseArgs(argv: string[]) {
+	const opts: { pr?: number; out?: string; steps?: string; before: boolean; attach: boolean } = {
+		before: false,
+		attach: false,
+	};
 	const value = (i: number): string => {
 		const v = argv[i + 1];
 		if (v === undefined || v.startsWith("--")) throw new Error(`${argv[i]} needs a value`);
@@ -113,11 +124,12 @@ function parseArgs(argv: string[]) {
 		if (argv[i] === "--pr") opts.pr = Number(value(i++));
 		else if (argv[i] === "--out") opts.out = resolve(value(i++));
 		else if (argv[i] === "--before") opts.before = true;
+		else if (argv[i] === "--attach") opts.attach = true;
 		else if (!opts.steps) opts.steps = resolve(argv[i]);
 		else throw new Error(`unexpected argument: ${argv[i]}`);
 	}
 	if (!opts.steps) {
-		throw new Error("usage: bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N] [--out DIR]");
+		throw new Error("usage: bun scripts/pr-screenshots.ts <steps.ts> [--before] [--attach] [--pr N] [--out DIR]");
 	}
 	const pr = opts.pr ?? Number(run("gh", ["pr", "view", "--json", "number", "-q", ".number"]));
 	if (!Number.isInteger(pr) || pr <= 0) throw new Error(`not a PR number: ${pr}`);
@@ -125,6 +137,7 @@ function parseArgs(argv: string[]) {
 		pr,
 		steps: opts.steps,
 		before: opts.before,
+		attach: opts.attach,
 		out: opts.out ?? join(tmpdir(), `meerkat-pr-${pr}-screenshots`),
 	};
 }
@@ -167,7 +180,7 @@ async function buildAll(src: string, work: string, commits: { code: Code; sha: s
 	if (failed) throw (failed as PromiseRejectedResult).reason;
 }
 
-async function capture(pr: number, stepsPath: string, out: string, before: boolean): Promise<void> {
+async function capture(pr: number, stepsPath: string, out: string, before: boolean): Promise<Shot[]> {
 	const steps: Steps = (await import(stepsPath)).default;
 	if (typeof steps !== "function") throw new Error(`${stepsPath} has no default export function`);
 	// Removes only earlier shots, so `--out` can name a directory that
@@ -274,9 +287,67 @@ async function capture(pr: number, stepsPath: string, out: string, before: boole
 	}
 	if (shots.length === 0) throw new Error("the steps file took no screenshots");
 	for (const s of shots) console.log([join(out, s.file), s.caption].filter(Boolean).join(" "));
+	return shots;
+}
+
+const SHOTS_START = "<!-- meerkat-screenshots -->";
+const SHOTS_END = "<!-- /meerkat-screenshots -->";
+
+// `body` with its screenshots block set to `shots`; the block goes at the
+// end when `body` has none. Everything outside the markers is kept.
+export function withScreenshots(body: string, out: string, shots: Shot[]): string {
+	const paired = shots.some((s) => s.code === "base");
+	// A name's shots sit together, base before head, as they were taken.
+	const ordered = [...new Set(shots.map((s) => s.name))].flatMap((n) => shots.filter((s) => s.name === n));
+	const images = ordered.map((s) => {
+		const alt = paired ? `${s.code === "base" ? "before" : "after"} ${s.name}` : s.name;
+		return [s.caption, `![${alt}](${join(out, s.file)})`].filter(Boolean).join("\n\n");
+	});
+	const block = [SHOTS_START, "## Screenshots", ...images, SHOTS_END].join("\n\n");
+	const end = body.indexOf(SHOTS_END);
+	const start = end === -1 ? -1 : body.lastIndexOf(SHOTS_START, end);
+	if (start !== -1) return body.slice(0, start) + block + body.slice(end + SHOTS_END.length);
+	return body ? `${body}\n\n${block}` : block;
+}
+
+// Uploads `shots` into the description of PR #`pr` as `withScreenshots`
+// lays them out. gh rewrites each path in the description to its upload;
+// if the description still names one afterwards, the old description is
+// put back and this throws, so no local path stays on GitHub.
+export function attachShots(pr: number, out: string, shots: Shot[]): void {
+	const paths = shots.map((s) => join(out, s.file));
+	// gh and markdown would read these as syntax, not as part of the path.
+	const odd = paths.find((p) => /[\s()<>\\]/.test(p));
+	if (odd) throw new Error(`can't attach ${odd}: use an --out without whitespace or any of ( ) < > \\`);
+	const description = (): string => JSON.parse(run("gh", ["pr", "view", String(pr), "--json", "body"])).body;
+	const original = description();
+	const work = mkdtempSync(join(tmpdir(), "meerkat-pr-body-"));
+	const edit = (body: string, attach: string[]) => {
+		const file = join(work, "body.md");
+		writeFileSync(file, body);
+		run("gh", ["pr", "edit", String(pr), "--body-file", file, ...attach.flatMap((p) => ["--attach", p])]);
+	};
+	try {
+		let failure: unknown;
+		try {
+			edit(withScreenshots(original, out, shots), paths);
+		} catch (e) {
+			failure = e;
+		}
+		const after = description();
+		const left = paths.find((p) => after.includes(p));
+		if (left) {
+			edit(original, []);
+			throw new Error(`PR #${pr}'s description still named ${left} after uploading; restored it`, { cause: failure });
+		}
+		if (failure) throw failure;
+	} finally {
+		rmSync(work, { recursive: true, force: true });
+	}
 }
 
 if (import.meta.main) {
-	const { pr, steps, out, before } = parseArgs(process.argv.slice(2));
-	await capture(pr, steps as string, out, before);
+	const { pr, steps, out, before, attach } = parseArgs(process.argv.slice(2));
+	const shots = await capture(pr, steps as string, out, before);
+	if (attach) attachShots(pr, out, shots);
 }
