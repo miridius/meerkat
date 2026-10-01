@@ -35,16 +35,18 @@ exemption_version() {
   jq -r --arg n "$1" '.[$n].version // empty' <<<"$EXEMPT_JSON"
 }
 
-# pnpm_outdated: sets PNPM_ROWS to one "name<TAB>latest" line per JS
-# dependency behind latest, across the workspace. pnpm's latest is the
-# newest release past minimumReleaseAge, so it can trail npm_latest.
+# pnpm_outdated [ARG...]: sets PNPM_ROWS to one "name<TAB>latest" line
+# per JS dependency behind latest, across the workspace. pnpm's latest is
+# the newest release past minimumReleaseAge, so it can trail npm_latest;
+# ARGs go to pnpm, so --config.minimum-release-age=0 reports the
+# registry's latest instead.
 pnpm_outdated() {
   local json err rc
   err=$(mktemp)
   # pnpm outdated exits 1 when it FINDS outdated deps, so the exit code
   # alone can't tell findings from breakage: a JSON object on stdout is
   # the success signal. Warnings go to stderr, kept out of the JSON.
-  json=$(pnpm -r outdated --format json 2>"$err") && rc=0 || rc=$?
+  json=$(pnpm -r outdated --format json "$@" 2>"$err") && rc=0 || rc=$?
   if ((rc > 1)) || ! jq -e 'type == "object"
       and all(.[]; (.latest | type) == "string")' <<<"$json" >/dev/null 2>&1; then
     cat "$err"

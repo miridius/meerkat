@@ -58,18 +58,18 @@ done
 fail=0
 
 echo "=== pnpm outdated (workspace) ==="
+# An entry must name the registry's latest. pnpm's latest lags a release
+# younger than the 24h floor, and pnpm leaves out a package installed at
+# the newest release past the floor, so entries are checked against a
+# report without the floor.
+pnpm_outdated --config.minimum-release-age=0 || exit 1
+exempted=()
+while IFS=$'\t' read -r name latest; do
+  exempt "$name" "$latest" && exempted+=("$name")
+done < <(grep . <<<"$PNPM_ROWS")
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
-  # pnpm's latest lags a release younger than the 24h floor, but an
-  # entry must name the registry's latest.
-  if [[ -n "$(exemption_version "$name")" ]]; then
-    if ! registry_latest=$(npm_latest "$name"); then
-      matched+=("$name")
-      fail=1
-      continue
-    fi
-    exempt "$name" "$registry_latest" && continue
-  fi
+  [[ " ${exempted[*]-} " == *" $name "* ]] && continue
   if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
     published=""
   fi

@@ -29,8 +29,8 @@ defmodule Meerkat.OutdatedGateTest do
     stubs = Path.join(base, "stubs")
     hex_out = Path.join(base, "hex.out")
     pnpm_out = Path.join(base, "pnpm.json")
+    registry_out = Path.join(base, "pnpm-registry.json")
     pnpm_times = Path.join(base, "pnpm-times.json")
-    npm_latest = Path.join(base, "npm-latest")
     hex_api = Path.join(base, "hex-api")
 
     File.mkdir_p!(Path.join(base, "scripts"))
@@ -46,16 +46,15 @@ defmodule Meerkat.OutdatedGateTest do
 
     File.mkdir_p!(stubs)
     File.mkdir_p!(hex_api)
-    File.mkdir_p!(npm_latest)
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
     case "$(basename "$0") $*" in
       "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
       "pnpm -r outdated --format json") cat '#{pnpm_out}'; exit 1 ;;
-      "pnpm view "*" dist-tags.latest")
-        if [[ -e '#{npm_latest}'/"$2" ]]; then cat '#{npm_latest}'/"$2"
-        else jq -r --arg n "$2" '.[$n].latest' '#{pnpm_out}'; fi ;;
+      "pnpm -r outdated --format json --config.minimum-release-age=0")
+        if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
+        exit 1 ;;
       "pnpm view "*) cat '#{pnpm_times}' ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
     esac
@@ -69,8 +68,8 @@ defmodule Meerkat.OutdatedGateTest do
      stubs: stubs,
      hex_out: hex_out,
      pnpm_out: pnpm_out,
+     registry_out: registry_out,
      pnpm_times: pnpm_times,
-     npm_latest: npm_latest,
      hex_api: hex_api}
   end
 
@@ -101,8 +100,10 @@ defmodule Meerkat.OutdatedGateTest do
   test "an unreadable report blocks the push", ctx do
     exempt(ctx, %{})
 
-    for report <- ["", "[]", ~s("oops"), "null"] do
-      File.write!(ctx.pnpm_out, report)
+    for file <- [ctx.registry_out, ctx.pnpm_out], report <- ["", "[]", ~s("oops"), "null"] do
+      File.write!(ctx.registry_out, "{}")
+      File.write!(ctx.pnpm_out, "{}")
+      File.write!(file, report)
       assert {out, 1} = run(ctx)
       assert out =~ "cannot check JS deps"
     end
@@ -150,11 +151,11 @@ defmodule Meerkat.OutdatedGateTest do
   end
 
   # pnpm outdated reports the newest release past minimumReleaseAge as
-  # latest, so a release under 24h shows only in the registry's latest.
+  # latest, so a release under 24h shows only once the floor is off.
   describe "a JS release under 24h that pnpm outdated does not report" do
     setup ctx do
       File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.2"}}))
-      File.write!(Path.join(ctx.npm_latest, "shiki"), "4.4.3\n")
+      File.write!(ctx.registry_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
     end
 
     test "makes an exemption for the release pnpm reports stale", ctx do
@@ -170,17 +171,17 @@ defmodule Meerkat.OutdatedGateTest do
       assert {out, 0} = run(ctx)
       assert out =~ "exempt: shiki@4.4.3"
     end
+  end
 
-    test "fails closed when the registry's latest is unreadable", ctx do
-      exempt(ctx, %{"shiki" => entry("4.4.3")})
+  # pnpm outdated leaves out a package installed at the newest release
+  # past minimumReleaseAge, though a younger release makes it behind.
+  test "an exemption naming a JS release under 24h passes when no older release is pending",
+       ctx do
+    exempt(ctx, %{"shiki" => entry("4.4.3")})
+    File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
 
-      for report <- ["", "4.4.3 4.4.4\n"] do
-        File.write!(Path.join(ctx.npm_latest, "shiki"), report)
-        assert {out, 1} = run(ctx)
-        assert out =~ "could not read shiki's latest release from the registry"
-        refute out =~ "stale exemption"
-      end
-    end
+    assert {out, 0} = run(ctx)
+    assert out =~ "exempt: shiki@4.4.3"
   end
 
   describe "a Hex release in cooldown" do
