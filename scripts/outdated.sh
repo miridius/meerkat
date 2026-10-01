@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
-# behind its latest release, except exempted releases and JS
-# releases younger than the 24h supply-chain floor (minimumReleaseAge
-# in pnpm-workspace.yaml — too young to be installable, so not yet
-# actionable). It fails on every git dependency unless it has a stable
-# Hex release and an exemption names the latest one. It also fails on
-# a missing or malformed scripts/dep-exemptions.json, and on a stale
-# entry there. The gate fails CLOSED on its own breakage: missing
-# tools, unreachable registries, or unparseable probe output block the
-# push rather than skipping a check.
+# behind its latest release, except exempted releases and releases too
+# young to install, so not yet actionable: JS releases younger than the
+# 24h supply-chain floor (minimumReleaseAge in pnpm-workspace.yaml), and
+# Hex releases in the configured cooldown window that the requirements
+# admit. Hex does not mark a cooldown release the requirements exclude,
+# so that one blocks. A too-young release still makes an exemption for
+# an older one stale. The gate also fails on every git dependency unless
+# it has a stable Hex release and an exemption names the latest one, and
+# on a missing or malformed scripts/dep-exemptions.json or a stale entry
+# there. It fails CLOSED on its own breakage: missing tools, unreachable
+# registries, or unparseable probe output block the push rather than
+# skipping a check.
 
 set -uo pipefail
 
@@ -29,8 +32,8 @@ load_exemptions || exit 1
 matched=()
 
 # exempt NAME LATEST: 0 when an entry covers exactly LATEST. An entry for
-# any other release is reported stale; the caller then treats the
-# package as outdated.
+# any other release is stale and fails the gate, even when LATEST is too
+# young to require; the caller then checks the package as if unexempted.
 exempt() {
   local version reason
   version=$(exemption_version "$1")
@@ -38,6 +41,7 @@ exempt() {
   matched+=("$1")
   if [[ "$version" != "$2" ]]; then
     echo "stale exemption: $1 covers $version, but latest is $2"
+    fail=1
     return 1
   fi
   reason=$(jq -r --arg n "$1" '.[$n].reason' <<<"$EXEMPT_JSON")
@@ -56,7 +60,16 @@ fail=0
 echo "=== pnpm outdated (workspace) ==="
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
-  exempt "$name" "$latest" && continue
+  # pnpm's latest lags a release younger than the 24h floor, but an
+  # entry must name the registry's latest.
+  if [[ -n "$(exemption_version "$name")" ]]; then
+    if ! registry_latest=$(npm_latest "$name"); then
+      matched+=("$name")
+      fail=1
+      continue
+    fi
+    exempt "$name" "$registry_latest" && continue
+  fi
   if ! published=$(pnpm view "$name" time --json 2>&1 | jq -r --arg v "$latest" '.[$v] // empty' 2>/dev/null); then
     published=""
   fi
@@ -83,8 +96,12 @@ echo
 echo "=== mix hex.outdated ==="
 hex_outdated || exit 1
 echo "$HEX_OUT"
-while read -r name latest _; do
+while read -r name latest status; do
   exempt "$name" "$latest" && continue
+  if [[ "$status" == cooldown ]]; then
+    echo "cooldown: $name@$latest is in the configured Hex cooldown window"
+    continue
+  fi
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$HEX_ROWS")

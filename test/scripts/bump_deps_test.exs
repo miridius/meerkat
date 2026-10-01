@@ -53,6 +53,7 @@ defmodule Meerkat.BumpDepsHookTest do
     pnpm_out = Path.join(base, "pnpm.json")
     seen = Path.join(base, "seen")
     fail_update = Path.join(base, "fail-update")
+    npm_latest = Path.join(base, "npm-latest")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
@@ -62,10 +63,15 @@ defmodule Meerkat.BumpDepsHookTest do
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs deps-common.sh
-             dep-exemptions.json) do
+          ~w(check.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs deps-common.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
+
+    # Fixed rather than copied, so a new upstream release cannot change it.
+    File.write!(
+      Path.join([work, "scripts", "dep-exemptions.json"]),
+      ~s({"shiki": {"version": "4.4.3", "reason": "upstream needs shiki 3"}})
+    )
 
     # This test covers the dependency bump, not the runner; keep the fixture's
     # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
@@ -89,6 +95,7 @@ defmodule Meerkat.BumpDepsHookTest do
     File.write!(pnpm_out, "{}")
 
     File.mkdir_p!(stubs)
+    File.mkdir_p!(npm_latest)
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
@@ -102,6 +109,9 @@ defmodule Meerkat.BumpDepsHookTest do
       "pnpm -r outdated --format json")
         echo " WARN  deprecated subdependency" >&2
         cat '#{pnpm_out}'; exit 1 ;;
+      "pnpm view "*" dist-tags.latest")
+        if [[ -e '#{npm_latest}'/"$2" ]]; then cat '#{npm_latest}'/"$2"
+        else jq -r --arg n "$2" '.[$n].latest' '#{pnpm_out}'; fi ;;
       "pnpm -r update --latest --ignore-scripts "*)
         names="${cmd#pnpm -r update --latest --ignore-scripts }"
         echo "updated $names" >> package.json
@@ -121,7 +131,8 @@ defmodule Meerkat.BumpDepsHookTest do
      hex_out: hex_out,
      pnpm_out: pnpm_out,
      seen: seen,
-     fail_update: fail_update}
+     fail_update: fail_update,
+     npm_latest: npm_latest}
   end
 
   test "a commit while dependencies are behind carries their bump", ctx do
@@ -197,10 +208,47 @@ defmodule Meerkat.BumpDepsHookTest do
     end
   end
 
-  test "a failed update refuses the commit", ctx do
+  test "a failed update refuses the commit and restores mix.exs", ctx do
     File.write!(ctx.hex_out, @hex_behind)
     File.touch!(ctx.fail_update)
-    assert_refused(ctx, "")
+    assert_refused(ctx, "mix deps.update bandit jason plug failed, so the commit was refused")
+    assert File.read!(Path.join(ctx.work, "mix.exs")) == @mix_exs
+  end
+
+  # pnpm outdated reports the newest release past minimumReleaseAge as
+  # latest, so a release under 24h shows only in the registry's latest.
+  describe "an entry while a JS release is under 24h" do
+    setup ctx do
+      File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.2"}}))
+      File.write!(Path.join(ctx.npm_latest, "shiki"), "4.4.3\n")
+      stage(ctx.work, "code.txt", "change\n")
+      :ok
+    end
+
+    for {version, case_name} <- [
+          {"4.4.2", "the release pnpm reports"},
+          {"4.4.3", "the young one"}
+        ] do
+      test "naming #{case_name} leaves the package alone", ctx do
+        File.write!(
+          Path.join(ctx.work, "scripts/dep-exemptions.json"),
+          ~s({"shiki": {"version": "#{unquote(version)}", "reason": "x"}})
+        )
+
+        assert {_, 0} = commit(ctx, ["-m", "change code"])
+        refute Enum.any?(run(ctx), &(&1 =~ "pnpm -r update"))
+      end
+    end
+
+    test "naming an older release does not hold it back", ctx do
+      File.write!(
+        Path.join(ctx.work, "scripts/dep-exemptions.json"),
+        ~s({"shiki": {"version": "4.4.1", "reason": "x"}})
+      )
+
+      assert {_, 0} = commit(ctx, ["-m", "change code"])
+      assert "pnpm -r update --latest --ignore-scripts shiki" in run(ctx)
+    end
   end
 
   test "an exempt Hex release is left behind", ctx do
