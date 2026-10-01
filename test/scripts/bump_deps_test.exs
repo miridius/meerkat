@@ -67,7 +67,8 @@ defmodule Meerkat.BumpDepsHookTest do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
-    # Stands in for the per-file runner, so the stubs log its gate as `mix test`.
+    # This test covers the dependency bump, not the runner; keep the fixture's
+    # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
 
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")

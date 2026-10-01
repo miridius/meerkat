@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Runs the whole ExUnit suite, as `mix test` would, with each test file in
-# its own BEAM, on half the cores at a time.
+# Compile once with MIX_ENV=test, then run each test/**/*_test.exs file as
+# its own `mix test --no-compile` BEAM, with parallelism capped at half the
+# online cores (minimum one).
 #
-# Most of the suite's modules are `async: false`, because they change
-# process-wide state: environment variables, application env, singleton
-# processes. A single `mix test` runs those modules one after another. In
-# separate BEAMs they share none of that state, so they can run at once.
-# Half the cores ran the suite as fast as all of them did, and loads the
-# machine less, so the suite's timing-sensitive tests keep their margin.
+# Many modules are `async: false` because they change process-wide state:
+# environment variables, application env, or singleton processes. One `mix
+# test` runs them serially; separate BEAMs share none of that state, so those
+# files can run together. Half the cores took as long as all of them and
+# loads the machine less.
 #
-# Prints each failing file's output, and exits non-zero if any file fails.
-# CI runs plain `mix test`, which also checks the files pass in one BEAM.
+# On failure, print each failing file's output, list the failing files, and
+# exit non-zero. CI still runs plain `mix test` for the whole suite in one BEAM.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,21 +22,37 @@ logs=$(mktemp -d)
 trap 'rm -rf "$logs"' EXIT
 export logs
 
-# Largest files first, so the longest runs are not left until the end.
-files=$(find test -name '*_test.exs' -type f -exec wc -l {} + | grep -v ' total$' | sort -nr | awk '{print $2}')
+# Sort by line count, largest first, so the longest runs start early rather than pile up at the end.
+files=$(find test -name '*_test.exs' -type f -exec wc -l {} + | { grep -v ' total$' || true; } | sort -nr | awk '{print $2}')
+if [[ -z "$files" ]]; then
+  echo "mix test: no *_test.exs files under test/." >&2
+  exit 1
+fi
 
-# Each job records its exit status beside its output.
-xargs -P "$(($(getconf _NPROCESSORS_ONLN) / 2))" -n 1 bash -c '
-  log="$logs/$(tr / _ <<<"$1")"
+# Half the online cores rounds to 0 on one core; since `xargs -P 0` runs as
+# many processes as possible, clamp the worker count to 1.
+jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+((jobs >= 1)) || jobs=1
+
+# Each job writes its exit status beside its log; these status files, not
+# xargs' exit status, determine success. Files xargs never runs have no
+# status file and count as failed.
+xargs -P "$jobs" -n 1 bash -c '
+  log="$logs/$1"
+  mkdir -p "$(dirname "$log")"
   status=0
   mix test --no-compile "$1" >"$log" 2>&1 || status=$?
   echo "$status" >"$log.status"
-' _ <<<"$files"
+' _ <<<"$files" || true
 
 failed=()
 for file in $files; do
-  log="$logs/$(tr / _ <<<"$file")"
-  if [[ "$(cat "$log.status")" != 0 ]]; then
+  log="$logs/$file"
+  if [[ ! -f "$log.status" ]]; then
+    failed+=("$file")
+    echo
+    echo "=== mix test $file did not finish ==="
+  elif [[ "$(cat "$log.status")" != 0 ]]; then
     failed+=("$file")
     echo
     echo "=== mix test $file ==="

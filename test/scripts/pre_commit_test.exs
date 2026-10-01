@@ -16,7 +16,7 @@ defmodule Meerkat.PreCommitHookTest do
     "mix format --check-formatted",
     "mix credo --strict",
     "bunx biome lint --error-on-warnings",
-    "mix test",
+    "mix-test.sh",
     "bun test",
     "bun test tests/e2e/lib",
     "bun run build",
@@ -49,8 +49,10 @@ defmodule Meerkat.PreCommitHookTest do
 
     # test/scripts/bump_deps_test.exs covers the dependency bump.
     File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
-    # Stands in for the per-file runner, so the stubs log its gate as `mix test`.
-    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
+    # test/scripts/mix_test_test.exs covers the runner itself. Replace this
+    # with `exec mix-test.sh` so the PATH stub logs check.sh's test step as
+    # `mix-test.sh` and catches a regression to plain `mix test`.
+    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix-test.sh\n")
 
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.mkdir_p!(Path.join(work, "assets"))
@@ -68,7 +70,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
-    cmd="$(basename "$0") $*"
+    cmd="$(basename "$0")${*:+ $*}"
     echo "$cmd" >> '#{log}'
     printf '%s\\t%s\\t%s\\n' "$cmd" "$PWD" "${MIX_BUILD_PATH:-}" >> '#{places}'
     if [ "$cmd" = "mix compile --warnings-as-errors" ]; then
@@ -78,7 +80,7 @@ defmodule Meerkat.PreCommitHookTest do
     """)
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
-    for tool <- ~w(mix pnpm bun bunx), do: File.ln_s!("stub", Path.join(stubs, tool))
+    for tool <- ~w(mix pnpm bun bunx mix-test.sh), do: File.ln_s!("stub", Path.join(stubs, tool))
 
     {:ok, work: work, stubs: stubs, log: log, seen: seen, places: places}
   end
