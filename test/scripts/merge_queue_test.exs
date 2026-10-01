@@ -34,6 +34,7 @@ defmodule Meerkat.MergeQueueTest do
       "pr checks")
         case " $* " in
           *" --watch "*)
+            sleep "$(cat "$dir/watch-seconds-$3" 2>/dev/null || echo 0)"
             cat "$dir/watch-out-$3" 2>/dev/null
             exit "$(cat "$dir/checks-status-$3" 2>/dev/null || echo 0)"
             ;;
@@ -56,7 +57,11 @@ defmodule Meerkat.MergeQueueTest do
         jq=""; prev=""
         for a in "$@"; do [ "$prev" = --jq ] && jq=$a; prev=$a; done
         case "$2" in
-          */commits/*) { cat "$dir/commit-${2##*/}.json" 2>/dev/null || echo '{}'; } | jq -r "$jq" ;;
+          */commits/*)
+            { cat "$dir/commit-${2##*/}.json" 2>/dev/null ||
+                echo '{"commit":{"verification":{"verified":false,"reason":"unsigned"}},"committer":{"login":"someone"},"parents":[{"sha":"pushed"}]}'
+            } | jq -r "$jq"
+            ;;
           */merge-async/*)
             f="$dir/merge-poll"
             head -n 1 "$f"
@@ -232,6 +237,36 @@ defmodule Meerkat.MergeQueueTest do
 
     assert run_queue(dir, ["1@aaa"]) == {"#1 merged sq1 (updated with main)\n", 0}
     assert merges(dir) == [merge(1, "bbb")]
+  end
+
+  test "a rerun after an interrupted run's update accepts GitHub's update of the reviewed SHA",
+       %{dir: dir} do
+    pr(dir, 1, [{"bbb", "BLOCKED", true}])
+    commit(dir, "bbb", "aaa")
+
+    assert run_queue(dir, ["1@aaa"]) == {"#1 merged sq1 (updated with main)\n", 0}
+    assert calls(dir, "pr update-branch") == []
+    assert merges(dir) == [merge(1, "bbb")]
+  end
+
+  test "an interrupted run prints why it stopped", %{dir: dir} do
+    pr(dir, 1, [{"aaa", "BLOCKED", true}])
+    File.write!(Path.join(dir, "watch-seconds-1"), "1")
+    log = Path.join(dir, "log")
+
+    script = """
+    "$0" 1 2 & pid=$!
+    until grep -q '^pr checks' '#{log}' 2>/dev/null; do sleep 0.05; done
+    kill -TERM $pid
+    wait $pid
+    """
+
+    env = [{"PATH", Path.join(dir, "bin") <> ":" <> System.get_env("PATH")}]
+
+    assert System.cmd("bash", ["-c", script, @script], env: env, stderr_to_stdout: true) ==
+             {"#1 stopped by SIGTERM\nnot attempted: 2\n", 1}
+
+    assert merges(dir) == []
   end
 
   test "a PR whose head moved past its reviewed SHA stops the queue unmerged", %{dir: dir} do
