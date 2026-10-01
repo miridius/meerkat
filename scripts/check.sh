@@ -37,7 +37,7 @@ step mix compile --warnings-as-errors
 step mix format --check-formatted
 step mix credo --strict
 step bunx biome lint --error-on-warnings
-step mix test
+step bash scripts/mix-test.sh
 (cd assets && step bun test)
 step bun test tests/e2e/lib
 (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)

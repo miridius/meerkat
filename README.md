@@ -147,7 +147,7 @@ See `CLAUDE.md` for the development workflow.
 ## Quality gates
 
 ```bash
-bun run test                         # mix test, assets bun tests, e2e/lib bun tests, then Playwright
+bun run test                         # scripts/mix-test.sh (ExUnit, one BEAM per test file), assets bun tests, e2e/lib bun tests, then Playwright
 mix format --check-formatted         # Elixir formatting
 mix compile --warnings-as-errors     # strict compile
 ```

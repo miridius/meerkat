@@ -106,8 +106,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "a connected mount registers the LiveView as a viewer", %{conn: conn} do
-    before = Meerkat.Viewers.count()
-    {:ok, _view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
-    assert Meerkat.Viewers.count() == before + 1
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    assert Registry.keys(Meerkat.ViewerRegistry, view.pid) == [:viewer]
   end
 end
