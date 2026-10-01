@@ -74,27 +74,29 @@ defmodule Meerkat.DecisionTest do
     end
 
     test "an overdue review left open keeps its deadline directory recent" do
-      repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-decision")
-      Application.put_env(:meerkat, :repo_path, repo)
-
-      on_exit(fn ->
-        Application.delete_env(:meerkat, :repo_path)
-        File.rm_rf(repo)
-      end)
-
-      System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
-      Meerkat.Timeout.deadline_ms(repo, "abc123")
-      run_dir = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "unkeyed"])
+      run_dir = overdue_review()
       backdated_s = System.system_time(:second) - 3600
       File.touch!(run_dir, backdated_s)
 
-      Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
       Decision.reset()
       Process.sleep(100)
       :sys.get_state(Decision)
 
       %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
       assert mtime > backdated_s
+    end
+
+    test "an overdue review's deadline checks start no subprocess" do
+      overdue_review()
+      decision = Process.whereis(Decision)
+      :erlang.trace(:new_ports, true, [:ports])
+
+      Decision.reset()
+      Process.sleep(100)
+      :sys.get_state(Decision)
+      :erlang.trace(:new_ports, false, [:ports])
+
+      refute_received {:trace, _port, :open, ^decision, _command}
     end
 
     test "a deadline already past ends the review without anyone clicking" do
@@ -165,12 +167,36 @@ defmodule Meerkat.DecisionTest do
     end
   end
 
+  defp overdue_review do
+    repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-decision")
+    meerkat_dir = Path.join([repo, ".git", "meerkat-precommit"])
+    Application.put_env(:meerkat, :repo_path, repo)
+    # Match production: Meerkat.CLI.start_endpoint! caches :meerkat_dir in
+    # application env. Without it, each 5 ms deadline check runs two `git
+    # rev-parse` subprocesses in the singleton Decision GenServer; under
+    # load one took over 5 s and the on_exit reset timed out. The callers
+    # setup below caches it for the same reason.
+    Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
+
+    on_exit(fn ->
+      Application.delete_env(:meerkat, :repo_path)
+      Application.delete_env(:meerkat, :meerkat_dir)
+      File.rm_rf(repo)
+    end)
+
+    System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
+    Meerkat.Timeout.deadline_ms(repo, "abc123")
+    Application.put_env(:meerkat, :review_deadline_ms, System.system_time(:millisecond) - 1)
+    Path.join([meerkat_dir, "deadlines", "unkeyed"])
+  end
+
   describe "callers" do
     import Meerkat.TestHelpers
 
     setup do
       repo = make_tmp_repo("meerkat-decision-callers")
       Application.put_env(:meerkat, :repo_path, repo)
+      Application.put_env(:meerkat, :meerkat_dir, Path.join([repo, ".git", "meerkat-precommit"]))
       Application.put_env(:meerkat, :review_id, "abc123")
       Application.put_env(:meerkat, :deadline_check_ms, 5)
       previous = System.get_env("MEERKAT_REVIEW_TIMEOUT")
@@ -187,7 +213,7 @@ defmodule Meerkat.DecisionTest do
           else: System.delete_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
 
         Enum.each(
-          [:repo_path, :review_id, :deadline_check_ms, :review_deadline_ms],
+          [:repo_path, :meerkat_dir, :review_id, :deadline_check_ms, :review_deadline_ms],
           &Application.delete_env(:meerkat, &1)
         )
 

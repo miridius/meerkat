@@ -101,7 +101,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 4. `mix format --check-formatted`
 5. `mix credo --strict`
 6. `bunx biome lint --error-on-warnings`
-7. `mix test`
+7. `bash scripts/mix-test.sh`
 8. `bun test` in `assets/`
 9. `bun test tests/e2e/lib` from the repo root
 10. `bun run build` in `assets/`
@@ -114,7 +114,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **CI:** Every PR runs, in order, `mix deps.get`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `mix test`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
-`bun run test` runs `mix test`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
+`bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
 When behaviour changes, choose the lowest layer that exercises it:
 - Use ExUnit (`test/**/*_test.exs`, including LiveViewTest) or asset
