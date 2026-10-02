@@ -196,10 +196,15 @@ defmodule Meerkat.PersistenceTest do
     test "loads the given state and deletes without a warning", %{repo: repo, review_id: id} do
       state = %ReviewState{show_generated: true}
 
-      assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
-               assert Persistence.load(repo, id, state) == state
-               assert Persistence.delete(repo, id) == :ok
-             end) == ""
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert Persistence.load(repo, id, state) == state
+          assert Persistence.delete(repo, id) == :ok
+        end)
+
+      # stderr is global, so concurrent tests can write to it; both
+      # warnings name the snapshot path, which only this test uses.
+      refute stderr =~ Persistence.path_for(repo, id)
     end
   end
 
