@@ -13,10 +13,13 @@ defmodule Meerkat.ReviewServer do
   ## Lifecycle
 
   Started lazily via `ensure_started/2` on the first LiveView mount
-  for a given review_id. Subsequent mounts find the already-running
-  process via the Registry. The persisted state on disk is loaded
-  on `init/1`; every mutation re-persists via `Meerkat.Persistence`
-  before broadcasting.
+  for a given `review_id`. Subsequent mounts find the already-running
+  process via the Registry. The persisted state on disk is loaded on
+  `init/1`. Mutations are applied and broadcast; while
+  `Meerkat.Decision.current/0` is `nil`, each mutation is persisted via
+  `Meerkat.Persistence` before broadcasting. Once a decision exists,
+  mutations are no longer persisted, so the deleted snapshot is not
+  recreated.
   """
 
   use GenServer
@@ -176,6 +179,19 @@ defmodule Meerkat.ReviewServer do
     GenServer.call(via(review_id), {:close_form, key})
   end
 
+  @doc """
+  Deletes `review_id`'s snapshot now; if a server is running, deletion
+  runs there after any save already in progress. The snapshot stays
+  deleted because the server stops saving once a decision exists.
+  """
+  @spec delete_snapshot(String.t(), review_id) :: :ok
+  def delete_snapshot(repo_path, review_id) do
+    case Registry.lookup(Meerkat.ReviewRegistry, review_id) do
+      [{pid, _}] -> GenServer.call(pid, :delete_snapshot)
+      [] -> Persistence.delete(repo_path, review_id)
+    end
+  end
+
   ## GenServer plumbing
 
   @doc false
@@ -290,6 +306,10 @@ defmodule Meerkat.ReviewServer do
     update(ctx, fn s -> %{s | open_forms: OpenForms.close(s.open_forms, key)} end)
   end
 
+  def handle_call(:delete_snapshot, _from, %{repo_path: repo, review_id: id} = ctx) do
+    {:reply, Persistence.delete(repo, id), ctx}
+  end
+
   defp surface_key(:inline), do: :comments
   defp surface_key(:file), do: :file_comments
   defp surface_key(:global), do: :global_comments
@@ -313,7 +333,7 @@ defmodule Meerkat.ReviewServer do
   defp update(%{state: state, repo_path: repo, review_id: id} = ctx, mutate_fn) do
     new_state = mutate_fn.(state)
 
-    case Persistence.save(repo, id, new_state) do
+    case persist(repo, id, new_state) do
       :ok ->
         :ok
 
@@ -333,5 +353,11 @@ defmodule Meerkat.ReviewServer do
 
     Phoenix.PubSub.broadcast(Meerkat.PubSub, topic(id), {:state_changed, new_state})
     {:reply, new_state, %{ctx | state: new_state}}
+  end
+
+  # Once a decision exists the snapshot is deleted and must stay deleted,
+  # so a later invocation of the same review doesn't load it.
+  defp persist(repo, id, state) do
+    if Meerkat.Decision.current(), do: :ok, else: Persistence.save(repo, id, state)
   end
 end

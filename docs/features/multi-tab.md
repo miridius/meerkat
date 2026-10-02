@@ -64,28 +64,21 @@ so saving that form cannot bring the comment back.
 
 ## Decision convergence
 
-When a decision is made in any tab—by a button click or an
+Whenever a decision is stored—whether by a button click or an
 auto-approved timeout—`Meerkat.Decision` broadcasts
 `{:meerkat_decision, decision}` on `Decision.decision_topic()`
-(`"meerkat:decision"`). Every connected `ReviewLive` subscribes to
-this topic and assigns `:done` when it receives the decision, so all
-open tabs switch to the done view and cannot be edited after the
-decision. A tab mounted after the decision also opens in the done
-view via `Decision.current/0`.
+(`"meerkat:decision"`). Every connected `ReviewLive` subscribes to the
+topic and assigns the done view when it receives the decision, so all
+open tabs switch to done. Each also pushes `drafts:wipe`; the
+window-level `phx:drafts:wipe` listener removes every
+`meerkat:draft:<review_id>:` key from `localStorage`.
 
-Drafts in `localStorage` are shared across tabs on the same origin.
-Every connected tab receives the decision broadcast and pushes
-`drafts:wipe`; the `phx:drafts:wipe` window listener removes all
-`meerkat:draft:<review_id>:` keys. This prevents stale drafts from
-resurfacing for the same review on a later invocation on that origin,
-even when no tab made the decision, as with an auto-approved timeout.
+A tab mounted after a decision reads it via `Decision.current/0` and
+opens on the done view. It also pushes `drafts:wipe`, covering
+refreshes and reconnects that missed the broadcast.
 
-The CLI deletes the in-progress snapshot as soon as a decision is
-made, whether or not an invocation is attached, and deletes it again
-after delivery to catch a save already in flight. The next invocation
-for the same `review_id` starts with no comments, including one that
-replaces a review holding an undelivered decision after the commit
-message changes.
+For how the in-progress snapshot is handled, see
+[decision-flow.md](decision-flow.md#persistence-across-decisions).
 
 ## Tab close
 

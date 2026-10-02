@@ -61,10 +61,9 @@ defmodule MeerkatWeb.ReviewLive do
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.decision_topic())
     end
 
-    # Refresh-during-shutdown: if the CLI has already submitted a
-    # decision (Decision.current/0 returns non-nil), seed the
-    # `:done` assign so the LiveView mounts straight onto the done
-    # view rather than the live review.
+    # A tab mounted after the decision (a refresh, or a reconnect that
+    # missed the broadcast) opens straight onto the done view, and
+    # still wipes the drafts the broadcast would have wiped.
     done = done_view(Decision.current())
 
     {:ok,
@@ -122,7 +121,8 @@ defmodule MeerkatWeb.ReviewLive do
        # / malformed / wrong schema version. Cleared on any
        # terminal decision via PendingAnswers.clear/1.
        pending_answers: PendingAnswers.load(repo_path)
-     )}
+     )
+     |> then(&if(done && connected?(&1), do: wipe_drafts(&1), else: &1))}
   end
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"

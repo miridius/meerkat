@@ -7,8 +7,9 @@ defmodule Meerkat.Decision do
   review's deadline passing with nobody having clicked, unless
   `Meerkat.Timeout.action/0` is `:wait`. `current/0`
   returns the decision if it's already been made — used by
-  `ReviewLive.mount/3` on a refresh-during-shutdown F5 to seed the done
-  view.
+  `ReviewLive.mount/3` for any tab mounting after the decision, whether
+  on refresh or reconnect. Each decision is broadcast on
+  `decision_topic/0`, so every open tab switches to the done view.
 
   Decision shape:
   `{:approve | :approve_with_feedback | :reject | :cancel | :timeout, payload}`,

@@ -137,6 +137,38 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
+  describe "delete_snapshot/2" do
+    setup do
+      Meerkat.Decision.reset()
+      on_exit(&Meerkat.Decision.reset/0)
+    end
+
+    test "deletes the running server's snapshot, which no later mutation recreates",
+         %{repo: repo, review_id: id} do
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      _ = ReviewServer.set_approved(id, "a.ex", true)
+      assert File.exists?(Persistence.path_for(repo, id))
+
+      {:ok, _} = Meerkat.Decision.submit({:approve, ""})
+      assert :ok = ReviewServer.delete_snapshot(repo, id)
+      refute File.exists?(Persistence.path_for(repo, id))
+
+      state = ReviewServer.set_approved(id, "b.ex", true)
+      assert MapSet.member?(state.approved_file_names, "b.ex")
+      refute File.exists?(Persistence.path_for(repo, id))
+    end
+
+    test "deletes the snapshot when no server is running", %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{})
+      assert File.exists?(Persistence.path_for(repo, id))
+
+      assert :ok = ReviewServer.delete_snapshot(repo, id)
+      refute File.exists?(Persistence.path_for(repo, id))
+    end
+  end
+
   describe "clear_all_comments/1" do
     test "wipes all four surfaces in a single broadcast", %{repo: repo, review_id: id} do
       {:ok, _} =

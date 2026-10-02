@@ -149,9 +149,7 @@ defmodule Meerkat.Persistence do
   defp current_signature(state), do: state_signature(state)
 
   @doc """
-  Delete the on-disk snapshot. Called when a review reaches a
-  terminal decision (approve / reject / cancel) — the next
-  invocation should start fresh.
+  Delete the on-disk snapshot for the given repository and `review_id`.
   """
   @spec delete(String.t(), String.t()) :: :ok
   def delete(repo_path, review_id) do

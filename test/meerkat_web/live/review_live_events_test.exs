@@ -528,6 +528,27 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
   end
 
+  test "a tab that mounts after a decision it missed opens on the done view and wipes drafts",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+    {:ok, _} = Decision.submit({:timeout, ""})
+
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    assert render(view) =~ "Approved"
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
+  end
+
+  test "a tab that mounts before any decision keeps its drafts", %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+
+    {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    no_push_event(view, "drafts:wipe")
+  end
+
   test "an open comment form disables Approve and Send Feedback until it closes", %{conn: conn} do
     view = mount_unbound(conn)
 

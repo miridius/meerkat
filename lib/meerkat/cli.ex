@@ -34,7 +34,6 @@ defmodule Meerkat.CLI do
     Feedback,
     Git,
     PendingAnswers,
-    Persistence,
     PortInUseError,
     ReviewId,
     ReviewLog,
@@ -189,7 +188,9 @@ defmodule Meerkat.CLI do
         decision = await_decision_or_reject()
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
-        _ = Persistence.delete(repo_path(), review_id)
+        # ReviewServer runs the delete after any save in flight and saves
+        # nothing once a decision exists, so the snapshot stays deleted.
+        _ = ReviewServer.delete_snapshot(repo_path(), review_id)
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
         Process.sleep(750)
@@ -197,9 +198,6 @@ defmodule Meerkat.CLI do
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
         {code, text} = exit_code(decision, review_id, feedback_file_path(log))
         run = deliver({code, text}, serve_dir)
-        # Delete it again to catch a save already in flight when the decision
-        # arrived that finished after the first deletion.
-        _ = Persistence.delete(repo_path(), review_id)
 
         _ =
           if run,
