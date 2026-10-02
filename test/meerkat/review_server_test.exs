@@ -137,6 +137,78 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
+  describe "argument guards" do
+    test "reject a negative file index, a non-binary comment id and a non-boolean learn flag",
+         %{review_id: id} do
+      assert_raise FunctionClauseError, fn -> ReviewServer.get_file_at(id, -1) end
+      # Read back at runtime so the compiler's type check doesn't flag them.
+      non_binary_id = Process.get(:non_binary_id, 1)
+      non_boolean = Process.get(:non_boolean, "yes")
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.remove_comment(id, :global, non_binary_id)
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.set_learn_from_this(id, :global, "c1", non_boolean)
+      end
+    end
+  end
+
+  describe "a failed save" do
+    test "keeps the mutation in memory and broadcasts :persistence_failed",
+         %{repo: repo, review_id: id} do
+      Meerkat.Decision.reset()
+      # A directory where the snapshot file belongs makes every save fail.
+      File.mkdir_p!(Persistence.path_for(repo, id))
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          {:ok, _} =
+            ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+          Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(id))
+          state = ReviewServer.set_approved(id, "a.ex", true)
+          assert MapSet.member?(state.approved_file_names, "a.ex")
+        end)
+
+      assert_receive {:persistence_failed, _reason}
+      assert stderr =~ "couldn't persist review #{id} state"
+    end
+  end
+
+  describe "delete_snapshot/2" do
+    setup do
+      Meerkat.Decision.reset()
+      on_exit(&Meerkat.Decision.reset/0)
+    end
+
+    test "deletes the running server's snapshot, which no later mutation recreates",
+         %{repo: repo, review_id: id} do
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      _ = ReviewServer.set_approved(id, "a.ex", true)
+      assert File.exists?(Persistence.path_for(repo, id))
+
+      {:ok, _} = Meerkat.Decision.submit({:approve, ""})
+      assert :ok = ReviewServer.delete_snapshot(repo, id)
+      refute File.exists?(Persistence.path_for(repo, id))
+
+      state = ReviewServer.set_approved(id, "b.ex", true)
+      assert MapSet.member?(state.approved_file_names, "b.ex")
+      refute File.exists?(Persistence.path_for(repo, id))
+    end
+
+    test "deletes the snapshot when no server is running", %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{})
+      assert File.exists?(Persistence.path_for(repo, id))
+
+      assert :ok = ReviewServer.delete_snapshot(repo, id)
+      refute File.exists?(Persistence.path_for(repo, id))
+    end
+  end
+
   describe "clear_all_comments/1" do
     test "wipes all four surfaces in a single broadcast", %{repo: repo, review_id: id} do
       {:ok, _} =

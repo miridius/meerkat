@@ -62,6 +62,24 @@ that would clear the draft itself.
 Removing a comment also closes any open form editing it in every tab,
 so saving that form cannot bring the comment back.
 
+## Decision convergence
+
+Whenever a decision is stored—whether by a button click or an
+auto-approved timeout—`Meerkat.Decision` broadcasts
+`{:meerkat_decision, decision}` on `Decision.decision_topic()`
+(`"meerkat:decision"`). Every connected `ReviewLive` subscribes to the
+topic and assigns the done view when it receives the decision, so all
+open tabs switch to done. Each also pushes `drafts:wipe`; the
+window-level `phx:drafts:wipe` listener removes every
+`meerkat:draft:<review_id>:` key from `localStorage`.
+
+A tab mounted after a decision reads it via `Decision.current/0` and
+opens on the done view. It also pushes `drafts:wipe`, covering
+refreshes and reconnects that missed the broadcast.
+
+For how the in-progress snapshot is handled, see
+[decision-flow.md](decision-flow.md#persistence-across-decisions).
+
 ## Tab close
 
 Unless `--no-open` is passed, the browser tab is opened at review

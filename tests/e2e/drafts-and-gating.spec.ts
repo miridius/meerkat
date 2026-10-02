@@ -1,12 +1,11 @@
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 
-// Drafts use localStorage scoped to the review URL's origin (the
-// random port). Reload (within the same meerkat invocation) re-reads
-// the draft. A fresh meerkat invocation gets a different port and a
-// fresh review_id, so drafts do NOT persist across invocations; the
-// test exercises the same-invocation reload path only. How the view
-// gates the decision buttons on a dirty form, and relabels Approve, is
+// Drafts are localStorage keys scoped to the URL's origin and keyed by
+// review_id. A reload re-reads the draft; submitting clears it, and a
+// decision wipes the review's drafts. Each startMeerkat() call uses a
+// fresh temporary fixture repo and --port 0, so tests do not share
+// drafts. Button gating on a dirty form and the Approve relabel are
 // covered by the LiveView tests.
 test.describe("comment drafts", () => {
 	test("typed text gates the decision, survives a reload, and is cleared by submitting", async ({
@@ -48,6 +47,28 @@ test.describe("comment drafts", () => {
 			await expect(form, "a submitted form does not reopen on reload").toBeHidden();
 			await page.getByRole("button", { name: /^\+ Add another$/ }).click();
 			await expect(form.locator("textarea"), "submitting cleared the draft").toHaveValue("");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("a decision wipes the review's drafts", async ({ page, context }) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			await page.locator(".comment-form textarea").fill("typed before the decision");
+			const draftKeys = (p: typeof page) =>
+				p.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("meerkat:draft:")));
+			await expect.poll(() => draftKeys(page)).toHaveLength(1);
+
+			await page.locator("button.cancel-btn").click();
+			await expect(page.getByRole("heading", { name: /^Cancelled$/ })).toBeVisible();
+
+			// The done view closes its own tab, so read the shared storage from another.
+			const other = await context.newPage();
+			await other.goto(meerkat.url);
+			await expect.poll(() => draftKeys(other)).toEqual([]);
 		} finally {
 			await meerkat.kill();
 		}

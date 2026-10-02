@@ -149,9 +149,7 @@ defmodule Meerkat.Persistence do
   defp current_signature(state), do: state_signature(state)
 
   @doc """
-  Delete the on-disk snapshot. Called when a review reaches a
-  terminal decision (approve / reject / cancel) — the next
-  invocation should start fresh.
+  Delete the on-disk snapshot for the given repository and `review_id`.
   """
   @spec delete(String.t(), String.t()) :: :ok
   def delete(repo_path, review_id) do
@@ -242,12 +240,11 @@ defmodule Meerkat.Persistence do
 
   defp serialise({:hidden_extensions, mapset}), do: {:hidden_extensions, MapSet.to_list(mapset)}
 
-  # file_overrides: %{file_name => :show | :hide}. JSON keys are
-  # strings, values are atoms — encode values as strings on save
-  # so the decode round-trip with keys: :atoms! doesn't choke on
-  # dynamic file_name keys (they're already strings).
+  # file_overrides: %{file_name => :show | :hide}, saved as
+  # [file_name, "show" | "hide"] pairs: `keys: :atoms!` would reject a
+  # file name used as a JSON object key and discard the whole snapshot.
   defp serialise({:file_overrides, map}) when is_map(map) do
-    {:file_overrides, Map.new(map, fn {k, v} -> {k, to_string(v)} end)}
+    {:file_overrides, Enum.map(map, fn {k, v} -> [k, to_string(v)] end)}
   end
 
   defp serialise({:open_forms, forms}) when is_list(forms) do
@@ -312,9 +309,12 @@ defmodule Meerkat.Persistence do
     Enum.map(list, &migrate_finding_type/1)
   end
 
-  # Keys come back as strings (atoms-only-applies-to-known-keys on
-  # decode), values as strings. Decode the values back to :show /
-  # :hide atoms.
+  # Saved as pairs; older snapshots saved an object, which decodes only
+  # when every file name is an existing atom. Values return to atoms.
+  defp deserialise(:file_overrides, pairs) when is_list(pairs) do
+    deserialise(:file_overrides, Map.new(pairs, fn [k, v] -> {k, v} end))
+  end
+
   defp deserialise(:file_overrides, map) when is_map(map) do
     Map.new(map, fn
       {k, "show"} -> {to_string(k), :show}

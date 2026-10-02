@@ -150,10 +150,21 @@ already connected and `--no-open` was not passed.
 
 ## Persistence across decisions
 
-A terminal decision deletes the in-progress JSON snapshot at
-`<gitdir>/meerkat-precommit/in-progress/<review_id>.json`. The
-next invocation of meerkat for the same review_id starts with an
-empty state — comments do NOT leak across review cycles.
+The in-progress snapshot lives at
+`<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
+
+Right after the decision, before delivery, the CLI calls
+`ReviewServer.delete_snapshot/2` once. If a `ReviewServer` is
+registered, deletion runs inside that process after any save already
+in progress; otherwise, the file is deleted directly. Once
+`Decision.current/0` is non-nil, `ReviewServer` still applies and
+broadcasts mutations but no longer saves the snapshot, so it stays
+deleted.
+
+The decision broadcast switches all connected tabs to the done view,
+and tabs mounted later also open on done. The next invocation for the
+same `review_id` starts without comments, including a replacement
+after only the commit message has changed.
 
 ## Review log
 
