@@ -102,6 +102,7 @@ defmodule Meerkat.OutdatedGateTest do
       File.write!(file, report)
       assert {out, 1} = run(ctx)
       assert out =~ "cannot check JS deps"
+      assert out =~ "--config.minimum-release-age=0 produced" == (file == ctx.registry_out)
     end
 
     File.write!(ctx.pnpm_out, "{}")
@@ -168,21 +169,51 @@ defmodule Meerkat.OutdatedGateTest do
 
   # pnpm outdated leaves out a package installed at the newest release
   # past minimumReleaseAge, though a younger release makes it behind.
-  test "a JS release under 24h passes the gate without an exemption", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
+  describe "a JS release under 24h when pnpm outdated leaves the package out" do
+    setup ctx do
+      File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
+    end
 
-    assert {out, 0} = run(ctx)
-    assert out =~ "all dependencies current."
+    test "passes the gate without an exemption", ctx do
+      exempt(ctx, %{})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "all dependencies current."
+    end
+
+    test "is covered by an exemption naming it", ctx do
+      exempt(ctx, %{"shiki" => entry("4.4.3")})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "exempt: shiki@4.4.3"
+    end
+
+    test "makes an exemption for an older release stale", ctx do
+      exempt(ctx, %{"shiki" => entry("4.4.1")})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "stale exemption: shiki covers 4.4.1, but latest is 4.4.3"
+      refute out =~ "BLOCKED"
+      refute out =~ "not behind latest"
+    end
   end
 
-  test "an exemption naming a JS release under 24h passes when no older release is pending",
-       ctx do
-    exempt(ctx, %{"shiki" => entry("4.4.3")})
-    File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
+  test "each exempted JS package passes, and an unexempted one blocks", ctx do
+    exempt(ctx, %{"shiki" => entry("4.4.3"), "vite" => entry("8.3.2")})
 
-    assert {out, 0} = run(ctx)
+    report = ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"},
+                 "vite": {"current": "8.2.0", "latest": "8.3.2"},
+                 "lefthook": {"current": "2.1.0", "latest": "2.1.16"}})
+
+    File.write!(ctx.pnpm_out, report)
+    File.write!(ctx.registry_out, report)
+
+    assert {out, 1} = run(ctx)
     assert out =~ "exempt: shiki@4.4.3"
+    assert out =~ "exempt: vite@8.3.2"
+    refute out =~ "BLOCKED: shiki"
+    refute out =~ "BLOCKED: vite"
+    assert out =~ "BLOCKED: lefthook is outdated (latest: 2.1.16)"
   end
 
   describe "a Hex release in cooldown" do

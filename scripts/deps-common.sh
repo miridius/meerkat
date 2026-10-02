@@ -37,9 +37,9 @@ exemption_version() {
 
 # pnpm_outdated [ARG...]: sets PNPM_ROWS to one "name<TAB>latest" line
 # per JS dependency behind latest, across the workspace. pnpm's latest is
-# the newest release past minimumReleaseAge, so it can trail npm_latest;
-# ARGs go to pnpm, so --config.minimum-release-age=0 reports the
-# registry's latest instead.
+# the newest release past minimumReleaseAge, so it can trail npm_latest,
+# and a package installed at that release is left out; ARGs go to pnpm,
+# so --config.minimum-release-age=0 reports the registry's latest instead.
 pnpm_outdated() {
   local json err rc
   err=$(mktemp)
@@ -52,7 +52,7 @@ pnpm_outdated() {
     cat "$err"
     echo "$json"
     rm -f "$err"
-    echo "$prefix pnpm outdated produced no JSON report (exit $rc) — cannot check JS deps."
+    echo "$prefix pnpm outdated${*:+ $*} produced no JSON report (exit $rc) — cannot check JS deps."
     return 1
   fi
   rm -f "$err"
