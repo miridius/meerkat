@@ -505,6 +505,29 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "Feedback sent"
   end
 
+  test "a decision in one tab puts every other open tab on the done view", %{conn: conn} do
+    view = mount_unbound(conn)
+    {:ok, other, _html} = live_isolated(conn, ReviewLive)
+    assert has_element?(other, "button.reject-btn")
+
+    render_click(view, "decision.reject", %{})
+
+    assert render(other) =~ "Feedback sent"
+    refute has_element?(other, "button.reject-btn")
+  end
+
+  test "a decision made outside any tab puts open tabs on the done view and wipes drafts",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    {:ok, _} = Decision.submit({:timeout, ""})
+
+    assert render(view) =~ "Approved"
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
+  end
+
   test "an open comment form disables Approve and Send Feedback until it closes", %{conn: conn} do
     view = mount_unbound(conn)
 

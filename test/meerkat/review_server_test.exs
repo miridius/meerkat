@@ -5,14 +5,11 @@ defmodule Meerkat.ReviewServerTest do
   # list.
   use ExUnit.Case, async: false
 
-  alias Meerkat.{Comment, Decision, Persistence, ReviewServer, ReviewState}
+  alias Meerkat.{Comment, Persistence, ReviewServer, ReviewState}
 
   setup do
     repo = make_tmp_repo()
     id = "rs_#{System.unique_integer([:positive])}"
-    # Decision is global across test files; reset it so another file's
-    # decision cannot turn this file's persistence saves into no-ops.
-    Decision.reset()
 
     # Defensive: terminate any leftover GenServer registered under
     # this id. `System.unique_integer/1` is unique within a BEAM, but
@@ -31,7 +28,6 @@ defmodule Meerkat.ReviewServerTest do
       end
 
       File.rm_rf!(repo)
-      Decision.reset()
     end)
 
     {:ok, repo: repo, review_id: id}
@@ -138,23 +134,6 @@ defmodule Meerkat.ReviewServerTest do
       loaded = Persistence.load(repo, id, %ReviewState{})
 
       assert MapSet.equal?(loaded.approved_file_names, MapSet.new(["src/main.rs"]))
-    end
-
-    test "a mutation after a decision is broadcast but not persisted",
-         %{repo: repo, review_id: id} do
-      {:ok, _} =
-        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
-
-      _ = ReviewServer.set_approved(id, "before.rs", true)
-      {:ok, _} = Decision.submit({:reject, ""})
-      Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(id))
-
-      state = ReviewServer.set_approved(id, "after.rs", true)
-
-      assert MapSet.equal?(state.approved_file_names, MapSet.new(["before.rs", "after.rs"]))
-      assert_receive {:state_changed, ^state}
-      loaded = Persistence.load(repo, id, %ReviewState{})
-      assert MapSet.equal?(loaded.approved_file_names, MapSet.new(["before.rs"]))
     end
   end
 

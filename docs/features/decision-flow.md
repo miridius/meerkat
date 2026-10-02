@@ -153,9 +153,11 @@ already connected and `--no-open` was not passed.
 The in-progress snapshot lives at
 `<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
 
-When a decision is made, the snapshot is deleted, whether or not an
-invocation is attached. Tabs still showing the review may display edits
-made after the decision, but those edits are not saved.
+When a decision is made, the CLI deletes the snapshot whether or not
+an invocation is attached, then deletes it again after delivery to
+catch any save already in flight. All connected tabs receive the
+decision and switch to the done view, so no tab remains open for
+editing; tabs that mount afterward also start on the done view.
 
 The next invocation of meerkat for the same review_id starts without
 comments. Comments do not carry over between review cycles, including

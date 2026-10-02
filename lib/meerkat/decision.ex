@@ -53,6 +53,7 @@ defmodule Meerkat.Decision do
   @type outcome :: {non_neg_integer(), String.t()}
 
   @deadline_topic "meerkat:deadline"
+  @decision_topic "meerkat:decision"
   @taken_over "meerkat: a later invocation of this review took it over — aborting."
 
   ## Public API
@@ -156,6 +157,12 @@ defmodule Meerkat.Decision do
   """
   @spec deadline_topic() :: String.t()
   def deadline_topic, do: @deadline_topic
+
+  @doc """
+  PubSub topic carrying `{:meerkat_decision, decision}` once a decision is made.
+  """
+  @spec decision_topic() :: String.t()
+  def decision_topic, do: @decision_topic
 
   ## GenServer callbacks
 
@@ -281,6 +288,7 @@ defmodule Meerkat.Decision do
 
   defp put_decision(%{waiters: waiters} = state, decision) do
     Enum.each(waiters, &GenServer.reply(&1, decision))
+    Phoenix.PubSub.broadcast(Meerkat.PubSub, @decision_topic, {:meerkat_decision, decision})
     %{state | decision: decision, waiters: []}
   end
 

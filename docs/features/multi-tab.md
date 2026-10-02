@@ -17,10 +17,9 @@ canonical `%ReviewState{}`. Every mutation flows through it via
 After every mutation, `ReviewServer.update/2`:
 
 1. Runs the state transformer.
-2. Attempts to save the new state to
+2. Persists the new state to
    `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` via
-   `Meerkat.Persistence.save/3` while no decision has been made; after
-   a decision, it leaves the snapshot untouched.
+   `Meerkat.Persistence.save/3`.
 3. Broadcasts `{:state_changed, %ReviewState{}}` on the topic
    `"review:#{review_id}"`.
 
@@ -62,6 +61,30 @@ The error reply only prevents that tab from taking the success path
 that would clear the draft itself.
 Removing a comment also closes any open form editing it in every tab,
 so saving that form cannot bring the comment back.
+
+## Decision convergence
+
+When a decision is made in any tab—by a button click or an
+auto-approved timeout—`Meerkat.Decision` broadcasts
+`{:meerkat_decision, decision}` on `Decision.decision_topic()`
+(`"meerkat:decision"`). Every connected `ReviewLive` subscribes to
+this topic and assigns `:done` when it receives the decision, so all
+open tabs switch to the done view and cannot be edited after the
+decision. A tab mounted after the decision also opens in the done
+view via `Decision.current/0`.
+
+Drafts in `localStorage` are shared across tabs. Every connected tab
+receives the decision broadcast and pushes `drafts:wipe`; the browser
+hook removes all `meerkat:draft:<review_id>:` keys. Thus drafts are
+wiped even when no tab made the decision, as with an auto-approved
+timeout.
+
+The CLI deletes the in-progress snapshot as soon as a decision is
+made, whether or not an invocation is attached, and deletes it again
+after delivery to catch a save already in flight. The next invocation
+for the same `review_id` starts with no comments, including one that
+replaces a review holding an undelivered decision after the commit
+message changes.
 
 ## Tab close
 

@@ -15,13 +15,13 @@ defmodule Meerkat.ReviewServer do
   Started lazily via `ensure_started/2` on the first LiveView mount
   for a given review_id. Subsequent mounts find the already-running
   process via the Registry. The persisted state on disk is loaded
-  on `init/1`; mutations are saved via `Meerkat.Persistence` before
-  broadcasting only while no decision has been made.
+  on `init/1`; every mutation re-persists via `Meerkat.Persistence`
+  before broadcasting.
   """
 
   use GenServer
 
-  alias Meerkat.{Decision, OpenForms, Persistence, ReviewState}
+  alias Meerkat.{OpenForms, Persistence, ReviewState}
 
   @type review_id :: String.t()
 
@@ -313,7 +313,7 @@ defmodule Meerkat.ReviewServer do
   defp update(%{state: state, repo_path: repo, review_id: id} = ctx, mutate_fn) do
     new_state = mutate_fn.(state)
 
-    case persist(repo, id, new_state) do
+    case Persistence.save(repo, id, new_state) do
       :ok ->
         :ok
 
@@ -333,11 +333,5 @@ defmodule Meerkat.ReviewServer do
 
     Phoenix.PubSub.broadcast(Meerkat.PubSub, topic(id), {:state_changed, new_state})
     {:reply, new_state, %{ctx | state: new_state}}
-  end
-
-  # A lingering tab may still update and broadcast after a decision, but
-  # saving then would recreate the snapshot for the next review cycle.
-  defp persist(repo, id, state) do
-    if is_nil(Decision.current()), do: Persistence.save(repo, id, state), else: :ok
   end
 end

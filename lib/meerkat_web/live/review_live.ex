@@ -58,6 +58,7 @@ defmodule MeerkatWeb.ReviewLive do
       Meerkat.Viewers.register()
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.decision_topic())
     end
 
     # Refresh-during-shutdown: if the CLI has already submitted a
@@ -931,6 +932,10 @@ defmodule MeerkatWeb.ReviewLive do
 
   def handle_info({:meerkat_deadline, deadline_ms}, socket) do
     {:noreply, assign(socket, deadline_ms: deadline_ms)}
+  end
+
+  def handle_info({:meerkat_decision, decision}, socket) do
+    {:noreply, socket |> assign(done: done_view(decision)) |> wipe_drafts()}
   end
 
   # A newer version is installed. Defer the live-restart until no comment
