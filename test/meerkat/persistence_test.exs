@@ -1,6 +1,18 @@
 defmodule Meerkat.PersistenceTest do
   use ExUnit.Case, async: true
 
+  # --- Documented surviving mutants (review-and-merge step 5) ---
+  #
+  # Equivalent (no input distinguishes mutant from original):
+  # * Deleting `serialise({:open_forms, _})`: Jason encodes the raw
+  #   form's atom keys and values as strings, `keys: :atoms!` decodes
+  #   the same keys, and `deserialise_form/1` rebuilds only the listed
+  #   keys from either string or atom keys, dropping nils either way.
+  # * Deleting `migrate_finding_type(%{finding_type: :thought})`: load
+  #   decodes JSON, so `finding_type` is always a string there.
+  # * Deleting `surface_atom("inline")`: the catch-all clause also
+  #   returns `:inline`.
+
   alias Meerkat.{Comment, Persistence, ReviewState}
 
   setup do
@@ -180,6 +192,24 @@ defmodule Meerkat.PersistenceTest do
     end
   end
 
+  describe "a missing snapshot" do
+    test "loads the given state and deletes without a warning", %{repo: repo, review_id: id} do
+      state = %ReviewState{show_generated: true}
+
+      assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+               assert Persistence.load(repo, id, state) == state
+               assert Persistence.delete(repo, id) == :ok
+             end) == ""
+    end
+  end
+
+  test "file_overrides round-trip back to :show / :hide atoms", %{repo: repo, review_id: id} do
+    overrides = %{"a.ex" => :show, "b.ex" => :hide}
+    :ok = Persistence.save(repo, id, %ReviewState{file_overrides: overrides})
+
+    assert Persistence.load(repo, id, %ReviewState{}).file_overrides == overrides
+  end
+
   describe "stale-snapshot guard via state_signature" do
     test "load with the same staged content rehydrates", %{repo: repo, review_id: id} do
       saved =
@@ -222,6 +252,29 @@ defmodule Meerkat.PersistenceTest do
 
       assert reloaded.global_comments == []
       refute File.exists?(Persistence.path_for(repo, id))
+    end
+
+    test "a stale snapshot that cannot be removed still loads as an empty review",
+         %{repo: repo, review_id: id} do
+      :ok =
+        Persistence.save(repo, id, %ReviewState{
+          files: [%{file_name: "a.rs", effective_oid: "oid-a"}],
+          global_comments: [global_comment_with(body: "from previous session")]
+        })
+
+      dir = Path.dirname(Persistence.path_for(repo, id))
+      File.chmod!(dir, 0o555)
+      on_exit(fn -> File.chmod(dir, 0o755) end)
+
+      {reloaded, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn ->
+          Persistence.load(repo, id, %ReviewState{
+            files: [%{file_name: "a.rs", effective_oid: "oid-DIFFERENT"}]
+          })
+        end)
+
+      assert reloaded.global_comments == []
+      assert stderr =~ "stale snapshot rm failed"
     end
 
     test "cached state_signature on the input ReviewState is used over the live hash",
