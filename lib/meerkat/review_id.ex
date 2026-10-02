@@ -1,10 +1,12 @@
 defmodule Meerkat.ReviewId do
   @moduledoc """
-  Stable identifier for a review — keys the on-disk persistence file
-  and the `Meerkat.ReviewServer` Registry entry. Derived from the
-  `(repo_path, ReviewTarget)` pair so the same review (same staged
-  state, same commit-msg, same range) deterministically resumes its
-  saved in-progress comments.
+  Stable identifier for a review; keys the on-disk persistence file and
+  the `Meerkat.ReviewServer` Registry entry. `derive/2` hashes the
+  repository path plus the review target: for a staged review, the
+  commit-msg file path (not its contents or the staged content); for a
+  single ref, the ref; for a range, the base, head, and mode; or, for a
+  PR, the PR spec. Editing the commit message therefore keeps the same
+  `review_id`.
   """
 
   alias Meerkat.ReviewTarget

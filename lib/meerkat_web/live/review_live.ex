@@ -58,12 +58,12 @@ defmodule MeerkatWeb.ReviewLive do
       Meerkat.Viewers.register()
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.decision_topic())
     end
 
-    # Refresh-during-shutdown: if the CLI has already submitted a
-    # decision (Decision.current/0 returns non-nil), seed the
-    # `:done` assign so the LiveView mounts straight onto the done
-    # view rather than the live review.
+    # A tab mounted after the decision (a refresh, or a reconnect that
+    # missed the broadcast) opens straight onto the done view, and
+    # still wipes the drafts the broadcast would have wiped.
     done = done_view(Decision.current())
 
     {:ok,
@@ -121,7 +121,8 @@ defmodule MeerkatWeb.ReviewLive do
        # / malformed / wrong schema version. Cleared on any
        # terminal decision via PendingAnswers.clear/1.
        pending_answers: PendingAnswers.load(repo_path)
-     )}
+     )
+     |> then(&if(done && connected?(&1), do: wipe_drafts(&1), else: &1))}
   end
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"
@@ -193,9 +194,11 @@ defmodule MeerkatWeb.ReviewLive do
     })
   end
 
-  # Tell the Settings JS hook to drop every `meerkat:draft:<rid>:…`
-  # entry from localStorage. Fired on every terminal decision so
-  # stale per-anchor drafts don't pile up across reviews.
+  # Push `drafts:wipe` for the browser's `phx:drafts:wipe` window listener
+  # to remove every `meerkat:draft:<rid>:…` entry from localStorage.
+  # This runs on each terminal decision so stale drafts don't reappear
+  # on a later invocation of the same review, which normally has the same
+  # review id and origin.
   defp wipe_drafts(socket) do
     rid = socket.assigns.review_id
     if rid == "unbound", do: socket, else: push_event(socket, "drafts:wipe", %{review_id: rid})
@@ -931,6 +934,10 @@ defmodule MeerkatWeb.ReviewLive do
 
   def handle_info({:meerkat_deadline, deadline_ms}, socket) do
     {:noreply, assign(socket, deadline_ms: deadline_ms)}
+  end
+
+  def handle_info({:meerkat_decision, decision}, socket) do
+    {:noreply, socket |> assign(done: done_view(decision)) |> wipe_drafts()}
   end
 
   # A newer version is installed. Defer the live-restart until no comment

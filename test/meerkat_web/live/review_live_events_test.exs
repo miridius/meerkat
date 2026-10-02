@@ -11,7 +11,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   #
   # Equivalent (no input distinguishes mutant from original):
   # * `attr` declarations in function components `learn_toggle`,
-  #   `pending_answers_banner`, `version_chip`, `commit_message_section`,
+  #   `flash_error_banner`, `pending_answers_banner`, `version_chip`,
+  #   `commit_message_section`,
   #   `global_comments_section`,
   #   `file_list`, `markdown_preview`, `file_filter`, and `diff_toolbar` —
   #   deleting an `attr` line removes compile-time validation metadata
@@ -503,6 +504,50 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view = mount_unbound(conn)
     html = render_click(view, "decision.reject", %{})
     assert html =~ "Feedback sent"
+  end
+
+  test "a decision in one tab puts every other open tab on the done view", %{conn: conn} do
+    view = mount_unbound(conn)
+    {:ok, other, _html} = live_isolated(conn, ReviewLive)
+    assert has_element?(other, "button.reject-btn")
+
+    render_click(view, "decision.reject", %{})
+
+    assert render(other) =~ "Feedback sent"
+    refute has_element?(other, "button.reject-btn")
+  end
+
+  test "a decision made outside any tab puts open tabs on the done view and wipes drafts",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    {:ok, _} = Decision.submit({:timeout, ""})
+
+    assert render(view) =~ "Approved"
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
+  end
+
+  test "a tab that mounts after a decision it missed opens on the done view and wipes drafts",
+       %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+    {:ok, _} = Decision.submit({:timeout, ""})
+
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    assert render(view) =~ "Approved"
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
+  end
+
+  test "a tab that mounts before any decision keeps its drafts", %{conn: conn} do
+    repo = tmp_git_repo()
+    on_exit(fn -> File.rm_rf!(repo) end)
+
+    {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    no_push_event(view, "drafts:wipe")
   end
 
   test "an open comment form disables Approve and Send Feedback until it closes", %{conn: conn} do
@@ -1638,5 +1683,40 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # A blank oid would content-address nothing — it must not be cached.
     refute ApprovalCache.approved?(cache, "main", "blank.ex", "")
     refute Map.has_key?(cache["main"] || %{}, "blank.ex")
+  end
+
+  test "approve outside a git repo skips the approval cache and still decides", %{conn: conn} do
+    dir = Path.join(System.tmp_dir!(), "meerkat-lv-nogit-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    assert ApprovalCache.path_for(dir) == nil
+
+    Application.put_env(:meerkat, :repo_path, dir)
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file], head_branch: "main"})
+
+    render_click(view, "decision.approve", %{})
+    assert Decision.current() == {:approve, ""}
+  end
+
+  test "editing a comment that no longer exists opens no form", %{conn: conn} do
+    view = mount_unbound(conn)
+
+    render_click(view, "comment_form.edit", %{"surface" => "global", "id" => "gone"})
+
+    refute has_element?(view, ".dirty-form-link")
+  end
+
+  test "filter.show_only with a non-integer index is logged and changes nothing", %{conn: conn} do
+    state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
+    view = mount_unbound(conn, state)
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        render_hook(view, "filter.show_only", %{"file_index" => "x"})
+      end)
+
+    assert stderr =~ "filter.show_only ignored"
+    assert has_element?(view, ".file-list .file-name", "src/widget.rs")
+    assert has_element?(view, ".file-list .file-name", "other.ex")
   end
 end
