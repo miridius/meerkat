@@ -73,11 +73,12 @@ open tabs switch to the done view and cannot be edited after the
 decision. A tab mounted after the decision also opens in the done
 view via `Decision.current/0`.
 
-Drafts in `localStorage` are shared across tabs. Every connected tab
-receives the decision broadcast and pushes `drafts:wipe`; the browser
-hook removes all `meerkat:draft:<review_id>:` keys. Thus drafts are
-wiped even when no tab made the decision, as with an auto-approved
-timeout.
+Drafts in `localStorage` are shared across tabs on the same origin.
+Every connected tab receives the decision broadcast and pushes
+`drafts:wipe`; the `phx:drafts:wipe` window listener removes all
+`meerkat:draft:<review_id>:` keys. This prevents stale drafts from
+resurfacing for the same review on a later invocation on that origin,
+even when no tab made the decision, as with an auto-approved timeout.
 
 The CLI deletes the in-progress snapshot as soon as a decision is
 made, whether or not an invocation is attached, and deletes it again

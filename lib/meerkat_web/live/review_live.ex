@@ -194,9 +194,11 @@ defmodule MeerkatWeb.ReviewLive do
     })
   end
 
-  # Tell the Settings JS hook to drop every `meerkat:draft:<rid>:…`
-  # entry from localStorage. Fired on every terminal decision so
-  # stale per-anchor drafts don't pile up across reviews.
+  # Push `drafts:wipe` for the browser's `phx:drafts:wipe` window listener
+  # to remove every `meerkat:draft:<rid>:…` entry from localStorage.
+  # This runs on each terminal decision so stale drafts don't reappear
+  # on a later invocation of the same review, which normally has the same
+  # review id and origin.
   defp wipe_drafts(socket) do
     rid = socket.assigns.review_id
     if rid == "unbound", do: socket, else: push_event(socket, "drafts:wipe", %{review_id: rid})

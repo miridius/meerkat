@@ -69,20 +69,6 @@ const hooks = {
           /* storage disabled */
         }
       });
-      this.handleEvent("drafts:wipe", ({ review_id }) => {
-        if (!review_id) return;
-        try {
-          const prefix = `meerkat:draft:${review_id}:`;
-          const stale = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k?.startsWith(prefix)) stale.push(k);
-          }
-          for (const k of stale) localStorage.removeItem(k);
-        } catch (_e) {
-          /* storage disabled — nothing to clean */
-        }
-      });
     },
   },
   // Ticks in the browser from an absolute deadline rather than from a
@@ -412,6 +398,22 @@ const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: { _csrf_token: csrfToken },
   hooks,
+});
+
+window.addEventListener("phx:drafts:wipe", (e) => {
+  const review_id = e.detail?.review_id;
+  if (!review_id) return;
+  try {
+    const prefix = `meerkat:draft:${review_id}:`;
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(prefix)) stale.push(k);
+    }
+    for (const k of stale) localStorage.removeItem(k);
+  } catch (_e) {
+    /* storage disabled — nothing to clean */
+  }
 });
 
 // `push_event(socket, "open-url", %{url: ...})` from the server
