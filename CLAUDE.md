@@ -84,15 +84,39 @@ The end-to-end loop for a meerkat bug report or feature request:
    thorough review still happens at merge through
    `/review-and-merge`; this self-review does not replace it.
 
-   When a PR changes what meerkat's review page shows, add
-   screenshots to its description using
-   `bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N]
-   [--out DIR]`. Capture after opening the draft PR. Use judgement to
-   choose whichever screenshots, and how many, will help review that
-   PR; for changed UI, a before/after pair can help. Confirm each
-   image shows what you meant to capture. Uploads are public and
-   permanent. Confirm no image contains private data (such as local
-   absolute paths).
+   Before each `/pr` run that creates or updates a PR which changes
+   what meerkat's review page shows, write the steps file to
+   `.claude/pr-screenshots-steps.ts` relative to the root of the
+   repository checkout. Git ignores this path, so it is never
+   committed. `/pr` finds the file from the repository root. The agent
+   creates and updates PRs with `/pr` and does not run `gh pr create`
+   outside `/pr`. When that file and `scripts/pr-screenshots.ts`
+   exist, `/pr` runs `bun scripts/pr-screenshots.ts <steps.ts>
+   --before` after creating or updating the PR and before opening it
+   in the user's browser. This command saves the images and prints
+   their paths. It does not upload anything. Uploads are public and
+   permanent. The agent views every printed image. The agent checks
+   that each image shows what it meant to capture. The agent checks
+   that no image contains private data. If any image is wrong, the
+   agent fixes the steps and runs `bun scripts/pr-screenshots.ts
+   <steps.ts> --before` again. Only when every image is fine does
+   `/pr` run `bun scripts/pr-screenshots.ts <steps.ts> --before
+   --attach`. This command captures the screenshots again. It uploads
+   the screenshots into the PR's description. This run replaces the
+   screenshots from an earlier `--attach` run in the description. It
+   leaves the rest of the description as it is. `/pr` then opens the PR
+   in the user's browser. Opening the PR in the browser shows it to the
+   user, so the agent does not attach screenshots to a PR outside `/pr`.
+   The script can also be run by hand with `bun
+   scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N] [--out DIR]`
+   to try its steps file. The PR must exist before running the script by
+   hand. The latest commit on the PR's branch must be pushed before
+   running the script by hand. `--pr` defaults to the PR of the current
+   branch. With `--before`, the script builds meerkat from the commit
+   the PR branches from. It runs the same steps against that build. It
+   saves those shots next to the PR head's shots. Use judgement to
+   choose whichever screenshots, and how many, will help review that PR.
+   For changed UI, a before/after pair can help.
 
 ## Quality gates
 
