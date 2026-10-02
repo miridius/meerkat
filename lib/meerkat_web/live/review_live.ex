@@ -68,62 +68,67 @@ defmodule MeerkatWeb.ReviewLive do
     done = done_view(Decision.current())
 
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        page_title: page_title(state),
-       state: state,
-       diff_mode: "split",
-       # Wrap long lines by default — horizontal scrolling forces the
-       # reviewer off the keyboard and hides context. The toolbar
-       # toggle still lets users opt out for code that genuinely
-       # reads better unwrapped (long URLs, hex dumps).
-       wrap_lines: true,
-       font_size_px: 13,
-       tab_size: 2,
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
        deadline_ms: Application.get_env(:meerkat, :review_deadline_ms),
        timeout_action: Meerkat.Timeout.action(),
-       # Restore from persisted state — survives DevWatcher restart,
-       # crash, or close-and-reopen of the browser tab.
-       open_forms: state.open_forms,
        # Set when VersionWatcher signals a newer install; the live-restart
        # is deferred until no comment form is open (the @dirty? gate).
        update_pending: false,
-       filter_input: "",
-       only_file_index: nil,
-       # File-filter sidebar is closed by default so the diff body
-       # uses the full viewport width. Toggle in the toolbar to
-       # reveal the file list / filter / per-file approval ticks.
-       files_panel_open: false,
-       # File indices the reviewer has explicitly expanded after the
-       # file was approved (which collapses the diff body by default).
-       # Click the file header to flip collapse state; the set is
-       # ephemeral — un-approving + re-approving collapses again.
-       expanded_approved: MapSet.new(),
-       # File names the user has explicitly collapsed despite the
-       # file NOT being approved. Approved files default to collapsed
-       # (and get expanded via `expanded_approved`); unapproved files
-       # default to expanded (and get collapsed via this set).
-       collapsed_unapproved: MapSet.new(),
-       # File names whose markdown diff is currently shown as the
-       # rendered side-by-side view instead of the source diff. Flipped
-       # by `file.toggle_rendered`; the rendered HTML is memoised in
-       # `rendered_html` (content is static for the review session).
-       rendered_files: MapSet.new(),
+       # The rendered markdown HTML for each file in `rendered_files`,
+       # memoised (content is static for the review session).
        rendered_html: %{},
        done: done,
-       # Transient error banner. Set by handlers that failed in a way
-       # the user needs to see (gh api failure, stale-OID rejected
-       # approve). Cleared on the next decision or by clicking the
-       # close button on the banner.
-       flash_error: nil,
        # Pinned pending-answers banner. Best-effort: nil if no file
        # / malformed / wrong schema version. Cleared on any
        # terminal decision via PendingAnswers.clear/1.
        pending_answers: PendingAnswers.load(repo_path)
-     )}
+     )
+     |> assign_state(state)}
   end
+
+  # Assign the review state, its open forms (restored from persisted
+  # state, so they survive a DevWatcher restart, a crash, or a reopened
+  # tab) and its view fields as top-level assigns.
+  defp assign_state(socket, state) do
+    socket
+    |> assign(state: state, open_forms: state.open_forms)
+    |> assign(Map.to_list(state.view))
+    |> fill_rendered_html()
+  end
+
+  defp fill_rendered_html(socket) do
+    %{state: state, rendered_files: rendered, rendered_html: cache} = socket.assigns
+
+    cache =
+      state.files
+      |> Enum.filter(&MapSet.member?(rendered, &1.file_name))
+      |> Enum.reduce(cache, fn file, acc ->
+        Map.put_new_lazy(acc, file.file_name, fn -> render_markdown_sides(file) end)
+      end)
+
+    assign(socket, rendered_html: cache)
+  end
+
+  # Change the view state every tab of this review shares: through the
+  # ReviewServer, which broadcasts it, or locally when unbound.
+  defp update_view(socket, change) do
+    %{review_id: rid, state: state} = socket.assigns
+
+    state =
+      case rid do
+        "unbound" -> %{state | view: change.(state.view)}
+        rid -> ReviewServer.update_view(rid, change)
+      end
+
+    assign_state(socket, state)
+  end
+
+  defp put_view(socket, fields), do: update_view(socket, &Map.merge(&1, Map.new(fields)))
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"
   defp page_title(%ReviewState{}), do: "meerkat commit review"
@@ -140,13 +145,15 @@ defmodule MeerkatWeb.ReviewLive do
     do: change_open_forms(socket, &OpenForms.close(&1, key), &ReviewServer.close_form(&1, key))
 
   defp change_open_forms(socket, change, server_change) do
-    forms =
-      case socket.assigns.review_id do
-        "unbound" -> change.(socket.assigns.open_forms)
-        rid -> server_change.(rid).open_forms
+    %{review_id: rid, state: state} = socket.assigns
+
+    state =
+      case rid do
+        "unbound" -> %{state | open_forms: change.(state.open_forms)}
+        rid -> server_change.(rid)
       end
 
-    socket |> assign(open_forms: forms) |> maybe_apply_update()
+    socket |> assign_state(state) |> maybe_apply_update()
   end
 
   # Apply a pending live-restart once it's safe (no comment form open).
@@ -171,11 +178,8 @@ defmodule MeerkatWeb.ReviewLive do
     if MapSet.member?(set, key), do: MapSet.delete(set, key), else: MapSet.put(set, key)
   end
 
-  defp show_rendered(socket, %{file_name: file_name} = file) do
-    %{rendered_files: rendered, rendered_html: cache} = socket.assigns
-    cache = Map.put_new_lazy(cache, file_name, fn -> render_markdown_sides(file) end)
-    assign(socket, rendered_files: MapSet.put(rendered, file_name), rendered_html: cache)
-  end
+  defp show_rendered(socket, %{file_name: file_name}),
+    do: update_view(socket, &%{&1 | rendered_files: MapSet.put(&1.rendered_files, file_name)})
 
   defp render_markdown_sides(file) do
     Meerkat.Markdown.render_diff_sides(
@@ -209,19 +213,17 @@ defmodule MeerkatWeb.ReviewLive do
   @impl true
   def handle_event("set_diff_mode", %{"mode" => mode}, socket)
       when mode in ["split", "unified"] do
-    socket = assign(socket, diff_mode: mode)
-    {:noreply, push_settings(socket)}
+    {:noreply, socket |> put_view(diff_mode: mode) |> push_settings()}
   end
 
   def handle_event("toolbar.toggle_wrap", _, socket) do
-    socket = assign(socket, wrap_lines: not socket.assigns.wrap_lines)
-    {:noreply, push_settings(socket)}
+    {:noreply, socket |> update_view(&%{&1 | wrap_lines: not &1.wrap_lines}) |> push_settings()}
   end
 
   def handle_event("toolbar.set_font_size", %{"px" => px}, socket) do
     case parse_int(px) do
       {:ok, n} ->
-        {:noreply, push_settings(assign(socket, font_size_px: clamp_font_size(n)))}
+        {:noreply, socket |> put_view(font_size_px: clamp_font_size(n)) |> push_settings()}
 
       :error ->
         log_ignored_event("toolbar.set_font_size", "px", px)
@@ -232,8 +234,8 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.bump_font_size", %{"by" => by}, socket) do
     case parse_int(by) do
       {:ok, n} ->
-        px = clamp_font_size(socket.assigns.font_size_px + n)
-        {:noreply, push_settings(assign(socket, font_size_px: px))}
+        bump = &%{&1 | font_size_px: clamp_font_size(&1.font_size_px + n)}
+        {:noreply, socket |> update_view(bump) |> push_settings()}
 
       :error ->
         log_ignored_event("toolbar.bump_font_size", "by", by)
@@ -244,7 +246,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.set_tab_size", %{"n" => n}, socket) do
     case parse_int(n) do
       {:ok, v} ->
-        {:noreply, push_settings(assign(socket, tab_size: clamp_tab_size(v)))}
+        {:noreply, socket |> put_view(tab_size: clamp_tab_size(v)) |> push_settings()}
 
       :error ->
         log_ignored_event("toolbar.set_tab_size", "n", n)
@@ -252,18 +254,22 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
+  def handle_event("toolbar.set_settings_open", %{"open" => open?}, socket)
+      when is_boolean(open?) do
+    {:noreply, put_view(socket, settings_open: open?)}
+  end
+
+  def handle_event("version.set_popover_open", %{"open" => open?}, socket)
+      when is_boolean(open?) do
+    {:noreply, put_view(socket, version_popover_open: open?)}
+  end
+
   # Hydrate toolbar prefs from the client's localStorage on mount.
   # The Settings JS hook reads `meerkat:settings` and dispatches this
   # once with whatever validated values it found; missing keys keep
   # the server defaults.
   def handle_event("settings.load", payload, socket) when is_map(payload) do
-    {:noreply,
-     assign(socket,
-       diff_mode: valid_diff_mode(payload["diff_mode"], socket.assigns.diff_mode),
-       wrap_lines: valid_bool(payload["wrap_lines"], socket.assigns.wrap_lines),
-       font_size_px: valid_font_size(payload["font_size_px"], socket.assigns.font_size_px),
-       tab_size: valid_tab_size(payload["tab_size"], socket.assigns.tab_size)
-     )}
+    {:noreply, update_view(socket, &Map.merge(&1, valid_settings(payload, &1)))}
   end
 
   ## --- File approval ---
@@ -302,14 +308,14 @@ defmodule MeerkatWeb.ReviewLive do
         socket =
           case persist_result do
             {:error, reason} ->
-              assign(socket,
+              put_view(socket,
                 flash_error:
                   "Approval tick for #{file_name} didn't persist " <>
                     "(#{inspect(reason)}). Re-tick next session if you want it cached."
               )
 
             _ ->
-              assign(socket, flash_error: nil)
+              put_view(socket, flash_error: nil)
           end
 
         # On approve, the file section collapses — without this the
@@ -324,7 +330,7 @@ defmodule MeerkatWeb.ReviewLive do
         {:noreply, socket}
 
       {:stale, msg} ->
-        {:noreply, assign(socket, flash_error: msg)}
+        {:noreply, put_view(socket, flash_error: msg)}
     end
   end
 
@@ -504,8 +510,8 @@ defmodule MeerkatWeb.ReviewLive do
   ## --- File filter ---
 
   def handle_event("toolbar.toggle_files_panel", _, socket) do
-    opening? = not socket.assigns.files_panel_open
-    socket = assign(socket, files_panel_open: opening?)
+    socket = update_view(socket, &%{&1 | files_panel_open: not &1.files_panel_open})
+    opening? = socket.assigns.files_panel_open
 
     # The panel renders near the top of the page, above the file list,
     # but the toolbar is sticky, so opening it while scrolled down
@@ -523,26 +529,21 @@ defmodule MeerkatWeb.ReviewLive do
   # direction so the user can collapse anything they're done with,
   # not just approved files.
   def handle_event("file.toggle_expanded", %{"file_name" => file_name}, socket) do
-    %{state: state, expanded_approved: expanded, collapsed_unapproved: collapsed} =
-      socket.assigns
+    key =
+      if MapSet.member?(socket.assigns.state.approved_file_names, file_name),
+        do: :expanded_approved,
+        else: :collapsed_unapproved
 
-    approved? = MapSet.member?(state.approved_file_names, file_name)
-
-    socket =
-      if approved? do
-        assign(socket, expanded_approved: toggle_member(expanded, file_name))
-      else
-        assign(socket, collapsed_unapproved: toggle_member(collapsed, file_name))
-      end
-
-    {:noreply, socket}
+    {:noreply,
+     update_view(socket, &Map.update!(&1, key, fn set -> toggle_member(set, file_name) end))}
   end
 
   def handle_event("file.toggle_rendered", %{"file_name" => file_name}, socket) do
     %{state: state, rendered_files: rendered} = socket.assigns
 
     if MapSet.member?(rendered, file_name) do
-      {:noreply, assign(socket, rendered_files: MapSet.delete(rendered, file_name))}
+      {:noreply,
+       update_view(socket, &%{&1 | rendered_files: MapSet.delete(&1.rendered_files, file_name)})}
     else
       # Unknown file_name no-ops: flipping it on would hide the diff and
       # show an empty pane (no cached HTML to render).
@@ -559,6 +560,27 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
+  # A hunk-expand click in a DiffViewer. Every tab replays the file's
+  # expansions in order, so they all show the same expanded lines.
+  def handle_event(
+        "file.hunk_expand",
+        %{"file_name" => file_name, "mode" => mode, "dir" => dir, "index" => index},
+        socket
+      )
+      when mode in ["split", "unified"] and dir in ["up", "down", "all"] and
+             is_integer(index) and index >= 0 do
+    expansion = [mode, dir, index]
+
+    {:noreply,
+     update_view(socket, fn view ->
+       Map.update!(
+         view,
+         :hunk_expansions,
+         &Map.update(&1, file_name, [expansion], fn es -> es ++ [expansion] end)
+       )
+     end)}
+  end
+
   def handle_event("filter.toggle_extension", %{"ext" => ext}, socket) do
     %{state: state, review_id: rid} = socket.assigns
     hidden? = MapSet.member?(state.hidden_extensions, ext)
@@ -570,18 +592,17 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
-  # `phx-change` form payload always carries the named input via
-  # `value` (debounced + batched). Anything else means a malformed
-  # client event — fall through to empty string.
+  # This event comes from the SharedInput hook, with the box text under "value".
+  # A malformed payload is treated as an empty filter.
   def handle_event("filter.set_input", payload, socket) do
     value = if is_map(payload), do: Map.get(payload, "value", ""), else: ""
-    {:noreply, assign(socket, filter_input: value)}
+    {:noreply, put_view(socket, filter_input: value)}
   end
 
   def handle_event("filter.show_only", %{"file_index" => idx}, socket) do
     case parse_int(idx) do
       {:ok, n} ->
-        {:noreply, assign(socket, only_file_index: n)}
+        {:noreply, put_view(socket, only_file_index: n)}
 
       :error ->
         log_ignored_event("filter.show_only", "file_index", idx)
@@ -596,7 +617,10 @@ defmodule MeerkatWeb.ReviewLive do
       _ = ReviewServer.set_file_overrides(rid, %{})
     end
 
-    {:noreply, assign(socket, state: %{state | file_overrides: %{}}, only_file_index: nil)}
+    {:noreply,
+     socket
+     |> assign(state: %{state | file_overrides: %{}})
+     |> put_view(only_file_index: nil)}
   end
 
   def handle_event("filter.toggle_file", %{"file_name" => file_name}, socket) do
@@ -633,7 +657,7 @@ defmodule MeerkatWeb.ReviewLive do
         if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, file_name, :show)
 
         {:noreply,
-         assign(socket, only_file_index: if(only_file_index in [nil, idx], do: only_file_index))}
+         put_view(socket, only_file_index: if(only_file_index in [nil, idx], do: only_file_index))}
     end
   end
 
@@ -669,7 +693,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("hint.dismiss", _, socket) do
-    {:noreply, push_event(socket, "hint:set-dismissed", %{})}
+    {:noreply, socket |> put_view(hint_dismissed: true) |> push_event("hint:set-dismissed", %{})}
   end
 
   def handle_event("filter.toggle_generated", _, socket) do
@@ -729,11 +753,11 @@ defmodule MeerkatWeb.ReviewLive do
     with %{number: pr_number} <- state.pr,
          payload <- github_payload(state),
          {:ok, url} <- GitHub.post_review(repo_path, pr_number, payload) do
-      {:noreply, assign(socket, flash_error: nil) |> push_event("open-url", %{url: url})}
+      {:noreply, put_view(socket, flash_error: nil) |> push_event("open-url", %{url: url})}
     else
       nil ->
         {:noreply,
-         assign(socket,
+         put_view(socket,
            flash_error: "No PR attached to this review — can't post to GitHub."
          )}
 
@@ -741,14 +765,14 @@ defmodule MeerkatWeb.ReviewLive do
         IO.puts(:stderr, "meerkat: gh api failed — #{reason}")
 
         {:noreply,
-         assign(socket,
+         put_view(socket,
            flash_error: "Couldn't post review to GitHub: #{reason}"
          )}
     end
   end
 
   def handle_event("flash.dismiss", _, socket) do
-    {:noreply, assign(socket, flash_error: nil)}
+    {:noreply, put_view(socket, flash_error: nil)}
   end
 
   def handle_event("decision.cancel", _, socket) do
@@ -927,9 +951,14 @@ defmodule MeerkatWeb.ReviewLive do
   ## --- PubSub ---
 
   @impl true
+  # An earlier broadcast can arrive after this tab assigns a later
+  # event's reply; ignore it so the tab cannot revert to older state.
+  def handle_info({:state_changed, %ReviewState{rev: rev}}, socket)
+      when rev < socket.assigns.state.rev,
+      do: {:noreply, socket}
+
   def handle_info({:state_changed, %ReviewState{} = state}, socket) do
-    socket = assign(socket, state: state, open_forms: state.open_forms)
-    {:noreply, maybe_apply_update(socket)}
+    {:noreply, socket |> assign_state(state) |> maybe_apply_update()}
   end
 
   def handle_info({:meerkat_deadline, deadline_ms}, socket) do
@@ -945,14 +974,6 @@ defmodule MeerkatWeb.ReviewLive do
   # fires the moment the last one closes (see change_open_forms/3).
   def handle_info({:meerkat_version_available, _target}, socket) do
     {:noreply, maybe_apply_update(assign(socket, update_pending: true))}
-  end
-
-  def handle_info({:persistence_failed, reason}, socket) do
-    msg =
-      "Comments aren't being saved to disk (#{inspect(reason)}). " <>
-        "Copy any in-progress text before closing the tab; resolve the underlying issue and re-tick."
-
-    {:noreply, assign(socket, flash_error: msg)}
   end
 
   ## --- Render ---
@@ -1006,7 +1027,7 @@ defmodule MeerkatWeb.ReviewLive do
       )
 
     ~H"""
-    <main class="review" id="meerkat-root" phx-hook="Settings">
+    <main class="review" id="meerkat-root" phx-hook="Settings" data-review-id={@review_id}>
       <.diff_toolbar
         mode={@diff_mode}
         wrap_lines={@wrap_lines}
@@ -1016,6 +1037,8 @@ defmodule MeerkatWeb.ReviewLive do
         repo_path={@repo_path}
         open_forms={@open_forms}
         version={@version}
+        settings_open={@settings_open}
+        version_popover_open={@version_popover_open}
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
       <.pending_answers_banner :if={@pending_answers} pending_answers={@pending_answers} />
@@ -1034,7 +1057,12 @@ defmodule MeerkatWeb.ReviewLive do
         socket={@socket}
         review_id={@review_id}
       />
-      <p :if={@state.files != []} class="hint" phx-hook="HintDismiss" id="meerkat-hint">
+      <p
+        :if={@state.files != [] and not @hint_dismissed}
+        class="hint"
+        phx-hook="HintDismiss"
+        id="meerkat-hint"
+      >
         Tip: click a line number to comment on that line — click and drag for a range. {if @state.commit_message !=
                                                                                              "",
                                                                                            do:
@@ -1071,6 +1099,7 @@ defmodule MeerkatWeb.ReviewLive do
           collapsed_unapproved={@collapsed_unapproved}
           rendered_files={@rendered_files}
           rendered_html={@rendered_html}
+          hunk_expansions={@hunk_expansions}
           inline_comments_by_file={@inline_comments_by_file}
           file_comments_by_file={@file_comments_by_file}
           plantuml_available={@plantuml_available}
@@ -1155,6 +1184,7 @@ defmodule MeerkatWeb.ReviewLive do
   # those ancestor classes to flip the dot colour + label without
   # any LV-side JS hook.
   attr :version, :map, required: true
+  attr :open, :boolean, required: true
 
   defp version_chip(assigns) do
     ~H"""
@@ -1163,6 +1193,7 @@ defmodule MeerkatWeb.ReviewLive do
       class="version-chip-wrap"
       phx-hook="VersionChip"
       data-pr-numbers={Enum.map_join(@version.changelog, ",", & &1.number)}
+      data-open={to_string(@open)}
     >
       <button
         type="button"
@@ -1175,7 +1206,7 @@ defmodule MeerkatWeb.ReviewLive do
         <code class="chip-value">{@version.label}</code>
         <span class="version-badge" hidden></span>
       </button>
-      <div class="version-popover" hidden role="menu">
+      <div class="version-popover" hidden={not @open} role="menu">
         <div class="version-popover-title">recent changes</div>
         <ul class="version-changelog">
           <li :for={entry <- @version.changelog}>
@@ -1361,6 +1392,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :collapsed_unapproved, :any, required: true
   attr :rendered_files, :any, required: true
   attr :rendered_html, :any, required: true
+  attr :hunk_expansions, :map, required: true
   attr :inline_comments_by_file, :any, required: true
   attr :file_comments_by_file, :any, required: true
   attr :plantuml_available, :boolean, required: true
@@ -1485,7 +1517,8 @@ defmodule MeerkatWeb.ReviewLive do
               tab_size: @tab_size,
               comments: Map.get(@inline_comments_by_file, idx, []),
               inline_forms: inline_forms_for_diff(@open_forms, idx, @state, @review_id),
-              plantuml_available: @plantuml_available
+              plantuml_available: @plantuml_available,
+              expansions: Map.get(@hunk_expansions, file.file_name, [])
             }
           }
           socket={@socket}
@@ -1677,16 +1710,16 @@ defmodule MeerkatWeb.ReviewLive do
         </button>
       </header>
 
-      <form id="file-filter-form" phx-change="filter.set_input">
-        <input
-          type="text"
-          name="value"
-          class="filter-input"
-          placeholder="Filter files…"
-          value={@filter_input}
-          phx-debounce="50"
-        />
-      </form>
+      <input
+        type="text"
+        id="file-filter-input"
+        class="filter-input"
+        placeholder="Filter files…"
+        value={@filter_input}
+        data-value={@filter_input}
+        data-event="filter.set_input"
+        phx-hook="SharedInput"
+      />
 
       <ul class="hidden-extensions">
         <li :if={any_generated?(@state.files)}>
@@ -1770,6 +1803,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :repo_path, :string, required: true
   attr :open_forms, :list, required: true
   attr :version, :map, required: true
+  attr :settings_open, :boolean, required: true
+  attr :version_popover_open, :boolean, required: true
 
   defp diff_toolbar(assigns) do
     ~H"""
@@ -1818,7 +1853,7 @@ defmodule MeerkatWeb.ReviewLive do
         <code class="chip-value" title={@state.head_branch}>{@state.head_branch}</code>
       </span>
 
-      <.version_chip version={@version} />
+      <.version_chip version={@version} open={@version_popover_open} />
 
       <.connection_indicator />
 
@@ -1850,7 +1885,13 @@ defmodule MeerkatWeb.ReviewLive do
         <span>Wrap</span>
       </label>
 
-      <details class="toolbar-group toolbar-settings">
+      <details
+        id="toolbar-settings"
+        class="toolbar-group toolbar-settings"
+        phx-hook="SettingsPopover"
+        open={@settings_open}
+        data-open={to_string(@settings_open)}
+      >
         <summary title="Display settings">⚙</summary>
         <div class="toolbar-settings-popover">
           <div class="toolbar-group">
@@ -2044,7 +2085,8 @@ defmodule MeerkatWeb.ReviewLive do
   # The set of file indices visible in the main `.file-list` section.
   # Filters compose: linguist-generated (always hidden unless the
   # user toggles "show generated"), hidden_extensions (persisted),
-  # only_file_index (ephemeral), filter_input (ephemeral),
+  # `only_file_index` and `filter_input` (in the shared,
+  # non-persisted `ReviewState.view`; reset on BEAM restart),
   # file_overrides (persisted — per-row file-filter checkbox wins
   # over every default filter).
   defp visible_indices(state, filter_input, only_file_index) do
@@ -2264,13 +2306,7 @@ defmodule MeerkatWeb.ReviewLive do
   def clamp_tab_size_for_test(n), do: clamp_tab_size(n)
 
   @doc false
-  def valid_settings_for_test(payload, assigns),
-    do: %{
-      diff_mode: valid_diff_mode(payload["diff_mode"], assigns.diff_mode),
-      wrap_lines: valid_bool(payload["wrap_lines"], assigns.wrap_lines),
-      font_size_px: valid_font_size(payload["font_size_px"], assigns.font_size_px),
-      tab_size: valid_tab_size(payload["tab_size"], assigns.tab_size)
-    }
+  def valid_settings_for_test(payload, assigns), do: valid_settings(payload, assigns)
 
   @doc false
   def finding_atom_for_test(ft), do: finding_atom!(ft)
@@ -2458,35 +2494,40 @@ defmodule MeerkatWeb.ReviewLive do
       state: state,
       review_id: rid,
       filter_input: filter_input,
-      only_file_index: only_file_index,
-      expanded_approved: expanded,
-      collapsed_unapproved: collapsed,
-      rendered_files: rendered
+      only_file_index: only_file_index
     } = socket.assigns
 
     # A :show override beats every filter except show-only and the
     # substring filter, so clear those too when they hide this file.
-    socket =
+    {socket, unfilter} =
       if MapSet.member?(visible_indices(state, filter_input, only_file_index), idx) do
-        socket
+        {socket, []}
       else
         if rid != "unbound", do: _ = ReviewServer.set_file_override(rid, name, :show)
 
-        assign(socket,
-          state: %{state | file_overrides: Map.put(state.file_overrides, name, :show)},
-          only_file_index: if(only_file_index in [nil, idx], do: only_file_index),
-          filter_input: if(matches_filter?(name, filter_input), do: filter_input, else: "")
-        )
+        {assign(socket,
+           state: %{state | file_overrides: Map.put(state.file_overrides, name, :show)}
+         ),
+         [
+           only_file_index: if(only_file_index in [nil, idx], do: only_file_index),
+           filter_input: if(matches_filter?(name, filter_input), do: filter_input, else: "")
+         ]}
       end
 
-    socket =
-      if MapSet.member?(state.approved_file_names, name),
-        do: assign(socket, expanded_approved: MapSet.put(expanded, name)),
-        else: assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
+    approved? = MapSet.member?(state.approved_file_names, name)
 
-    if surface == :inline,
-      do: assign(socket, rendered_files: MapSet.delete(rendered, name)),
-      else: socket
+    update_view(socket, fn view ->
+      view = Map.merge(view, Map.new(unfilter))
+
+      view =
+        if approved?,
+          do: %{view | expanded_approved: MapSet.put(view.expanded_approved, name)},
+          else: %{view | collapsed_unapproved: MapSet.delete(view.collapsed_unapproved, name)}
+
+      if surface == :inline,
+        do: %{view | rendered_files: MapSet.delete(view.rendered_files, name)},
+        else: view
+    end)
   end
 
   defp open_form_label(%{surface: :global} = form, _files), do: edit_label("Global", form)
@@ -2578,6 +2619,15 @@ defmodule MeerkatWeb.ReviewLive do
       :stderr,
       "meerkat: #{event} ignored — non-integer #{field}: #{inspect(value)}"
     )
+  end
+
+  defp valid_settings(payload, current) do
+    %{
+      diff_mode: valid_diff_mode(payload["diff_mode"], current.diff_mode),
+      wrap_lines: valid_bool(payload["wrap_lines"], current.wrap_lines),
+      font_size_px: valid_font_size(payload["font_size_px"], current.font_size_px),
+      tab_size: valid_tab_size(payload["tab_size"], current.tab_size)
+    }
   end
 
   defp valid_diff_mode(m, _default) when m in ["split", "unified"], do: m

@@ -146,6 +146,17 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view |> render() |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> Enum.count()
   end
 
+  # The page a tab shows, without LiveSvelte's per-view props-diff
+  # counters.
+  defp page(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("main")
+    |> LazyHTML.to_html()
+    |> String.replace(~r/ data-props-diff="[^"]*"/, "")
+  end
+
   # The props a LiveSvelte mount point hands its Svelte component, read
   # from `html`, the render that mounted it. Later renders carry only
   # the props that changed, so after a bound review's ReviewServer
@@ -1139,6 +1150,59 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute has_element?(tab_b, ".global-comments .note")
   end
 
+  test "every view change in one tab shows in another tab and in a tab opened later", %{
+    conn: conn
+  } do
+    repo = tmp_git_repo()
+    {tab_a, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file, @md_file]}, repo)
+    {:ok, tab_b, _html} = live_isolated(conn, ReviewLive)
+
+    changes = [
+      {"set_diff_mode", %{"mode" => "unified"}},
+      {"toolbar.toggle_wrap", %{}},
+      {"toolbar.set_font_size", %{"px" => "17"}},
+      {"toolbar.bump_font_size", %{"by" => "1"}},
+      {"toolbar.set_tab_size", %{"n" => "4"}},
+      {"settings.load", %{"tab_size" => 8}},
+      {"toolbar.set_settings_open", %{"open" => true}},
+      {"version.set_popover_open", %{"open" => true}},
+      {"toolbar.toggle_files_panel", %{}},
+      {"filter.set_input", %{"value" => "widget"}},
+      {"filter.set_input", %{"value" => ""}},
+      {"filter.show_only", %{"file_index" => "1"}},
+      {"filter.show_all", %{}},
+      {"file.toggle_expanded", %{"file_name" => "src/widget.rs"}},
+      {"file.toggle_rendered", %{"file_name" => "README.md"}},
+      {"hint.dismiss", %{}},
+      {"decision.post_to_github", %{}},
+      {"flash.dismiss", %{}}
+    ]
+
+    for {event, params} <- changes do
+      before = page(tab_b)
+      render_hook(tab_a, event, params)
+      assert page(tab_b) != before, "#{event} didn't change the other tab"
+      assert page(tab_b) == page(tab_a), "#{event} left the tabs out of sync"
+    end
+
+    {:ok, tab_c, _html} = live_isolated(conn, ReviewLive)
+    assert page(tab_c) == page(tab_a)
+  end
+
+  test "a tab keeps a newer state when an older broadcast reaches it late", %{conn: conn} do
+    repo = tmp_git_repo()
+    {tab, rid} = mount_bound(conn, %ReviewState{files: [@plain_file, @md_file]}, repo)
+    render_hook(tab, "toolbar.toggle_files_panel", %{})
+    Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(rid))
+
+    render_hook(tab, "filter.set_input", %{"value" => "a"})
+    assert_receive {:state_changed, older}
+    render_hook(tab, "filter.set_input", %{"value" => "ap"})
+
+    send(tab.pid, {:state_changed, older})
+    assert render(tab) =~ ~s(data-value="ap")
+  end
+
   test "a comment body's <script> renders as text, not an element", %{conn: conn} do
     body = "hello <script>alert(1)</script> world"
 
@@ -1313,7 +1377,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     open_files_panel(view)
     assert has_element?(view, ".file-filter-toggle", "Files (2 of 2)")
 
-    view |> element(".file-filter form") |> render_change(%{"value" => "widget"})
+    view
+    |> element("#file-filter-input")
+    |> render_hook("filter.set_input", %{"value" => "widget"})
+
     assert has_element?(view, ".file-filter .base-name", "widget.rs")
     refute has_element?(view, ".file-filter .base-name", "other.ex")
     assert has_element?(view, ".file-filter-toggle", "Files (1 of 2)")

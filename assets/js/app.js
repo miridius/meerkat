@@ -10,6 +10,7 @@ import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
+import { holdTabState, onTabState, readTabState, writeTabState } from "../ts/tabs";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -34,10 +35,10 @@ const hooks = {
     },
   },
   // Persists toolbar prefs (split/unified, wrap, font size, tab size)
-  // in localStorage and rehydrates them on mount so they survive a
-  // reload. The server keeps an in-memory copy; on mount we push our
-  // values up, and the LV pushes any subsequent change back via
-  // `settings:save` for us to save.
+  // in localStorage per browser; on mount, pushes them with
+  // `settings.load`. The server's copy is the shared view, so every
+  // tab of the review shows those settings. Toolbar events push
+  // `settings:save` to the tab that changed them for localStorage.
   Settings: {
     mounted() {
       const KEY = "meerkat:settings";
@@ -54,14 +55,15 @@ const hooks = {
         try {
           localStorage.setItem(KEY, JSON.stringify(settings));
         } catch (_e) {
-          /* storage full / disabled — stays in-memory for this tab */
+          /* storage full / disabled — settings remain only in the shared server view */
         }
       });
-      // The hint banner is dismissed once per browser via
-      // `meerkat:hint-dismissed`. The LV pushes `hint.dismiss` only on
-      // explicit click, but the JS hook hides the banner on mount if
-      // the flag is already set so reviewers don't see the same line
-      // every session.
+      // The hint dismissal is remembered per browser in
+      // `meerkat:hint-dismissed`. HintDismiss pushes `hint.dismiss` on
+      // mount when the flag is set; an explicit dismiss also reaches
+      // the server. The server shares the dismissal across tabs and
+      // sends `hint:set-dismissed` back to the sender, where this hook
+      // writes the browser flag.
       this.handleEvent("hint:set-dismissed", () => {
         try {
           localStorage.setItem("meerkat:hint-dismissed", "1");
@@ -148,22 +150,21 @@ const hooks = {
       this.el.removeEventListener("click", this._onClick);
     },
   },
-  // Hide the line-comment hint banner on mount if the user has
-  // already dismissed it once in this browser. The dismiss flag
-  // lives under `meerkat:hint-dismissed` and is set by the Settings
-  // hook when the LV pushes `hint:set-dismissed`.
+  // On mount, read the per-browser `meerkat:hint-dismissed` flag.
+  // If set, hide this tab's tip and push `hint.dismiss`; the server
+  // records the dismissal in the shared view and hides the tip in
+  // every tab. It then pushes `hint:set-dismissed` back to the sender
+  // so the Settings hook can write the browser flag.
   HintDismiss: {
     mounted() {
       try {
         if (localStorage.getItem("meerkat:hint-dismissed") === "1") {
           this.el.style.display = "none";
+          this.pushEvent("hint.dismiss", {});
         }
       } catch (_e) {
         /* storage disabled — leave the hint visible */
       }
-      this.handleEvent("hint:set-dismissed", () => {
-        this.el.style.display = "none";
-      });
     },
   },
   // Pointer-drag range selection over the commit-message gutter.
@@ -192,23 +193,37 @@ const hooks = {
       const lineUnder = (ev) =>
         lineFor(document.elementFromPoint(ev.clientX, ev.clientY) ?? ev.target);
 
-      const clearHighlight = () => {
+      // Every tab of the review shows the blocks being dragged over in
+      // any of them.
+      const highlight = (range) => {
         for (const el of gutter.querySelectorAll("li.dragging")) {
           el.classList.remove("dragging");
         }
-      };
-
-      const applyHighlight = () => {
-        clearHighlight();
-        if (!dragStart || !dragEnd) return;
-        const lo = Math.min(dragStart.start, dragEnd.start);
-        const hi = Math.max(dragStart.end, dragEnd.end);
+        if (!range) return;
         for (const li of gutter.querySelectorAll("li[data-start-line]")) {
           const s = Number(li.dataset.startLine);
           const e = Number(li.dataset.endLine);
-          if (s >= lo && e <= hi) li.classList.add("dragging");
+          if (s >= range.lo && e <= range.hi) li.classList.add("dragging");
         }
       };
+
+      const clearHighlight = () => {
+        highlight(null);
+        holdTabState("gutter-drag", null);
+      };
+
+      const applyHighlight = () => {
+        if (!dragStart || !dragEnd) return clearHighlight();
+        const range = {
+          lo: Math.min(dragStart.start, dragEnd.start),
+          hi: Math.max(dragStart.end, dragEnd.end),
+        };
+        highlight(range);
+        holdTabState("gutter-drag", range);
+      };
+
+      highlight(readTabState("gutter-drag"));
+      this._stopTabState = onTabState("gutter-drag", highlight);
 
       // Set on pointerdown; cleared on pointerup/cancel. Track the
       // pointerId separately so we can release the capture in the
@@ -303,6 +318,7 @@ const hooks = {
     },
 
     destroyed() {
+      this._stopTabState();
       this.el.removeEventListener("pointerdown", this._onPointerDown);
       this.el.removeEventListener("pointermove", this._onPointerMove);
       this.el.removeEventListener("pointerup", this._onPointerUp);
@@ -365,31 +381,90 @@ const hooks = {
       }
       this._refreshBadge();
 
-      this._onClick = () => {
-        const opening = popover.hidden;
-        popover.hidden = !opening;
-        if (opening) {
-          setSeen(maxPr());
-          this._refreshBadge();
-        }
+      // The server owns whether the popover is open, so every tab of the
+      // review shows the same; each tab marks the changelog seen while
+      // it shows the popover.
+      this._sync = () => {
+        if (!popover.hidden) setSeen(maxPr());
+        this._refreshBadge();
       };
+      this._sync();
+
+      const setOpen = (open) => this.pushEvent("version.set_popover_open", { open });
+      this._onClick = () => setOpen(popover.hidden);
       btn.addEventListener("click", this._onClick);
 
       this._onDocClick = (e) => {
-        if (!wrap.contains(e.target)) popover.hidden = true;
+        if (!popover.hidden && !wrap.contains(e.target)) setOpen(false);
       };
       this._onEsc = (e) => {
-        if (e.key === "Escape") popover.hidden = true;
+        if (e.key === "Escape" && !popover.hidden) setOpen(false);
+      };
+      // Another tab marking the changelog seen clears this tab's badge.
+      this._onStorage = (e) => {
+        if (e.key === KEY) this._refreshBadge();
       };
       document.addEventListener("click", this._onDocClick, true);
       document.addEventListener("keydown", this._onEsc);
+      window.addEventListener("storage", this._onStorage);
     },
     updated() {
-      this._refreshBadge?.();
+      this._sync?.();
     },
     destroyed() {
       document.removeEventListener("click", this._onDocClick, true);
       document.removeEventListener("keydown", this._onEsc);
+      window.removeEventListener("storage", this._onStorage);
+    },
+  },
+  // The display-settings `<details>`: the server owns whether it is
+  // open, so every tab of the review shows the same.
+  SettingsPopover: {
+    mounted() {
+      this._onToggle = () => {
+        if (this.el.open !== (this.el.dataset.open === "true")) {
+          this.pushEvent("toolbar.set_settings_open", { open: this.el.open });
+        }
+      };
+      this.el.addEventListener("toggle", this._onToggle);
+    },
+    destroyed() {
+      this.el.removeEventListener("toggle", this._onToggle);
+    },
+  },
+  // LiveView does not patch a focused input's value, so this hook keeps the
+  // box in sync with the review's shared filter, including changes from other
+  // tabs. It leaves the box alone while typing is pending or pushes are in
+  // flight, then applies the shared value once idle so late replies cannot
+  // overwrite newer typing.
+  SharedInput: {
+    mounted() {
+      this._timer = null;
+      this._pending = 0;
+      this._sync = () => {
+        if (this._timer || this._pending > 0) return;
+        if (this.el.value !== this.el.dataset.value) this.el.value = this.el.dataset.value;
+      };
+      const pushed = () => {
+        this._pending--;
+        this._sync();
+      };
+      this._onInput = () => {
+        clearTimeout(this._timer);
+        this._timer = setTimeout(() => {
+          this._timer = null;
+          this._pending++;
+          this.pushEvent(this.el.dataset.event, { value: this.el.value }).then(pushed, pushed);
+        }, 50);
+      };
+      this.el.addEventListener("input", this._onInput);
+    },
+    updated() {
+      this._sync();
+    },
+    destroyed() {
+      clearTimeout(this._timer);
+      this.el.removeEventListener("input", this._onInput);
     },
   },
 };
@@ -404,11 +479,11 @@ window.addEventListener("phx:drafts:wipe", (e) => {
   const review_id = e.detail?.review_id;
   if (!review_id) return;
   try {
-    const prefix = `meerkat:draft:${review_id}:`;
+    const prefixes = [`meerkat:draft:${review_id}:`, `meerkat:view:${review_id}:`];
     const stale = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k?.startsWith(prefix)) stale.push(k);
+      if (prefixes.some((p) => k?.startsWith(p))) stale.push(k);
     }
     for (const k of stale) localStorage.removeItem(k);
   } catch (_e) {
@@ -465,45 +540,83 @@ window.addEventListener("phx:comment-form:reveal", (e) => {
   tick();
 });
 
-// Scroll preservation across a live-restart full reload. When a new
-// version changes assets, phx-track-static reloads the page on socket
-// reconnect; without this the reviewer is thrown back to the top.
-// sessionStorage is scoped per tab and per origin, and a live-restart
-// keeps the same port (so the same origin), so the position stashed
-// before the reload is read back after it; a fresh review opens a new
-// tab with empty storage and starts at the top.
-const SCROLL_KEY = "meerkat:scrollY";
-let scrollStashTimer = null;
+// Every tab of the review stays scrolled to the same place: a tab that
+// scrolls saves where it is as tab state, the others follow, and a tab
+// that opens or reloads (a live-restart reloads every tab) scrolls
+// there. A scroll this tab made to follow (`echoY`) is not saved back.
+//
+// The diff only renders once the LiveView connects (a few hundred ms
+// after a load), so the document is too short to scroll at first. Poll
+// each frame until it's tall enough to reach the position, then scroll
+// once; give up after a few seconds (a shorter diff clamps to its own
+// bottom).
+//
+// Do not publish a tab's temporary scroll while its page renders:
+// ignore scroll events until the shared-position restore finishes
+// (immediately if there is no shared position). Browser scroll
+// restoration is disabled, so this code is the only restore.
+let echoY = null;
+const scrollWhenReachable = (anchor, done = () => {}) => {
+  if (!anchor) return done();
+  const deadline = Date.now() + 5000;
+  const attempt = () => {
+    const y = Math.round(anchorY(anchor));
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    if (maxY >= y || Date.now() >= deadline) {
+      echoY = Math.max(0, Math.min(y, maxY));
+      window.scrollTo(0, y);
+      done();
+    } else {
+      requestAnimationFrame(attempt);
+    }
+  };
+  requestAnimationFrame(attempt);
+};
+
+// The file section at the top of the viewport and how far into it the
+// tab has scrolled, as a fraction of its height, so tabs whose windows
+// differ in width still show the same place. `id` is null above the
+// first file.
+const scrollAnchor = () => {
+  let section = null;
+  for (const el of document.querySelectorAll(".file-section")) {
+    if (el.getBoundingClientRect().top > 0) break;
+    section = el;
+  }
+  if (!section) return { id: null, fraction: 0, y: window.scrollY };
+  const rect = section.getBoundingClientRect();
+  return { id: section.id, fraction: -rect.top / rect.height, y: window.scrollY };
+};
+
+const anchorY = ({ id, fraction, y }) => {
+  const el = id ? document.getElementById(id) : null;
+  if (!el) return y;
+  return el.getBoundingClientRect().top + window.scrollY + fraction * el.offsetHeight;
+};
+
+let scrollPostPending = false;
+let restored = false;
+history.scrollRestoration = "manual";
 window.addEventListener(
   "scroll",
   () => {
-    if (scrollStashTimer) return;
-    scrollStashTimer = setTimeout(() => {
-      scrollStashTimer = null;
-      sessionStorage.setItem(SCROLL_KEY, String(Math.round(window.scrollY)));
-    }, 200);
+    if (!restored) return;
+    const echo = echoY !== null && Math.abs(window.scrollY - echoY) <= 1;
+    echoY = null;
+    if (echo || scrollPostPending) return;
+    scrollPostPending = true;
+    requestAnimationFrame(() => {
+      scrollPostPending = false;
+      writeTabState("scroll", scrollAnchor());
+    });
   },
   { passive: true },
 );
 
-const stashedScrollY = parseInt(sessionStorage.getItem(SCROLL_KEY) || "0", 10);
-if (stashedScrollY > 0) {
-  // The diff only renders once the LiveView reconnects (a few hundred ms
-  // after a hard reload), so the document is too short to scroll at first.
-  // Poll each frame until it's tall enough to reach the stashed position,
-  // then restore once; give up after a few seconds (a shorter new diff
-  // clamps to its own bottom).
-  const deadline = Date.now() + 5000;
-  const tryRestore = () => {
-    const maxY = document.documentElement.scrollHeight - window.innerHeight;
-    if (maxY >= stashedScrollY || Date.now() >= deadline) {
-      window.scrollTo(0, stashedScrollY);
-    } else {
-      requestAnimationFrame(tryRestore);
-    }
-  };
-  requestAnimationFrame(tryRestore);
-}
+scrollWhenReachable(readTabState("scroll"), () => {
+  restored = true;
+});
+onTabState("scroll", scrollWhenReachable);
 
 liveSocket.connect();
 window.liveSocket = liveSocket;

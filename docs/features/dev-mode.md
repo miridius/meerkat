@@ -45,12 +45,16 @@ exit 75. The browser tab stays put. State survives because:
   reloaded by `ReviewServer.init/1`.
 - Open forms are persisted in `ReviewState.open_forms`. After
   reconnect, `ReviewLive.mount/3` re-assigns them and `DiffViewer`
-  injects each inline form at its anchor. Prose typed into an add
-  form is kept in `localStorage` under
+  injects each inline form at its anchor. Prose typed into a form is
+  kept in localStorage under
   `meerkat:draft:<review_id>:` followed by the form's key, which
-  encodes its surface, anchor and edit target; reopening that form
-  restores the draft. Edit forms ignore drafts and reopen with the
-  saved comment's body.
+  encodes its surface, anchor and edit target. The JSON draft holds
+  prose, suggestion code, finding type and learn flag values that
+  differ from how the form opened, for add and edit forms. It is
+  updated on every change, removed when the form returns to its
+  opening values, and cleared on submit or cancel. Plain-prose drafts
+  saved before this change still load; a `storage` listener mirrors
+  changes into other tabs already showing the form.
 
 ## Preferred port
 

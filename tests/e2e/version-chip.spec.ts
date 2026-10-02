@@ -14,8 +14,9 @@ const PROD_MANIFEST = [
 // badge. What a dev and a prod build render is covered by the LiveView
 // tests.
 test.describe("version chip", () => {
-	test("a prod build's chip opens a changelog popover, and its badge counts entries newer than last seen until opened", async ({
+	test("a prod build's chip opens a changelog popover, and its badge counts entries newer than last seen until opened, in every tab", async ({
 		page,
+		context,
 	}) => {
 		const releaseRoot = manifestRoot(PROD_MANIFEST);
 		const meerkat = await startMeerkat({ env: { RELEASE_ROOT: releaseRoot } });
@@ -34,6 +35,8 @@ test.describe("version chip", () => {
 				popover.getByRole("link", { name: /#11.*Live-restart/ }),
 			).toHaveAttribute("href", "https://github.com/miridius/meerkat/pull/11");
 			await expect(popover.getByRole("link", { name: /#10/ })).toBeVisible();
+			await page.keyboard.press("Escape");
+			await expect(popover).toBeHidden();
 
 			// Simulate having last acknowledged up to #10, then re-mount.
 			await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
@@ -41,8 +44,14 @@ test.describe("version chip", () => {
 			await expect(badge).toBeVisible();
 			await expect(badge).toHaveText("1");
 
+			const other = await context.newPage();
+			await other.goto(meerkat.url);
+			await expect(other.locator(".version-badge")).toHaveText("1");
+
 			await chip.click();
 			await expect(badge, "opening the changelog clears the badge").toBeHidden();
+			await expect(other.locator(".version-popover"), "every tab opens it").toBeVisible();
+			await expect(other.locator(".version-badge")).toBeHidden();
 		} finally {
 			await meerkat.kill();
 			rmSync(releaseRoot, { recursive: true, force: true });

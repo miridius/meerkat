@@ -135,6 +135,33 @@ defmodule Meerkat.ReviewServerTest do
 
       assert MapSet.equal?(loaded.approved_file_names, MapSet.new(["src/main.rs"]))
     end
+
+    test "a failed save puts an error banner in the broadcast view", %{repo: repo, review_id: id} do
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      File.mkdir_p!(Persistence.path_for(repo, id))
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(id))
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        _ = ReviewServer.set_approved(id, "src/main.rs", true)
+      end)
+
+      assert_receive {:state_changed, %ReviewState{view: %{flash_error: msg}}}, 200
+      assert msg =~ "Comments aren't being saved to disk"
+    end
+
+    test "update_view/2 broadcasts the new view without saving it", %{repo: repo, review_id: id} do
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, ReviewServer.topic(id))
+      state = ReviewServer.update_view(id, &%{&1 | tab_size: 4})
+
+      assert state.view.tab_size == 4
+      assert_receive {:state_changed, %ReviewState{view: %{tab_size: 4}}}, 200
+      refute File.exists?(Persistence.path_for(repo, id))
+    end
   end
 
   describe "clear_all_comments/1" do

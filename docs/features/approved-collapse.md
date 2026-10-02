@@ -36,23 +36,18 @@ approving.
 
 ## State scope
 
-`expanded_approved` is in-LV ephemeral state, NOT persisted to
-`ReviewState`. Reasons:
+`expanded_approved` lives in `ReviewState.view` and is shared by
+every tab of the review, but is not persisted. A DevWatcher hot reload
+or other BEAM restart clears it.
 
-- `expanded_approved` is intentionally ephemeral: a DevWatcher
-  hot reload clears it and the user re-expands files they want to
-  revisit. The trade-off is one click per file vs persisting
-  per-session UI state past a BEAM restart — comment-form state
-  IS persisted because losing typed content costs more than
-  losing an affordance state.
-- Multi-tab convergence: another tab approving the same file
-  shouldn't affect this tab's expansion state. Local-only assign
-  keeps the model clean.
+The trade-off is one click per file to re-expand versus persisting UI
+state past a BEAM restart. Comment-form state IS persisted because
+losing typed content costs more than losing an affordance state.
 
-If a future iteration shows users repeatedly hate the
-re-expansion cost across hot reloads, the field can graduate to a
-persisted assign at any time — the helper `file_section_collapsed?/3`
-is the single read path.
+If a future iteration shows users repeatedly hate the re-expansion
+cost across hot reloads, the field can graduate to a persisted field
+at any time — the helper `file_section_collapsed?/4` is the single
+read path.
 
 ## DOM markers
 
@@ -61,6 +56,6 @@ is the single read path.
 - `<article class="file-section approved">` — approved but
   user-expanded.
 - The `DiffViewer` Svelte component renders only when the section
-  is NOT collapsed — the `:if={not file_section_collapsed?/3}` on
+  is NOT collapsed — the `:if={not file_section_collapsed?/4}` on
   the `<.svelte name="DiffViewer" .../>` controls it. There's no
   DOM cost to a collapsed file beyond the header.

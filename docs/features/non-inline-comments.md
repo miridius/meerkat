@@ -26,8 +26,15 @@ that inline comments use:
 - Several forms can be open at once, across surfaces and files;
   opening one never closes another. Submit and cancel send that
   form's `form_key`.
-- Per-form `draftKey` persistence for add-form prose in localStorage;
-  multiple forms on the same surface can be open.
+- Each form's `draftKey` stores a JSON draft in localStorage of the
+  prose, suggestion code, finding type and learn flag values that
+  differ from how the form opened, for add and edit forms. It is
+  written on every change, removed when the form returns to its
+  opening values, and cleared on submit or cancel. Plain-prose drafts
+  saved before this change still load; a `storage` listener mirrors
+  changes to other tabs already showing the form, and opening or
+  reloading a form restores the draft. Multiple forms on the same
+  surface can be open.
 - Inline `learn` checkbox on rendered comments; toggleable in
   place via `comment.toggle_learn` push event.
 - Edit reopens form prefilled; Remove drops the comment.

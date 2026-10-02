@@ -52,12 +52,26 @@
   // suggestion editors stay plaintext.
   const language = $derived(fileName ? languageFor(fileName) : "plaintext");
 
-  // Hydrate from localStorage if a draft key was passed AND there's
-  // something saved. Edit mode (initialBody non-empty) wins over the
-  // draft so reopening a saved comment doesn't lose its content.
-  function loadDraft(): string {
-    if (!draftKey || initialBody) return initialBody;
-    return safeLocalStorageGet(draftKey) ?? "";
+  // The draft under `draftKey` holds whatever the form shows that
+  // differs from how it opened: prose, suggestion code, finding type
+  // and learn flag, as JSON. Every tab of the review shares the
+  // origin's localStorage, so a tab opening the form, or reloading,
+  // shows what another tab typed, and the `storage` listener below
+  // mirrors each change into tabs already showing the form.
+  type Draft = { prose: string; code: string; findingType: FindingType; learnFromThis: boolean };
+
+  // Drafts saved before the JSON shape held the prose alone.
+  function parseDraft(raw: string | null): Partial<Draft> {
+    if (raw === null) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null && typeof parsed.prose === "string") {
+        return parsed;
+      }
+    } catch {
+      /* a draft saved as plain prose */
+    }
+    return { prose: raw };
   }
 
   // localStorage can throw on quota / private mode. Wrap with a
@@ -117,25 +131,62 @@
       ? splitSuggestionBody(initialBody)
       : null;
 
-  let prose = $state(editSplit ? editSplit.prose : loadDraft());
   // Suggestion-mode code seed: caller's `initialCode` for fresh
   // forms; the parsed code half for edit mode. Plain prose forms
   // ignore this.
-  let code = $state(editSplit ? editSplit.code : initialCode || "");
-  let findingType = $state<FindingType>(initialFindingType);
-  let learnFromThis = $state(initialLearnFromThis);
+  const opened: Draft = {
+    prose: editSplit ? editSplit.prose : initialBody,
+    code: editSplit ? editSplit.code : initialCode || "",
+    findingType: initialFindingType,
+    learnFromThis: initialLearnFromThis,
+  };
+  const saved = { ...opened, ...parseDraft(draftKey ? safeLocalStorageGet(draftKey) : null) };
+
+  let prose = $state(saved.prose);
+  let code = $state(saved.code);
+  let findingType = $state<FindingType>(saved.findingType);
+  let learnFromThis = $state(saved.learnFromThis);
   let submitInFlight = $state(false);
   let submitError = $state<string | null>(null);
 
-  // Persist draft on every keystroke. Cleared on submit-ack /
-  // cancel so a re-open of the same anchor starts blank.
+  function draftJson(d: Draft): string | null {
+    const changed = (Object.keys(opened) as (keyof Draft)[]).some((k) => d[k] !== opened[k]);
+    if (!changed) return null;
+    const { prose, code, findingType, learnFromThis } = d;
+    return JSON.stringify({ prose, code, findingType, learnFromThis });
+  }
+  // JSON this form last wrote or received (null for the opening
+  // values); skipping an equal draft avoids echoing it over newer typing.
+  let storedJson: string | null | undefined;
+
+  // Persist the draft on every change, or drop it once the form is
+  // back to how it opened. Cleared on submit-ack / cancel so a re-open
+  // of the same anchor starts as it opened.
   $effect(() => {
     if (!draftKey) return;
-    if (prose.trim().length === 0) {
-      safeLocalStorageRemove(draftKey);
-    } else {
-      safeLocalStorageSet(draftKey, prose);
+    const json = draftJson({ prose, code, findingType, learnFromThis });
+    if (json === storedJson) return;
+    storedJson = json;
+    if (json === null) safeLocalStorageRemove(draftKey);
+    else safeLocalStorageSet(draftKey, json);
+  });
+
+  // Another tab changed or cleared this form's draft.
+  function onStorage(e: StorageEvent) {
+    if (!draftKey || (e.key !== draftKey && e.key !== null)) return;
+    const next = { ...opened, ...parseDraft(e.key === null ? null : e.newValue) };
+    storedJson = draftJson(next);
+    prose = next.prose;
+    findingType = next.findingType;
+    learnFromThis = next.learnFromThis;
+    if (next.code !== code) {
+      code = next.code;
+      cmView?.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: next.code } });
     }
+  }
+  $effect(() => {
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   });
 
   function clearDraft() {

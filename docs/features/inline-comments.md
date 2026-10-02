@@ -26,8 +26,11 @@ place. After a split/unified or line-wrap toggle, open forms and
 posted comment rows are placed again in the new table, and each
 form keeps its mounted state: typed text, finding type and learn
 flag. If an open form or posted inline comment is anchored on a context
-line the reviewer expanded, that line can render collapsed again
-after a reload or split/unified toggle. DiffViewer expands the whole
+line the reviewer expanded, that line stays expanded after a tab
+reload, but can render collapsed after a split/unified toggle because
+expansions are per view mode, or after a BEAM restart (including a
+dev-mode hot reload) because expansions are not persisted to disk.
+DiffViewer expands the whole
 file once per diff and view mode so the form or comment stays
 visible: a collapsed hunk would hide the comment, and an open form
 blocks the decision buttons.
@@ -48,11 +51,14 @@ Keyboard shortcuts inside the form:
 - **Cmd/Ctrl+Enter** → submit (same as clicking the button).
 - **Escape** → cancel (same as clicking Cancel).
 
-The textarea persists its content to `localStorage` under
-`meerkat:draft:<review_id>:inline:<file_index>:<side>:<start_line>-<end_line>`
-(plus `:edit:<comment_id>` when editing an existing comment) on
-every keystroke and clears on submit/cancel. Re-opening the same
-anchor restores the draft.
+The draft under `meerkat:draft:<review_id>:inline:<file_index>:<side>:<start_line>-<end_line>`
+(plus `:edit:<comment_id>` when editing) stores, as JSON, the prose,
+suggestion code, finding type and learn flag values that differ from
+how the form opened. It is written on every change, removed when the
+form returns to its opening values, and cleared on submit or cancel.
+A draft saved as plain prose before this change still loads. A
+`storage` listener mirrors changes to other tabs already showing the
+form; opening or reloading the form restores the draft.
 
 ## Suggestion mode
 
@@ -113,12 +119,13 @@ adding a comment immediately adds it.
 All open-form metadata (surface, anchor, edit_id and edit prefill
 fields) is persisted in ReviewState's `open_forms` list, in opening
 order. After a BEAM restart or tab reload, the forms reopen at their
-anchors. An add form's localStorage draft restores its typed prose;
-an edit form reopens with the saved comment's body, not its unsaved
-edits. Add forms restore suggestion code, finding type and learn flag
-to their defaults; edit forms reopen with those values from the saved
-comment, but unsaved changes to them are lost.
+anchors. Each form's localStorage draft restores the prose, suggestion
+code, finding type and learn flag values that differ from how the form
+opened, for both add and edit forms. Drafts are written on every
+change, removed when the form returns to its opening values, and
+cleared on submit or cancel; a draft saved as plain prose before this
+change still loads.
 
-This is the contract the user relies on during dev iteration: a
-hot reload **never** loses an open form or the prose typed into an
-add form.
+This is the contract the user relies on during dev iteration: a hot
+reload never loses an open form or what was typed or chosen in it, as
+long as the draft is in localStorage.

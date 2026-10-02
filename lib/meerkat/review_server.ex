@@ -14,9 +14,10 @@ defmodule Meerkat.ReviewServer do
 
   Started lazily via `ensure_started/2` on the first LiveView mount
   for a given review_id. Subsequent mounts find the already-running
-  process via the Registry. The persisted state on disk is loaded
-  on `init/1`; every mutation re-persists via `Meerkat.Persistence`
-  before broadcasting.
+  process via the Registry. The persisted state on disk is loaded on
+  `init/1`; persisted mutations attempt `Meerkat.Persistence.save/3`
+  before broadcasting, while shared-view changes are broadcast without
+  saving.
   """
 
   use GenServer
@@ -176,6 +177,15 @@ defmodule Meerkat.ReviewServer do
     GenServer.call(via(review_id), {:close_form, key})
   end
 
+  @doc """
+  Applies `change` to the review's shared view and broadcasts the new
+  state to every tab without saving it. Called by `ReviewLive`.
+  """
+  @spec update_view(review_id, (ReviewState.view() -> ReviewState.view())) :: ReviewState.t()
+  def update_view(review_id, change) when is_function(change, 1) do
+    GenServer.call(via(review_id), {:update_view, change})
+  end
+
   ## GenServer plumbing
 
   @doc false
@@ -290,6 +300,10 @@ defmodule Meerkat.ReviewServer do
     update(ctx, fn s -> %{s | open_forms: OpenForms.close(s.open_forms, key)} end)
   end
 
+  def handle_call({:update_view, change}, _from, %{state: state} = ctx) do
+    publish(ctx, %{state | view: change.(state.view)})
+  end
+
   defp surface_key(:inline), do: :comments
   defp surface_key(:file), do: :file_comments
   defp surface_key(:global), do: :global_comments
@@ -305,32 +319,40 @@ defmodule Meerkat.ReviewServer do
 
   # Run the state mutation, persist, broadcast, reply with the new
   # state — keeps the four side effects in one place so no mutation
-  # path can forget any of them. Persistence failures broadcast a
-  # `:persistence_failed` PubSub event so the LV can surface a
-  # banner; the in-memory state remains correct, but the user needs
-  # to know their typed input isn't reaching disk before the BEAM
-  # dies.
+  # path can forget any of them. On persistence failure,
+  # `view.flash_error` is included in the `:state_changed` broadcast,
+  # so every tab sees the banner. The in-memory state remains correct,
+  # a warning goes to stderr, and the next mutation retries the save;
+  # no separate `:persistence_failed` event is broadcast.
   defp update(%{state: state, repo_path: repo, review_id: id} = ctx, mutate_fn) do
     new_state = mutate_fn.(state)
 
-    case Persistence.save(repo, id, new_state) do
-      :ok ->
-        :ok
+    new_state =
+      case Persistence.save(repo, id, new_state) do
+        :ok ->
+          new_state
 
-      {:error, reason} ->
-        IO.puts(
-          :stderr,
-          "meerkat: warning — couldn't persist review #{id} state: #{inspect(reason)}. " <>
-            "In-memory state preserved; comments may be lost if the BEAM dies before next save."
-        )
+        {:error, reason} ->
+          IO.puts(
+            :stderr,
+            "meerkat: warning — couldn't persist review #{id} state: #{inspect(reason)}. " <>
+              "In-memory state preserved; comments may be lost if the BEAM dies before next save."
+          )
 
-        Phoenix.PubSub.broadcast(
-          Meerkat.PubSub,
-          topic(id),
-          {:persistence_failed, reason}
-        )
-    end
+          put_in(
+            new_state.view.flash_error,
+            "Comments aren't being saved to disk (#{inspect(reason)}). " <>
+              "Copy any in-progress text before closing the tab; resolve the underlying issue and re-tick."
+          )
+      end
 
+    publish(ctx, new_state)
+  end
+
+  # A node-wide monotonic counter keeps revisions increasing across
+  # ReviewServer restarts; a process-local counter could reset.
+  defp publish(%{review_id: id} = ctx, new_state) do
+    new_state = %{new_state | rev: System.unique_integer([:monotonic, :positive])}
     Phoenix.PubSub.broadcast(Meerkat.PubSub, topic(id), {:state_changed, new_state})
     {:reply, new_state, %{ctx | state: new_state}}
   end

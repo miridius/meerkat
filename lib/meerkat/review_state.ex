@@ -48,6 +48,53 @@ defmodule Meerkat.ReviewState do
             # `draftKey`, so re-opening at the same anchor restores
             # the typed text too.
             open_forms: [],
+            # What the review page shows apart from the comments and
+            # filters above: toolbar settings, panel, narrowing, file
+            # collapse, rendered markdown, tip and error banners. Shared
+            # by every tab of the review via `Meerkat.ReviewServer`; not
+            # persisted, so a BEAM restart resets it.
+            view: %{
+              diff_mode: "split",
+              # Wrap long lines by default — horizontal scrolling forces the
+              # reviewer off the keyboard and hides context. The toolbar
+              # toggle still lets users opt out for code that genuinely
+              # reads better unwrapped (long URLs, hex dumps).
+              wrap_lines: true,
+              font_size_px: 13,
+              tab_size: 2,
+              settings_open: false,
+              version_popover_open: false,
+              # File-filter sidebar is closed by default so the diff body
+              # uses the full viewport width. Toggle in the toolbar to
+              # reveal the file list / filter / per-file approval ticks.
+              files_panel_open: false,
+              filter_input: "",
+              only_file_index: nil,
+              # File names the reviewer has explicitly expanded after the
+              # file was approved (which collapses the diff body by default).
+              # Click the file header to flip collapse state; un-approving
+              # + re-approving collapses again.
+              expanded_approved: MapSet.new(),
+              # File names the user has explicitly collapsed despite the
+              # file NOT being approved. Approved files default to collapsed
+              # (and get expanded via `expanded_approved`); unapproved files
+              # default to expanded (and get collapsed via this set).
+              collapsed_unapproved: MapSet.new(),
+              # File names whose markdown diff is currently shown as the
+              # rendered side-by-side view instead of the source diff.
+              # Flipped by `file.toggle_rendered`.
+              rendered_files: MapSet.new(),
+              # Each file's hunk-expand clicks, `[mode, dir, index]`, in
+              # the order made; every DiffViewer replays them.
+              hunk_expansions: %{},
+              hint_dismissed: false,
+              # Transient error banner. Set by handlers that failed in a way
+              # the user needs to see (gh api failure, stale-OID rejected
+              # approve, a failed save). Cleared by the banner's close
+              # button, a successful approval tick, or a successful post
+              # to GitHub.
+              flash_error: nil
+            },
             # True for staged-diff reviews: the `--commit-msg` hook
             # flow and a plain `meerkat` run. False for ad-hoc PR /
             # range / single-ref reviews. Drives "is Approve blocking
@@ -59,7 +106,10 @@ defmodule Meerkat.ReviewState do
             # computed once at construction so Persistence.save/3
             # doesn't re-hash on every mutation. `files` is frozen
             # post-mount, so the signature is too.
-            state_signature: nil
+            state_signature: nil,
+            # Revision used by LiveViews to ignore broadcasts older than
+            # the state they already hold.
+            rev: 0
 
   @type pr_info :: %{
           number: pos_integer(),
@@ -71,6 +121,24 @@ defmodule Meerkat.ReviewState do
           start_line: pos_integer(),
           end_line: pos_integer(),
           text: String.t()
+        }
+
+  @type view :: %{
+          diff_mode: String.t(),
+          wrap_lines: boolean(),
+          font_size_px: pos_integer(),
+          tab_size: pos_integer(),
+          settings_open: boolean(),
+          version_popover_open: boolean(),
+          files_panel_open: boolean(),
+          filter_input: String.t(),
+          only_file_index: non_neg_integer() | nil,
+          expanded_approved: MapSet.t(String.t()),
+          collapsed_unapproved: MapSet.t(String.t()),
+          rendered_files: MapSet.t(String.t()),
+          hunk_expansions: %{optional(String.t()) => [[String.t() | non_neg_integer()]]},
+          hint_dismissed: boolean(),
+          flash_error: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -89,8 +157,10 @@ defmodule Meerkat.ReviewState do
           show_generated: boolean(),
           file_overrides: %{optional(String.t()) => :show | :hide},
           open_forms: [Meerkat.OpenForms.form()],
+          view: view(),
           precommit?: boolean(),
-          state_signature: String.t() | nil
+          state_signature: String.t() | nil,
+          rev: integer()
         }
 
   @doc """

@@ -77,6 +77,7 @@
 
 <script lang="ts">
   import { DiffFile, DiffView, DiffModeEnum } from "@git-diff-view/svelte";
+  import { type DragRange, holdTabState, onTabState, readTabState } from "../ts/tabs";
   import "@git-diff-view/svelte/styles/diff-view.css";
   import { mount, unmount } from "svelte";
   import InlineComment from "./InlineComment.svelte";
@@ -151,6 +152,7 @@
     comments = [],
     inline_forms = [],
     plantuml_available = false,
+    expansions = [],
     live,
   }: {
     file: FileDiff;
@@ -162,6 +164,7 @@
     comments?: InlineCommentT[];
     inline_forms?: InlineFormDescriptor[];
     plantuml_available?: boolean;
+    expansions?: [string, string, number][];
     live: LiveBridge;
   } = $props();
 
@@ -260,6 +263,11 @@
       instance.init();
       instance.buildSplitDiffLines();
       instance.buildUnifiedDiffLines();
+      expandHunk = {
+        split: instance.onSplitHunkExpand,
+        unified: instance.onUnifiedHunkExpand,
+      };
+      appliedExpansions = 0;
       diffInstance = instance;
       renderError = null;
     } catch (err) {
@@ -267,6 +275,41 @@
       console.error("DiffViewer: createInstance failed for", file.file_name, err);
       renderError = msg;
       diffInstance = null;
+    }
+  });
+
+  // Hunk-expand clicks go to the server instead of expanding here: it
+  // keeps each file's expansions in order, and every tab of the review
+  // replays them from `expansions` onto `diffInstance`, so all tabs
+  // expand the same lines. The buttons belong to the copy of
+  // `diffInstance` that `DiffView` renders, which it hands to
+  // `onDiffFileCreated`; that copy and `diffInstance` keep each other
+  // up to date.
+  type ExpandMode = "split" | "unified";
+  type ExpandDir = "up" | "down" | "all";
+  let expandHunk: Record<ExpandMode, (dir: ExpandDir, index: number) => void> | null = null;
+  let appliedExpansions = 0;
+
+  function pushExpansion(mode: ExpandMode, dir: string, index: number) {
+    live.pushEvent("file.hunk_expand", { file_name: file.file_name, mode, dir, index });
+  }
+
+  function sendExpandClicksToServer(rendered: DiffFile | null) {
+    if (!rendered) return;
+    rendered.onSplitHunkExpand = (dir, index) => pushExpansion("split", dir, index);
+    rendered.onUnifiedHunkExpand = (dir, index) => pushExpansion("unified", dir, index);
+  }
+
+  $effect(() => {
+    const list = $state.snapshot(expansions) as [ExpandMode, ExpandDir, number][];
+    if (!diffInstance || !expandHunk) return;
+    for (; appliedExpansions < list.length; appliedExpansions++) {
+      const [mode, dir, index] = list[appliedExpansions];
+      try {
+        expandHunk[mode](dir, index);
+      } catch (err) {
+        console.warn("DiffViewer: couldn't replay hunk expansion", list[appliedExpansions], err);
+      }
     }
   });
 
@@ -490,11 +533,12 @@
     }
   }
 
-  // A form or comment can be anchored on a context line the reviewer
-  // expanded, which renders collapsed again after a reload or a view
-  // toggle. It must stay visible (an open form blocks the decision
-  // buttons), so expand the whole file once per diff instance and view
-  // mode; the hunk-expand observer then places it.
+  // A form or comment can be anchored on a context line revealed by
+  // expanding a hunk. Shared view state replays expansions after reload,
+  // but switching modes or restarting the BEAM can hide the anchor again.
+  // It must stay visible (an open form blocks the decision buttons), so
+  // expand the whole file once per diff instance and view mode; the
+  // hunk-expand observer then places it.
   const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
   function expandToShowHiddenAnchor() {
     if (!diffInstance) return;
@@ -775,23 +819,49 @@
     dragCurrent = null;
   }
 
-  // Re-apply drag-select classes whenever drag state changes. First remove
-  // `.drag-selecting` and `.drag-selecting-side` everywhere, then add
-  // `.drag-selecting` to each line-number cell in the drag range on the
-  // dragged side. In unified view (one `td.diff-line-num` with both numbers),
-  // also mark the whole row; in split view, mark that side's number cell and
-  // adjacent content cell with `.drag-selecting-side`. All highlights clear
-  // when `dragStart` returns to `null`.
+  // This tab's drag range, and the one another tab of the review is
+  // dragging in this file, which this tab shows too.
+  const localDrag = $derived<DragRange | null>(
+    dragStart && dragCurrent
+      ? {
+          side: dragStart.side,
+          lo: Math.min(dragStart.line, dragCurrent.line),
+          hi: Math.max(dragStart.line, dragCurrent.line),
+        }
+      : null,
+  );
+  type TabDrag = { file_index: number; range: DragRange };
+  let tabDrag = $state<TabDrag | null>(readTabState<TabDrag>("drag"));
+  const remoteDrag = $derived(tabDrag?.file_index === file_index ? tabDrag.range : null);
+
+  $effect(() => onTabState<TabDrag>("drag", (v) => (tabDrag = v)));
+
+  let sentDrag = false;
+  $effect(() => {
+    const range = $state.snapshot(localDrag);
+    if (!range && !sentDrag) return;
+    sentDrag = range !== null;
+    holdTabState("drag", range && { file_index, range });
+  });
+
+  // Re-apply drag-select classes whenever the local or shared drag range
+  // changes. First remove `.drag-selecting` and
+  // `.drag-selecting-side` everywhere, then add `.drag-selecting` to
+  // each line-number cell in the range on its dragged side. In unified
+  // view (one `td.diff-line-num` with both numbers), also mark the whole
+  // row; in split view, mark that side's number cell and adjacent content
+  // cell with `.drag-selecting-side`. This tab's drag takes precedence;
+  // otherwise, show a drag from another tab of this review if it is in
+  // this file. Highlights clear when neither drag range applies.
   $effect(() => {
     if (!diffContainer) return;
     for (const el of diffContainer.querySelectorAll(".drag-selecting, .drag-selecting-side")) {
       el.classList.remove("drag-selecting", "drag-selecting-side");
     }
-    if (!dragStart || !dragCurrent) return;
+    const range = localDrag ?? remoteDrag;
+    if (!range) return;
 
-    const lo = Math.min(dragStart.line, dragCurrent.line);
-    const hi = Math.max(dragStart.line, dragCurrent.line);
-    const side = dragStart.side;
+    const { lo, hi, side } = range;
     const numSel =
       side === "old"
         ? "td.diff-line-old-num, td.diff-line-num [data-line-old-num]"
@@ -1001,6 +1071,7 @@
       diffViewTheme="dark"
       diffViewAddWidget={false}
       registerHighlighter={highlighter ?? undefined}
+      onDiffFileCreated={sendExpandClicksToServer}
     />
   </div>
 {/if}

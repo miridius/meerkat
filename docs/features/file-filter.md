@@ -8,8 +8,9 @@ file list.
 ## Toggle
 
 Hidden by default. The toolbar's `☰ Files` button toggles it via
-`toolbar.toggle_files_panel`. State lives on the LV's
-`files_panel_open` socket assign (ephemeral, NOT persisted).
+`toolbar.toggle_files_panel`.
+`ReviewState.view.files_panel_open` holds the state, shared across
+tabs and not persisted; a BEAM restart resets it.
 
 The `.review-body` always has one column
 (`grid-template-columns: 1fr`); opening the panel does not change
@@ -28,9 +29,11 @@ Top to bottom:
    on whether every currently-filtered file is visible) and
    `Show all` (visible when `only_file_index != nil` OR any
    `file_overrides` entry is set; clears overrides).
-2. **Filter input**: a debounced (50ms) `phx-change="filter.set_input"`
-   text box. Filters the panel's list AND the main file list by
-   case-insensitive substring on the file's base name.
+2. **Filter input**: a text box with the `SharedInput` hook, which
+   sends `filter.set_input` 50 ms after typing stops. Filters the panel's list AND the main file list by
+   case-insensitive substring on the file's base name. The box
+   reflects shared changes even while focused, including a clear
+   made in another tab.
 3. **Generated-file chip**: `generated ✓` / `generated ×` —
    click to toggle `show_generated`. Only renders when at least
    one file in the diff has `is_generated = true` (from
@@ -75,16 +78,17 @@ Each row in the file-entries list shows:
   persisted) — explicit per-file override. `:hide` always hides;
   `:show` bypasses only the persisted generated-file and
   hidden-extension filters, not `only_file_index` or `filter_input`.
-- `filter_input` (string, in-LV ephemeral) — substring filter.
-- `only_file_index` (int | nil, in-LV ephemeral) — "show only
-  this file" override.
+- `filter_input` (string, in `ReviewState.view`, shared across tabs
+  and not persisted) — substring filter.
+- `only_file_index` (int | nil, in `ReviewState.view`, shared across
+  tabs and not persisted) — "show only this file" override.
 - `state.approved_file_names` (MapSet, persisted) — driven by
   the per-file Approved checkbox in the main file list; the panel's
   rows have no approval checkbox.
 
-Hidden / show_generated / file_overrides / approved-files survive
-a BEAM restart. `filter_input` and `only_file_index` don't —
-they're tab-local narrowing affordances.
+Hidden / show_generated / file_overrides / approved-files survive a
+BEAM restart. `filter_input` and `only_file_index` are shared across
+tabs, but do not survive a BEAM restart; they are not tab-local.
 
 ## Composition
 
