@@ -187,6 +187,9 @@ defmodule Meerkat.CLI do
         announce_url(target, serve_dir)
         open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
+        # Remove this review's snapshot before the delay or delivery: a held
+        # decision's server may be replaced and exit before `deliver/2` returns.
+        _ = Persistence.delete(repo_path(), review_id)
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
         Process.sleep(750)
@@ -194,9 +197,8 @@ defmodule Meerkat.CLI do
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
         {code, text} = exit_code(decision, review_id, feedback_file_path(log))
         run = deliver({code, text}, serve_dir)
-        # Clear the in-progress snapshot — the next invocation must
-        # start with an empty review, not replay stale comments from
-        # a closed cycle.
+        # Delete it again to catch a save already in flight when the decision
+        # arrived that finished after the first deletion.
         _ = Persistence.delete(repo_path(), review_id)
 
         _ =

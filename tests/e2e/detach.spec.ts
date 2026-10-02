@@ -240,4 +240,42 @@ test.describe("a review outlives the process that invoked it", () => {
 			rmSync(fixture.dir, { recursive: true, force: true });
 		}
 	});
+
+	// A message-only change keeps the same review_id, so the replacement
+	// would otherwise load the held review's existing snapshot.
+	test("a held decision's comments do not reappear in the review that replaces it after a message-only change", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		const first = await startMeerkat({ fixture, keepFixture: true, underParent: true });
+		let second: Runner | undefined;
+		try {
+			const replacedBackend = backendPid(first);
+			await page.goto(first.url);
+			await first.killParent();
+			await first.awaitClose();
+
+			await addGlobalComment(page, "held for the old message");
+			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
+			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
+
+			writeFileSync(fixture.commitMsgPath, "A different subject\n");
+			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
+			expect(alive(replacedBackend), "the review holding the decision has been replaced").toBe(false);
+
+			await page.goto(second.url);
+			await expect(page.locator("body")).toContainText("A different subject");
+			await expect(page.locator(".global-comments .note")).toHaveCount(0);
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code, stderr } = await second.awaitExit();
+			expect(code).toBe(0);
+			expect(stderr, "the replacement review has no comments").toContain(
+				"The user approved your commit. Proceeding.",
+			);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
 });

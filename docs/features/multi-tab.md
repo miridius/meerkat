@@ -17,9 +17,10 @@ canonical `%ReviewState{}`. Every mutation flows through it via
 After every mutation, `ReviewServer.update/2`:
 
 1. Runs the state transformer.
-2. Persists the new state to
+2. Attempts to save the new state to
    `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` via
-   `Meerkat.Persistence.save/3`.
+   `Meerkat.Persistence.save/3` while no decision has been made; after
+   a decision, it leaves the snapshot untouched.
 3. Broadcasts `{:state_changed, %ReviewState{}}` on the topic
    `"review:#{review_id}"`.
 

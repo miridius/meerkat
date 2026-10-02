@@ -150,10 +150,17 @@ already connected and `--no-open` was not passed.
 
 ## Persistence across decisions
 
-A terminal decision deletes the in-progress JSON snapshot at
-`<gitdir>/meerkat-precommit/in-progress/<review_id>.json`. The
-next invocation of meerkat for the same review_id starts with an
-empty state — comments do NOT leak across review cycles.
+The in-progress snapshot lives at
+`<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
+
+When a decision is made, the snapshot is deleted, whether or not an
+invocation is attached. Tabs still showing the review may display edits
+made after the decision, but those edits are not saved.
+
+The next invocation of meerkat for the same review_id starts without
+comments. Comments do not carry over between review cycles, including
+when a changed commit message causes an invocation to replace a review
+with an undelivered decision.
 
 ## Review log
 
