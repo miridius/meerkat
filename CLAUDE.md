@@ -84,15 +84,12 @@ The end-to-end loop for a meerkat bug report or feature request:
    thorough review still happens at merge through
    `/review-and-merge`; this self-review does not replace it.
 
-   When a PR changes what meerkat's review page shows, add
-   screenshots to its description using
-   `bun scripts/pr-screenshots.ts <steps.ts> [--before] [--pr N]
-   [--out DIR]`. Capture after opening the draft PR. Use judgement to
-   choose whichever screenshots, and how many, will help review that
-   PR; for changed UI, a before/after pair can help. Confirm each
-   image shows what you meant to capture. Uploads are public and
-   permanent. Confirm no image contains private data (such as local
-   absolute paths).
+   When a PR changes what meerkat's review page shows, screenshots are
+   called for. Use judgement to choose whichever screenshots, and how
+   many, will help review that PR; for changed UI, a before/after pair
+   can help. The agent creates and updates PRs with `/pr` and does not
+   run `gh pr create` outside `/pr`, and does not attach screenshots to
+   a PR outside `/pr`.
 
 ## Quality gates
 
