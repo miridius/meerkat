@@ -163,8 +163,6 @@ scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
 scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
 ```
 
-Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
-
 ### Fix every surviving mutant
 
 Do not dismiss surviving mutants under ordinary review triage.

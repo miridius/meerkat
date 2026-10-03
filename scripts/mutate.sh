@@ -9,8 +9,7 @@
 # Modes:
 #   scripts/mutate.sh             — mutate every lib/meerkat/*.ex
 #                                   (skips application — supervisor
-#                                   plumbing). Slow; run before
-#                                   opening a PR.
+#                                   plumbing). Slow.
 #   scripts/mutate.sh changed     — mutate ONLY lib/meerkat/*.ex files
 #                                   changed on the current branch vs
 #                                   origin/main. Run during local
