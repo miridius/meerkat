@@ -39,6 +39,7 @@ bridges the two by exercising the docs against the running app.
 - [approved-collapse.md](approved-collapse.md) — approved files collapse; click header to re-expand.
 - [pending-answers.md](pending-answers.md) — pinned banner, schema, lifecycle.
 - [multi-tab.md](multi-tab.md) — PubSub state convergence, tab close behavior.
+- [dashboard.md](dashboard.md) — not yet built: one page for session questions, commit reviews, PRs needing the user, and read-only session decisions.
 
 ## Pending / not-yet-written
 
