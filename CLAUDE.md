@@ -96,7 +96,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 ## Quality gates
 
-**Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, then `scripts/bump-deps.sh`, then `scripts/check.sh`. They are piped, so if one script refuses the commit, the later ones do not run.
+**Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, `scripts/bump-deps.sh`, `scripts/check.sh`, then `scripts/mutate.sh staged`. They are piped, so if one script refuses the commit, later scripts do not run.
 
 `bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It refuses the commit when it cannot rewrite a requirement or an update fails, never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
 
@@ -133,19 +133,17 @@ When behaviour changes, choose the lowest layer that exercises it:
 
 ## Mutation testing
 
-`scripts/mutate.sh` runs `mix muex` against `lib/meerkat/*.ex` to
-surface untested behaviour: muex rewrites operators / literals one
-at a time and re-runs the test suite — a rewrite the suite still
-passes against is a test gap.
+`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. A surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) blocks the commit; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Staged lines that produce no mutants pass. One or more file paths mutate every line of those files. Put extra muex flags after `--`.
 
 ```bash
-scripts/mutate.sh                # lib/meerkat/*.ex except application.ex (slow)
-scripts/mutate.sh changed        # only files changed vs origin/main
-scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
-scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
+scripts/mutate.sh
+scripts/mutate.sh changed
+scripts/mutate.sh staged
+scripts/mutate.sh lib/meerkat/git.ex
+scripts/mutate.sh changed -- --concurrency 4
 ```
 
-Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
+Every blocking mutant must be killed by a test in the same commit, except for the kinds listed under “Acceptable non-fixes” in `.claude/skills/review-and-merge/SKILL.md`: equivalent mutants, pure-observability mutations, and unreachable I/O seams. For one of these exceptions, put a `# muex:ignore <reason>` comment on its own line directly above the mutated line, in a position that `mix format` leaves in place, with a reason explaining why it qualifies; muex reports every mutant on the line below an annotated comment as ignored, so none blocks the commit, whatever its status would otherwise have been. Do not use this comment for any other survivor. Never bypass the hook with `--no-verify`.
 
 ## Local dev mode
 

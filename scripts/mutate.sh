@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # Mutation testing for meerkat.
 #
-# Runs `mix muex` against the meerkat domain code. muex rewrites
+# Runs `mix muex` against the meerkat Elixir code. muex rewrites
 # operators / literals one at a time and re-runs the test suite
 # against each rewrite. A rewrite the suite still passes against
 # is an uncovered behaviour — fix the test or the code.
 #
 # Modes:
-#   scripts/mutate.sh             — mutate every lib/meerkat/*.ex
-#                                   (skips application — supervisor
-#                                   plumbing). Slow; run before
-#                                   opening a PR.
-#   scripts/mutate.sh changed     — mutate ONLY lib/meerkat/*.ex files
-#                                   changed on the current branch vs
-#                                   origin/main. Run during local
-#                                   iteration.
-#   scripts/mutate.sh <path…>     — mutate the named files.
+#   scripts/mutate.sh             — mutate every line of every
+#                                   lib/meerkat/*.ex (skips application
+#                                   — supervisor plumbing). Slow.
+#   scripts/mutate.sh changed     — mutate only the lib/**/*.ex lines
+#                                   changed vs the merge base with
+#                                   origin/main (override with
+#                                   BASE_BRANCH), uncommitted edits
+#                                   included (muex --since).
+#   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
+#                                   staged for the next commit (muex
+#                                   --staged), and fail when any
+#                                   mutant survives or no test reaches
+#                                   it. The lefthook pre-commit hook
+#                                   runs this mode.
+#   scripts/mutate.sh <path…>     — mutate every line of the named
+#                                   files.
 #
 # Pass extra muex flags through after `--`:
 #   scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
@@ -43,24 +50,60 @@ skip_file() {
   return 1
 }
 
+# Collects the files under $1 matching find's -name $2 (to the depth in
+# $3, if given) into `files`, minus SKIP_PATTERNS. Captured into a
+# tempfile + exit status checked — process-subst `< <(find …)` would
+# swallow a find failure (set -e doesn't propagate through it).
+collect_files() {
+  local dir=$1 name=$2 depth=${3:-}
+  local listing
+  listing=$(mktemp)
+  if ! find "$dir" ${depth:+-maxdepth "$depth"} -name "$name" -type f | sort > "$listing"; then
+    rm -f "$listing"
+    echo "scripts/mutate.sh: find under $dir failed." >&2
+    exit 2
+  fi
+  while IFS= read -r f; do
+    skip_file "$f" || files+=("$f")
+  done < "$listing"
+  rm -f "$listing"
+}
+
+# Whether `git diff <args>` adds or changes any lib/**/*.ex line, the
+# only lines muex's --since / --staged can mutate. The diff is captured
+# first: piped straight into `grep -q`, git could die of SIGPIPE and
+# pipefail would read a match as a failure.
+has_added_lines() {
+  local diff
+  if ! diff=$(git diff --unified=0 --no-color --diff-filter=d "$@" -- ':(glob)lib/**/*.ex'); then
+    echo "scripts/mutate.sh: git diff $* failed." >&2
+    exit 2
+  fi
+  awk '/^\+/ && !/^\+\+\+ / { found = 1 } END { exit !found }' <<<"$diff"
+}
+
+# Scopes muex to the lines its diff flags ($@) select. Every such line
+# counts, so --no-filter keeps muex from skipping a file it rates too
+# simple to be worth mutating, and --no-optimize from dropping the
+# mutants of a function it rates too simple.
+line_scope() {
+  scope_args=("$@" --no-filter --no-optimize)
+}
+
 mode=${1:-default}
 shift || true
+# `scripts/mutate.sh -- <muex flags>` is the default mode with flags.
+if [[ "$mode" == "--" ]]; then
+  mode=default
+  set -- -- "$@"
+fi
 
 files=()
+scope_args=()
+gate=false
 case "$mode" in
   default)
-    # Capture into a tempfile + check exit status — process-subst
-    # `< <(find …)` would swallow a find failure (set -e doesn't
-    # propagate through it).
-    listing=$(mktemp)
-    trap 'rm -f "$listing"' EXIT
-    if ! find lib/meerkat -maxdepth 1 -name '*.ex' -type f | sort > "$listing"; then
-      echo "scripts/mutate.sh: find under lib/meerkat failed." >&2
-      exit 2
-    fi
-    while IFS= read -r f; do
-      skip_file "$f" || files+=("$f")
-    done < "$listing"
+    collect_files lib/meerkat '*.ex' 1
     ;;
   changed)
     base="${BASE_BRANCH:-origin/main}"
@@ -68,22 +111,26 @@ case "$mode" in
       echo "scripts/mutate.sh: base ref '$base' not found; fetch origin first." >&2
       exit 2
     fi
-    listing=$(mktemp)
-    trap 'rm -f "$listing"' EXIT
-    if ! git diff --name-only "$base"...HEAD -- 'lib/meerkat/*.ex' > "$listing"; then
-      echo "scripts/mutate.sh: git diff vs $base failed." >&2
-      exit 2
-    fi
-    while IFS= read -r f; do
-      [[ -z "$f" ]] && continue
-      skip_file "$f" && continue
-      [[ -f "$f" ]] || continue
-      files+=("$f")
-    done < "$listing"
-    if [[ ${#files[@]} -eq 0 ]]; then
-      echo "scripts/mutate.sh: no lib/meerkat/*.ex files changed vs $base — nothing to mutate."
+    if ! has_added_lines --merge-base "$base"; then
+      echo "scripts/mutate.sh: no lib/**/*.ex lines changed vs $base — nothing to mutate."
       exit 0
     fi
+    collect_files lib '*.ex'
+    line_scope --since "$base"
+    ;;
+  staged)
+    # During `git commit -a` or `git commit <paths>`, GIT_INDEX_FILE names
+    # a temporary index holding the commit's contents. --git-path resolves
+    # it (or the usual index) to an absolute path, which muex --staged
+    # reads after the rest of git's hook environment is cleared below.
+    index=$(git rev-parse --path-format=absolute --git-path index)
+    if ! has_added_lines --cached; then
+      echo "scripts/mutate.sh: no lib/**/*.ex lines staged — nothing to mutate."
+      exit 0
+    fi
+    collect_files lib '*.ex'
+    line_scope --staged
+    gate=true
     ;;
   *)
     # Treat every arg up to `--` as a file path. Flag-shaped args
@@ -120,10 +167,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "scripts/mutate.sh: mutating ${#files[@]} file(s):"
-printf '  %s\n' "${files[@]}"
+# Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks; left set,
+# they would point Mix's checkout of git dependencies, and every test's
+# fixture repo, at this repository.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
+if [[ ${#scope_args[@]} -eq 0 ]]; then
+  echo "scripts/mutate.sh: mutating ${#files[@]} file(s):"
+  printf '  %s\n' "${files[@]}"
+else
+  echo "scripts/mutate.sh: mutating the $mode lines of lib/**/*.ex."
+fi
 
 MIX_ENV=test mix deps.get
+# The suite needs node_modules, which a fresh worktree lacks.
+pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
 MIX_ENV=test mix compile --warnings-as-errors
 
 # muex's `--files` accepts comma-separated globs/paths.
@@ -132,4 +191,53 @@ joined=$(IFS=,; echo "${files[*]}")
 # its line, and skips mutants on lines no test executes (reported as
 # no coverage). For lines `:cover` has no data for, it falls back to
 # muex's dependency analysis, then to the full suite.
-mix muex --files "$joined" --coverage-guided "${extra_args[@]}"
+muex=(mix muex --files "$joined" --coverage-guided "${scope_args[@]}")
+
+if [[ "$gate" != true ]]; then
+  "${muex[@]}" "${extra_args[@]}"
+  exit
+fi
+
+# The gate judges the run from muex's JSON report rather than its score:
+# a commit whose staged lines yield no mutants has nothing to score, and
+# must pass. muex prints the report's path, so the report is kept, in
+# _build/, until the next gate run replaces it. muex strips
+# GIT_INDEX_FILE from the test runs it starts.
+mkdir -p _build
+report="$PWD/_build/mutate-staged.json"
+GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
+  --format json --output "$report" "${extra_args[@]}"
+
+# A survivor is a staged line whose behaviour the tests do not pin
+# down. A no-coverage mutant is the same gap, found without running:
+# no ExUnit test executes its line.
+# muex's patch holds the whole enclosing expression, which for a deleted
+# statement is the whole module body, so print only the lines one side
+# has and the other lacks, at most six per side.
+failing=$(jq -r '
+  def only($sign; $lines; $other):
+    ($lines - $other) as $diff
+    | $diff[:6] | map("\n    \($sign) " + .) | join("")
+      + (if ($diff | length) > 6 then "\n    \($sign) …" else "" end);
+  .mutations[]
+  | select(.status == "survived" or .status == "no_coverage")
+  | "\(.location.file):\(.location.line)  \(.status)  \(.description)"
+    + (if .patch then
+         (.patch.before | split("\n")) as $b
+         | (.patch.after | split("\n")) as $a
+         | only("-"; $b; $a) + only("+"; $a; $b)
+       else "" end)
+' "$report")
+
+if [[ -n "$failing" ]]; then
+  echo
+  echo "scripts/mutate.sh: staged lib/ lines have untested behaviour:"
+  echo
+  echo "$failing"
+  echo
+  echo "Add or tighten a test that fails for each mutant above, in this commit."
+  echo "See CLAUDE.md \"Mutation testing\" for the documented exceptions."
+  exit 1
+fi
+
+echo "scripts/mutate.sh: no mutant of the staged lib/ lines survived."
