@@ -22,9 +22,6 @@ remove commits a merged PR still references). Before committing:
   age as a supply-chain guard). `bun run` / `bunx` for
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
-- **Set up dependencies first.** In every new checkout or worktree,
-  run `mix deps.get` and `pnpm install` before running any other
-  `mix` or `bun` command, running tests, or committing.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
   when a direct JS or Hex dependency trails its latest release unless
   that release is exempt. JS releases under 24h are not required, and a
