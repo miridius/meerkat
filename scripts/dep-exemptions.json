@@ -5,6 +5,6 @@
   },
   "muex": {
     "version": "0.11.2",
-    "reason": "pinned to the fork commit with the test-selection fixes, parallel coverage collection, and parallel runs of same-file mutants: https://github.com/miridius/muex/commit/9ba8336d668443281ef69443e827e3034fcc75b9"
+    "reason": "pinned to the fork commit with the test-selection fixes, parallel coverage collection, parallel runs of same-file mutants, and staged-line scoping: https://github.com/miridius/muex/commit/e5bacc145b0221315d0c0bee796ecd853fdcd854"
   }
 }
