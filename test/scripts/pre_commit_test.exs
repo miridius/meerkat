@@ -93,6 +93,8 @@ defmodule Meerkat.PreCommitHookTest do
       env | grep '^GIT_' > '#{muex}/env'
       git diff --cached --name-only > '#{muex}/staged'
       while [ $# -gt 0 ] && [ "$1" != --output ]; do shift; done
+      [ $# -gt 0 ] || exit 0
+      echo "$2" > '#{muex}/output'
       cp "${STUB_REPORT:-#{report}}" "$2"
       exit 0
     fi
@@ -182,8 +184,18 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--staged" in args
     assert "--coverage-guided" in args
     assert "--no-filter" in args
+    assert "--no-optimize" in args
     assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
+
+    # muex prints the report's path, so the report must outlive the run.
+    output = ctx.muex |> Path.join("output") |> File.read!() |> String.trim()
+    assert File.exists?(output)
+
+    assert String.starts_with?(
+             output,
+             Path.join(git(ctx.work, ["rev-parse", "--show-toplevel"]), "_build/")
+           )
 
     env = muex_env(ctx)
     assert Enum.any?(env, &String.starts_with?(&1, "GIT_INDEX_FILE=/"))
@@ -250,6 +262,25 @@ defmodule Meerkat.PreCommitHookTest do
 
     assert {_, 0} = commit(ctx, ["-m", "comment"], [{"STUB_REPORT", report}])
     assert gates_run(ctx) == @gates ++ @mutation
+  end
+
+  # `changed` scores the same lines a commit would, so it must keep every
+  # mutant the gate keeps.
+  test "`mutate.sh changed` mutates uncommitted lib/ lines with the gate's scoping", ctx do
+    File.write!(Path.join(ctx.work, "lib/meerkat/one.ex"), "one\nchanged\n")
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {_, 0} =
+             System.cmd("bash", ["scripts/mutate.sh", "changed"],
+               cd: ctx.work,
+               env: [{"PATH", path}, {"BASE_BRANCH", "main"}],
+               stderr_to_stdout: true
+             )
+
+    args = muex_args(ctx)
+    assert ["--since", "main"] in Enum.chunk_every(args, 2, 1)
+    assert "--no-filter" in args
+    assert "--no-optimize" in args
   end
 
   test "a commit on main is refused before any check runs", ctx do

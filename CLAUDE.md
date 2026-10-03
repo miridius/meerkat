@@ -143,7 +143,7 @@ scripts/mutate.sh lib/meerkat/git.ex
 scripts/mutate.sh changed -- --concurrency 4
 ```
 
-Every blocking mutant must be killed by a test in the same commit, except for the kinds listed under “Acceptable non-fixes” in `.claude/skills/review-and-merge/SKILL.md`: equivalent mutants, pure-observability mutations, and unreachable I/O seams. For one of these exceptions, put a `# muex:ignore <reason>` comment on the mutated line, with a reason explaining why it qualifies; muex reports every mutant on an annotated line as ignored, so none blocks the commit, whatever its status would otherwise have been. Do not use this comment for any other survivor. Never bypass the hook with `--no-verify`.
+Every blocking mutant must be killed by a test in the same commit, except for the kinds listed under “Acceptable non-fixes” in `.claude/skills/review-and-merge/SKILL.md`: equivalent mutants, pure-observability mutations, and unreachable I/O seams. For one of these exceptions, put a `# muex:ignore <reason>` comment on its own line directly above the mutated line, in a position that `mix format` leaves in place, with a reason explaining why it qualifies; muex reports every mutant on the line below an annotated comment as ignored, so none blocks the commit, whatever its status would otherwise have been. Do not use this comment for any other survivor. Never bypass the hook with `--no-verify`.
 
 ## Local dev mode
 

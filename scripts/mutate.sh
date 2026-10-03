@@ -82,6 +82,14 @@ has_added_lines() {
   awk '/^\+/ && !/^\+\+\+ / { found = 1 } END { exit !found }' <<<"$diff"
 }
 
+# Scopes muex to the lines its diff flags ($@) select. Every such line
+# counts, so --no-filter keeps muex from skipping a file it rates too
+# simple to be worth mutating, and --no-optimize from dropping the
+# mutants of a function it rates too simple.
+line_scope() {
+  scope_args=("$@" --no-filter --no-optimize)
+}
+
 mode=${1:-default}
 shift || true
 # `scripts/mutate.sh -- <muex flags>` is the default mode with flags.
@@ -108,7 +116,7 @@ case "$mode" in
       exit 0
     fi
     collect_files lib '*.ex'
-    scope_args=(--since "$base")
+    line_scope --since "$base"
     ;;
   staged)
     # During `git commit -a` or `git commit <paths>`, GIT_INDEX_FILE names
@@ -121,7 +129,7 @@ case "$mode" in
       exit 0
     fi
     collect_files lib '*.ex'
-    scope_args=(--staged)
+    line_scope --staged
     gate=true
     ;;
   *)
@@ -192,13 +200,12 @@ fi
 
 # The gate judges the run from muex's JSON report rather than its score:
 # a commit whose staged lines yield no mutants has nothing to score, and
-# must pass. Every staged line counts, so --no-filter keeps muex from
-# skipping a file it rates too simple to be worth mutating, and
-# --no-optimize from dropping the mutants of a function it rates too
-# simple. muex strips GIT_INDEX_FILE from the test runs it starts.
-report=$(mktemp)
-trap 'rm -f "$report"' EXIT
-GIT_INDEX_FILE="$index" "${muex[@]}" --no-filter --no-optimize --fail-at 0 \
+# must pass. muex prints the report's path, so the report is kept, in
+# _build/, until the next gate run replaces it. muex strips
+# GIT_INDEX_FILE from the test runs it starts.
+mkdir -p _build
+report="$PWD/_build/mutate-staged.json"
+GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
   --format json --output "$report" "${extra_args[@]}"
 
 # A survivor is a staged line whose behaviour the tests do not pin
