@@ -145,12 +145,7 @@ When behaviour changes, choose the lowest layer that exercises it:
   CLI to BEAM exit/stdout, and process lifecycle.
 - Keep owned/local behaviour real; mock only boundaries we don't own.
 
-## Review and merge
-
-The `/manager:review-and-merge` skill runs the merge-time checks and
-post-merge steps in this section.
-
-### Mutation testing
+## Mutation testing
 
 By default, `scripts/mutate.sh` runs
 `mix muex --coverage-guided` on `lib/meerkat/*.ex` except
@@ -171,31 +166,7 @@ scripts/mutate.sh lib/meerkat/git.ex   # one or more named files
 scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
 ```
 
-Run the check on every changed `lib/**/*.ex` file in the PR.
-
-```bash
-set -euo pipefail
-
-CHANGED=$(git diff --name-only --diff-filter=d <base>...HEAD -- 'lib/*.ex')
-if [ -z "$CHANGED" ]; then
-  echo "No changed lib/**/*.ex files; skipping mutation testing."
-else
-  scripts/mutate.sh $CHANGED
-fi
-```
-
-Run `git fetch origin` before the full PR check.
-Use the refreshed `origin/main` as `<base>`.
-Use the commit before the fixes as `<base>` for a rerun on fix
-commits.
-The PR branch must be checked out for this command.
-The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
-The `--diff-filter=d` option omits deleted files.
-This keeps deleted paths out of the file list passed to muex.
-With `set -euo pipefail`, a failing `git diff` aborts instead of
-producing an empty list.
-The empty-list guard prevents an empty file list from invoking the
-default mutation scope.
+Run `scripts/mutate.sh changed` locally before opening a PR; do not add it to automatic hooks, since runs take minutes per module.
 
 ### Fix every surviving mutant
 
@@ -239,6 +210,39 @@ An unreachable I/O seam is an acceptable non-fix only when ExUnit
 cannot reach the code.
 Explain why ExUnit cannot reach it.
 Name the e2e test that kills the mutant.
+
+## Review and merge
+
+The `/manager:review-and-merge` skill runs the merge-time checks and
+post-merge steps in this section.
+
+### Mutation-test the PR
+
+Run the check on every changed `lib/**/*.ex` file in the PR.
+
+```bash
+set -euo pipefail
+
+CHANGED=$(git diff --name-only --diff-filter=d <base>...HEAD -- 'lib/*.ex')
+if [ -z "$CHANGED" ]; then
+  echo "No changed lib/**/*.ex files; skipping mutation testing."
+else
+  scripts/mutate.sh $CHANGED
+fi
+```
+
+Run `git fetch origin` before the full PR check.
+Use the refreshed `origin/main` as `<base>`.
+Use the commit before the fixes as `<base>` for a rerun on fix
+commits.
+The PR branch must be checked out for this command.
+The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
+The `--diff-filter=d` option omits deleted files.
+This keeps deleted paths out of the file list passed to muex.
+With `set -euo pipefail`, a failing `git diff` aborts instead of
+producing an empty list.
+The empty-list guard prevents an empty file list from invoking the
+default mutation scope.
 
 ### Post-merge deploy
 
