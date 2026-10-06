@@ -1,5 +1,5 @@
 defmodule Meerkat.TimeoutTest do
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   # Surviving muex mutants in lib/meerkat/timeout.ex, with why they are
   # not test gaps:

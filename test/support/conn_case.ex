@@ -1,8 +1,8 @@
 defmodule MeerkatWeb.ConnCase do
   @moduledoc """
   Common test setup for controller / LiveView tests; provides a
-  `conn` fixture via `Phoenix.ConnTest`. Synchronous tests also start
-  and end with no decision (see `Meerkat.DecisionCase`).
+  `conn` fixture via `Phoenix.ConnTest`. Synchronous tests also get
+  `Meerkat.Case`'s global-state isolation.
   """
 
   use ExUnit.CaseTemplate
@@ -22,7 +22,7 @@ defmodule MeerkatWeb.ConnCase do
   end
 
   setup tags do
-    Meerkat.DecisionCase.reset_decision(tags)
+    Meerkat.Case.isolate_global_state(tags)
 
     # meerkat binds 127.0.0.1 and MeerkatWeb.Loopback rejects non-loopback
     # Host headers; ConnTest defaults to "www.example.com", so pin the test

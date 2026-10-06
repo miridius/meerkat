@@ -1,6 +1,6 @@
 defmodule Meerkat.VersionWatcherTest do
   # async: false: :restart_fun is global application env.
-  use Meerkat.DecisionCase, async: false
+  use Meerkat.Case, async: false
 
   alias Meerkat.VersionWatcher
 
@@ -56,7 +56,7 @@ defmodule Meerkat.VersionWatcherTest do
     start_supervised!({VersionWatcher, [poll_ms: 10, name: name, viewers_fun: fn -> 1 end]})
 
     flip(link, Path.join(dir, "v2"))
-    assert_receive {:meerkat_version_available, _}, 1000
+    assert_receive {:meerkat_version_available, _}
   end
 
   test "broadcasts when current flips to a new version", %{dir: dir, link: link} do
@@ -64,7 +64,7 @@ defmodule Meerkat.VersionWatcherTest do
     start(link, viewers_fun: fn -> 1 end)
     flip(link, Path.join(dir, "v2"))
 
-    assert_receive {:meerkat_version_available, target}, 1000
+    assert_receive {:meerkat_version_available, target}
     assert Path.basename(target) == "v2"
   end
 
@@ -75,7 +75,7 @@ defmodule Meerkat.VersionWatcherTest do
     start(link, viewers_fun: fn -> 0 end)
     flip(link, Path.join(dir, "v2"))
 
-    assert_receive {:restart, 75}, 1000
+    assert_receive {:restart, 75}
   end
 
   test "does not restart while a viewer is connected", %{dir: dir, link: link} do
@@ -86,7 +86,7 @@ defmodule Meerkat.VersionWatcherTest do
     start(link, viewers_fun: fn -> 1 end)
     flip(link, Path.join(dir, "v2"))
 
-    assert_receive {:meerkat_version_available, _}, 1000
+    assert_receive {:meerkat_version_available, _}
     refute_receive {:restart, _}, 200
   end
 
@@ -96,8 +96,8 @@ defmodule Meerkat.VersionWatcherTest do
     start(link, viewers_fun: fn -> 1 end)
     flip(link, Path.join(dir, "v2"))
 
-    assert_receive {:meerkat_version_available, _}, 1000
-    assert_receive {:meerkat_version_available, _}, 1000
+    assert_receive {:meerkat_version_available, _}
+    assert_receive {:meerkat_version_available, _}
   end
 
   test "broadcasts the new target after a second flip", %{dir: dir, link: link} do

@@ -1,6 +1,6 @@
 defmodule Meerkat.GitHubTest do
   # `current_pr/1` tests put a gh stub on the process-wide PATH.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
   import Meerkat.TestHelpers, only: [git: 2]

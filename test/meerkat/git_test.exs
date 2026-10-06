@@ -893,7 +893,7 @@ defmodule Meerkat.GitTest do
 end
 
 defmodule Meerkat.GitMeerkatDirTest do
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers
 
