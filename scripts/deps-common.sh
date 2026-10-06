@@ -59,6 +59,36 @@ pnpm_outdated() {
   PNPM_ROWS=$(jq -r 'to_entries[] | [.key, .value.latest] | @tsv' <<<"$json")
 }
 
+# pnpm_installable NAME: 0 when pnpm, under minimumReleaseAge, resolves
+# `pnpm -r update --latest NAME`, and 2, printing pnpm's reason, when it
+# refuses because a dependency of that release has no version in its
+# range past the floor. pnpm outdated judges a release by its own publish
+# time only, so a release past the floor can still require a younger
+# version, such as an exact-pinned platform build published minutes
+# later. The update runs on a scratch copy of the workspace manifests and
+# lockfile, so the tree is left alone.
+pnpm_installable() {
+  local tmp="" out rc
+  if ! { tmp=$(mktemp -d) &&
+    mkdir "$tmp/assets" &&
+    cp package.json pnpm-workspace.yaml pnpm-lock.yaml "$tmp/" &&
+    cp assets/package.json "$tmp/assets/" &&
+    # assets/package.json takes the Phoenix packages from ../deps.
+    ln -s "$PWD/deps" "$tmp/deps"; }; then
+    rm -rf "$tmp"
+    echo "$prefix could not copy the workspace to a scratch dir — cannot check $1 is installable."
+    return 1
+  fi
+  out=$(cd "$tmp" && pnpm -r update --latest --lockfile-only --ignore-scripts "$1" 2>&1) &&
+    rc=0 || rc=$?
+  rm -rf "$tmp"
+  ((rc == 0)) && return 0
+  grep -m1 ERR_PNPM_NO_MATURE_MATCHING_VERSION <<<"$out" && return 2
+  echo "$out"
+  echo "$prefix pnpm could not resolve $1's latest release (exit $rc) — cannot check it is installable."
+  return 1
+}
+
 # npm_latest NAME: prints the release NAME's "latest" dist-tag names on
 # the registry, however young it is. Its failure message goes to stderr,
 # since callers capture stdout.
