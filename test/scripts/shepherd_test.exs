@@ -149,7 +149,11 @@ defmodule Meerkat.ShepherdTest do
       runs = Path.join(dir, "runs")
       File.mkdir_p!(runs)
       File.chmod!(runs, 0o555)
-      on_exit(fn -> File.chmod!(runs, 0o755) && File.rm_rf!(dir) end)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
 
       port =
         open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [

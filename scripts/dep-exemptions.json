@@ -2,9 +2,5 @@
   "shiki": {
     "version": "4.5.0",
     "reason": "@git-diff-view/shiki 0.1.7 depends on shiki ^3.23.0"
-  },
-  "muex": {
-    "version": "0.11.3",
-    "reason": "pinned to the fork commit with the test-selection fixes (multi-alias test selection, crediting each test file with only the lines it executed), parallel coverage collection, and parallel runs of same-file mutants, none of which 0.11.3 has: https://github.com/miridius/muex/commit/9ba8336d668443281ef69443e827e3034fcc75b9"
   }
 }
