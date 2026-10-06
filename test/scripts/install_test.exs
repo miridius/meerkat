@@ -3,7 +3,7 @@ defmodule Meerkat.InstallScriptTest do
   # checkout whose commit `current` already holds. A stub `mix` first on
   # PATH records a run and fails, so a rebuild is detected without
   # building anything.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2]
 

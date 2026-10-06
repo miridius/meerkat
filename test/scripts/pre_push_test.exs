@@ -1,8 +1,9 @@
 defmodule Meerkat.PrePushHookTest do
   # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
-  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh is
-  # replaced, by a stub that records each run and exits with a chosen status.
-  use ExUnit.Case, async: false
+  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh and
+  # verified-push.sh are replaced, by stubs that record each run and exit with a
+  # chosen status; test/scripts/verified_push_test.exs covers verified-push.sh.
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
 
@@ -21,6 +22,8 @@ defmodule Meerkat.PrePushHookTest do
     remote = Path.join(base, "remote.git")
     marker = Path.join(base, "outdated-ran")
     outdated_status = Path.join(base, "outdated-status")
+    verified_args = Path.join(base, "verified-push-args")
+    verified_status = Path.join(base, "verified-push-status")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     File.mkdir_p!(Path.join(work, ".lefthook/pre-push"))
@@ -44,13 +47,54 @@ defmodule Meerkat.PrePushHookTest do
     exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
     """)
 
+    File.write!(Path.join([work, "scripts", "verified-push.sh"]), """
+    #!/usr/bin/env bash
+    echo "$*" > '#{verified_args}'
+    exit "$(cat '#{verified_status}' 2>/dev/null || echo 0)"
+    """)
+
     Meerkat.TestHelpers.install_lefthook(work)
 
     commit(work, "README.md", "hello\n", "base")
     no_hooks(work, ["push", "-q", "origin", "main"])
 
     {:ok,
-     work: work, marker: marker, outdated_status: outdated_status, private_refs: private_refs}
+     work: work,
+     marker: marker,
+     outdated_status: outdated_status,
+     verified_args: verified_args,
+     verified_status: verified_status,
+     private_refs: private_refs}
+  end
+
+  test "a push hands each new tip to verified-push.sh", ctx do
+    commit(ctx.work, "a.txt", "a\n", "add a")
+    first = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "b.txt", "b\n", "add b")
+    second = git(ctx.work, ["rev-parse", "HEAD"])
+
+    assert {_, 0} =
+             push(ctx.work, ["origin", "#{first}:refs/heads/one", "HEAD:refs/heads/two"])
+
+    tips = ctx.verified_args |> File.read!() |> String.split()
+    assert Enum.sort(tips) == Enum.sort([first, second])
+  end
+
+  test "a failing verified-push.sh blocks the push", ctx do
+    File.write!(ctx.verified_status, "1")
+    commit(ctx.work, "a.txt", "a\n", "add a")
+
+    assert {_, code} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
+    assert code != 0
+  end
+
+  test "verified-push.sh is not run when another check already blocks the push", ctx do
+    File.write!(ctx.outdated_status, "1")
+    commit(ctx.work, "a.txt", "a\n", "add a")
+
+    assert {_, code} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
+    assert code != 0
+    refute File.exists?(ctx.verified_args)
   end
 
   test "a push of new commits runs the checks", %{work: work, marker: marker} do

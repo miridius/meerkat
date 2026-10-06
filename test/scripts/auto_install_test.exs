@@ -2,7 +2,7 @@ defmodule Meerkat.AutoInstallScriptTest do
   # Runs the repo's real scripts/auto-install.sh in a throwaway repo, with
   # the environment git gives a post-checkout hook. scripts/install.sh and
   # `mix` are stubs that log each run and the git variables it sees.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2]
 
