@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { type Fixture, makeFixture } from "./fixture.js";
+import { type Fixture, makeFixture, OWNED_TMP_DIR_RE } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
 
@@ -211,6 +211,18 @@ export async function reapOrphanedBackends(): Promise<void> {
 		const dir = join(tmpdir(), name);
 		await stopBackends(dir);
 		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Removes the `ownedTmpDir` dirs of test processes no longer alive, which
+// exited before their cleanup ran. Those of live processes, including
+// concurrent runs, and dirs without a PID are left alone. Run it after
+// `reapOrphanedBackends`, so no backend is left serving a removed fixture.
+export function reapOrphanedFixtures(): void {
+	for (const name of readdirSync(tmpdir())) {
+		const owner = name.match(OWNED_TMP_DIR_RE);
+		if (!owner || alive(Number(owner[1]))) continue;
+		rmSync(join(tmpdir(), name), { recursive: true, force: true });
 	}
 }
 

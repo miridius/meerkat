@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { elapsedSeconds, reapOrphanedBackends, startMeerkat } from "./runner.js";
+import { makeFixture } from "./fixture.js";
+import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat } from "./runner.js";
 
 // spawnSync rather than awaiting spawn's "exit": under load bun sometimes
 // sets exitCode on a child without ever emitting "exit".
@@ -90,6 +91,48 @@ describe("orphaned backend reaper", () => {
 			try {
 				process.kill(kept, "SIGKILL");
 			} catch {}
+			rmSync(unowned, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("orphaned fixture reaper", () => {
+	test("removes the fixtures of a test process killed before cleanup and keeps those of a live one", () => {
+		// A test process SIGKILLed mid-test never reaches fixture cleanup.
+		const killed = spawnSync(
+			"bun",
+			[
+				"-e",
+				`import { makeFixture, makePrFixture } from ${JSON.stringify(join(import.meta.dir, "fixture.ts"))};
+				const pr = makePrFixture();
+				console.log(JSON.stringify([makeFixture().dir, pr.dir, pr.ghStubDir]));
+				process.kill(process.pid, "SIGKILL");`,
+			],
+			{ encoding: "utf8" },
+		);
+		expect(killed.signal).toBe("SIGKILL");
+		const orphaned: string[] = JSON.parse(killed.stdout);
+		const owned = makeFixture();
+		try {
+			reapOrphanedFixtures();
+
+			for (const dir of orphaned) expect(existsSync(dir), `${dir} of a killed owner is removed`).toBe(false);
+			expect(existsSync(owned.dir), "fixture of a live owner is kept").toBe(true);
+		} finally {
+			for (const dir of orphaned) rmSync(dir, { recursive: true, force: true });
+			owned.cleanup();
+		}
+	});
+
+	test("leaves alone fixture dirs whose name carries no owner pid", () => {
+		// Named like the fixtures of older test runs, which a concurrent run
+		// on an older checkout may still be using.
+		const unowned = mkdtempSync(join(tmpdir(), "meerkat-e2e-"));
+		try {
+			reapOrphanedFixtures();
+
+			expect(existsSync(unowned), "fixture dir without an owner pid is kept").toBe(true);
+		} finally {
 			rmSync(unowned, { recursive: true, force: true });
 		}
 	});

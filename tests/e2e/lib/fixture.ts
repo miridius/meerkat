@@ -72,6 +72,24 @@ Lorem ipsum dolor sit amet.
 More text.
 `;
 
+const OWNED_TMP_DIR_PREFIXES = [
+	"meerkat-e2e",
+	"meerkat-e2e-gh",
+	"meerkat-e2e-pr-remote",
+	"meerkat-e2e-pr-staging",
+	"meerkat-e2e-pr-local",
+	"meerkat-rr",
+] as const;
+
+export const OWNED_TMP_DIR_RE = new RegExp(`^(?:${OWNED_TMP_DIR_PREFIXES.join("|")})-(\\d+)-[A-Za-z0-9]+$`);
+
+// Names the dir after the test process making it, so `reapOrphanedFixtures`
+// can remove it once that process has exited, as when its worker is killed
+// before the dir's cleanup runs.
+export function ownedTmpDir(prefix: (typeof OWNED_TMP_DIR_PREFIXES)[number]): string {
+	return mkdtempSync(join(tmpdir(), `${prefix}-${process.pid}-`));
+}
+
 function rmAll(dirs: string[]): void {
 	for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }
@@ -90,7 +108,7 @@ function gitFor(cwd: string): (...args: string[]) => string {
 export function makeFixture(
 	opts: { commitMsg?: string; files?: Record<string, string> } = {},
 ): Fixture {
-	const dir = mkdtempSync(join(tmpdir(), "meerkat-e2e-"));
+	const dir = ownedTmpDir("meerkat-e2e");
 	const git = gitFor(dir);
 
 	git("init", "-q", "-b", "main");
@@ -140,13 +158,13 @@ export function makePrFixture(
 	const url = `https://github.com/example/example/pull/${prNumber}`;
 
 	// Bare remote — mirrors GitHub-style PR refs.
-	const remoteDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-pr-remote-"));
+	const remoteDir = ownedTmpDir("meerkat-e2e-pr-remote");
 	const remoteGit = gitFor(remoteDir);
 	remoteGit("init", "-q", "--bare", "-b", baseRef);
 
 	// Workspace where we author the base + head commits, then push them
 	// up to the bare remote.
-	const stagingDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-pr-staging-"));
+	const stagingDir = ownedTmpDir("meerkat-e2e-pr-staging");
 	const stagingGit = gitFor(stagingDir);
 	stagingGit("init", "-q", "-b", baseRef);
 	// Base commit — the merge-base.
@@ -164,7 +182,7 @@ export function makePrFixture(
 	stagingGit("push", "-q", "origin", `HEAD:refs/pull/${prNumber}/head`);
 
 	// Local working clone — this is what meerkat is invoked inside.
-	const dir = mkdtempSync(join(tmpdir(), "meerkat-e2e-pr-local-"));
+	const dir = ownedTmpDir("meerkat-e2e-pr-local");
 	const localGit = gitFor(dir);
 	localGit("clone", "-q", remoteDir, ".");
 
@@ -181,7 +199,7 @@ export function makePrFixture(
 	//
 	// The captured request body lets tests assert on what the server
 	// actually sent.
-	const ghStubDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
+	const ghStubDir = ownedTmpDir("meerkat-e2e-gh");
 	const ghPath = join(ghStubDir, "gh");
 	const apiCapturePath = join(ghStubDir, "last-api-input.json");
 	const reviewHtmlUrl = `${url}#pullrequestreview-12345`;
@@ -257,7 +275,7 @@ exit 1
 // dev BEAM reads the same file a prod release would), so the chip renders
 // a real version + changelog without needing an installed release.
 export function manifestRoot(lines: string[]): string {
-	const root = mkdtempSync(join(tmpdir(), "meerkat-rr-"));
+	const root = ownedTmpDir("meerkat-rr");
 	writeFileSync(join(root, "meerkat_version"), `${lines.join("\n")}\n`);
 	return root;
 }
