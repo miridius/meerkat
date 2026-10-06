@@ -30,6 +30,11 @@ A Claude Code session using `AskUserQuestion` stops until the user answers. With
   under [Sessions](#sessions). Everything stays on this machine.
 - **PRs shown** are every open PR, in any repository, that needs the
   user (see [Pull requests](#pull-requests)).
+- **Updates apply mid-session.** When meerkat or its Claude Code
+  plugin changes, the change takes effect in running sessions and open
+  dashboard tabs without a session restart, and nothing in flight is
+  lost (see
+  [Updates mid-session](#updates-mid-session)).
 
 ## Page layout
 
@@ -62,20 +67,19 @@ no such work is left, the session ends its turn (see
 [What the session sees](#what-the-session-sees)), and the answer
 starts a new turn.
 
-### Limits
+### What is worth posting
 
-These limits keep a session from flooding the list with items:
+Meerkat sets no caps on items or alerts; instead, the meerkat Claude
+Code plugin tells sessions what is worth posting:
 
-- An item whose kind and text match an open item from the same
-  session is not added again.
-- A session may hold at most 3 open notices and 10 open items in all.
-  A post beyond either limit is refused, with a reason telling the
-  session to wait or to fold it into an existing item.
-- A re-asked fork id replaces its open item, so it does not count
-  again.
-- macOS alerts are limited to one per session every 5 minutes. Items
-  arriving inside that window are counted in the session's next
-  alert.
+- A question or confirmation only for a choice that belongs to the user.
+- A request only for an action the session cannot take itself.
+- A notice only for something the user would want to know now, such
+  as a PR ready for review or stuck work; not progress updates or
+  routine completions.
+- Combine related points in one item.
+- Don't repeat an open item; to ask again, the session re-asks under
+  the same fork id.
 
 ### Question display
 
@@ -203,13 +207,26 @@ re-asking shows up as a new item.
 
 ## Alerts
 
-Every new item, including a notice, triggers a macOS notification, within the per-session rate in [Limits](#limits). Clicking it opens the dashboard.
+Every new item, including a notice, triggers a macOS notification. Clicking it opens the dashboard.
 
 ## Where it runs
 
 A login agent keeps the dashboard running at a fixed, bookmarkable URL, allowing alerts to fire even with no tab open. Like review pages, the dashboard serves only loopback connections.
 
 Sessions can post items without an open dashboard tab. Items survive meerkat restarts and remain until answered or dismissed.
+
+### Updates mid-session
+
+Changes such as these take effect in already-running sessions and
+open dashboard tabs without restarting the session, and lose no item,
+answer or feedback:
+
+- Meerkat restarting.
+- Installing a new meerkat version.
+- Installing a new version of the meerkat Claude Code plugin.
+
+How each change takes effect in a running session is not yet designed
+or researched.
 
 ## Research: getting an answer into a session
 
