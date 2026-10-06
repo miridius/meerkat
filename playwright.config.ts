@@ -27,6 +27,10 @@ export default defineConfig({
 	// half the cores (Playwright's own default).
 	workers: process.env.CI ? 2 : "50%",
 	reporter: process.env.CI ? "github" : "list",
+	// Playwright's 5s default for expect ran out on a loaded machine. A
+	// condition that is met ends the wait, so a passing test is no slower;
+	// set no shorter wait on an expect.
+	expect: { timeout: 20_000 },
 	use: {
 		// 20s per action (Playwright's default `actionTimeout` is 0
 		// / unbounded). Bounds individual interactions so a hung

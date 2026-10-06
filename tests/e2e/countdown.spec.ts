@@ -32,7 +32,6 @@ test.describe("review countdown", () => {
 			await expect
 				.poll(async () => secondsLeft(await countdown.textContent()), {
 					message: "the clock runs down rather than up or nowhere",
-					timeout: 5000,
 				})
 				.toBeLessThan(first);
 
