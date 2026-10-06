@@ -47,10 +47,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			const backend = backendPid(first);
 			first.signalGroup("SIGTERM");
 			await first.awaitExit();
-			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(
-				0,
-				{ timeout: 3_000 },
-			);
+			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(0);
 			expect(alive(backend), "the backend survives the signal to its caller's group").toBe(true);
 
 			await addGlobalComment(page, "typed after the caller died");

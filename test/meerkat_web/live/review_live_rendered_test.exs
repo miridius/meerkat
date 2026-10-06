@@ -8,7 +8,7 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
 
   import Phoenix.LiveViewTest
 
-  alias Meerkat.{Decision, ReviewState}
+  alias Meerkat.ReviewState
 
   @md_file %{
     status: :modified,
@@ -23,9 +23,6 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
   }
 
   setup do
-    # A prior test may have left a submitted decision, which makes
-    # ReviewLive mount the done view instead of the review.
-    Decision.reset()
     prev = Application.get_env(:meerkat, :review_state)
     Application.put_env(:meerkat, :review_state, %ReviewState{files: [@md_file]})
     on_exit(fn -> restore(:review_state, prev) end)

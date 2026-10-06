@@ -2,7 +2,7 @@ defmodule Meerkat.PreCommitHookTest do
   # Commits through the repo's real lefthook.yml, scripts/no-main-commits.sh
   # and scripts/check.sh. Only the tools check.sh runs (mix, pnpm, bun,
   # bunx) are replaced, by stubs on PATH that log each run and can fail it.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
 
@@ -43,7 +43,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
-    for script <- ~w(check.sh no-main-commits.sh) do
+    for script <- ~w(check.sh checked-trees.sh no-main-commits.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -75,6 +75,9 @@ defmodule Meerkat.PreCommitHookTest do
     printf '%s\\t%s\\t%s\\n' "$cmd" "$PWD" "${MIX_BUILD_PATH:-}" >> '#{places}'
     if [ "$cmd" = "mix compile --warnings-as-errors" ]; then
       env | grep '^GIT_' | sed 's/^/env=/' > '#{seen}'
+    fi
+    if [ "$cmd" = "${STUB_EDIT:-}" ]; then
+      echo "edited mid-run" >> code.txt
     fi
     [ "$cmd" != "${STUB_FAIL:-}" ]
     """)
@@ -115,6 +118,89 @@ defmodule Meerkat.PreCommitHookTest do
 
     assert {_, 0} = commit(ctx, ["-am", "change code"])
     assert gates_run(ctx) == @gates
+    assert checked?(ctx, "HEAD")
+  end
+
+  test "a commit whose checks pass records its contents as checked", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+    refute checked?(ctx, ":")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"])
+    assert checked?(ctx, "HEAD")
+  end
+
+  # The checks ran on the worktree, which then differs from the commit.
+  test "a commit beside an unstaged file or an untracked file is not recorded", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+    File.write!(Path.join(ctx.work, "assets/.keep"), "unstaged\n")
+    assert {_, 0} = commit(ctx, ["-m", "beside an unstaged file"])
+    refute checked?(ctx, "HEAD")
+
+    no_hooks(ctx.work, ["checkout", "--", "assets/.keep"])
+    stage(ctx.work, "code.txt", "staged again\n")
+    File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
+    assert {_, 0} = commit(ctx, ["-m", "beside an untracked file"])
+    refute checked?(ctx, "HEAD")
+  end
+
+  # lefthook hides the unstaged part of a partially staged file while the
+  # hook runs, so the checks see exactly the commit.
+  test "a commit of a partially staged file is recorded", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+    File.write!(Path.join(ctx.work, "code.txt"), "unstaged\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "partial"])
+    assert checked?(ctx, "HEAD")
+    assert File.read!(Path.join(ctx.work, "code.txt")) == "unstaged\n"
+  end
+
+  test "a commit whose checks fail is not recorded", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+
+    assert {_, code} = commit(ctx, ["-m", "change code"], [{"STUB_FAIL", "bun run test:e2e"}])
+    assert code != 0
+    refute checked?(ctx, ":")
+  end
+
+  test "a commit whose worktree changes while the checks run is not recorded", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"], [{"STUB_EDIT", "mix credo --strict"}])
+    refute checked?(ctx, "HEAD")
+  end
+
+  describe "check.sh --head" do
+    setup ctx do
+      stage(ctx.work, "code.txt", "merged\n")
+      no_hooks(ctx.work, ["commit", "-qm", "a merge skips the pre-commit hook"])
+      :ok
+    end
+
+    test "runs every gate on HEAD and records it", ctx do
+      assert {out, 0} = check_head(ctx)
+      assert out =~ "=== pre-push: all checks passed ==="
+      assert gates_run(ctx) == @gates
+      assert checked?(ctx, "HEAD")
+    end
+
+    test "beside an untracked file runs every gate but records nothing", ctx do
+      File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
+
+      assert {_, 0} = check_head(ctx)
+      assert gates_run(ctx) == @gates
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "records nothing when the worktree changes while the checks run", ctx do
+      assert {_, 0} = check_head(ctx, [{"STUB_EDIT", "mix credo --strict"}])
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "records nothing when its checks fail", ctx do
+      assert {_, code} = check_head(ctx, [{"STUB_FAIL", "bun run test:e2e"}])
+      assert code != 0
+      refute checked?(ctx, "HEAD")
+    end
   end
 
   for gate <- @gates do
@@ -178,6 +264,29 @@ defmodule Meerkat.PreCommitHookTest do
       env: [{"PATH", path} | hook_env()] ++ env,
       stderr_to_stdout: true
     )
+  end
+
+  defp check_head(ctx, env \\ []) do
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    System.cmd("bash", ["scripts/check.sh", "--head"],
+      cd: ctx.work,
+      env: [{"PATH", path} | hook_env()] ++ env,
+      stderr_to_stdout: true
+    )
+  end
+
+  # `:` names the index's tree, the contents a commit would get.
+  defp checked?(ctx, rev) do
+    tree = if rev == ":", do: git(ctx.work, ["write-tree"]), else: rev
+
+    {_, code} =
+      System.cmd("bash", ["scripts/checked-trees.sh", "has", tree],
+        cd: ctx.work,
+        env: hook_env()
+      )
+
+    code == 0
   end
 
   defp gates_run(ctx) do

@@ -4,7 +4,7 @@ defmodule Meerkat.GitOidsTest do
   # `git ls-files -s` / `git ls-tree HEAD` parsing, the deleted-vs-present
   # routing, and the `core.quotePath=false` raw-path matching that lets a
   # non-ASCII filename's approval survive.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2]
 

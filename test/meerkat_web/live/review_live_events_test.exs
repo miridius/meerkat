@@ -65,7 +65,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   """
 
   setup do
-    Decision.reset()
     test_pid = self()
 
     prev =
@@ -76,8 +75,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     Application.put_env(:meerkat, :restart_fun, fn code -> send(test_pid, {:restart, code}) end)
 
     on_exit(fn ->
-      Decision.reset()
-
       Enum.each(prev, fn
         {key, {:ok, val}} -> Application.put_env(:meerkat, key, val)
         {key, :error} -> Application.delete_env(:meerkat, key)

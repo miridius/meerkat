@@ -8,7 +8,7 @@ defmodule Meerkat.ReviewStateTest do
 
   # Not async: the `from_target/2` tests put a `gh` stub on PATH, which
   # is process-global.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, isolate_git_config: 0, make_tmp_repo: 1, stage: 3]
 

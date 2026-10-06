@@ -56,7 +56,6 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     previous_app = Map.new(app_env, fn {k, _} -> {k, Application.fetch_env(:meerkat, k)} end)
     Enum.each(app_env, fn {k, v} -> Application.put_env(:meerkat, k, v) end)
-    Decision.reset()
     Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
 
     on_exit(fn ->
@@ -71,7 +70,6 @@ defmodule MeerkatWeb.AttachControllerTest do
       end)
 
       Application.delete_env(:meerkat, :review_deadline_ms)
-      Decision.reset()
       File.rm_rf(repo)
     end)
 
@@ -88,7 +86,7 @@ defmodule MeerkatWeb.AttachControllerTest do
   # deadline topic, which setup subscribes to, so receiving this confirms the caller
   # attached.
   defp await_attached do
-    assert_receive {:meerkat_deadline, _}, 5000
+    assert_receive {:meerkat_deadline, _}
   end
 
   # An attach made after a decision arms no deadline, so poll Decision instead.
@@ -196,7 +194,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     assert conn.status == 409
     refute conn.resp_body =~ "approved"
-    assert_receive {:halted, 1}, 1000
+    assert_receive {:halted, 1}
   end
 
   test "a later invocation whose commit message changed replaces the review",
@@ -206,7 +204,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     conn = attach(conn, "later-run")
 
     assert conn.status == 409
-    assert_receive {:halted, 1}, 1000
+    assert_receive {:halted, 1}
   end
 
   test "a caller attached to a review that changed is told so before the backend halts",
@@ -220,7 +218,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert Task.await(first).resp_body =~
              ~r/\Ao BANNER line\n(k\n)*d meerkat: a later invocation found this review's diff or commit message changed, so it replaces this review — aborting\.\n\z/
 
-    assert_receive {:halted, 1}, 1000
+    assert_receive {:halted, 1}
   end
 
   test "a later invocation whose target no longer resolves is refused and leaves the review running",
@@ -257,7 +255,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     conn = delivered(conn, "later-run")
 
     assert conn.status == 200
-    assert_receive {:delivered_to, "later-run"}, 1000
+    assert_receive {:delivered_to, "later-run"}
   end
 
   test "a caller attaching after another took delivery is told the backend is closing",
