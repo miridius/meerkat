@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -260,6 +268,23 @@ export function manifestRoot(lines: string[]): string {
 	const root = mkdtempSync(join(tmpdir(), "meerkat-rr-"));
 	writeFileSync(join(root, "meerkat_version"), `${lines.join("\n")}\n`);
 	return root;
+}
+
+// A stand-in for the install's `current` symlink. Pass `link` as
+// MEERKAT_CURRENT_LINK; `flip()` repoints it, as an install of a new
+// version does, so the review's VersionWatcher live-restarts its BEAM.
+export function makeVersionLink(): { link: string; flip: () => void; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-current-"));
+	const link = join(dir, "current");
+	symlinkSync(join(dir, "v1"), link);
+	return {
+		link,
+		flip: () => {
+			symlinkSync(join(dir, "v2"), `${link}.new`);
+			renameSync(`${link}.new`, link);
+		},
+		cleanup: () => rmAll([dir]),
+	};
 }
 
 function sanitisedGitEnv(): NodeJS.ProcessEnv {

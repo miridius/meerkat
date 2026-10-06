@@ -2,8 +2,9 @@ import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
 
-// A live-restart onto a version with changed assets makes phx-track-static
-// reload the page on socket reconnect. A plain page.reload() reproduces
+// A live-restart onto a version with changed assets makes
+// ReviewLive.mount/3 redirect on reconnect for a full page load.
+// A plain page.reload() reproduces
 // that full reload (same origin, so sessionStorage survives), which is the
 // behaviour the scroll-preservation code in app.js has to handle.
 test.describe("scroll preservation across reload", () => {
@@ -26,9 +27,9 @@ test.describe("scroll preservation across reload", () => {
 			await page.waitForTimeout(350);
 			expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(0);
 
-			// The reload the scroll code preserves across is triggered by
-			// phx-track-static (LiveView full-reloads on reconnect when the
-			// version's assets changed), so confirm those tags are present.
+			// ReviewLive.mount/3 uses static_changed?/1 to redirect reconnecting
+			// tabs with outdated assets for a full page load. That check uses
+			// phx-track-static tags, so confirm those tags are present.
 			expect(
 				await page.locator("script[phx-track-static]").count(),
 			).toBeGreaterThan(0);

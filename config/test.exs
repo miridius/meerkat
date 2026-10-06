@@ -5,6 +5,9 @@ import Config
 config :meerkat, MeerkatWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "QH2P7vjHF5LPC+1k6/PpILvkFW4S5T2hkeX7qhItS0OY+EkSGW1UHYC0KAzQDKE6",
+  # Tests have no Vite build; this fake current asset lets LiveViewTest
+  # check that current tracked assets stay put and absent ones redirect.
+  cache_static_manifest_latest: %{"assets/app-current.js" => "assets/app-current.js"},
   server: false
 
 # Print only warnings and errors during test

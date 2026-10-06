@@ -80,18 +80,7 @@ defmodule Meerkat.ShepherdTest do
   # BEAM's port, which by then another process may hold.
   describe "between a BEAM's exit and its respawn" do
     test "the prod shepherd leaves no port file naming the exited BEAM" do
-      seen =
-        port_file_between_runs(
-          @shepherd,
-          "rel/bin/meerkat",
-          "",
-          [{"readlink", "/usr/bin/readlink"}],
-          fn dir ->
-            File.ln_s!(Path.join(dir, "rel"), Path.join(dir, "current"))
-            [{"MEERKAT_CURRENT_LINK", Path.join(dir, "current")}]
-          end
-        )
-
+      seen = Enum.reject(prod_shepherd_between_runs(), &String.starts_with?(&1, "secret:"))
       assert seen == ["beam: 44444", "readlink: none", "beam: 1"]
     end
 
@@ -115,6 +104,34 @@ defmodule Meerkat.ShepherdTest do
         )
 
       assert seen == ["beam: none", "beam: 1"]
+    end
+
+    test "the prod shepherd gives every BEAM it spawns one generated secret" do
+      assert [<<"secret: ", secret::binary>>] =
+               Enum.filter(prod_shepherd_between_runs(), &String.starts_with?(&1, "secret:"))
+
+      assert byte_size(Base.decode64!(secret)) == 48
+    end
+
+    test "the dev launcher gives every BEAM it spawns one generated secret" do
+      assert [<<"secret: ", secret::binary>>] =
+               Enum.filter(dev_launcher_between_runs(), &String.starts_with?(&1, "secret:"))
+
+      assert byte_size(Base.decode64!(secret)) == 48
+    end
+
+    test "the prod shepherd keeps an inherited secret" do
+      seen = prod_shepherd_between_runs([{"SECRET_KEY_BASE", "inherited"}])
+      assert Enum.filter(seen, &String.starts_with?(&1, "secret:")) == ["secret: inherited"]
+    end
+
+    test "the dev launcher keeps an inherited secret" do
+      seen =
+        dev_launcher_between_runs(["--commit-msg", "/tmp/msg", "--no-open"], [
+          {"SECRET_KEY_BASE", "inherited"}
+        ])
+
+      assert Enum.filter(seen, &String.starts_with?(&1, "secret:")) == ["secret: inherited"]
     end
   end
 
@@ -149,7 +166,11 @@ defmodule Meerkat.ShepherdTest do
       runs = Path.join(dir, "runs")
       File.mkdir_p!(runs)
       File.chmod!(runs, 0o555)
-      on_exit(fn -> File.chmod!(runs, 0o755) && File.rm_rf!(dir) end)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
 
       port =
         open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
@@ -239,14 +260,27 @@ defmodule Meerkat.ShepherdTest do
 
   # The dev launcher runs `mix run` as the BEAM, and `find`, `mix compile`
   # and `bunx vite build` to check and refresh the build.
-  defp dev_launcher_between_runs(args \\ ["--commit-msg", "/tmp/msg", "--no-open"]) do
+  defp dev_launcher_between_runs(args \\ ["--commit-msg", "/tmp/msg", "--no-open"], env \\ []) do
     port_file_between_runs(
       Path.join(File.cwd!(), "bin/meerkat-beam"),
       "stubs/mix",
       "if [[ \"$1\" != run ]]; then\n#{record_port_file("mix")}\nexit 0\nfi",
       [{"find", "/usr/bin/find"}, {"bunx", nil}],
-      fn _dir -> [] end,
+      fn _dir -> env end,
       args
+    )
+  end
+
+  defp prod_shepherd_between_runs(env \\ []) do
+    port_file_between_runs(
+      @shepherd,
+      "rel/bin/meerkat",
+      "",
+      [{"readlink", "/usr/bin/readlink"}],
+      fn dir ->
+        File.ln_s!(Path.join(dir, "rel"), Path.join(dir, "current"))
+        [{"MEERKAT_CURRENT_LINK", Path.join(dir, "current")} | env]
+      end
     )
   end
 
@@ -280,6 +314,7 @@ defmodule Meerkat.ShepherdTest do
     #{prelude}
     i=$(cat "$I_FILE"); echo $((i + 1)) > "$I_FILE"
     echo "beam: ${MEERKAT_PREFERRED_PORT:-none}" >> "$SEEN_FILE"
+    echo "secret: ${SECRET_KEY_BASE:-none}" >> "$SEEN_FILE"
     echo "$((i + 1)) $$" > "$MEERKAT_SERVE_DIR/port"
     if [[ "$i" == 0 ]]; then exit 75; fi
     exit 0
@@ -403,6 +438,7 @@ defmodule Meerkat.ShepherdTest do
       {"MEERKAT_PREFERRED_PORT", "12345"},
       {"MEERKAT_RUNS_DIR", Path.join(dir, "runs")},
       {"I_FILE", Path.join(dir, "i")},
+      {"SECRET_KEY_BASE", nil},
       # A shepherd run by a caller has this set; the caller itself does not.
       {"MEERKAT_SERVE_DIR", nil}
     ]

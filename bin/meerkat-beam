@@ -150,6 +150,11 @@ fi
 # put_env dynamic config BEFORE the endpoint binds.
 RESTART_EXIT_CODE=75
 
+# Set the secret once before the respawn loop, preserving any inherited value.
+# Every BEAM can then verify the tab's existing LiveView session token,
+# so a restart reconnects in place instead of forcing a full page reload.
+export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(head -c 48 /dev/urandom | base64)}"
+
 # Browser-open marker: a temp file the BEAM creates the FIRST time
 # it successfully calls `open` on the review URL. Subsequent
 # shepherd iterations (BEAM exit 75 = DevWatcher restart) see the
