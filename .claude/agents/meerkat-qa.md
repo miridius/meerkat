@@ -119,9 +119,9 @@ For each QA run:
    End with a single-line verdict: `PASS` (0 deviations), `WARN`
    (only warnings), or `FAIL` (any deviation).
 
-8. **Cleanup.** Kill the meerkat shepherd (pgrep + kill).
-   `rm -rf /tmp/meerkat-qa-<run>` unless `KEEP_QA_TMP=1` is in
-   the environment.
+8. **Cleanup.** Kill only `$beam_pid`, captured at launch.
+   Delete only what this agent created, never a directory it was
+   given, and only if `KEEP_QA_TMP` is not `1`.
 
 # Constraints
 
