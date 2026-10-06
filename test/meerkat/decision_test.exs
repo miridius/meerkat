@@ -1,14 +1,9 @@
 defmodule Meerkat.DecisionTest do
   # async: false — Decision is a singleton GenServer, mounted by the
-  # main supervisor. Tests clear its state between runs via reset/0.
-  use ExUnit.Case, async: false
+  # main supervisor. Meerkat.DecisionCase clears it around each test.
+  use Meerkat.DecisionCase, async: false
 
   alias Meerkat.Decision
-
-  setup do
-    Decision.reset()
-    :ok
-  end
 
   describe "submit/1 + await/0" do
     test "a second submit is refused and told which decision stands" do
@@ -52,8 +47,6 @@ defmodule Meerkat.DecisionTest do
 
         if previous_action,
           do: System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", previous_action)
-
-        Decision.reset()
       end)
 
       :ok
@@ -217,7 +210,6 @@ defmodule Meerkat.DecisionTest do
           &Application.delete_env(:meerkat, &1)
         )
 
-        Decision.reset()
         File.rm_rf(repo)
       end)
 

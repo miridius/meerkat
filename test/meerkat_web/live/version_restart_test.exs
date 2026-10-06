@@ -5,7 +5,7 @@ defmodule MeerkatWeb.VersionRestartTest do
 
   import Phoenix.LiveViewTest
 
-  alias Meerkat.{Decision, ReviewState}
+  alias Meerkat.ReviewState
 
   @rs_file %{
     status: :modified,
@@ -20,7 +20,6 @@ defmodule MeerkatWeb.VersionRestartTest do
   }
 
   setup do
-    Decision.reset()
     prev_state = Application.get_env(:meerkat, :review_state)
     prev_restart = Application.fetch_env(:meerkat, :restart_fun)
 
