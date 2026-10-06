@@ -76,6 +76,9 @@ defmodule Meerkat.PreCommitHookTest do
     if [ "$cmd" = "mix compile --warnings-as-errors" ]; then
       env | grep '^GIT_' | sed 's/^/env=/' > '#{seen}'
     fi
+    if [ "$cmd" = "${STUB_EDIT:-}" ]; then
+      echo "edited mid-run" >> code.txt
+    fi
     [ "$cmd" != "${STUB_FAIL:-}" ]
     """)
 
@@ -159,6 +162,47 @@ defmodule Meerkat.PreCommitHookTest do
     refute checked?(ctx, ":")
   end
 
+  test "a commit whose worktree changes while the checks run is not recorded", ctx do
+    stage(ctx.work, "code.txt", "staged\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"], [{"STUB_EDIT", "mix credo --strict"}])
+    refute checked?(ctx, "HEAD")
+  end
+
+  describe "check.sh --head" do
+    setup ctx do
+      stage(ctx.work, "code.txt", "merged\n")
+      no_hooks(ctx.work, ["commit", "-qm", "a merge skips the pre-commit hook"])
+      :ok
+    end
+
+    test "runs every gate on HEAD and records it", ctx do
+      assert {out, 0} = check_head(ctx)
+      assert out =~ "=== pre-push: all checks passed ==="
+      assert gates_run(ctx) == @gates
+      assert checked?(ctx, "HEAD")
+    end
+
+    test "beside an untracked file runs every gate but records nothing", ctx do
+      File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
+
+      assert {_, 0} = check_head(ctx)
+      assert gates_run(ctx) == @gates
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "records nothing when the worktree changes while the checks run", ctx do
+      assert {_, 0} = check_head(ctx, [{"STUB_EDIT", "mix credo --strict"}])
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "records nothing when its checks fail", ctx do
+      assert {_, code} = check_head(ctx, [{"STUB_FAIL", "bun run test:e2e"}])
+      assert code != 0
+      refute checked?(ctx, "HEAD")
+    end
+  end
+
   for gate <- @gates do
     test "a failing `#{gate}` blocks the commit", ctx do
       head = git(ctx.work, ["rev-parse", "HEAD"])
@@ -216,6 +260,16 @@ defmodule Meerkat.PreCommitHookTest do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
     System.cmd("git", ["commit", "-q" | args],
+      cd: ctx.work,
+      env: [{"PATH", path} | hook_env()] ++ env,
+      stderr_to_stdout: true
+    )
+  end
+
+  defp check_head(ctx, env \\ []) do
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    System.cmd("bash", ["scripts/check.sh", "--head"],
       cd: ctx.work,
       env: [{"PATH", path} | hook_env()] ++ env,
       stderr_to_stdout: true

@@ -46,7 +46,7 @@ defmodule MeerkatWeb.VersionRestartTest do
 
     send(view.pid, {:meerkat_version_available, "versions/v2"})
 
-    assert_receive {:restart, 75}, 1000
+    assert_receive {:restart, 75}
   end
 
   test "defers the restart while a comment form is open, applies on close", %{conn: conn} do
@@ -59,7 +59,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     refute_receive {:restart, _}, 200
 
     render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
-    assert_receive {:restart, 75}, 1000
+    assert_receive {:restart, 75}
   end
 
   test "with two forms open, the restart waits for the last one to close", %{conn: conn} do
@@ -74,7 +74,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     refute_receive {:restart, _}, 200
 
     render_hook(view, "comment_form.hide", %{"form_key" => "global"})
-    assert_receive {:restart, 75}, 1000
+    assert_receive {:restart, 75}
   end
 
   test "does not live-restart once a decision has been submitted", %{conn: conn} do
@@ -101,7 +101,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     # A cross-tab state push that carries no open form should apply the
     # deferred restart (change_open_forms is not the only path into the gate).
     send(view.pid, {:state_changed, %ReviewState{files: [@rs_file]}})
-    assert_receive {:restart, 75}, 1000
+    assert_receive {:restart, 75}
   end
 
   test "a connected mount registers the LiveView as a viewer", %{conn: conn} do

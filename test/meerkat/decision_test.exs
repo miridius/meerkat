@@ -99,7 +99,7 @@ defmodule Meerkat.DecisionTest do
       parent = self()
       spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
 
-      assert_receive {:awaited, {:timeout, ""}}, 1000
+      assert_receive {:awaited, {:timeout, ""}}
     end
 
     test "a deadline still ahead leaves the review open" do
@@ -151,7 +151,7 @@ defmodule Meerkat.DecisionTest do
 
       parent = self()
       spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
-      assert_receive {:awaited, {:timeout, _}}, 1000
+      assert_receive {:awaited, {:timeout, _}}
 
       assert {:already_decided, {:timeout, _}} =
                Decision.submit({:reject, "please fix the thing"})
@@ -235,7 +235,7 @@ defmodule Meerkat.DecisionTest do
           end
         end)
 
-      assert_receive {:attached, ^pid, reply}, 1000
+      assert_receive {:attached, ^pid, reply}
       {pid, reply}
     end
 
@@ -244,7 +244,7 @@ defmodule Meerkat.DecisionTest do
       assert reply == {:ok, nil}
 
       :ok = Decision.publish({1, "feedback\n"})
-      assert_receive {:outcome, ^pid, {1, "feedback\n"}}, 1000
+      assert_receive {:outcome, ^pid, {1, "feedback\n"}}
     end
 
     test "a caller for another run displaces the one attached before it" do
@@ -252,11 +252,10 @@ defmodule Meerkat.DecisionTest do
       {second, _} = spawn_caller("run-b")
 
       assert_receive {:displaced, ^first,
-                      "meerkat: a later invocation of this review took it over — aborting."},
-                     1000
+                      "meerkat: a later invocation of this review took it over — aborting."}
 
       :ok = Decision.publish({0, "approved\n"})
-      assert_receive {:outcome, ^second, {0, "approved\n"}}, 1000
+      assert_receive {:outcome, ^second, {0, "approved\n"}}
       refute_receive {:outcome, ^first, _}, 100
     end
 
@@ -272,8 +271,8 @@ defmodule Meerkat.DecisionTest do
       {again, _} = spawn_caller("run-a")
 
       assert Enum.sort(Decision.replace("changed")) == Enum.sort([first, again])
-      assert_receive {:displaced, ^first, "changed"}, 1000
-      assert_receive {:displaced, ^again, "changed"}, 1000
+      assert_receive {:displaced, ^first, "changed"}
+      assert_receive {:displaced, ^again, "changed"}
       assert :sys.get_state(Decision).callers == %{}
       assert Application.get_env(:meerkat, :review_deadline_ms) == nil
     end
@@ -294,7 +293,7 @@ defmodule Meerkat.DecisionTest do
 
       :ok = Decision.publish({0, "approved\n"})
       assert Decision.delivered("run-c") == :ok
-      assert_receive {:delivered_to, "run-c"}, 1000
+      assert_receive {:delivered_to, "run-c"}
       assert Decision.attach("run-d") == :closing
     end
 
@@ -380,7 +379,7 @@ defmodule Meerkat.DecisionTest do
       spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
       {_pid, _} = spawn_caller("run-f")
 
-      assert_receive {:awaited, {:timeout, _}}, 3000
+      assert_receive {:awaited, {:timeout, _}}
     end
 
     test "an overdue review left open keeps its attached caller's deadline directory recent",

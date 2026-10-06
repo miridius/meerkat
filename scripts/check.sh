@@ -3,14 +3,15 @@
 # `pnpm install --frozen-lockfile`, as in CI, also fails a commit whose
 # pnpm-lock.yaml does not match its package.json files.
 #
-# A commit that changes only Markdown files, or nothing, skips the checks;
-# CI still runs them on the PR.
-#
-# When the checks pass on exactly the commit's contents, with no unstaged
-# change and no untracked file, scripts/checked-trees.sh records them.
-#
 # `check.sh --head`, run by scripts/verified-push.sh, checks HEAD instead
-# of the commit being made, and records it when the worktree is clean.
+# of the commit being made.
+#
+# In pre-commit mode, a commit that changes only Markdown files, or nothing,
+# skips the checks; CI still runs them on the PR.
+#
+# When the checks pass and the worktree held exactly the contents checked,
+# with no untracked file, both when they started and when they finished,
+# scripts/checked-trees.sh records those contents.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
@@ -18,8 +19,8 @@ cd "$root"
 
 if [[ "${1:-}" == --head ]]; then
   label=pre-push
-  tree=HEAD
-  [[ -z "$(git status --porcelain)" ]] && clean=1 || clean=0
+  # Resolved now: HEAD can move while the checks run.
+  tree=$(git rev-parse --verify 'HEAD^{tree}')
 else
   label=pre-commit
   # During `git commit -a` or `git commit <paths>`, GIT_INDEX_FILE names a
@@ -33,12 +34,10 @@ else
   fi
 
   tree=$(git write-tree)
-  if git diff --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
-    clean=1
-  else
-    clean=0
-  fi
 fi
+
+holds() { bash scripts/checked-trees.sh holds "$tree"; }
+holds && clean=1 || clean=0
 
 # Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
 # point every test's fixture repo at this checkout's index.
@@ -64,7 +63,8 @@ step bun test tests/e2e/lib
 step bunx playwright install --only-shell chromium
 step bun run test:e2e
 
-if [[ "$clean" == 1 ]]; then
+# Checked again in case the worktree changed while the checks ran.
+if [[ "$clean" == 1 ]] && holds; then
   bash scripts/checked-trees.sh mark "$tree"
 fi
 

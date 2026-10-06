@@ -10,7 +10,8 @@
 # loads the machine less.
 #
 # On failure, print each failing file's output, list the failing files, and
-# exit non-zero. CI runs this script too, so both run the files the same way.
+# exit non-zero. CI and the pre-commit gate both run this script, so each
+# runs the files the same way.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

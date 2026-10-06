@@ -69,10 +69,15 @@ defmodule Meerkat.PrePushHookTest do
 
   test "a push hands each new tip to verified-push.sh", ctx do
     commit(ctx.work, "a.txt", "a\n", "add a")
-    sha = git(ctx.work, ["rev-parse", "HEAD"])
+    first = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "b.txt", "b\n", "add b")
+    second = git(ctx.work, ["rev-parse", "HEAD"])
 
-    assert {_, 0} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
-    assert File.read!(ctx.verified_args) == sha <> "\n"
+    assert {_, 0} =
+             push(ctx.work, ["origin", "#{first}:refs/heads/one", "HEAD:refs/heads/two"])
+
+    tips = ctx.verified_args |> File.read!() |> String.split()
+    assert Enum.sort(tips) == Enum.sort([first, second])
   end
 
   test "a failing verified-push.sh blocks the push", ctx do

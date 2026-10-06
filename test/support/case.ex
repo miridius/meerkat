@@ -1,6 +1,7 @@
 defmodule Meerkat.Case do
   @moduledoc """
-  Case template for every test module; `MeerkatWeb.ConnCase` builds on it.
+  Case template for every synchronous test module; `MeerkatWeb.ConnCase`
+  builds on it.
 
   A synchronous test starts with no `Meerkat.Decision` and clears any
   decision it leaves. Many synchronous modules reach that singleton, directly
@@ -12,8 +13,8 @@ defmodule Meerkat.Case do
   leak broke only whichever test happened to run next in the same BEAM. That
   happened only in some orders, so it passed in one run and failed in another.
 
-  An async test runs alongside others, so it must not touch any of this
-  state, and the template leaves it alone.
+  An async test runs alongside others, so the template leaves it alone; one
+  that changes this state must restore it before it exits.
   """
 
   use ExUnit.CaseTemplate
@@ -37,18 +38,22 @@ defmodule Meerkat.Case do
     # of their on_exit callbacks.
     on_exit(fn ->
       Meerkat.Decision.reset()
-
-      case changes(before, global_state()) do
-        [] ->
-          :ok
-
-        changes ->
-          raise ExUnit.AssertionError,
-            message:
-              "test left global state changed; restore it in on_exit:\n" <>
-                Enum.map_join(changes, "\n", &"  #{&1}")
-      end
+      assert_restored!(before)
     end)
+  end
+
+  @doc false
+  def assert_restored!(before) do
+    case changes(before, global_state()) do
+      [] ->
+        :ok
+
+      changes ->
+        raise ExUnit.AssertionError,
+          message:
+            "test left global state changed; restore it in on_exit:\n" <>
+              Enum.map_join(changes, "\n", &"  #{&1}")
+    end
   end
 
   # Decision's deadline sets :review_deadline_ms to nil when it disarms, so a

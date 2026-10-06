@@ -5,6 +5,8 @@
 #
 #   checked-trees.sh mark <tree-ish>   record that its contents passed
 #   checked-trees.sh has <tree-ish>    exit 0 if its contents passed, else 1
+#   checked-trees.sh holds <tree-ish>  exit 0 if the worktree holds exactly its
+#                                      contents, with no untracked file, else 1
 #
 # Contents are keyed on every file except Markdown, which check.sh skips: a
 # commit that changes only Markdown counts as checked when its parent was.
@@ -12,7 +14,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: checked-trees.sh mark|has <tree-ish>" >&2
+  echo "usage: checked-trees.sh mark|has|holds <tree-ish>" >&2
   exit 2
 }
 
@@ -32,6 +34,13 @@ mark)
   ;;
 has)
   [[ -f "$dir/$k" ]]
+  ;;
+holds)
+  # Unlike `git status`, neither command hides untracked files under
+  # status.showUntrackedFiles=no, and a git error counts as not holding.
+  git diff --quiet "$2^{tree}" --
+  others=$(git ls-files --others --exclude-standard)
+  [[ -z "$others" ]]
   ;;
 *)
   usage

@@ -29,7 +29,7 @@ defmodule Meerkat.VerifiedPushTest do
     #!/usr/bin/env bash
     echo "check.sh $*" >> '#{log}'
     [ -z "${STUB_FAIL:-}" ] || exit 1
-    bash scripts/checked-trees.sh mark HEAD
+    [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
     """)
 
     File.write!(Path.join(work, "code.txt"), "base\n")
@@ -81,6 +81,16 @@ defmodule Meerkat.VerifiedPushTest do
     assert checks_run(ctx) == []
   end
 
+  test "an untracked file is seen even when git status hides untracked files", ctx do
+    git(ctx.work, ["config", "status.showUntrackedFiles", "no"])
+    commit(ctx.work, "code.txt", "rebased\n", "rebased")
+    File.write!(Path.join(ctx.work, "stray.txt"), "x\n")
+
+    assert {out, code} = verified_push(ctx, ["HEAD"])
+    assert code != 0
+    assert out =~ "uncommitted or untracked files"
+  end
+
   test "an unchecked tip other than HEAD is refused and named", ctx do
     commit(ctx.work, "code.txt", "other\n", "other")
     other = git(ctx.work, ["rev-parse", "HEAD"])
@@ -89,8 +99,39 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {out, code} = verified_push(ctx, [other])
     assert code != 0
-    assert out =~ "#{String.slice(other, 0, 7)} has not passed scripts/check.sh"
+    short = git(ctx.work, ["rev-parse", "--short", other])
+    assert out =~ "#{short} has not passed scripts/check.sh"
     assert checks_run(ctx) == []
+  end
+
+  test "an unchecked tip is refused after a checked one", ctx do
+    checked = git(ctx.work, ["rev-parse", "HEAD"])
+    mark(ctx.work, "HEAD")
+    commit(ctx.work, "code.txt", "other\n", "other")
+    other = git(ctx.work, ["rev-parse", "HEAD"])
+    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+
+    assert {out, code} = verified_push(ctx, [checked, other])
+    assert code != 0
+    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} has not passed"
+  end
+
+  test "an unchecked tip is refused after a tag of something other than a commit", ctx do
+    blob = git(ctx.work, ["hash-object", "-w", "code.txt"])
+    commit(ctx.work, "code.txt", "other\n", "other")
+    other = git(ctx.work, ["rev-parse", "HEAD"])
+    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+
+    assert {_, code} = verified_push(ctx, [blob, other])
+    assert code != 0
+  end
+
+  test "an unchecked HEAD is refused when the worktree changed during its check", ctx do
+    commit(ctx.work, "code.txt", "rebased\n", "rebased")
+
+    assert {out, code} = verified_push(ctx, ["HEAD"], [{"STUB_NO_MARK", "1"}])
+    assert code != 0
+    assert out =~ "the worktree changed"
   end
 
   test "a tag of something other than a commit is skipped", ctx do
@@ -98,6 +139,21 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {_, 0} = verified_push(ctx, [blob])
     assert checks_run(ctx) == []
+  end
+
+  test "a tip git cannot read is refused", ctx do
+    assert {out, code} = run(ctx.work, ["scripts/verified-push.sh", String.duplicate("1", 40)])
+    assert code != 0
+    assert out =~ "cannot read"
+  end
+
+  test "an annotated tag of an unchecked commit is refused", ctx do
+    commit(ctx.work, "code.txt", "tagged\n", "tagged")
+    git(ctx.work, ["tag", "-a", "-m", "release", "v1"])
+    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+
+    assert {_, code} = verified_push(ctx, ["v1"])
+    assert code != 0
   end
 
   defp commit(work, name, content, message) do
