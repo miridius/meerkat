@@ -305,12 +305,17 @@ local probes.
   shape under "Tools that require user interaction" in its hooks
   reference. The call completes with no prompt and no denial.
   Caveats:
-  - Claude Code relays that text as the answer, so it must say
-    plainly that it is not the user's choice.
+  - Claude Code shows Claude this as the user's answer, so it must
+    plainly say it is not the user's choice.
   - The `decisions` plugin's `log` hook must record that asking as
     posted to the dashboard. Recorded as a typed reply, it would leave
     the fork open for re-asking.
-  - Not probed in an interactive session.
+  - Probed in Claude Code 2.1.289 in an interactive session started
+    with `claude --bg` in `dontAsk` mode; other permission modes
+    were not probed. The call completed about 0.3 s after Claude
+    made it. The tool result began `The user answered:`, followed by
+    the question and the hook's text. Claude picked neither option
+    and carried on.
 - **Deny.** The hook could instead deny the call with a reason. Claude
   reads the reason and the call never runs. The documentation does
   not say how repeated denials change later tool use, but Claude
