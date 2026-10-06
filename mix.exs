@@ -70,7 +70,8 @@ defmodule Meerkat.MixProject do
       # mutation that every selected test passes = a test gap. See
       # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
       # with the test-selection fixes, parallel coverage collection,
-      # parallel runs of same-file mutants, and staged-line scoping; see
+      # parallel runs of same-file mutants, per-process coverage export
+      # names, staged-line scoping, and `# muex:ignore` directives; see
       # scripts/dep-exemptions.json.
       {:muex,
        github: "miridius/muex",
