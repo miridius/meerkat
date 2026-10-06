@@ -72,7 +72,49 @@ defmodule Meerkat.GitHeldIndexTest do
     assert {:ok, [%{new_content: "second\n"}]} = Git.staged_file_diffs(dir)
   end
 
-  test "an index file named outside any repository is kept as it is",
+  test "a relative name is taken from the top of the work tree, as git takes it",
+       %{dir: dir, held_dir: held_dir} do
+    sub = Path.join(dir, "sub")
+    File.mkdir_p!(sub)
+    System.put_env("GIT_INDEX_FILE", ".git/index")
+
+    assert Git.hold_temporary_index(sub, held_dir) == :ok
+    refute File.exists?(Path.join(held_dir, "index"))
+
+    temporary_index(dir, "next-index-4.lock", %{"a.txt" => "rerun\n"})
+
+    assert {:ok, [%{new_content: "rerun\n"}]} =
+             Git.with_index(sub, ".git/next-index-4.lock", fn -> Git.staged_file_diffs(sub) end)
+  end
+
+  test "a new repository's own index is not mistaken for a removed one", %{held_dir: held_dir} do
+    fresh = Meerkat.TestHelpers.make_git_repo("meerkat-held-index-fresh")
+    on_exit(fn -> File.rm_rf!(fresh) end)
+    System.put_env("GIT_INDEX_FILE", ".git/index")
+
+    assert Git.hold_temporary_index(fresh, held_dir) == :ok
+  end
+
+  test "a named index git has already removed is an error, not an empty review",
+       %{dir: dir, held_dir: held_dir} do
+    System.put_env("GIT_INDEX_FILE", Path.join(dir, ".git/index.lock"))
+
+    assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
+    assert message =~ "is gone"
+    assert Application.fetch_env(:meerkat, :held_index) == :error
+  end
+
+  test "a copy that cannot be written is an error", %{dir: dir, held_dir: held_dir} do
+    System.put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
+    File.chmod!(held_dir, 0o500)
+    on_exit(fn -> File.chmod!(held_dir, 0o700) end)
+
+    assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
+    assert message =~ "couldn't keep a copy"
+    assert Application.fetch_env(:meerkat, :held_index) == :error
+  end
+
+  test "when the repo path is not a repository, the named index is still copied",
        %{dir: dir, held_dir: held_dir} do
     outside =
       Path.join(System.tmp_dir!(), "meerkat-no-repo-#{System.unique_integer([:positive])}")

@@ -28,6 +28,7 @@ defmodule Meerkat.GitCommitIndexTest do
     commit(ctx, dir, ["-m", "plain"])
 
     assert_reviewed(ctx, dir, [{"a.txt", "plain\n"}])
+    refute copied?(ctx)
   end
 
   test "`git commit -a` is read from the index holding every tracked change",
@@ -38,6 +39,7 @@ defmodule Meerkat.GitCommitIndexTest do
     commit(ctx, dir, ["-a", "-m", "all"])
 
     assert_reviewed(ctx, dir, [{"a.txt", "all\n"}, {"c.txt", "staged\n"}])
+    assert copied?(ctx)
   end
 
   test "`git commit <path>` is read from the index holding only that path", %{dir: dir} = ctx do
@@ -47,6 +49,7 @@ defmodule Meerkat.GitCommitIndexTest do
     commit(ctx, dir, ["b.txt", "-m", "path"])
 
     assert_reviewed(ctx, dir, [{"b.txt", "by path\n"}])
+    assert copied?(ctx)
   end
 
   test "`git commit -a` in a linked worktree, where git also exports GIT_DIR",
@@ -59,6 +62,20 @@ defmodule Meerkat.GitCommitIndexTest do
     commit(ctx, linked, ["-a", "-m", "linked"])
 
     assert_reviewed(ctx, linked, [{"a.txt", "linked\n"}])
+    assert copied?(ctx)
+  end
+
+  test "a plain commit in a linked worktree is read from that worktree's own index",
+       %{dir: dir} = ctx do
+    linked = dir <> "-linked"
+    on_exit(fn -> File.rm_rf!(linked) end)
+    git(dir, ["worktree", "add", "-q", "-b", "linked", linked])
+    stage(linked, "a.txt", "linked plain\n")
+
+    commit(ctx, linked, ["-m", "linked plain"])
+
+    assert_reviewed(ctx, linked, [{"a.txt", "linked plain\n"}])
+    refute copied?(ctx)
   end
 
   defp install_hook(hooks) do
@@ -67,6 +84,8 @@ defmodule Meerkat.GitCommitIndexTest do
     File.write!(hook, """
     #!/bin/sh
     exec elixir -pa '#{Mix.Project.compile_path()}' -e '
+      held = System.fetch_env!("MEERKAT_REVIEWED") <> "-held"
+      :ok = Meerkat.Git.hold_temporary_index(File.cwd!(), held)
       {:ok, files} = Meerkat.Git.staged_file_diffs(File.cwd!())
       report = for f <- files, do: {f.file_name, f.new_content, f.effective_oid}
       File.write!(System.fetch_env!("MEERKAT_REVIEWED"), :erlang.term_to_binary(report))
@@ -100,4 +119,7 @@ defmodule Meerkat.GitCommitIndexTest do
 
     assert for({name, _, oid} <- shown, do: {name, oid}) == recorded
   end
+
+  # Whether the hook kept a copy of the index git named, as a detached review does.
+  defp copied?(ctx), do: File.exists?(Path.join(ctx.report <> "-held", "index"))
 end

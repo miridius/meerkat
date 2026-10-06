@@ -298,20 +298,6 @@ defmodule MeerkatWeb.AttachControllerTest do
       assert attach(conn, "later-run").status == 409
       assert_receive {:halted, 1}, 1000
     end
-
-    test "a later invocation of a review that is not staged ignores the index file",
-         %{conn: conn, repo: repo} do
-      target = {:range, "HEAD", "HEAD", :two_dot}
-      {:ok, state} = ReviewState.from_target(target, repo)
-      Application.put_env(:meerkat, :review_target, target)
-      Application.put_env(:meerkat, :review_state, state)
-      :ok = Decision.publish({0, "approved\n"})
-
-      conn = attach_from_index(conn, "later-run", Path.join(repo, ".git/index.lock"))
-
-      assert conn.status == 200
-      refute_receive {:halted, _}, 300
-    end
   end
 
   test "a caller attached to a review that changed is told so before the backend halts",

@@ -874,33 +874,35 @@ defmodule Meerkat.Git do
   Preserve the temporary index named by `GIT_INDEX_FILE` for this
   review.
 
-  When `GIT_INDEX_FILE` names an existing file other than the repository's
-  own index, this keeps a copy at `Path.join(dir, "index")` and makes
-  staged reads in this BEAM use it. If that copy already exists, it is
+  When `GIT_INDEX_FILE` names a file other than the repository's own
+  index, this keeps a copy at `Path.join(dir, "index")` and makes every
+  Git command this BEAM runs use it. If that copy already exists, it is
   used as-is so a restarted BEAM can resume the same review. The
   repository's own index is never copied; staged reads continue to use it
-  live so they reflect changes the user stages.
+  live so they reflect changes the user stages. A relative name is taken
+  from the top of the work tree, as Git takes it.
 
-  If the temporary index cannot be read or copied, a warning is printed
-  to stderr and staged reads are not redirected. The function always
-  returns `:ok`.
+  Returns `{:error, message}` when the named index cannot be read (Git
+  already removed it) or copied: without it the review would show every
+  file as deleted.
   """
-  @spec hold_temporary_index(String.t(), String.t()) :: :ok
+  @spec hold_temporary_index(String.t(), String.t()) :: :ok | {:error, String.t()}
   def hold_temporary_index(repo_path, dir) do
     held = Path.join(dir, "index")
 
-    if File.exists?(held) or copy_temporary_index(repo_path, held) == :ok do
-      Application.put_env(:meerkat, :held_index, held)
+    case if(File.exists?(held), do: :ok, else: copy_temporary_index(repo_path, held)) do
+      :ok -> Application.put_env(:meerkat, :held_index, held)
+      :skip -> :ok
+      {:error, _} = error -> error
     end
-
-    :ok
   end
 
   @doc """
   Run `fun` with Git reads using the index file `name`, rather than this
-  BEAM's held copy. A relative `name` is taken from `repo_path`; `nil` or
-  `""` means the repository's own index. After `fun` returns, Git reads use
-  the held copy again.
+  BEAM's held copy. A relative `name` is taken from the top of the work
+  tree, as Git takes it; `nil` or `""` means the repository's own index.
+  Only Git calls made in the calling process see `name`. After `fun`
+  returns, Git reads use the held copy again.
 
   Returns `fun`'s result.
   """
@@ -919,15 +921,26 @@ defmodule Meerkat.Git do
   end
 
   defp index_override(_repo_path, name) when name in [nil, ""], do: nil
-  defp index_override(repo_path, name), do: Path.expand(name, repo_path)
+  defp index_override(repo_path, name), do: index_path(repo_path, name)
+
+  # Git takes a relative GIT_INDEX_FILE from the top of the work tree, which
+  # is not `repo_path` when a hook runs meerkat from a subdirectory.
+  defp index_path(repo_path, name) do
+    case Path.type(name) == :absolute or toplevel(repo_path) do
+      true -> Path.expand(name)
+      {:ok, top} -> Path.expand(name, top)
+      {:error, _} -> Path.expand(name, repo_path)
+    end
+  end
 
   ## Internals
 
   # GIT_DIR / GIT_WORK_TREE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY /
   # GIT_ALTERNATE_OBJECT_DIRECTORIES / GIT_NAMESPACE all override git's
   # discovery process when set — making `cd:` and
-  # `GIT_CEILING_DIRECTORIES` irrelevant. Git exports these to the
-  # pre-commit / pre-push / post-merge hooks it runs, so
+  # `GIT_CEILING_DIRECTORIES` irrelevant. Any of them may be set in a
+  # hook's environment (git exports GIT_DIR to hooks in a linked
+  # worktree, for example), so
   # meerkat-invoked-from-a-hook ends up resolving paths against the
   # parent repo's gitdir instead of the cwd the caller asked for.
   # Pass them as `{key, nil}` to `System.cmd` to strip from the child
@@ -1002,37 +1015,38 @@ defmodule Meerkat.Git do
 
   defp copy_temporary_index(repo_path, held) do
     with name when name not in [nil, ""] <- System.get_env("GIT_INDEX_FILE"),
-         index = Path.expand(name, repo_path),
-         true <- File.regular?(index),
-         false <- same_file?(index, repo_index(repo_path)),
-         {:ok, body} <- File.read(index) do
-      Meerkat.AtomicFile.write(held, body)
+         index = index_path(repo_path, name),
+         false <- own_index?(index, repo_index(repo_path)),
+         {:read, {:ok, body}, _} <- {:read, File.read(index), index} do
+      with {:error, reason} <- Meerkat.AtomicFile.write(held, body),
+           do:
+             {:error, "couldn't keep a copy of the commit's index: #{:file.format_error(reason)}"}
     else
-      {:error, reason} ->
-        IO.puts(
-          :stderr,
-          "meerkat: warning — couldn't keep a copy of the commit's index: #{inspect(reason)}"
-        )
+      {:read, {:error, :enoent}, index} ->
+        {:error, "the commit's index #{index} is gone; git has exited"}
 
-        :error
+      {:read, {:error, reason}, index} ->
+        {:error, "couldn't read the commit's index #{index}: #{:file.format_error(reason)}"}
 
       _ ->
         :skip
     end
   end
 
+  # Stderr stays out of the path: a warning git prints would corrupt it.
   defp repo_index(repo_path) do
     env = [{"GIT_INDEX_FILE", nil} | @git_discovery_env_overrides]
+    args = ["rev-parse", "--path-format=absolute", "--git-path", "index"]
 
-    args = ["rev-parse", "--git-path", "index"]
-
-    case System.cmd("git", args, cd: repo_path, env: env, stderr_to_stdout: true) do
-      {output, 0} -> Path.expand(String.trim(output), repo_path)
+    case System.cmd("git", args, cd: repo_path, env: env, stderr_to_stdout: false) do
+      {output, 0} -> String.trim(output)
       _ -> nil
     end
   end
 
-  defp same_file?(_path, nil), do: false
+  # Compares paths too: a new repository has no index file to stat.
+  defp own_index?(_index, nil), do: false
+  defp own_index?(index, own), do: index == Path.expand(own) or same_file?(index, own)
 
   defp same_file?(path, other) do
     with {:ok, a} <- File.stat(path), {:ok, b} <- File.stat(other) do

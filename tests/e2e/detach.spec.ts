@@ -38,6 +38,19 @@ function alive(pid: number): boolean {
 	}
 }
 
+// Like the index git hands the hook of `git commit -a` or `git commit <path>`: it
+// stages EXTRA.md, which the repo's own index does not.
+function temporaryIndex(dir: string, name: string): string {
+	const index = join(dir, ".git", name);
+	copyFileSync(join(dir, ".git", "index"), index);
+	writeFileSync(join(dir, "EXTRA.md"), "only in the temporary index\n");
+	execFileSync("git", ["add", "EXTRA.md"], {
+		cwd: dir,
+		env: { ...process.env, GIT_INDEX_FILE: index },
+	});
+	return index;
+}
+
 test.describe("a review outlives the process that invoked it", () => {
 	// The backend leaves the caller's process group and session with setsid,
 	// which keeps every signal to the group from reaching it, so one signal
@@ -294,8 +307,7 @@ test.describe("a review outlives the process that invoked it", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
-		const firstIndex = join(fixture.dir, ".git", "next-index-1.lock");
-		copyFileSync(join(fixture.dir, ".git", "index"), firstIndex);
+		const firstIndex = temporaryIndex(fixture.dir, "next-index-1.lock");
 		const first = await startMeerkat({
 			fixture,
 			keepFixture: true,
@@ -309,11 +321,19 @@ test.describe("a review outlives the process that invoked it", () => {
 			await first.awaitClose();
 			rmSync(firstIndex);
 
+			const approved = page
+				.locator(".file-section")
+				.filter({ hasText: "EXTRA.md" })
+				.getByRole("checkbox", { name: "Approved" });
+			await approved.click();
+			// The tick appears immediately even if rejected; reload to see whether the review accepted it.
+			await page.reload();
+			await expect(approved).toBeChecked();
+
 			await page.getByRole("button", { name: /^Approve$/ }).click();
 			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
 
-			const retryIndex = join(fixture.dir, ".git", "next-index-2.lock");
-			copyFileSync(join(fixture.dir, ".git", "index"), retryIndex);
+			const retryIndex = temporaryIndex(fixture.dir, "next-index-2.lock");
 			second = await startMeerkat({
 				fixture,
 				keepFixture: true,
@@ -338,24 +358,22 @@ test.describe("a review outlives the process that invoked it", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
-		const index = join(fixture.dir, ".git", "index");
-		const temporary = join(fixture.dir, ".git", "next-index-1.lock");
-		copyFileSync(index, temporary);
-		writeFileSync(join(fixture.dir, "EXTRA.md"), "only in the temporary index\n");
-		execFileSync("git", ["add", "EXTRA.md"], {
-			cwd: fixture.dir,
-			env: { ...process.env, GIT_INDEX_FILE: temporary },
+		const temporary = temporaryIndex(fixture.dir, "next-index-1.lock");
+		const first = await startMeerkat({
+			fixture,
+			keepFixture: true,
+			env: { GIT_INDEX_FILE: temporary },
 		});
-		const first = await startMeerkat({ fixture, keepFixture: true, env: { GIT_INDEX_FILE: index } });
 		let second: Runner | undefined;
 		try {
 			const replacedBackend = backendPid(first);
 
+			// Relative, as git hands it to the hook of a plain `git commit`.
 			second = await startMeerkat({
 				fixture,
 				keepFixture: true,
 				runsDir: first.runsDir,
-				env: { GIT_INDEX_FILE: temporary },
+				env: { GIT_INDEX_FILE: join(".git", "index") },
 			});
 			expect(alive(replacedBackend), "the review of the other index has exited").toBe(false);
 			const replaced = await first.awaitExit();
@@ -363,80 +381,13 @@ test.describe("a review outlives the process that invoked it", () => {
 			expect(replaced.stderr).toContain("diff or commit message changed");
 
 			await page.goto(second.url);
-			await expect(page.locator("body")).toContainText("EXTRA.md");
+			await expect(page.locator(".file-section").first()).toBeVisible();
+			await expect(page.locator("body"), "the new review drops the old review's copy").not.toContainText(
+				"EXTRA.md",
+			);
 			await page.getByRole("button", { name: /^Approve$/ }).click();
 			const { code } = await second.awaitExit();
 			expect(code, "the rerun collects the decision on the new review").toBe(0);
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a file ticked approved after git deletes the commit's temporary index is accepted", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		const temporary = join(fixture.dir, ".git", "index.lock");
-		copyFileSync(join(fixture.dir, ".git", "index"), temporary);
-		const meerkat = await startMeerkat({
-			fixture,
-			keepFixture: true,
-			env: { GIT_INDEX_FILE: temporary },
-		});
-		try {
-			await page.goto(meerkat.url);
-			rmSync(temporary);
-
-			const approved = page
-				.locator(".file-section")
-				.filter({ hasText: "NOTES.md" })
-				.getByRole("checkbox", { name: "Approved" });
-			await approved.click();
-			// The tick appears immediately even if rejected; reload to see whether the review accepted it.
-			await page.reload();
-			await expect(approved).toBeChecked();
-		} finally {
-			await meerkat.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a rerun given the same index file is replayed the decision held for it", async ({
-		page,
-	}) => {
-		const fixture = makeFixture();
-		// Relative, as git hands it to the hook of a plain `git commit`.
-		const index = join(".git", "index");
-		const first = await startMeerkat({
-			fixture,
-			keepFixture: true,
-			underParent: true,
-			env: { GIT_INDEX_FILE: index },
-		});
-		let second: Runner | undefined;
-		try {
-			await page.goto(first.url);
-			await first.killParent();
-			await first.awaitClose();
-
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
-
-			second = await startMeerkat({
-				fixture,
-				keepFixture: true,
-				runsDir: first.runsDir,
-				awaitUrl: false,
-				env: { GIT_INDEX_FILE: index },
-			});
-			const { code, stderr } = await second.awaitExit();
-			expect(code, "the rerun receives the held decision").toBe(0);
-			expect(stderr).toContain("The user approved your commit. Proceeding.");
-			expect(stderr, "it attached to the review, not a fresh one").not.toContain(
-				"Paused for human review",
-			);
 		} finally {
 			await second?.kill();
 			await first.kill();

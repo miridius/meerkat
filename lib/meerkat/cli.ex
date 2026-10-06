@@ -85,16 +85,14 @@ defmodule Meerkat.CLI do
       save_answers(repo_path(), read_stdin())
     else
       target = ReviewTarget.from_opts(opts)
-      hold_temporary_index(target)
 
-      case auto_approve_decision(target, repo_path()) do
-        {:auto, message} ->
-          IO.write(:stderr, message)
-          finalise_auto_approve(repo_path())
-          0
+      case hold_temporary_index(target) do
+        :ok ->
+          review(target, opts)
 
-        :live ->
-          run_live_review_safe(target, opts)
+        {:error, message} ->
+          IO.puts(:stderr, "meerkat: #{message} — defaulting to REJECT (commit aborted).")
+          2
       end
     end
   rescue
@@ -123,11 +121,25 @@ defmodule Meerkat.CLI do
   # git removes a commit's temporary index when it exits, but the detached
   # review lives on.
   defp hold_temporary_index({:staged, _}) do
-    if serve_dir = System.get_env("MEERKAT_SERVE_DIR"),
-      do: Git.hold_temporary_index(repo_path(), serve_dir)
+    case System.get_env("MEERKAT_SERVE_DIR") do
+      nil -> :ok
+      serve_dir -> Git.hold_temporary_index(repo_path(), serve_dir)
+    end
   end
 
   defp hold_temporary_index(_target), do: :ok
+
+  defp review(target, opts) do
+    case auto_approve_decision(target, repo_path()) do
+      {:auto, message} ->
+        IO.write(:stderr, message)
+        finalise_auto_approve(repo_path())
+        0
+
+      :live ->
+        run_live_review_safe(target, opts)
+    end
+  end
 
   # filesync the log file handler before the launcher calls
   # `System.halt/1` — halt tears the VM down without running handler

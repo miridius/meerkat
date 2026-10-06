@@ -94,6 +94,16 @@ defmodule Meerkat.CLIMainTest do
       assert code == 0
       assert stderr =~ "staged file(s) are linguist-generated — auto-approving."
     end
+
+    test "an index git removed before the review could copy it rejects the commit",
+         %{commit_msg: commit_msg, index: index} do
+      File.rm!(index)
+
+      {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
+      assert code == 2
+      assert stderr =~ "is gone"
+      assert stderr =~ "defaulting to REJECT (commit aborted)."
+    end
   end
 
   test "a ref that does not resolve exits 64 and says the target could not be resolved",
