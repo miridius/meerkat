@@ -19,6 +19,7 @@ defmodule Meerkat.GitHubTest do
       git(dir, ["config", "user.email", "t@t.t"])
       git(dir, ["switch", "-q", "-c", "feature/x"])
       git(dir, ["commit", "--allow-empty", "-qm", "base"])
+      git(dir, ["remote", "add", "origin", "https://github.com/o/r.git"])
 
       # The stub records its arguments, and answers like gh for a
       # branch with a PR.
@@ -139,6 +140,47 @@ defmodule Meerkat.GitHubTest do
 
       assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
       refute File.exists?(calls)
+    end
+
+    test "a repo with no remotes skips the lookup without a warning",
+         %{dir: dir, bin: bin, calls: calls} do
+      # gh's answer in a repo with no remotes.
+      File.write!(Path.join(bin, "gh"), """
+      #!/bin/sh
+      echo "$*" >> '#{calls}'
+      echo 'no git remotes found' >&2
+      exit 1
+      """)
+
+      git(dir, ["remote", "remove", "origin"])
+
+      assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
+      refute File.exists?(calls)
+    end
+
+    test "a repo whose remotes are all on non-GitHub hosts has no PR and no warning",
+         %{dir: dir, bin: bin} do
+      # gh's answer when no remote points to a host it knows.
+      File.write!(Path.join(bin, "gh"), """
+      #!/bin/sh
+      echo 'none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`' >&2
+      exit 1
+      """)
+
+      git(dir, ["remote", "set-url", "origin", "https://gitlab.com/o/r.git"])
+
+      assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
+    end
+
+    test "any other gh failure still warns", %{dir: dir, bin: bin} do
+      File.write!(Path.join(bin, "gh"), """
+      #!/bin/sh
+      echo 'HTTP 401: Bad credentials' >&2
+      exit 1
+      """)
+
+      assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) =~
+               "gh pr view failed: HTTP 401: Bad credentials"
     end
   end
 

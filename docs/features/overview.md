@@ -45,7 +45,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
    number (`28`, `#28`, `+28`) also gets no PR pill. If HEAD has no
    branch—because it is detached outside a rebase or the rebase began
    from a detached HEAD—neither branch nor PR appears, and no warning
-   is printed.
+   is printed. Repos with no git remotes show no PR pill and print no
+   warning. The same applies when all remotes are on non-GitHub hosts.
 2. **Flash error banner** (only when a handler set `flash_error`,
    e.g. a stale-OID approve or a `gh api` failure).
 3. **Pending answers** banner (only if a prior review had question

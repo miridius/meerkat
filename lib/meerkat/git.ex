@@ -402,6 +402,19 @@ defmodule Meerkat.Git do
   end
 
   @doc """
+  Checks whether the repo at `repo_path` has any git remotes configured.
+  Returns `{:ok, true}` if at least one remote exists, `{:ok, false}`
+  if none exist, or `{:error, message}` if git fails.
+  """
+  @spec any_remote?(String.t()) :: {:ok, boolean()} | {:error, String.t()}
+  def any_remote?(repo_path) do
+    case run_git(repo_path, ["remote"]) do
+      {:ok, output} -> {:ok, String.trim(output) != ""}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
   Resolve the per-worktree gitdir via `git rev-parse --git-dir`. In a
   secondary worktree this is `.git/worktrees/<name>`; in the main
   worktree it's `.git`. Returns the absolute path. Per-worktree state

@@ -143,6 +143,7 @@ test.describe("a review outlives the process that invoked it", () => {
 
 	test("a rerun prints a warning from resolving its review once, before the banner", async () => {
 		const fixture = makeFixture();
+		fixture.git("remote", "add", "origin", "https://github.com/example/example.git");
 		const ghStubDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
 		writeFileSync(join(ghStubDir, "gh"), "#!/bin/sh\necho 'gh stub failure' >&2\nexit 1\n");
 		chmodSync(join(ghStubDir, "gh"), 0o755);

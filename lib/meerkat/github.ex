@@ -63,9 +63,20 @@ defmodule Meerkat.GitHub do
   gh finds the current branch only while HEAD is on it, so mid-rebase
   the branch being rebased is named explicitly, and a HEAD detached
   outside a rebase belongs to no branch: no lookup, no warning.
+
+  Repos with no git remotes return `nil` without running `gh` or
+  printing a warning. If `gh` reports that none of the configured
+  remotes point to a known GitHub host, returns `nil` without a
+  warning as well.
   """
   @spec current_pr(String.t()) :: pr | nil
   def current_pr(repo_path) do
+    if Git.any_remote?(repo_path) == {:ok, false},
+      do: nil,
+      else: lookup_head_branch_pr(repo_path)
+  end
+
+  defp lookup_head_branch_pr(repo_path) do
     case Git.head_branch(repo_path) do
       {:checked_out, _} ->
         lookup_current_pr(repo_path, [])
@@ -108,6 +119,10 @@ defmodule Meerkat.GitHub do
           # `gh` not installed / not on PATH — also expected outside
           # repos with GitHub remotes.
           trimmed =~ ~r/(command not found|gh: not found)/i ->
+            nil
+
+          # Expected: no remote points to a GitHub host known to `gh`.
+          trimmed =~ ~r/none of the git remotes .* point to a known GitHub host/i ->
             nil
 
           # Anything else is a real failure worth surfacing.

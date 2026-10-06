@@ -42,6 +42,7 @@ exit 1
 // `branch` stands at an `edit` stop: HEAD detached, rebase in progress.
 function fixtureMidRebase(branch: string) {
 	const fixture = makeFixture();
+	fixture.git("remote", "add", "origin", "https://github.com/example/example.git");
 	fixture.git("switch", "-q", "-c", branch);
 	fixture.git("commit", "-q", "-m", "staged work");
 	fixture.git("commit", "--allow-empty", "-q", "-m", "later work");
