@@ -19,7 +19,7 @@ remove commits a merged PR still references). Before committing:
 ## Rules
 
 - **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
-  `pnpm install`. `mix …` for backend. JS dependencies are
+  `pnpm install --frozen-lockfile`. `mix …` for backend. JS dependencies are
   installed ONLY with `pnpm install` (the workspace root covers
   `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
   age as a supply-chain guard). `bun run` / `bunx` for
@@ -132,7 +132,7 @@ When behaviour changes, choose the lowest layer that exercises it:
 
 ## Mutation testing
 
-`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it adds minutes to the commit. A staged file with unstaged edits blocks the commit. A surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) blocks the commit; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Staged lines that produce no mutants pass. One or more file paths mutate every line of those files. Put extra muex flags after `--`.
+`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it adds minutes to the commit. A staged file with unstaged edits blocks the commit. In every mode, a surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) fails the run; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Lines that produce no mutants pass. One or more file paths mutate every line of those files. Put extra muex flags after `--`.
 
 ```bash
 scripts/mutate.sh
@@ -231,7 +231,7 @@ session's own worktree.
 `git fetch` fires no hook.
 A pull that moves `main` fires `post-merge`.
 A pull that changes nothing fires no hook.
-When the hook runs, it invokes `install.sh` in that worktree.
+When the hook runs on `main`, it invokes `install.sh` in that worktree.
 The hook may deploy a `-wip` build if `git status --porcelain`
 prints anything.
 

@@ -179,7 +179,7 @@ defmodule Meerkat.PreCommitHookTest do
     stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
 
     assert {out, 0} = commit(ctx, ["-m", "change lib"])
-    assert out =~ "no mutant of the staged lib/ lines survived"
+    assert out =~ "no mutant of the selected lib/ lines survived"
     assert gates_run(ctx) == @gates ++ @mutation
 
     args = muex_args(ctx)
@@ -263,7 +263,7 @@ defmodule Meerkat.PreCommitHookTest do
     stage(ctx.work, "lib/meerkat/one.ex", "one\n# comment\n")
     stale = write_report(ctx.base, "stale", [mutant("survived")])
     File.mkdir_p!(Path.join(ctx.work, "_build"))
-    File.cp!(stale, Path.join(ctx.work, "_build/mutate-staged.json"))
+    File.cp!(stale, Path.join(ctx.work, "_build/mutate.json"))
 
     assert {out, 0} = commit(ctx, ["-m", "comment"], [{"STUB_REPORT", "none"}])
     assert out =~ "produce no mutants"
@@ -313,6 +313,25 @@ defmodule Meerkat.PreCommitHookTest do
     assert ["--since", "main"] in Enum.chunk_every(args, 2, 1)
     assert "--no-filter" in args
     assert "--no-optimize" in args
+  end
+
+  # muex's own exit status passes survivors under its default --fail-at
+  # and ignores no-coverage mutants, so every mode judges the report.
+  for status <- ~w(survived no_coverage) do
+    test "`mutate.sh <path>` fails on a #{status} mutant and lists it", ctx do
+      report = write_report(ctx.base, unquote(status), [mutant(unquote(status))])
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+      assert {out, 1} =
+               System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
+                 cd: ctx.work,
+                 env: [{"PATH", path}, {"STUB_REPORT", report}],
+                 stderr_to_stdout: true
+               )
+
+      assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
+      assert "--fail-at" in muex_args(ctx)
+    end
   end
 
   test "a commit on main is refused before any check runs", ctx do

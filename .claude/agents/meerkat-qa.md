@@ -37,10 +37,14 @@ Do not report partial passes.
 Use `makeFixture` or `makePrFixture` from
 `tests/e2e/lib/fixture.ts` to build git fixtures.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
-`startMeerkat` uses the binary named by `MEERKAT_BIN`.
-It defaults to the installed `meerkat` on `PATH`.
-Set `MEERKAT_BIN` to this checkout's `bin/meerkat-beam`.
+Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
+Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
+Before the first browser check, run
+`bunx playwright install --only-shell chromium`.
+End each `startMeerkat` run with its `kill()`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
+Set `MEERKAT_RUNS_DIR` to a directory in the scratch directory for
+direct CLI checks.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
 gutter.
@@ -49,14 +53,15 @@ Use `--pr <N>` to select a pull request.
 When using `--pr <N>`, prepend `makePrFixture`'s `ghStubDir` to
 `PATH` through `startMeerkat`'s `pathPrefixes` option.
 This makes meerkat use the stub `gh` command.
-Use `--no-open` to suppress browser launch.
-Use `--port 0` to let the operating system choose a port.
-Wait for a line containing
+In direct CLI checks, use `--no-open` and `--port 0`.
+In direct CLI checks, wait for a line containing
 `Paused for human review at <url>`.
-Open the reported URL in the browser.
+Open the review URL in the browser.
 
 Never use the user's real repositories.
 Never modify meerkat.
 Kill every meerkat process you start.
+This includes the process in each `pid` file under your
+`MEERKAT_RUNS_DIR`.
 Remove fixture, test, and log files when done.
 Keep only evidence cited in the report.
