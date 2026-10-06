@@ -1,6 +1,6 @@
 defmodule Meerkat.VersionTest do
   # async: false: RELEASE_ROOT is process-global env.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import ExUnit.CaptureLog
 

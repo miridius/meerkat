@@ -1,5 +1,5 @@
 defmodule Meerkat.GitIntegrationTest do
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
   alias Meerkat.Git

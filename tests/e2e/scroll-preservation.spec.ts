@@ -44,9 +44,7 @@ test.describe("scroll preservation across reload", () => {
 			await page.reload();
 
 			await expect
-				.poll(() => page.evaluate(() => Math.round(window.scrollY)), {
-					timeout: 5000,
-				})
+				.poll(() => page.evaluate(() => Math.round(window.scrollY)))
 				.toBeGreaterThan(before - 100);
 		} finally {
 			await meerkat.kill();

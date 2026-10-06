@@ -5,7 +5,7 @@ defmodule Meerkat.BumpDepsHookTest do
   # pnpm, bun and bunx are replaced, by stubs on PATH: they log each run,
   # report the outdated packages a test sets up, and record an update by
   # appending a line to the lockfile or manifest it would change.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
 
@@ -64,7 +64,8 @@ defmodule Meerkat.BumpDepsHookTest do
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs deps-common.sh) do
+          ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
+             deps-common.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 

@@ -1,5 +1,5 @@
 defmodule Meerkat.GitBinaryTest do
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   alias Meerkat.Git
 

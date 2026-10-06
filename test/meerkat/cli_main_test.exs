@@ -2,7 +2,7 @@ defmodule Meerkat.CLIMainTest do
   # `Meerkat.CLI.main/1` end to end, for the invocations that decide
   # before a review server would start. Not async: these set MEERKAT_PWD
   # and PATH, which are process-global.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers
 
