@@ -2,8 +2,8 @@
 # Mutation testing for meerkat.
 #
 # Runs `mix muex` against the meerkat Elixir code. muex rewrites
-# operators / literals one at a time and re-runs the test suite
-# against each rewrite. A rewrite the suite still passes against
+# operators / literals one at a time and re-runs the tests that
+# cover each rewrite. A rewrite those tests still pass against
 # is an uncovered behaviour — fix the test or the code.
 #
 # Modes:
@@ -17,12 +17,12 @@
 #                                   included (muex --since).
 #   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
 #                                   staged for the next commit (muex
-#                                   --staged), and fail when any
-#                                   mutant survives or no test reaches
-#                                   it. The lefthook pre-commit hook
-#                                   runs this mode.
+#                                   --staged). The lefthook pre-commit
+#                                   hook runs this mode.
 #   scripts/mutate.sh <path…>     — mutate every line of the named
 #                                   files.
+#
+# Every mode fails when any mutant survives or no test reaches it.
 #
 # Pass extra muex flags through after `--`:
 #   scripts/mutate.sh changed -- --concurrency 4
@@ -101,7 +101,7 @@ fi
 
 files=()
 scope_args=()
-gate=false
+muex_env=()
 case "$mode" in
   default)
     collect_files lib/meerkat '*.ex' 1
@@ -131,7 +131,7 @@ case "$mode" in
     fi
     collect_files lib '*.ex'
     line_scope --staged
-    gate=true
+    muex_env=(GIT_INDEX_FILE="$index")
     ;;
   *)
     # Treat every arg up to `--` as a file path. Flag-shaped args
@@ -167,6 +167,17 @@ while [[ $# -gt 0 ]]; do
     *)  extra_args+=("$1"); shift ;;
   esac
 done
+# The run is judged from the JSON report the gate below asks for; muex
+# keeps the last of a repeated flag, so a later one would move or
+# replace the report, or exit before it is judged.
+for arg in "${extra_args[@]}"; do
+  case "$arg" in
+    --format | --format=* | --output | --output=* | --fail-at | --fail-at=*)
+      echo "scripts/mutate.sh: $arg is set by this script; drop it." >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks; left set,
 # they would point Mix's checkout of git dependencies, and every test's
@@ -199,27 +210,23 @@ jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
 ((jobs >= 1)) || jobs=1
 muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs" "${scope_args[@]}")
 
-if [[ "$gate" != true ]]; then
-  "${muex[@]}" "${extra_args[@]}"
-  exit
-fi
-
-# The gate judges the run from muex's JSON report rather than its score:
-# a commit whose staged lines yield no mutants has nothing to score, and
-# must pass. muex prints the report's path, so the report is kept, in
-# _build/, until the next gate run replaces it. muex strips
-# GIT_INDEX_FILE from the test runs it starts.
+# Every mode judges the run from muex's JSON report rather than its
+# score: muex's default --fail-at passes a run with survivors, its
+# score ignores no-coverage mutants, and lines that yield no mutants
+# have nothing to score, and must pass. muex prints the report's path,
+# so the report is kept, in _build/, until the next run replaces it.
+# muex strips GIT_INDEX_FILE from the test runs it starts.
 mkdir -p _build
-report="$PWD/_build/mutate-staged.json"
+report="$PWD/_build/mutate.json"
 # muex writes no report when there is nothing to mutate, as for staged
 # comments or lib/meerkat/application.ex alone, so an earlier run's
 # report must not be left for this run to judge.
 rm -f "$report"
-GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
+env "${muex_env[@]}" "${muex[@]}" --fail-at 0 \
   --format json --output "$report" "${extra_args[@]}"
 
 if [[ ! -f "$report" ]]; then
-  echo "scripts/mutate.sh: the staged lib/ lines produce no mutants."
+  echo "scripts/mutate.sh: the selected lib/ lines produce no mutants."
   exit 0
 fi
 
@@ -233,7 +240,7 @@ if [[ -n "$unknown" ]]; then
   exit 2
 fi
 
-# A survivor is a staged line whose behaviour the tests do not pin
+# A survivor is a line whose behaviour the tests do not pin
 # down. A no-coverage mutant is the same gap, found without running:
 # no ExUnit test executes its line.
 # muex's patch holds the whole enclosing expression, which for a deleted
@@ -256,13 +263,13 @@ failing=$(jq -r '
 
 if [[ -n "$failing" ]]; then
   echo
-  echo "scripts/mutate.sh: staged lib/ lines have untested behaviour:"
+  echo "scripts/mutate.sh: the selected lib/ lines have untested behaviour:"
   echo
   echo "$failing"
   echo
-  echo "Add or tighten a test that fails for each mutant above, in this commit."
+  echo "Add or tighten a test that fails for each mutant above, in this change."
   echo "See CLAUDE.md \"Mutation testing\" for the documented exceptions."
   exit 1
 fi
 
-echo "scripts/mutate.sh: no mutant of the staged lib/ lines survived."
+echo "scripts/mutate.sh: no mutant of the selected lib/ lines survived."

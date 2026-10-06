@@ -18,7 +18,8 @@ remove commits a merged PR still references). Before committing:
 
 ## Rules
 
-- **Elixir + pnpm + Bun.** `mix …` for backend. JS dependencies are
+- **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
+  `pnpm install --frozen-lockfile`. `mix …` for backend. JS dependencies are
   installed ONLY with `pnpm install` (the workspace root covers
   `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
   age as a supply-chain guard). `bun run` / `bunx` for
@@ -85,7 +86,7 @@ The end-to-end loop for a meerkat bug report or feature request:
    self-review cheap: it must not add review agents,
    mutation-testing runs, or extra test suites of its own. The
    thorough review still happens at merge through
-   `/review-and-merge`; this self-review does not replace it.
+   `/manager:review-and-merge`; this self-review does not replace it.
 
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
@@ -131,7 +132,7 @@ When behaviour changes, choose the lowest layer that exercises it:
 
 ## Mutation testing
 
-`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it adds minutes to the commit. A staged file with unstaged edits blocks the commit. A surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) blocks the commit; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Staged lines that produce no mutants pass. One or more file paths mutate every line of those files. Put extra muex flags after `--`.
+`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it adds minutes to the commit. A staged file with unstaged edits blocks the commit. In every mode, a surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) fails the run; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Lines that produce no mutants pass. One or more file paths mutate every line of those files. Put extra muex flags after `--`.
 
 ```bash
 scripts/mutate.sh
@@ -141,7 +142,127 @@ scripts/mutate.sh lib/meerkat/git.ex
 scripts/mutate.sh changed -- --concurrency 4
 ```
 
-Every blocking mutant must be killed by a test in the same commit, except for the kinds listed under “Acceptable non-fixes” in `.claude/skills/review-and-merge/SKILL.md`: equivalent mutants, pure-observability mutations, and unreachable I/O seams. For one of these exceptions, put a `# muex:ignore <reason>` comment on its own line directly above the mutated line, in a position that `mix format` leaves in place, with a reason explaining why it qualifies; muex reports every mutant on the line below an annotated comment as ignored, so none blocks the commit, whatever its status would otherwise have been. Do not use this comment for any other survivor. Never bypass the hook with `--no-verify`.
+`mix muex --coverage-guided` runs each mutant against test files that
+execute its line when `:cover` has data.
+When `:cover` has no data for a line, muex falls back to dependency
+analysis and then to the full test suite.
+A mutant is a survivor when the test files run for its line still
+pass against it.
+
+Every blocking mutant must be killed by a test in the same commit, except for the kinds listed under “Acceptable non-fixes” below: equivalent mutants, pure-observability mutations, and unreachable I/O seams. For one of these exceptions, put a `# muex:ignore <reason>` comment on its own line directly above the mutated line, in a position that `mix format` leaves in place, with a reason explaining why it qualifies; muex reports every mutant on the line below an annotated comment as ignored, so none blocks the commit, whatever its status would otherwise have been. Do not use this comment for any other survivor. Never bypass the hook with `--no-verify`.
+
+### Fix every surviving mutant
+
+Do not dismiss surviving mutants under ordinary review triage.
+Fix each survivor with a test or document it under an acceptable
+non-fix below.
+This repository is under our end-to-end control.
+It has no external reviewers, legacy callers, or compatibility
+constraints.
+A surviving mutant is a real gap even when its code predates the PR.
+Fix it now.
+Closing an unrelated test gap is worthwhile.
+
+For a pure-logic survivor, add a test that rejects the behavior
+introduced by the mutation.
+If logic is buried in I/O-bound or server-bound code, extract it
+behind a test seam.
+Test the extracted pure logic.
+
+`mix muex` runs ExUnit only.
+It cannot see Playwright e2e coverage.
+`StatementDeletion` mutants on thin I/O glue are unreliable.
+They can survive despite a direct test.
+Fix or document every survivor under the rules below.
+
+### Acceptable non-fixes
+
+An equivalent mutant is acceptable only when no input, realistic or
+otherwise, distinguishes it from the original.
+Document why it is equivalent.
+Do not remove a real safety guard just to remove a mutation point.
+
+A pure-observability non-fix is allowed only when the mutation changes
+log or `IO.puts` message text.
+
+An unreachable I/O seam is an acceptable non-fix only when ExUnit
+cannot reach the code.
+Explain why ExUnit cannot reach it.
+Name the e2e test that kills the mutant.
+
+## Review and merge
+
+The `/manager:review-and-merge` skill runs the merge-time checks and
+post-merge steps in this section.
+
+### Mutation-test the PR
+
+Run the check on every changed `lib/**/*.ex` file in the PR.
+
+```bash
+set -euo pipefail
+
+CHANGED=$(git diff --name-only --diff-filter=d <base>...HEAD -- 'lib/*.ex')
+if [ -z "$CHANGED" ]; then
+  echo "No changed lib/**/*.ex files; skipping mutation testing."
+else
+  scripts/mutate.sh $CHANGED
+fi
+```
+
+Run `git fetch origin` before the full PR check.
+Use the PR's base branch on the refreshed `origin` as `<base>`.
+Use the commit before the fixes as `<base>` for a rerun on fix
+commits.
+The PR branch must be checked out for this command.
+The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
+The `--diff-filter=d` option omits deleted files.
+This keeps deleted paths out of the file list passed to muex.
+With `set -euo pipefail`, a failing `git diff` aborts instead of
+producing an empty list.
+The empty-list guard prevents an empty file list from invoking the
+default mutation scope.
+
+### Post-merge deploy
+
+After the plugin updates local `main` successfully, deploy from this
+session's own worktree.
+
+`git fetch` fires no hook.
+A pull that moves `main` fires `post-merge`.
+A pull that changes nothing fires no hook.
+When the hook runs on `main`, it invokes `install.sh` in that worktree.
+The hook may deploy a `-wip` build if `git status --porcelain`
+prints anything.
+
+Use only this session's own worktree for the explicit deploy.
+Leave it on `main` if it already has `main` checked out.
+Otherwise, require `git status --porcelain` to print nothing before
+running `git switch --detach main`.
+If the switch fails, report that deployment was skipped and why.
+
+A worktree is clean only when `git status --porcelain` prints
+nothing.
+Untracked non-ignored files make the worktree dirty.
+If the worktree is dirty, do not run the installer.
+Report why deployment was skipped.
+After the worktree is on the updated local `main` and is clean, run
+`bash scripts/install.sh` there.
+
+Check the first 12 characters of that worktree's `HEAD`.
+An explicit install succeeds only when it exits with code 0.
+For a new build, the output must include
+`meerkat: built version <id> at <path>`.
+The `<id>` must start with the expected 12-character prefix.
+The `<id>` must contain no `-wip`.
+The output must end with `meerkat: done.`.
+An up-to-date build succeeds when it prints
+`meerkat: current already built from <prefix> (clean tree); skipping. Pass --force to rebuild.`.
+The prefix in that line must match the expected 12 characters.
+Any other outcome is a deployment failure.
+Report any deployment failure.
+If a pull hook or explicit install ran and the clean install did not
+succeed, report that a `-wip` build may be live.
 
 ## Local dev mode
 
