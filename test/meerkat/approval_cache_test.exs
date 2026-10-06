@@ -124,6 +124,44 @@ defmodule Meerkat.ApprovalCacheTest do
 
       assert ApprovalCache.load(path) == %{}
     end
+
+    for {label, body} <- [
+          {"a branch that isn't an object", ~s({"version":2,"branches":{"main":5}})},
+          {"a file entry that isn't a list", ~s({"version":2,"branches":{"main":{"x":"1"}}})},
+          {"an OID that isn't a string", ~s({"version":2,"branches":{"main":{"x":[1]}}})},
+          {"branches that isn't an object", ~s({"version":2,"branches":["main"]})},
+          {"no branches key", ~s({"version":2})}
+        ] do
+      test "wrong-shaped content (#{label}) is quarantined and approves nothing", %{dir: dir} do
+        path = Path.join(dir, "approved.json")
+        File.mkdir_p!(dir)
+        File.write!(path, unquote(body))
+
+        log =
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            cache = ApprovalCache.load(path)
+            assert cache == %{}
+            refute ApprovalCache.approved?(cache, "main", "x", "1")
+          end)
+
+        refute File.exists?(path)
+        assert Enum.any?(File.ls!(dir), &String.starts_with?(&1, "approved.json.corrupt."))
+        assert log =~ "approval cache at #{path} unusable (unexpected shape"
+      end
+    end
+
+    test "modify/2 over a wrong-shaped file starts from an empty cache", %{dir: dir} do
+      path = Path.join(dir, "approved.json")
+      File.mkdir_p!(dir)
+      File.write!(path, ~s({"version":2,"branches":{"main":5}}))
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:ok, %{"main" => %{"x" => ["1"]}}} =
+                 ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "x", "1"))
+      end)
+
+      assert Enum.any?(File.ls!(dir), &String.starts_with?(&1, "approved.json.corrupt."))
+    end
   end
 
   describe "modify/2" do

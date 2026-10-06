@@ -50,32 +50,21 @@ defmodule Meerkat.ApprovalCache do
   end
 
   @doc """
-  Read the cache file. Missing → empty. Malformed / wrong-version
-  files are logged to stderr and quarantined to `.corrupt.<ts>` so
-  the next save doesn't overwrite a file the user might still want.
+  Read the cache file. Missing → empty. Malformed, wrong-version or
+  wrong-shaped files are logged to stderr and quarantined to
+  `.corrupt.<ts>` so the next save doesn't overwrite a file the user
+  might still want. A quarantined file approves nothing.
   """
   @spec load(String.t()) :: t
   def load(path) do
     case File.read(path) do
       {:ok, body} ->
-        case Jason.decode(body) do
-          {:ok, %{"version" => @cache_version, "branches" => branches}} when is_map(branches) ->
+        case parse(body) do
+          {:ok, branches} ->
             branches
 
-          {:ok, %{"version" => other}} ->
-            quarantine(
-              path,
-              "schema version mismatch (got #{inspect(other)}, want #{@cache_version})"
-            )
-
-            %{}
-
-          {:ok, _} ->
-            quarantine(path, "missing version/branches keys")
-            %{}
-
-          {:error, %Jason.DecodeError{} = err} ->
-            quarantine(path, "JSON parse failed: #{Exception.message(err)}")
+          {:error, reason} ->
+            quarantine(path, reason)
             %{}
         end
 
@@ -91,6 +80,37 @@ defmodule Meerkat.ApprovalCache do
         %{}
     end
   end
+
+  defp parse(body) do
+    case Jason.decode(body) do
+      {:ok, %{"version" => @cache_version} = decoded} ->
+        branches = decoded["branches"]
+
+        if valid_branches?(branches),
+          do: {:ok, branches},
+          else: {:error, "unexpected shape: want branch → file → [OID string]"}
+
+      {:ok, %{"version" => other}} ->
+        {:error, "schema version mismatch (got #{inspect(other)}, want #{@cache_version})"}
+
+      {:ok, _} ->
+        {:error, "missing version/branches keys"}
+
+      {:error, %Jason.DecodeError{} = err} ->
+        {:error, "JSON parse failed: #{Exception.message(err)}"}
+    end
+  end
+
+  # JSON object keys always decode as strings, so only values need checking.
+  defp valid_branches?(branches) when is_map(branches),
+    do: Enum.all?(branches, fn {_, files} -> valid_files?(files) end)
+
+  defp valid_branches?(_), do: false
+
+  defp valid_files?(files) when is_map(files),
+    do: Enum.all?(files, fn {_, oids} -> is_list(oids) and Enum.all?(oids, &is_binary/1) end)
+
+  defp valid_files?(_), do: false
 
   defp quarantine(path, reason) do
     Meerkat.Quarantine.move(

@@ -998,6 +998,32 @@ defmodule Meerkat.CLITest do
       assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
+    test "wrong-shaped approval cache → quarantined, live review even for an approved file", %{
+      dir: dir
+    } do
+      # Valid JSON, right version, a real approval for the staged file —
+      # but another branch's entry has the wrong shape. The whole file is
+      # untrustworthy, so it must approve nothing (and not crash).
+      File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
+      git(dir, ["add", "a.rs"])
+      oid = git(dir, ["rev-parse", ":a.rs"])
+      path = ApprovalCache.path_for(dir)
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(
+        path,
+        ~s({"version":2,"branches":{"main":{"a.rs":["#{oid}"]},"other":5}})
+      )
+
+      log =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.auto_approve_decision_for_test(dir) == :live
+        end)
+
+      assert log =~ "approval cache at #{path} unusable (unexpected shape"
+      refute File.exists?(path)
+    end
+
     # A binary diff shows no content, but it is still an unreviewed file,
     # so it must reach the UI whether attributes or its bytes make it binary.
     for {classification, attrs, old, new} <- [
