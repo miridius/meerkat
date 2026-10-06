@@ -5,6 +5,8 @@ lefthook: node_modules/.bin/lefthook
 
 # A commit on main is refused before the long checks start. The
 # dependency bump runs before the checks so they cover what it stages.
+# Mutation testing of the staged lib/ lines runs last, once the suite
+# it judges with is known to pass.
 pre-commit:
   piped: true
   commands:
@@ -17,6 +19,9 @@ pre-commit:
     check:
       priority: 3
       run: bash scripts/check.sh
+    mutate:
+      priority: 4
+      run: bash scripts/mutate.sh staged
 
 # A script, not a command: see .lefthook/pre-push/pre-push.sh.
 pre-push:

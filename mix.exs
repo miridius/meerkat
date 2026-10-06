@@ -72,10 +72,11 @@ defmodule Meerkat.MixProject do
       # that adds, on top of 0.11.3, test-selection fixes (multi-alias
       # test selection, crediting each test file with only the lines it
       # executed), parallel coverage collection, parallel runs of
-      # same-file mutants, and per-process coverage export names.
+      # same-file mutants, per-process coverage export names,
+      # staged-line scoping, and `# muex:ignore` directives.
       {:muex,
        github: "miridius/muex",
-       ref: "dc4d6859004e3364c2ef683742eed016455e2063",
+       ref: "d04ecf60294511d69ab177561cd3d05479d9f855",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
