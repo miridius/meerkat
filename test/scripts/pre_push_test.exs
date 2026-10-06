@@ -1,9 +1,10 @@
 defmodule Meerkat.PrePushHookTest do
   # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
-  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh is
-  # replaced, by a stub that records each run and exits with a chosen status,
-  # and public-root.sh, whose root this fixture lacks, by a stub that records
-  # the lines it reads; public_root_test.exs tests the real one.
+  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh and
+  # public-root.sh are replaced: outdated.sh by a stub that records each run and
+  # exits with a chosen status, and public-root.sh, whose root this fixture
+  # lacks, by a stub that records the lines it reads; public_root_test.exs tests
+  # the real one.
   use ExUnit.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
@@ -92,6 +93,19 @@ defmodule Meerkat.PrePushHookTest do
     assert code != 0
     assert File.read!(ctx.root_input) =~ ~r/^\S+ #{sha} refs\/heads\/feature 0{40}\n$/
     assert File.exists?(ctx.marker), "outdated.sh still runs when the public-root check fails"
+  end
+
+  test "the public-root check reads every ref of a push", ctx do
+    base = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "a.txt", "a\n", "add a")
+    sha = git(ctx.work, ["rev-parse", "HEAD"])
+
+    assert {_, 0} = push(ctx.work, ["origin", "HEAD:refs/heads/one", "HEAD:refs/heads/main"])
+
+    lines = ctx.root_input |> File.read!() |> String.split("\n", trim: true) |> Enum.sort()
+    assert [main, one] = lines
+    assert main =~ ~r/^\S+ #{sha} refs\/heads\/main #{base}$/
+    assert one =~ ~r/^\S+ #{sha} refs\/heads\/one 0{40}$/
   end
 
   test "a private reference on a branch other than the checked-out one blocks its push", ctx do
