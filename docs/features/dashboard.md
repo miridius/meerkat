@@ -2,7 +2,7 @@
 
 **Status: designed, not built.**
 
-A single meerkat page brings together everything waiting on the user: questions, notices and requests from Claude Code sessions, open commit reviews, and pull requests needing attention. It also shows each session’s design decisions, and the user can send the session feedback on a decision that is wrong or outdated, much as they comment on a diff line.
+A single meerkat page brings together everything waiting on the user: questions and requests from Claude Code sessions, open commit reviews, and pull requests needing attention. It also shows each session’s design decisions, and the user can send the session feedback on a decision that is wrong or outdated, much as they comment on a diff line.
 
 ## Why
 
@@ -17,8 +17,8 @@ A Claude Code session using `AskUserQuestion` stops until the user answers. With
   posts each `AskUserQuestion` call to the dashboard and completes
   it without a prompt, so a terminal never stops for a question (see
   [Research: moving sessions off `AskUserQuestion`](#research-moving-sessions-off-askuserquestion)).
-- **Asynchronous items.** A session posts a question, notice or
-  request and carries on. The answer reaches the session that asked
+- **Asynchronous items.** A session posts a question or request
+  and carries on. The answer reaches the session that asked
   it later, whether that session is busy or idle by then.
 - **Decisions take feedback, not edits.** Each session's design
   decisions come from the fork log the `decisions` Claude Code plugin
@@ -57,7 +57,6 @@ The browser tab title begins with the number of open items—for example, `(3) m
 | Question | Asks the user a question, which may carry a fork id, `Q<n>` | Choose an option or type a reply |
 | Confirmation | Checks the user’s agreement before the session continues | Choose an option or type a reply |
 | Request | Asks for an action only the user can take, such as signing in to a service | Mark it done or type a reply |
-| Notice | Shares information that needs no answer | Dismiss it |
 
 An `AskUserQuestion` call with several questions produces one item per question. Items from the same call remain grouped in the list.
 
@@ -73,10 +72,10 @@ Meerkat sets no caps on items or alerts; instead, the meerkat Claude
 Code plugin tells sessions what is worth posting:
 
 - A question or confirmation only for a choice that belongs to the user.
-- A request only for an action the session cannot take itself.
-- A notice only for something the user would want to know now, such
-  as a PR ready for review or stuck work; not progress updates or
-  routine completions.
+- A request only for an action the session cannot take itself,
+  including one needed by stuck work.
+- Nothing purely informational, such as progress updates, routine
+  completions, or a PR ready for review.
 - Combine related points in one item.
 - Don't repeat an open item; to ask again, the session re-asks under
   the same fork id.
@@ -122,8 +121,6 @@ in the fork log when the session receives the answer. For a session
 that had ended, the log updates once the background resume delivers it. A typed reply
 with no option picked leaves the fork open. The session then re-asks
 the fork, and the re-asking shows up as a new item.
-
-Dismissing a notice removes it from the list without sending anything back to the session.
 
 ### What the session sees
 
@@ -207,13 +204,13 @@ re-asking shows up as a new item.
 
 ## Alerts
 
-Every new item, including a notice, triggers a macOS notification. Clicking it opens the dashboard.
+Every new item triggers a macOS notification. Clicking it opens the dashboard.
 
 ## Where it runs
 
 A login agent keeps the dashboard running at a fixed, bookmarkable URL, allowing alerts to fire even with no tab open. Like review pages, the dashboard serves only loopback connections.
 
-Sessions can post items without an open dashboard tab. Items survive meerkat restarts and remain until answered or dismissed.
+Sessions can post items without an open dashboard tab. Items survive meerkat restarts and remain until answered or marked done.
 
 ### Updates mid-session
 
