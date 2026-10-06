@@ -148,7 +148,8 @@ defmodule Meerkat.CLI do
   # unwritten. Guarded: a no-op when the handler was never installed
   # (auto-approve fast path) and swallows any flush error, because this
   # runs at teardown and must never flip an already-decided exit code.
-  defp flush_logs do
+  @doc false
+  def flush_logs do
     case :logger.get_handler_config(:meerkat_file) do
       {:ok, _} -> :logger_std_h.filesync(:meerkat_file)
       _ -> :ok
@@ -207,6 +208,7 @@ defmodule Meerkat.CLI do
 
         Application.put_env(:meerkat, :review_target, target)
         Application.put_env(:meerkat, :no_open, opts.no_open)
+        :ok = Meerkat.SignalHandler.install()
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
         open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
