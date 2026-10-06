@@ -13,7 +13,11 @@ defmodule Meerkat.TestHelpers do
       "GIT_CONFIG_GLOBAL" => "/dev/null",
       "GIT_CONFIG_NOSYSTEM" => "1",
       "GIT_CONFIG_COUNT" => "0",
-      "GIT_CONFIG_PARAMETERS" => nil
+      "GIT_CONFIG_PARAMETERS" => nil,
+      "GIT_AUTHOR_NAME" => nil,
+      "GIT_AUTHOR_EMAIL" => nil,
+      "GIT_COMMITTER_NAME" => nil,
+      "GIT_COMMITTER_EMAIL" => nil
     }
 
     previous = Map.new(overrides, fn {key, _} -> {key, System.get_env(key)} end)
