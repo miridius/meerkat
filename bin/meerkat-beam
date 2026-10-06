@@ -85,7 +85,19 @@ if [[ -n "${MEERKAT_BUILD_ONLY:-}" ]]; then
   exit 0
 fi
 
-CLI_EVAL='File.cd!(System.get_env("MEERKAT_PWD") || "."); System.halt(Meerkat.CLI.main(System.argv()))'
+APPROVED_EXIT_CODE=76
+CLI_EVAL="File.cd!(System.get_env(\"MEERKAT_PWD\") || \".\"); System.halt(case Meerkat.CLI.main(System.argv()) do 0 -> $APPROVED_EXIT_CODE; code -> code end)"
+
+decision_code() {
+  case "$1" in
+    "$APPROVED_EXIT_CODE") echo 0 ;;
+    0)
+      echo "meerkat: the review BEAM exited 0 before meerkat decided (a SIGTERM while it booted?) — defaulting to REJECT (commit aborted)." >&2
+      echo 143
+      ;;
+    *) echo "$1" ;;
+  esac
+}
 
 # `--answers` reads the answers from stdin, and the loop below starts
 # the BEAM as a background job, which bash gives /dev/null as stdin.
@@ -104,7 +116,11 @@ for arg in "$@"; do
       echo "meerkat: the build is broken, so the answers were not stored; fix the compile error above and re-run." >&2
       exit 2
     fi
-    exec mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@"
+    trap 'kill -9 $(jobs -p) 2>/dev/null; wait; exit 143' TERM INT HUP
+    mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" <&0 &
+    code=0
+    wait $! || code=$?
+    exit "$(decision_code "$code")"
   fi
 done
 
@@ -220,7 +236,7 @@ while true; do
   mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" &
   beam_pid=$!
   wait "$beam_pid"
-  exit_code=$?
+  exit_code=$(decision_code $?)
   beam_pid=""
   # The port file records "<port> <pid>" for the port this BEAM bound.
   # Carry it forward after every exit, including runs using explicit

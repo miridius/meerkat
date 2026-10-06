@@ -10,11 +10,11 @@ defmodule Meerkat.ShepherdTest do
   @timeout_ms 10_000
 
   test "restarts on exit 75, then propagates a clean decision" do
-    assert run_shepherd([75, 75, 0]) == %{code: 0, iterations: 3}
+    assert run_shepherd([75, 75, 76]) == %{code: 0, iterations: 3}
   end
 
   test "retries a crash (exit 2) once, then propagates a clean decision" do
-    assert run_shepherd([2, 0]) == %{code: 0, iterations: 2}
+    assert run_shepherd([2, 76]) == %{code: 0, iterations: 2}
   end
 
   test "aborts (propagates 2) on a second consecutive crash" do
@@ -29,12 +29,24 @@ defmodule Meerkat.ShepherdTest do
     assert run_shepherd([143]) == %{code: 143, iterations: 1}
   end
 
+  test "turns a BEAM exit 0, which no decision halts with, into 143" do
+    assert run_shepherd([0, 76]) == %{code: 143, iterations: 1}
+  end
+
+  test "the dev shepherd turns a BEAM exit 0 into 143, and its approval sentinel into 0" do
+    {port, dir} = open_dev_shepherd(exit_codes: [0])
+    assert await_exit(port, dir) == 143
+
+    {port, dir} = open_dev_shepherd(exit_codes: [76])
+    assert await_exit(port, dir) == 0
+  end
+
   test "a 75 restart resets the crash budget" do
-    assert run_shepherd([2, 75, 2, 0]) == %{code: 0, iterations: 4}
+    assert run_shepherd([2, 75, 2, 76]) == %{code: 0, iterations: 4}
   end
 
   test "without --port, the BEAM prefers the stable port, and a respawn the port the last BEAM bound" do
-    assert run_shepherd([75, 2, 0], ports: true) == %{
+    assert run_shepherd([75, 2, 76], ports: true) == %{
              code: 0,
              iterations: 3,
              ports: [
@@ -46,7 +58,7 @@ defmodule Meerkat.ShepherdTest do
   end
 
   test "an explicit --port reaches the BEAM untouched, with no stable port preferred" do
-    assert run_shepherd([75, 0], args: ["--commit-msg", "/tmp/msg", "--port", "0"], ports: true) ==
+    assert run_shepherd([75, 76], args: ["--commit-msg", "/tmp/msg", "--port", "0"], ports: true) ==
              %{
                code: 0,
                iterations: 2,
@@ -55,7 +67,7 @@ defmodule Meerkat.ShepherdTest do
   end
 
   test "an explicit --port=N reaches the BEAM untouched, with no stable port preferred" do
-    assert run_shepherd([0], args: ["--commit-msg", "/tmp/msg", "--port=0"], ports: true) == %{
+    assert run_shepherd([76], args: ["--commit-msg", "/tmp/msg", "--port=0"], ports: true) == %{
              code: 0,
              iterations: 1,
              ports: ["none --commit-msg /tmp/msg --port=0"]
@@ -65,10 +77,18 @@ defmodule Meerkat.ShepherdTest do
   test "--answers runs the BEAM once in the foreground with the caller's stdin" do
     input = ~s({"answers":[{"location":"global","question":"q","answer":"a"}]}\n)
 
-    assert run_shepherd([0], args: ["--answers"], input: input) == %{
+    assert run_shepherd([76], args: ["--answers"], input: input) == %{
              code: 0,
              iterations: 1,
              stdin: input
+           }
+  end
+
+  test "--answers turns a BEAM exit 0 into 143" do
+    assert run_shepherd([0], args: ["--answers"], input: "{}") == %{
+             code: 143,
+             iterations: 1,
+             stdin: "{}"
            }
   end
 
@@ -153,7 +173,11 @@ defmodule Meerkat.ShepherdTest do
       runs = Path.join(dir, "runs")
       File.mkdir_p!(runs)
       File.chmod!(runs, 0o555)
-      on_exit(fn -> File.chmod!(runs, 0o755) && File.rm_rf!(dir) end)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
 
       port =
         open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
@@ -286,7 +310,7 @@ defmodule Meerkat.ShepherdTest do
     echo "beam: ${MEERKAT_PREFERRED_PORT:-none}" >> "$SEEN_FILE"
     echo "$((i + 1)) $$" > "$MEERKAT_SERVE_DIR/port"
     if [[ "$i" == 0 ]]; then exit 75; fi
-    exit 0
+    exit 76
     """)
 
     File.chmod!(beam, 0o755)

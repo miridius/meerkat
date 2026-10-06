@@ -28,6 +28,19 @@ export MEERKAT_PWD="${MEERKAT_PWD:-$PWD}"
 export MEERKAT_CURRENT_LINK="$CURRENT_LINK"
 
 RESTART_EXIT_CODE=75
+APPROVED_EXIT_CODE=76
+CLI_EVAL="System.halt(case Meerkat.CLI.main(System.argv()) do 0 -> $APPROVED_EXIT_CODE; code -> code end)"
+
+decision_code() {
+  case "$1" in
+    "$APPROVED_EXIT_CODE") echo 0 ;;
+    0)
+      echo "meerkat: the review BEAM exited 0 before meerkat decided (a SIGTERM while it booted?) — defaulting to REJECT (commit aborted)." >&2
+      echo 143
+      ;;
+    *) echo "$1" ;;
+  esac
+}
 
 resolve_release() {
   RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
@@ -48,8 +61,11 @@ for arg in "$@"; do
       exit 64
     fi
     resolve_release
-    exec "$RELEASE_DIR/bin/meerkat" \
-      eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
+    trap 'kill -9 $(jobs -p) 2>/dev/null; wait; exit 143' TERM INT HUP
+    "$RELEASE_DIR/bin/meerkat" eval "$CLI_EVAL" "$@" <&0 &
+    code=0
+    wait $! || code=$?
+    exit "$(decision_code "$code")"
   fi
 done
 
@@ -112,11 +128,10 @@ crashed=0
 while true; do
   resolve_release
 
-  "$RELEASE_DIR/bin/meerkat" \
-    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &
+  "$RELEASE_DIR/bin/meerkat" eval "$CLI_EVAL" "$@" &
   beam_pid=$!
   wait "$beam_pid"
-  exit_code=$?
+  exit_code=$(decision_code $?)
   beam_pid=""
   # The port file records "<port> <pid>" for the port this BEAM bound.
   # Carry it forward after every exit (version-upgrade restart or the
