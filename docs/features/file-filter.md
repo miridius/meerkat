@@ -23,11 +23,13 @@ sticky, so the button is reachable from anywhere on the page.
 
 Top to bottom:
 
-1. **Title row**: `Files (visible_count of total_count)` plus
-   `Hide matched` / `Show matched` (one toggle whose label depends
-   on whether every currently-filtered file is visible) and
-   `Show all` (visible when `only_file_index != nil` OR any
-   `file_overrides` entry is set; clears overrides).
+1. **Title row**: `Files (visible_count of total_count)`, where
+   `visible_count` is the number of files shown in the main file list
+   after applying all rules in **Composition**, and `total_count` is
+   the number of files in the diff, plus `Hide matched` / `Show matched`
+   (one toggle whose label depends on whether every currently-filtered
+   file is visible) and `Show all` (visible when `only_file_index != nil`
+   OR any `file_overrides` entry is set; clears overrides).
 2. **Filter input**: a debounced (50ms) `phx-change="filter.set_input"`
    text box. Filters the panel's list AND the main file list by
    case-insensitive substring on the file's base name.

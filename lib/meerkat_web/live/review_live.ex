@@ -1645,7 +1645,7 @@ defmodule MeerkatWeb.ReviewLive do
       assign(assigns,
         sidebar_entries: visible_in_sidebar,
         total_count: length(assigns.state.files),
-        visible_count: length(visible_in_sidebar),
+        visible_count: MapSet.size(assigns.visible_indices),
         matched_visible?: matched_visible?
       )
 
