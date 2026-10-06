@@ -260,9 +260,12 @@
 
   // Cmd/Ctrl+Enter submits, Escape cancels. CodeMirror (suggestion
   // mode) wires the same shortcuts via createCmEditor's onSubmit/onCancel
-  // hooks; this handler covers the plain textarea path.
+  // hooks; this handler covers the plain textarea path. With Shift the
+  // key is the Send Feedback shortcut, so it must not submit; Send
+  // Feedback is disabled while a form is open, so in a form it does
+  // nothing.
   function handleKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) { // Shift selects Send Feedback; inside a form, neither submit nor send.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
       e.preventDefault();
       submit();
     } else if (e.key === "Escape") {

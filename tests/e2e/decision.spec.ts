@@ -81,28 +81,46 @@ test.describe("decision flow", () => {
 		const meerkat = await startMeerkat();
 		try {
 			await page.goto(meerkat.url);
+			// Desktop Chrome emulation sends a Windows user agent, so the page
+			// detects a non-Mac platform even on a macOS runner.
+			const mod = "Control";
 			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
 			const hint = sendFeedback.locator(".shortcut-hint");
-			await expect(hint).toHaveText(/^(⇧⌘↩|Ctrl\+Shift\+Enter)$/);
-			const mod = (await hint.textContent()) === "⇧⌘↩" ? "Meta" : "Control";
+			await expect(hint).toHaveText("Ctrl+Shift+Enter");
 
 			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
 			const form = page.locator(".comment-form");
 			const textarea = form.locator("textarea");
-			await textarea.fill("sent by shortcut");
+			await textarea.fill("unsent draft");
 			await textarea.press(`${mod}+Shift+Enter`);
-			await expect(form).toBeVisible();
-			await expect(textarea).toHaveValue("sent by shortcut");
-			await expect(page.locator(".comment-count")).toHaveText("0 comments");
+			await expect(textarea).toHaveValue("unsent draft");
 
+			await textarea.fill("sent by shortcut");
 			await textarea.press(`${mod}+Enter`);
 			await expect(form).toBeHidden();
+			await expect(page.locator(".comment-count")).toHaveText("1 comment");
 			await expect(sendFeedback).toBeEnabled();
+			await expect(hint).toHaveText("Ctrl+Shift+Enter");
+
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/main.rs" });
+			await fileSection.getByRole("button", { name: /^\+ Add file comment$/ }).click();
+			await expect(sendFeedback).toBeDisabled();
+			await form.getByRole("button", { name: /^Suggestion$/ }).click();
+			await form.locator(".code-host .cm-content").click();
+			await page.keyboard.type("fn renamed() {}");
+			await page.keyboard.press(`${mod}+Shift+Enter`);
+			await expect(form.locator(".code-host .cm-line")).toHaveCount(1);
+			await form.locator("textarea.prose").fill("suggested by shortcut test");
+			await form.getByRole("button", { name: /^Add File Comment$/ }).click();
+			await expect(form).toBeHidden();
+			await expect(page.locator(".comment-count")).toHaveText("2 comments");
 
 			await page.keyboard.press(`${mod}+Shift+Enter`);
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code).toBe(1);
 			expect(stderr).toContain("sent by shortcut");
+			expect(stderr).toContain("suggested by shortcut test");
+			expect(stderr).not.toContain("unsent draft");
 		} finally {
 			await meerkat.kill();
 		}

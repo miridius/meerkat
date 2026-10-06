@@ -27,12 +27,7 @@ GitHub PR.
    error banner.
 
 3. **Send Feedback** — submit `:reject`. Disabled when there are
-   zero comments or when any comment form is open. Cmd+Shift+Enter
-   on macOS or Ctrl+Shift+Enter elsewhere works from anywhere on the
-   review page, does exactly what clicking Send Feedback does, and
-   does nothing while the button is disabled. The button shows “⇧⌘↩”
-   after its label on macOS and “Ctrl+Shift+Enter” elsewhere. The
-   footer shows
+   zero comments or when any comment form is open. The footer shows
    `N unsaved form open:` or `N unsaved forms open:`, with a link for
    each form. Links are labelled `Global`, a file name, an inline
    location such as `src/main.rs L3–5` (or `src/main.rs L3` for one
@@ -42,6 +37,11 @@ GitHub PR.
    if collapsed), switches an inline form from rendered markdown
    back to the diff, then scrolls to the form and focuses its text
    box. Exit **1** with the formatted comment payload on stderr.
+   Cmd+Shift+Enter on macOS or Ctrl+Shift+Enter elsewhere works from
+   anywhere on the review page, does exactly what clicking Send
+   Feedback does, and does nothing while the button is disabled. The
+   button shows “⇧⌘↩” after its label on macOS and
+   “Ctrl+Shift+Enter” elsewhere.
 
 4. **Approve** — labelled **Approve with feedback** when the review
    has any comments, and **Approve** otherwise. Submits `:approve`
