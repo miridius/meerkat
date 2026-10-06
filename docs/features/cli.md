@@ -97,10 +97,16 @@ staged files are still reviewed.
   with the code. A caller that cannot create its run dir while not
   attached to a serving BEAM exits 2 with a REJECT message (`could
   not create <run dir>`); an already attached caller still receives
-  the decision and exits with it. While waiting to retry after a
-  failed build, the dev launcher exits 2 with a REJECT message if its
-  checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
-  launcher could not build meerkat, so it stored nothing.
+  the decision and exits with it. An attached caller exits 2 with a
+  REJECT message (`<run dir> was removed`) whenever its run dir is
+  gone, whether another invocation removed it after finding its
+  server dead with no exit code recorded or after finding the run
+  finished with an exit file over a minute old or a recorded caller
+  pid that was not a live meerkat process, or the runs dir itself
+  was deleted. While waiting to retry after a failed build, the dev
+  launcher exits 2 with a REJECT message if its checkout or
+  `$MEERKAT_PWD` is deleted. Under `--answers`: the dev launcher
+  could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`
