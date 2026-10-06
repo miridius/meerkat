@@ -10,6 +10,7 @@ defmodule Meerkat.CLIMainTest do
 
   setup do
     isolate_git_config()
+    restore_signal_handler_on_exit()
     repo = make_git_repo("meerkat-cli-main")
     git(repo, ["config", "user.email", "t@t.t"])
     git(repo, ["config", "user.name", "t"])
@@ -120,6 +121,33 @@ defmodule Meerkat.CLIMainTest do
     # A whole line: a crash's stack trace can quote the same text.
     assert stderr =~ ~r/^meerkat: error resolving review target: /m
     assert Application.get_all_env(:meerkat) == env_before
+  end
+
+  # OTP's own SIGTERM handling would exit 0 here, which means approved.
+  test "a SIGTERM while the review target resolves exits 143 with a REJECT message",
+       %{repo: repo} do
+    stub_gh(repo, ~s(kill -TERM "$MEERKAT_TEST_BEAM"; sleep 10))
+
+    {output, code} =
+      System.cmd(
+        "mix",
+        [
+          "run",
+          "--no-start",
+          "--no-compile",
+          "-e",
+          ~s|System.put_env("MEERKAT_TEST_BEAM", System.pid()); | <>
+            "System.halt(Meerkat.CLI.main(System.argv()))",
+          "--",
+          "HEAD",
+          "--no-open"
+        ],
+        env: [{"MIX_ENV", to_string(Mix.env())}],
+        stderr_to_stdout: true
+      )
+
+    assert code == 143
+    assert output =~ "meerkat: received SIGTERM"
   end
 
   # A regression that opens a review would block on a human forever.
