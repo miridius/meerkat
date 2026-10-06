@@ -1,7 +1,8 @@
 defmodule MeerkatWeb.ConnCase do
   @moduledoc """
   Common test setup for controller / LiveView tests; provides a
-  `conn` fixture via `Phoenix.ConnTest`.
+  `conn` fixture via `Phoenix.ConnTest`. Synchronous tests also start
+  and end with no decision (see `Meerkat.DecisionCase`).
   """
 
   use ExUnit.CaseTemplate

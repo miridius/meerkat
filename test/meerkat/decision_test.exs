@@ -1,6 +1,6 @@
 defmodule Meerkat.DecisionTest do
   # async: false — Decision is a singleton GenServer, mounted by the
-  # main supervisor. Tests clear its state between runs via reset/0.
+  # main supervisor. Meerkat.DecisionCase clears it around each test.
   use Meerkat.DecisionCase, async: false
 
   alias Meerkat.Decision
