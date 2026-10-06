@@ -101,7 +101,7 @@ defmodule Meerkat.CLIMainTest do
 
       {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
       assert code == 2
-      assert stderr =~ "is gone"
+      assert stderr =~ "no longer exists"
       assert stderr =~ "defaulting to REJECT (commit aborted)."
     end
   end
@@ -140,14 +140,5 @@ defmodule Meerkat.CLIMainTest do
     File.write!(Path.join(bin, "gh"), "#!/bin/sh\n#{body}\n")
     File.chmod!(Path.join(bin, "gh"), 0o755)
     put_env("PATH", bin <> ":" <> System.fetch_env!("PATH"))
-  end
-
-  defp put_env(name, value) do
-    previous = System.get_env(name)
-    if value, do: System.put_env(name, value), else: System.delete_env(name)
-
-    on_exit(fn ->
-      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
-    end)
   end
 end

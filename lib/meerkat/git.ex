@@ -875,8 +875,9 @@ defmodule Meerkat.Git do
   review.
 
   When `GIT_INDEX_FILE` names a file other than the repository's own
-  index, this keeps a copy at `Path.join(dir, "index")` and makes every
-  Git command this BEAM runs use it. If that copy already exists, it is
+  index, this keeps a copy at `Path.join(dir, "index")` and makes this
+  module's Git commands use it, except where `with_index/3` names another
+  index. If that copy already exists, it is
   used as-is so a restarted BEAM can resume the same review. The
   repository's own index is never copied; staged reads continue to use it
   live so they reflect changes the user stages. A relative name is taken
@@ -889,8 +890,9 @@ defmodule Meerkat.Git do
   @spec hold_temporary_index(String.t(), String.t()) :: :ok | {:error, String.t()}
   def hold_temporary_index(repo_path, dir) do
     held = Path.join(dir, "index")
+    copied = if File.exists?(held), do: :ok, else: copy_temporary_index(repo_path, held)
 
-    case if(File.exists?(held), do: :ok, else: copy_temporary_index(repo_path, held)) do
+    case copied do
       :ok -> Application.put_env(:meerkat, :held_index, held)
       :skip -> :ok
       {:error, _} = error -> error
@@ -904,19 +906,27 @@ defmodule Meerkat.Git do
   Only Git calls made in the calling process see `name`. After `fun`
   returns, Git reads use the held copy again.
 
-  Returns `fun`'s result.
+  Returns `fun`'s result, or `{:error, message}` without running `fun` when
+  `name` names no file, which Git would read as an empty index.
   """
-  @spec with_index(String.t(), String.t() | nil, (-> result)) :: result when result: var
+  @spec with_index(String.t(), String.t() | nil, (-> result)) :: result | {:error, String.t()}
+        when result: var
   def with_index(repo_path, name, fun) do
-    previous = Process.get(:meerkat_index, :unset)
-    Process.put(:meerkat_index, index_override(repo_path, name))
+    index = index_override(repo_path, name)
 
-    try do
-      fun.()
-    after
-      if previous == :unset,
-        do: Process.delete(:meerkat_index),
-        else: Process.put(:meerkat_index, previous)
+    if index && not File.exists?(index) do
+      {:error, "the index #{index} no longer exists"}
+    else
+      previous = Process.get(:meerkat_index, :unset)
+      Process.put(:meerkat_index, index)
+
+      try do
+        fun.()
+      after
+        if previous == :unset,
+          do: Process.delete(:meerkat_index),
+          else: Process.put(:meerkat_index, previous)
+      end
     end
   end
 
@@ -924,12 +934,16 @@ defmodule Meerkat.Git do
   defp index_override(repo_path, name), do: index_path(repo_path, name)
 
   # Git takes a relative GIT_INDEX_FILE from the top of the work tree, which
-  # is not `repo_path` when a hook runs meerkat from a subdirectory.
+  # is not `repo_path` when a hook runs meerkat from a subdirectory. Stderr
+  # stays out of the path: a warning git prints would corrupt it.
   defp index_path(repo_path, name) do
-    case Path.type(name) == :absolute or toplevel(repo_path) do
-      true -> Path.expand(name)
-      {:ok, top} -> Path.expand(name, top)
-      {:error, _} -> Path.expand(name, repo_path)
+    if Path.type(name) == :absolute do
+      Path.expand(name)
+    else
+      case run_git(repo_path, ["rev-parse", "--show-toplevel"], false) do
+        {:ok, top} -> Path.expand(name, String.trim(top))
+        {:error, _} -> Path.expand(name, repo_path)
+      end
     end
   end
 
@@ -1023,7 +1037,7 @@ defmodule Meerkat.Git do
              {:error, "couldn't keep a copy of the commit's index: #{:file.format_error(reason)}"}
     else
       {:read, {:error, :enoent}, index} ->
-        {:error, "the commit's index #{index} is gone; git has exited"}
+        {:error, "the commit's index #{index} no longer exists"}
 
       {:read, {:error, reason}, index} ->
         {:error, "couldn't read the commit's index #{index}: #{:file.format_error(reason)}"}

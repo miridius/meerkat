@@ -60,6 +60,16 @@ defmodule Meerkat.TestHelpers do
   defp put_env({key, nil}), do: System.delete_env(key)
   defp put_env({key, value}), do: System.put_env(key, value)
 
+  @doc """
+  Set environment variable `name` to `value`, or unset it when `value` is
+  `nil`, for the rest of the current test; restored on exit.
+  """
+  def put_env(name, value) do
+    previous = System.get_env(name)
+    put_env({name, value})
+    on_exit(fn -> put_env({name, previous}) end)
+  end
+
   defp shell_quote(value), do: "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
 
   @doc """

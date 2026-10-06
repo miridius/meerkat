@@ -90,18 +90,6 @@ defmodule MeerkatWeb.AttachControllerTest do
     |> get("/api/attach?run=#{run}&quiet=0&index=#{URI.encode_www_form(index)}")
   end
 
-  # The backend was started by an invocation git gave this index file.
-  defp start_with_index(name) do
-    previous = System.get_env("GIT_INDEX_FILE")
-    System.put_env("GIT_INDEX_FILE", name)
-
-    on_exit(fn ->
-      if previous,
-        do: System.put_env("GIT_INDEX_FILE", previous),
-        else: System.delete_env("GIT_INDEX_FILE")
-    end)
-  end
-
   # An attach made before a decision arms the deadline; Decision broadcasts on its
   # deadline topic, which setup subscribes to, so receiving this confirms the caller
   # attached.
@@ -230,8 +218,9 @@ defmodule MeerkatWeb.AttachControllerTest do
   describe "the index file a staged review reads" do
     # `git commit` hands its hook a relative `.git/index`; `git commit -a` and
     # `git commit <path>` hand it a temporary one holding what they will commit.
+    # The backend was started by an invocation git gave this index file.
     setup do
-      start_with_index(".git/index")
+      put_env("GIT_INDEX_FILE", ".git/index")
     end
 
     test "a later invocation given the same index file replays the held outcome",
@@ -297,6 +286,17 @@ defmodule MeerkatWeb.AttachControllerTest do
       stage(repo, "a.txt", "two\n")
       assert attach(conn, "later-run").status == 409
       assert_receive {:halted, 1}, 1000
+    end
+
+    test "a later invocation whose index file git has removed is refused and keeps the review",
+         %{conn: conn, repo: repo} do
+      :ok = Decision.publish({0, "approved\n"})
+
+      conn = attach_from_index(conn, "later-run", Path.join(repo, ".git/index.lock"))
+
+      assert conn.status == 502
+      assert conn.resp_body =~ "no longer exists"
+      refute_receive {:halted, _}, 300
     end
   end
 

@@ -16,13 +16,10 @@ defmodule Meerkat.GitHeldIndexTest do
     held_dir = Path.join(dir, ".git/run")
     File.mkdir_p!(held_dir)
 
-    previous = System.get_env("GIT_INDEX_FILE")
+    # Restores the GIT_INDEX_FILE the tests below set.
+    Meerkat.TestHelpers.put_env("GIT_INDEX_FILE", System.get_env("GIT_INDEX_FILE"))
 
     on_exit(fn ->
-      if previous,
-        do: System.put_env("GIT_INDEX_FILE", previous),
-        else: System.delete_env("GIT_INDEX_FILE")
-
       Application.delete_env(:meerkat, :held_index)
       File.rm_rf!(dir)
     end)
@@ -100,16 +97,15 @@ defmodule Meerkat.GitHeldIndexTest do
     System.put_env("GIT_INDEX_FILE", Path.join(dir, ".git/index.lock"))
 
     assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
-    assert message =~ "is gone"
+    assert message =~ "no longer exists"
     assert Application.fetch_env(:meerkat, :held_index) == :error
   end
 
-  test "a copy that cannot be written is an error", %{dir: dir, held_dir: held_dir} do
+  test "a copy that cannot be written is an error", %{dir: dir} do
     System.put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
-    File.chmod!(held_dir, 0o500)
-    on_exit(fn -> File.chmod!(held_dir, 0o700) end)
 
-    assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
+    # A file where the copy's directory should be, which even root cannot write under.
+    assert {:error, message} = Git.hold_temporary_index(dir, Path.join(dir, "a.txt"))
     assert message =~ "couldn't keep a copy"
     assert Application.fetch_env(:meerkat, :held_index) == :error
   end
