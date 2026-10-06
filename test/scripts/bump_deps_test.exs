@@ -54,6 +54,7 @@ defmodule Meerkat.BumpDepsHookTest do
     seen = Path.join(base, "seen")
     fail_update = Path.join(base, "fail-update")
     npm_latest = Path.join(base, "npm-latest")
+    refuse = Path.join(base, "refuse")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
@@ -80,7 +81,8 @@ defmodule Meerkat.BumpDepsHookTest do
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.write!(Path.join(work, "mix.exs"), @mix_exs)
 
-    for file <- ~w(mix.lock package.json pnpm-lock.yaml assets/package.json code.txt) do
+    for file <-
+          ~w(mix.lock package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json code.txt) do
       File.mkdir_p!(Path.dirname(Path.join(work, file)))
       File.write!(Path.join(work, file), "base\n")
     end
@@ -96,6 +98,7 @@ defmodule Meerkat.BumpDepsHookTest do
 
     File.mkdir_p!(stubs)
     File.mkdir_p!(npm_latest)
+    File.mkdir_p!(refuse)
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
@@ -112,6 +115,8 @@ defmodule Meerkat.BumpDepsHookTest do
       "pnpm view "*" dist-tags.latest")
         if [[ -e '#{npm_latest}'/"$2" ]]; then cat '#{npm_latest}'/"$2"
         else jq -r --arg n "$2" '.[$n].latest' '#{pnpm_out}'; fi ;;
+      "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
+        if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "pnpm -r update --latest --ignore-scripts "*)
         names="${cmd#pnpm -r update --latest --ignore-scripts }"
         echo "updated $names" >> package.json
@@ -132,7 +137,8 @@ defmodule Meerkat.BumpDepsHookTest do
      pnpm_out: pnpm_out,
      seen: seen,
      fail_update: fail_update,
-     npm_latest: npm_latest}
+     npm_latest: npm_latest,
+     refuse: refuse}
   end
 
   test "a commit while dependencies are behind carries their bump", ctx do
@@ -249,6 +255,29 @@ defmodule Meerkat.BumpDepsHookTest do
       assert {_, 0} = commit(ctx, ["-m", "change code"])
       assert "pnpm -r update --latest --ignore-scripts shiki" in run(ctx)
     end
+  end
+
+  test "a JS release pnpm refuses for a younger package it adds is left behind", ctx do
+    File.write!(ctx.pnpm_out, ~s({"vite": {"current": "8.2.0", "latest": "8.3.1"},
+                                  "lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
+
+    File.write!(
+      Path.join(ctx.refuse, "lefthook"),
+      " ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17 (released 24 hours ago) of lefthook-windows-x64 does not meet the minimumReleaseAge constraint\n"
+    )
+
+    stage(ctx.work, "code.txt", "change\n")
+
+    assert {out, 0} = commit(ctx, ["-m", "change code"])
+    assert out =~ "lefthook@2.1.17 pulls in a package under the 24h floor; not bumped yet"
+    assert "pnpm -r update --latest --ignore-scripts vite" in run(ctx)
+    assert git(ctx.work, ["status", "--porcelain"]) == ""
+  end
+
+  test "a JS release pnpm cannot resolve for another reason refuses the commit", ctx do
+    File.write!(ctx.pnpm_out, @pnpm_behind)
+    File.write!(Path.join(ctx.refuse, "vite"), " ERR_PNPM_META_FETCH_FAIL  GET failed\n")
+    assert_refused(ctx, "pnpm could not resolve vite's latest release (exit 1)")
   end
 
   test "an exempt Hex release is left behind", ctx do

@@ -31,8 +31,16 @@ defmodule Meerkat.OutdatedGateTest do
     pnpm_out = Path.join(base, "pnpm.json")
     registry_out = Path.join(base, "pnpm-registry.json")
     hex_api = Path.join(base, "hex-api")
+    refuse = Path.join(base, "refuse")
 
     File.mkdir_p!(Path.join(base, "scripts"))
+    File.mkdir_p!(refuse)
+
+    for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
+      File.mkdir_p!(Path.dirname(Path.join(base, file)))
+      File.write!(Path.join(base, file), "base\n")
+    end
+
     File.write!(Path.join(base, "mix.lock"), @hex_lock)
 
     for script <- ~w(outdated.sh deps-common.sh) do
@@ -53,6 +61,8 @@ defmodule Meerkat.OutdatedGateTest do
       "pnpm -r outdated --format json --config.minimum-release-age=0")
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
         exit 1 ;;
+      "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
+        if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
     esac
     """)
@@ -66,7 +76,8 @@ defmodule Meerkat.OutdatedGateTest do
      hex_out: hex_out,
      pnpm_out: pnpm_out,
      registry_out: registry_out,
-     hex_api: hex_api}
+     hex_api: hex_api,
+     refuse: refuse}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -195,6 +206,33 @@ defmodule Meerkat.OutdatedGateTest do
       assert out =~ "stale exemption: shiki covers 4.4.1, but latest is 4.4.3"
       refute out =~ "BLOCKED"
       refute out =~ "not behind latest"
+    end
+  end
+
+  describe "a JS release pnpm outdated reports but pnpm refuses to install" do
+    setup ctx do
+      File.write!(ctx.pnpm_out, ~s({"lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
+
+      File.write!(
+        Path.join(ctx.refuse, "lefthook"),
+        " ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17 (released 24 hours ago) of lefthook-windows-x64 does not meet the minimumReleaseAge constraint\n"
+      )
+    end
+
+    test "passes the gate when a package it adds is under 24h", ctx do
+      exempt(ctx, %{})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "too young: lefthook@2.1.17 pulls in a package under the 24h floor"
+    end
+
+    test "blocks the push when pnpm fails for another reason", ctx do
+      exempt(ctx, %{})
+      File.write!(Path.join(ctx.refuse, "lefthook"), " ERR_PNPM_META_FETCH_FAIL  GET failed\n")
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "ERR_PNPM_META_FETCH_FAIL"
+      assert out =~ "pnpm could not resolve lefthook's latest release (exit 1)"
     end
   end
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
 # behind its latest release, except exempted releases and releases too
-# young to install, so not yet actionable: JS releases younger than the
-# 24h supply-chain floor (minimumReleaseAge in pnpm-workspace.yaml), and
+# young to install, so not yet actionable: JS releases that are, or add a
+# package that is, younger than the 24h supply-chain floor
+# (minimumReleaseAge in pnpm-workspace.yaml), and
 # Hex releases in the configured cooldown window that the requirements
 # admit. Hex does not mark a cooldown release the requirements exclude,
 # so that one blocks. A too-young release still makes an exemption for
@@ -68,10 +69,17 @@ while IFS=$'\t' read -r name latest; do
   exempt "$name" "$latest" && exempted+=("$name")
 done < <(grep . <<<"$PNPM_ROWS")
 # With the floor, pnpm reports only releases past it, so a release under
-# 24h never blocks.
+# 24h never blocks, and neither does one whose install pnpm would refuse
+# for a younger package it adds.
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
   [[ " ${exempted[*]-} " == *" $name "* ]] && continue
+  pnpm_installable "$name" && rc=0 || rc=$?
+  if ((rc == 2)); then
+    echo "too young: $name@$latest pulls in a package under the 24h floor"
+    continue
+  fi
+  ((rc == 0)) || exit 1
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$PNPM_ROWS")

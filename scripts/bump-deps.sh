@@ -14,7 +14,8 @@
 #   the commit.
 # - JS: `pnpm -r update --latest`, which rewrites the package.json range
 #   and keeps pnpm-workspace.yaml's minimumReleaseAge, so no release
-#   younger than 24h enters the lockfile.
+#   younger than 24h enters the lockfile. A release that would add a
+#   package younger than that is skipped, since pnpm refuses it.
 #
 # A package whose latest release is the one its scripts/dep-exemptions.json
 # entry names is left where it is; for JS, that is either the latest
@@ -86,6 +87,12 @@ while IFS=$'\t' read -r name latest; do
     registry_latest=$(npm_latest "$name")
     is_exempt "$name" "$registry_latest" && continue
   fi
+  pnpm_installable "$name" && rc=0 || rc=$?
+  if ((rc == 2)); then
+    echo "pre-commit: $name@$latest pulls in a package under the 24h floor; not bumped yet."
+    continue
+  fi
+  ((rc == 0)) || exit 1
   js_names+=("$name")
 done < <(grep . <<<"$PNPM_ROWS")
 if [[ ${#js_names[@]} -gt 0 ]]; then

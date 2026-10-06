@@ -26,7 +26,8 @@ remove commits a merged PR still references). Before committing:
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
   when a direct JS or Hex dependency trails its latest release unless
-  that release is exempt. JS releases under 24h are not required, and a
+  that release is exempt. A JS release isn't required while the 24h
+  minimum release age makes pnpm refuse to install it. A
   Hex release in cooldown is not required only when all requirements in
   `mix.exs` and other dependencies admit it; otherwise, it is treated as
   outdated and blocks the gate unless exempted. In either ecosystem, an
