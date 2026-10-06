@@ -440,7 +440,7 @@ defmodule Meerkat.Git do
   """
   @spec toplevel(String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def toplevel(path) do
-    case run_git(path, ["rev-parse", "--show-toplevel"]) do
+    case run_git_unmerged(path, ["rev-parse", "--show-toplevel"]) do
       {:ok, output} -> {:ok, String.trim(output)}
       {:error, _} = err -> err
     end
@@ -934,14 +934,13 @@ defmodule Meerkat.Git do
   defp index_override(repo_path, name), do: index_path(repo_path, name)
 
   # Git takes a relative GIT_INDEX_FILE from the top of the work tree, which
-  # is not `repo_path` when a hook runs meerkat from a subdirectory. Stderr
-  # stays out of the path: a warning git prints would corrupt it.
+  # is not `repo_path` when a hook runs meerkat from a subdirectory.
   defp index_path(repo_path, name) do
     if Path.type(name) == :absolute do
       Path.expand(name)
     else
-      case run_git(repo_path, ["rev-parse", "--show-toplevel"], false) do
-        {:ok, top} -> Path.expand(name, String.trim(top))
+      case toplevel(repo_path) do
+        {:ok, top} -> Path.expand(name, top)
         {:error, _} -> Path.expand(name, repo_path)
       end
     end

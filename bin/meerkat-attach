@@ -256,7 +256,8 @@ _ma_attach() {
 
   # 409 means the review changed and 503 means another caller took delivery;
   # either way, the backend is exiting and this caller starts a fresh one.
-  # 502 means this rerun could not resolve its review target; the error was
+  # 502 means this rerun could not resolve its review target or named an
+  # index that no longer exists; the error was
   # printed from its o frames, the backend keeps its review, and this caller
   # exits 64, the CLI's unresolved-target exit code.
   case "$status" in

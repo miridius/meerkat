@@ -1,7 +1,7 @@
 defmodule Meerkat.GitHeldIndexTest do
   use ExUnit.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3, temporary_index: 3]
+  import Meerkat.TestHelpers, only: [git: 2, put_env: 2, stage: 3, temporary_index: 3]
 
   alias Meerkat.Git
 
@@ -16,9 +16,6 @@ defmodule Meerkat.GitHeldIndexTest do
     held_dir = Path.join(dir, ".git/run")
     File.mkdir_p!(held_dir)
 
-    # Restores the GIT_INDEX_FILE the tests below set.
-    Meerkat.TestHelpers.put_env("GIT_INDEX_FILE", System.get_env("GIT_INDEX_FILE"))
-
     on_exit(fn ->
       Application.delete_env(:meerkat, :held_index)
       File.rm_rf!(dir)
@@ -30,7 +27,7 @@ defmodule Meerkat.GitHeldIndexTest do
   test "reads of a temporary index still see it once git has deleted it",
        %{dir: dir, held_dir: held_dir} do
     index = temporary_index(dir, "index.lock", %{"a.txt" => "all\n"})
-    System.put_env("GIT_INDEX_FILE", index)
+    put_env("GIT_INDEX_FILE", index)
 
     Git.hold_temporary_index(dir, held_dir)
     File.rm!(index)
@@ -44,7 +41,7 @@ defmodule Meerkat.GitHeldIndexTest do
 
   test "a restarted BEAM finds the copy the one before it took", %{dir: dir, held_dir: held_dir} do
     index = temporary_index(dir, "next-index-7.lock", %{"a.txt" => "by path\n"})
-    System.put_env("GIT_INDEX_FILE", index)
+    put_env("GIT_INDEX_FILE", index)
     Git.hold_temporary_index(dir, held_dir)
     File.rm!(index)
     Application.delete_env(:meerkat, :held_index)
@@ -59,7 +56,7 @@ defmodule Meerkat.GitHeldIndexTest do
     stage(dir, "a.txt", "first\n")
 
     for name <- [".git/index", Path.join(dir, ".git/index"), Path.join(dir, ".git/../.git/index")] do
-      System.put_env("GIT_INDEX_FILE", name)
+      put_env("GIT_INDEX_FILE", name)
       Git.hold_temporary_index(dir, held_dir)
     end
 
@@ -73,10 +70,13 @@ defmodule Meerkat.GitHeldIndexTest do
        %{dir: dir, held_dir: held_dir} do
     sub = Path.join(dir, "sub")
     File.mkdir_p!(sub)
-    System.put_env("GIT_INDEX_FILE", ".git/index")
+    put_env("GIT_INDEX_FILE", ".git/index")
+    # Trace lines on stderr must not end up in the work-tree path.
+    put_env("GIT_TRACE", "1")
 
     assert Git.hold_temporary_index(sub, held_dir) == :ok
     refute File.exists?(Path.join(held_dir, "index"))
+    put_env("GIT_TRACE", nil)
 
     temporary_index(dir, "next-index-4.lock", %{"a.txt" => "rerun\n"})
 
@@ -87,14 +87,14 @@ defmodule Meerkat.GitHeldIndexTest do
   test "a new repository's own index is not mistaken for a removed one", %{held_dir: held_dir} do
     fresh = Meerkat.TestHelpers.make_git_repo("meerkat-held-index-fresh")
     on_exit(fn -> File.rm_rf!(fresh) end)
-    System.put_env("GIT_INDEX_FILE", ".git/index")
+    put_env("GIT_INDEX_FILE", ".git/index")
 
     assert Git.hold_temporary_index(fresh, held_dir) == :ok
   end
 
   test "a named index git has already removed is an error, not an empty review",
        %{dir: dir, held_dir: held_dir} do
-    System.put_env("GIT_INDEX_FILE", Path.join(dir, ".git/index.lock"))
+    put_env("GIT_INDEX_FILE", Path.join(dir, ".git/index.lock"))
 
     assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
     assert message =~ "no longer exists"
@@ -102,7 +102,7 @@ defmodule Meerkat.GitHeldIndexTest do
   end
 
   test "a copy that cannot be written is an error", %{dir: dir} do
-    System.put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
+    put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
 
     # A file where the copy's directory should be, which even root cannot write under.
     assert {:error, message} = Git.hold_temporary_index(dir, Path.join(dir, "a.txt"))
@@ -117,7 +117,7 @@ defmodule Meerkat.GitHeldIndexTest do
 
     File.mkdir_p!(outside)
     on_exit(fn -> File.rm_rf!(outside) end)
-    System.put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
+    put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
 
     Git.hold_temporary_index(outside, held_dir)
 
@@ -125,7 +125,7 @@ defmodule Meerkat.GitHeldIndexTest do
   end
 
   test "with no index file named there is nothing to keep", %{dir: dir, held_dir: held_dir} do
-    System.delete_env("GIT_INDEX_FILE")
+    put_env("GIT_INDEX_FILE", nil)
 
     Git.hold_temporary_index(dir, held_dir)
 
@@ -138,7 +138,7 @@ defmodule Meerkat.GitHeldIndexTest do
     held_dir: held_dir
   } do
     index = temporary_index(dir, "next-index-8.lock", %{"a.txt" => "held\n"})
-    System.put_env("GIT_INDEX_FILE", index)
+    put_env("GIT_INDEX_FILE", index)
     Git.hold_temporary_index(dir, held_dir)
     rerun = temporary_index(dir, "next-index-9.lock", %{"a.txt" => "rerun\n"})
     stage(dir, "a.txt", "own\n")
@@ -168,10 +168,7 @@ defmodule Meerkat.GitHeldIndexTest do
   end
 
   test "with no copy kept, reads use the index the environment names", %{dir: dir} do
-    System.put_env(
-      "GIT_INDEX_FILE",
-      temporary_index(dir, "next-index-3.lock", %{"a.txt" => "env\n"})
-    )
+    put_env("GIT_INDEX_FILE", temporary_index(dir, "next-index-3.lock", %{"a.txt" => "env\n"}))
 
     assert {:ok, [%{new_content: "env\n"}]} = Git.staged_file_diffs(dir)
   end

@@ -17,8 +17,9 @@ defmodule MeerkatWeb.AttachController do
   gets a `d <line>` frame; a displaced caller prints `<line>` to stderr
   and exits 1. Once a caller has taken delivery, others get 503. `quiet=1`
   skips the banner, for a caller that already printed it. A later
-  invocation whose review target cannot be resolved gets 502 with the
-  error in `o` frames, and the review keeps running. A caller attaching
+  invocation whose review target cannot be resolved, or whose staged
+  review names an index that no longer exists, gets 502 with the error
+  in `o` frames, and the review keeps running. A caller attaching
   after a decision has been made, whether the outcome is held or a click
   has happened but the outcome has not yet been published, gets no banner
   and opens no browser tab.
@@ -114,7 +115,9 @@ defmodule MeerkatWeb.AttachController do
     # different content for `git commit`, `git commit -a` and `git commit <path>`.
     # Its file name says nothing: a path commit's is named after git's pid. The
     # backend's held copy is the first invocation's index, not this caller's.
-    # Other targets do not read the index.
+    # Other targets do not read the index, so its name is not checked.
+    caller_index = if match?({:staged, _}, target), do: caller_index
+
     case Git.with_index(repo_path, caller_index, fn ->
            ReviewState.from_target(target, repo_path)
          end) do

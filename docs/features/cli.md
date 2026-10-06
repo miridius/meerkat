@@ -102,7 +102,11 @@ staged files are still reviewed. For which index they read, see
   staged content (for example, `git commit -a` after a plain
   `git commit` when tracked files have unstaged changes that `-a` would
   include) or the commit message differs, the old server exits and the
-  invocation starts a new one.
+  invocation starts a new one. If the named index no longer exists, the
+  invocation prints `meerkat: error resolving review target: the index
+  <path> no longer exists` and exits `64`; the running review keeps
+  going, along with any decision it holds. Reviews of other targets
+  ignore the value.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
 - `FORCE=1` — let `scripts/install.sh` override the dev-mode
@@ -131,7 +135,9 @@ staged files are still reviewed. For which index they read, see
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`
-  fetch). The launchers pass it straight through. Under `--answers`:
+  fetch). A later invocation of a running staged review also exits 64
+  when its `GIT_INDEX_FILE` names an index that no longer exists; see
+  [`GIT_INDEX_FILE`](#env-vars). The launchers pass it straight through. Under `--answers`:
   a terminal on stdin, or a directory that is no git repository.
 - `74` — `--answers` could not read stdin, or could not write the
   answers file. Nothing was stored, and the input itself was fine.
