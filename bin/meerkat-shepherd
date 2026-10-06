@@ -83,6 +83,10 @@ if [[ "$explicit_port" == "false" ]]; then
   fi
 fi
 
+# Keep one secret across respawns (or inherit it) so LiveView session
+# tokens remain valid and the tab reconnects without reloading.
+export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(head -c 48 /dev/urandom | base64)}"
+
 # Browser-open marker: the BEAM opens the review URL only on the first
 # iteration that finds the marker empty, so a respawn doesn't spawn a
 # duplicate tab (the existing tab just reconnects).

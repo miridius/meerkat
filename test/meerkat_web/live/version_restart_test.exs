@@ -108,4 +108,20 @@ defmodule MeerkatWeb.VersionRestartTest do
     {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
     assert Registry.keys(Meerkat.ViewerRegistry, view.pid) == [:viewer]
   end
+
+  test "a tab reconnecting with assets the server still serves stays put", %{conn: conn} do
+    conn =
+      put_connect_params(conn, %{
+        "_track_static" => ["http://127.0.0.1:4002/assets/app-current.js"]
+      })
+
+    assert {:ok, _view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+  end
+
+  test "a tab reconnecting with assets the server no longer serves reloads", %{conn: conn} do
+    conn =
+      put_connect_params(conn, %{"_track_static" => ["http://127.0.0.1:4002/assets/app-old.js"]})
+
+    assert {:error, {:redirect, %{to: "/"}}} = live_isolated(conn, MeerkatWeb.ReviewLive)
+  end
 end

@@ -465,9 +465,10 @@ window.addEventListener("phx:comment-form:reveal", (e) => {
   tick();
 });
 
-// Scroll preservation across a live-restart full reload. When a new
-// version changes assets, phx-track-static reloads the page on socket
-// reconnect; without this the reviewer is thrown back to the top.
+// Scroll preservation across a live-restart full reload.
+// When a new version changes assets, ReviewLive.mount/3 redirects on
+// reconnect for a full page load; without this scroll preservation,
+// the reviewer is thrown back to the top.
 // sessionStorage is scoped per tab and per origin, and a live-restart
 // keeps the same port (so the same origin), so the position stashed
 // before the reload is read back after it; a fresh review opens a new

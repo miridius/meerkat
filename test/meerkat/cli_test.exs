@@ -605,6 +605,29 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "static_manifest_latest/1" do
+    test "maps every script and stylesheet the Vite build emitted to itself" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-manifest")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      path = Path.join(dir, "manifest.json")
+
+      File.write!(path, ~s({
+        "js/app.js": {"file": "assets/app-A1.js", "css": ["assets/app-B2.css"], "isEntry": true},
+        "_dist-C3.js": {"file": "assets/dist-C3.js"}
+      }))
+
+      assert CLI.static_manifest_latest_for_test(path) == %{
+               "assets/app-A1.js" => "assets/app-A1.js",
+               "assets/app-B2.css" => "assets/app-B2.css",
+               "assets/dist-C3.js" => "assets/dist-C3.js"
+             }
+    end
+
+    test "is nil without a build, so no tab is told its assets changed" do
+      assert CLI.static_manifest_latest_for_test("/nonexistent/manifest.json") == nil
+    end
+  end
+
   describe "port_in_use?/1" do
     test "finds eaddrinuse however deep the start error nests it" do
       # The shape `Application.ensure_all_started(:meerkat)` returns when

@@ -38,7 +38,11 @@ Two halves:
    2 with a REJECT message.
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
-exit 75. The browser tab stays put. State survives because:
+exit 75. The tab stays put because the dev shepherd keeps one
+secret across BEAMs, so its LiveView session token remains valid.
+If the restart rebuilt the assets, `ReviewLive.mount/3` instead
+redirects the reconnecting tab to "/" for a full page load of the
+new build. State survives either way because:
 
 - Comments + approvals are persisted to
   `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` and

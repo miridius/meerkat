@@ -546,6 +546,9 @@ defmodule Meerkat.CLI do
   def secret_key_base_for_test, do: secret_key_base()
 
   @doc false
+  def static_manifest_latest_for_test(path), do: static_manifest_latest(path)
+
+  @doc false
   def open_browser_unless_disabled_for_test(no_open, open),
     do: open_browser_unless_disabled(no_open, open)
 
@@ -736,6 +739,8 @@ defmodule Meerkat.CLI do
       ],
       server: true,
       secret_key_base: secret_key_base(),
+      cache_static_manifest_latest:
+        static_manifest_latest(Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")),
       check_origin: {MeerkatWeb.Loopback, :origin?, []}
     ]
 
@@ -748,6 +753,23 @@ defmodule Meerkat.CLI do
 
   defp secret_key_base do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
+  end
+
+  # Supply :cache_static_manifest_latest for LiveView's static_changed?/1.
+  # Tracked URLs are current when they end with a map key or value; Vite
+  # already digests emitted script and stylesheet names, so each maps to itself.
+  # Without a manifest, nil makes static_changed?/1 return false.
+  defp static_manifest_latest(path) do
+    case File.read(path) do
+      {:ok, json} ->
+        for {_key, chunk} <- PhoenixVite.Manifest.parse(json),
+            file <- [chunk.file | chunk.css],
+            into: %{},
+            do: {file, file}
+
+      {:error, _} ->
+        nil
+    end
   end
 
   # Agent-facing banner for the `git commit` / `meerkat` process now
