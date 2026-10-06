@@ -1,7 +1,6 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, ownedTmpDir } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -22,7 +21,7 @@ function prJson(number: number, headRefName: string): string {
 // Answers like gh: a PR for `gh pr view feature/rebased`, and gh's own
 // failure for a bare `gh pr view` while HEAD is detached.
 function ghStub(): string {
-	const dir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
+	const dir = ownedTmpDir("meerkat-e2e-gh");
 	writeFileSync(
 		join(dir, "gh"),
 		`#!/bin/sh

@@ -1,4 +1,5 @@
 ExUnit.start()
+Meerkat.TestHelpers.isolate_tmp_dir()
 
 # Controller / LiveView tests need the endpoint started so Phoenix's
 # `Phoenix.ConnTest.dispatch/5` can find its persistent_term config.

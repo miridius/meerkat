@@ -8,9 +8,9 @@ export default defineConfig({
 	testDir: "./tests/e2e",
 	// The harness's own tests (tests/e2e/lib/*.test.ts) run under `bun test`.
 	testMatch: "*.spec.ts",
-	// Setup reaps backends left by earlier runs killed before teardown, and
-	// builds the checkout under test once; teardown reaps any backends this
-	// run left behind.
+	// Setup reaps backends and fixtures left by earlier runs killed before
+	// teardown, and builds the checkout under test once; teardown reaps any
+	// this run left behind, such as those of a worker killed mid-test.
 	globalSetup: "./tests/e2e/lib/setup.ts",
 	globalTeardown: "./tests/e2e/lib/reap.ts",
 	timeout: 60_000,

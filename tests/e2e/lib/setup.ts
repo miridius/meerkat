@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { basename } from "node:path";
-import { MEERKAT_BIN, reapOrphanedBackends } from "./runner.js";
+import { MEERKAT_BIN, reapOrphanedBackends, reapOrphanedFixtures } from "./runner.js";
 
 // With MEERKAT_BIN at bin/meerkat-beam, each test boots its own launcher,
 // whose pre-flight compiles the Elixir code and builds the assets when
@@ -9,6 +9,7 @@ import { MEERKAT_BIN, reapOrphanedBackends } from "./runner.js";
 // own pre-flight once here, before any worker starts.
 export default async function globalSetup(): Promise<void> {
 	await reapOrphanedBackends();
+	reapOrphanedFixtures();
 	if (basename(MEERKAT_BIN) !== "meerkat-beam") {
 		console.log(`e2e setup: not pre-building, MEERKAT_BIN=${MEERKAT_BIN} is not bin/meerkat-beam`);
 		return;

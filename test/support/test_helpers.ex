@@ -21,6 +21,45 @@ defmodule Meerkat.TestHelpers do
     on_exit(fn -> Enum.each(previous, &put_env/1) end)
   end
 
+  @owned_tmp_dir_re ~r/^meerkat-exunit-(\d+)-\d+$/
+
+  @doc """
+  Points TMPDIR, and so `System.tmp_dir!/0` and every child process, at a
+  new `meerkat-exunit-<OS pid>-<n>` dir under the system temp dir, removed
+  after the suite. Called once from `test_helper.exs`.
+
+  First runs `reap_orphaned_tmp_dirs/1`, so the dirs of BEAMs killed before
+  their suite finished go with the next run.
+  """
+  @spec isolate_tmp_dir() :: :ok
+  def isolate_tmp_dir do
+    parent = System.tmp_dir!()
+    reap_orphaned_tmp_dirs(parent)
+    dir = Path.join(parent, "meerkat-exunit-#{System.pid()}-#{System.os_time(:nanosecond)}")
+    File.mkdir_p!(dir)
+    System.put_env("TMPDIR", dir)
+    ExUnit.after_suite(fn _ -> File.rm_rf(dir) end)
+  end
+
+  @doc """
+  Removes each `isolate_tmp_dir/0` dir in `parent` whose BEAM is no longer
+  alive. Those of live BEAMs, including concurrent runs, are left alone.
+  """
+  @spec reap_orphaned_tmp_dirs(String.t()) :: :ok
+  def reap_orphaned_tmp_dirs(parent) do
+    for name <- File.ls!(parent),
+        [_, pid] <- [Regex.run(@owned_tmp_dir_re, name)],
+        not os_pid_alive?(pid) do
+      # Not rm_rf!: BEAMs starting together reap the same dirs at once.
+      File.rm_rf(Path.join(parent, name))
+    end
+
+    :ok
+  end
+
+  defp os_pid_alive?(pid),
+    do: match?({_, 0}, System.cmd("kill", ["-0", pid], stderr_to_stdout: true))
+
   def stage(dir, name, content) do
     path = Path.join(dir, name)
     File.mkdir_p!(Path.dirname(path))
