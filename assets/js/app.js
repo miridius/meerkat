@@ -10,6 +10,7 @@ import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
+import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -90,6 +91,21 @@ const hooks = {
     },
     destroyed() {
       clearInterval(this._timer);
+    },
+  },
+  SendFeedbackShortcut: {
+    mounted() {
+      const mac = isMacPlatform(navigator.userAgentData?.platform || navigator.platform);
+      this.el.querySelector(".shortcut-hint").textContent = sendFeedbackHint(mac);
+      this._onKey = (e) => {
+        if (!isSendFeedbackShortcut(e, mac)) return;
+        e.preventDefault();
+        if (!this.el.disabled) this.el.click();
+      };
+      document.addEventListener("keydown", this._onKey);
+    },
+    destroyed() {
+      document.removeEventListener("keydown", this._onKey);
     },
   },
   // The toolbar wraps onto more rows as the window narrows, so

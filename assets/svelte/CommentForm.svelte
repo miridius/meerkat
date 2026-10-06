@@ -262,7 +262,7 @@
   // mode) wires the same shortcuts via createCmEditor's onSubmit/onCancel
   // hooks; this handler covers the plain textarea path.
   function handleKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) { // Shift selects Send Feedback; inside a form, neither submit nor send.
       e.preventDefault();
       submit();
     } else if (e.key === "Escape") {

@@ -74,4 +74,37 @@ test.describe("decision flow", () => {
 			meerkat.fixture.cleanup?.();
 		}
 	});
+
+	test("Cmd/Ctrl+Shift+Enter sends feedback, and inside an open comment form neither submits nor sends", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat();
+		try {
+			await page.goto(meerkat.url);
+			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
+			const hint = sendFeedback.locator(".shortcut-hint");
+			await expect(hint).toHaveText(/^(⇧⌘↩|Ctrl\+Shift\+Enter)$/);
+			const mod = (await hint.textContent()) === "⇧⌘↩" ? "Meta" : "Control";
+
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			const form = page.locator(".comment-form");
+			const textarea = form.locator("textarea");
+			await textarea.fill("sent by shortcut");
+			await textarea.press(`${mod}+Shift+Enter`);
+			await expect(form).toBeVisible();
+			await expect(textarea).toHaveValue("sent by shortcut");
+			await expect(page.locator(".comment-count")).toHaveText("0 comments");
+
+			await textarea.press(`${mod}+Enter`);
+			await expect(form).toBeHidden();
+			await expect(sendFeedback).toBeEnabled();
+
+			await page.keyboard.press(`${mod}+Shift+Enter`);
+			const { code, stderr } = await meerkat.awaitExit();
+			expect(code).toBe(1);
+			expect(stderr).toContain("sent by shortcut");
+		} finally {
+			await meerkat.kill();
+		}
+	});
 });

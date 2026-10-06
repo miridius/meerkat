@@ -46,6 +46,7 @@ The form has:
 Keyboard shortcuts inside the form:
 
 - **Cmd/Ctrl+Enter** → submit (same as clicking the button).
+- **Cmd/Ctrl+Shift+Enter** → neither submit nor send feedback (Send Feedback is disabled while a form is open).
 - **Escape** → cancel (same as clicking Cancel).
 
 The textarea persists its content to `localStorage` under

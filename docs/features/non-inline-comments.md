@@ -22,7 +22,7 @@ that inline comments use:
   Follow-up / Revert.
 - Body rendered through `Meerkat.Markdown.to_safe_html/1` —
   fenced code blocks, headings, bullets, inline code all work.
-- Cmd/Ctrl+Enter submits, Escape cancels.
+- Cmd/Ctrl+Enter submits, Escape cancels; Cmd/Ctrl+Shift+Enter neither submits nor sends feedback.
 - Several forms can be open at once, across surfaces and files;
   opening one never closes another. Submit and cancel send that
   form's `form_key`.
