@@ -35,13 +35,12 @@ remove commits a merged PR still references). Before committing:
   version does not match the latest reported version (the JS registry's
   latest or `Latest` in `mix hex.outdated` for Hex), even if that latest
   release is not yet required.
-  The gate also fails on any git dependency unless an exemption names
-  its latest stable Hex release and its pinned commit contains that
-  release; one without a stable Hex release cannot be exempted, and a
-  new stable release makes its entry stale immediately. The pre-commit
+  A git dependency counts as its latest stable Hex release when its
+  pinned GitHub commit contains that release's tag. The gate fails for
+  all other git dependencies. None is exempt. The pre-commit
   hook bumps registry packages; do not bump them by hand. It never
   moves git dependencies, so maintain
-  their exemptions by hand. Fix fallout rather than pinning old
+  their pins by hand. Fix fallout rather than pinning old
   releases. Each `scripts/dep-exemptions.json` entry needs a `version`
   and non-empty `reason`; missing or malformed files and stale entries
   fail the gate. The gate fails closed.

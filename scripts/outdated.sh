@@ -7,10 +7,10 @@
 # Hex releases in the configured cooldown window that the requirements
 # admit. Hex does not mark a cooldown release the requirements exclude,
 # so that one blocks. A too-young release still makes an exemption for
-# an older one stale. The gate also fails on every git dependency unless
-# it has a stable Hex release, an exemption names the latest one, and its
-# pinned GitHub commit contains that release's tag in the GitHub repo Hex
-# links. It also fails on a missing or malformed
+# an older one stale. A git dependency whose pinned GitHub commit
+# contains its latest stable Hex release's tag, in the GitHub repo Hex
+# links, counts as that release; the gate fails on every other git
+# dependency, exempt or not. It also fails on a missing or malformed
 # scripts/dep-exemptions.json or a stale entry there. It fails CLOSED
 # on its own breakage: missing tools, unreachable registries,
 # unparseable probe output, or a pnpm resolution that fails for another
@@ -102,11 +102,10 @@ while read -r name latest status; do
 done < <(grep . <<<"$HEX_ROWS")
 
 # A git dependency is absent from hex.outdated's table, so nothing above
-# would notice the Hex release that makes its pin unnecessary. Each one
-# needs an entry naming the latest Hex release it replaces, and a pin
-# that contains that release (pin_contains); a newer release makes the
-# entry stale. scripts/bump-deps.sh never moves a git
-# dependency, so a stale entry is updated by hand.
+# would notice the Hex release that makes its pin unnecessary. A pin
+# that contains the latest Hex release (pin_contains) is current; any
+# other blocks, exempt or not. scripts/bump-deps.sh never moves a git
+# dependency, so its pin is moved by hand.
 echo
 echo "=== git dependencies ==="
 if ! git_deps=$(sed -nE 's/^  "([a-z0-9_]+)": \{:git,.*/\1/p' mix.lock); then
@@ -159,7 +158,10 @@ pin_contains() {
       echo "BLOCKED: $1 — could not read GitHub's comparison of its pin with $upstream $tag; failing closed"
       return 1
     fi
-    [[ "$status" == ahead || "$status" == identical ]] && return 0
+    if [[ "$status" == ahead || "$status" == identical ]]; then
+      echo "current: $1 is pinned to ${pin##*:}, which contains $upstream $tag"
+      return 0
+    fi
     echo "BLOCKED: $1 is pinned to ${pin##*:}, which does not contain $upstream $tag;"
     echo "  move the pin onto a commit that contains $2, or depend on the Hex release"
     return 1
@@ -177,12 +179,9 @@ while read -r name; do
     fail=1
     continue
   fi
-  if exempt "$name" "$latest"; then
-    pin_contains "$name" "$latest" "$hex_json" || fail=1
-    continue
-  fi
-  echo "BLOCKED: $name is a git dependency (latest Hex release: $latest);"
-  echo "  add or update its exemption to name $latest, or depend on the Hex release"
+  pin_contains "$name" "$latest" "$hex_json" && continue
+  # The pin is behind, or not checked, so its entry is not stale.
+  matched+=("$name")
   fail=1
 done < <(grep . <<<"$git_deps")
 

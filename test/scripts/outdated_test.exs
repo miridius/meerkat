@@ -339,32 +339,24 @@ defmodule Meerkat.OutdatedGateTest do
       compare(ctx, "upstream/plug_x", "v1.0.0...someone:plug_x:b1c2d3e", "identical")
     end
 
-    test "blocks the push without an exemption", ctx do
-      exempt(ctx, %{"plug_x" => entry("1.0.0")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "exempt: plug_x@1.0.0"
-      assert out =~ "BLOCKED: muex is a git dependency (latest Hex release: 0.11.2)"
-      assert out =~ "add or update its exemption"
-    end
-
-    test "passes with an exemption naming its latest Hex release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+    test "counts as the latest Hex release its pinned commit contains", ctx do
+      exempt(ctx, %{})
 
       assert {out, 0} = run(ctx)
-      assert out =~ "exempt: muex@0.11.2"
-      assert out =~ "exempt: plug_x@1.0.0"
+      assert out =~ "current: muex is pinned to a628d48, which contains upstream/muex v0.11.2"
+      assert out =~ "current: plug_x is pinned to b1c2d3e, which contains upstream/plug_x v1.0.0"
     end
 
-    test "fails once a newer Hex release is out", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.1"), "plug_x" => entry("1.0.0")})
+    test "makes an exemption for a pin containing the latest Hex release stale", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: muex covers 0.11.1, but latest is 0.11.2"
+      assert out =~ "stale exemption: muex is not behind latest; remove its entry"
     end
 
-    test "fails when the pinned commit does not contain the named release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+    test "fails when the pinned commit does not contain the latest Hex release", ctx do
+      # An exemption naming the release does not cover a pin without it.
+      exempt(ctx, %{"muex" => entry("0.11.2")})
       # The v-tag verdict stands; the gate does not go on to try this one.
       compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
 
@@ -375,12 +367,14 @@ defmodule Meerkat.OutdatedGateTest do
         assert out =~
                  "BLOCKED: muex is pinned to a628d48, which does not contain upstream/muex v0.11.2"
 
-        refute out =~ "plug_x is pinned"
+        refute out =~ "plug_x is pinned to b1c2d3e, which does not"
+        refute out =~ "exempt: muex"
+        refute out =~ "stale exemption"
       end
     end
 
     test "finds a release tag without a v prefix", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       File.rm!(
         Path.join(ctx.github_api, "repos/upstream/plug_x/compare/v1.0.0...someone:plug_x:b1c2d3e")
@@ -392,7 +386,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when GitHub finds neither release tag", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       File.rm!(
         Path.join(ctx.github_api, "repos/upstream/muex/compare/v0.11.2...someone:muex:a628d48")
@@ -402,10 +396,12 @@ defmodule Meerkat.OutdatedGateTest do
 
       assert out =~
                "BLOCKED: muex — GitHub finds neither tag v0.11.2 nor 0.11.2 in upstream/muex, or not pin a628d48"
+
+      refute out =~ "stale exemption"
     end
 
     test "fails closed when GitHub's comparison is unreadable", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       for report <- ["", "{}", "not json"] do
         compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", nil, report)
@@ -417,7 +413,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed on any other HTTP answer, naming a likely rate limit", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       # A later tag spelling would pass, but an error answer is not a missing tag.
       compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
 
@@ -433,7 +429,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "sends GITHUB_TOKEN, or else gh's token, to GitHub", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       config = Path.join(ctx.base, "curl-config")
       File.write!(Path.join(ctx.base, "gh-token"), "gh-t0k")
 
@@ -447,7 +443,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when Hex links no GitHub repo", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       hex_release(ctx, "muex", ~s({"latest_stable_version": "0.11.2"}))
 
       assert {out, 1} = run(ctx)
@@ -455,7 +451,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when mix.lock pins it outside https://github.com", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       File.write!(
         Path.join(ctx.base, "mix.lock"),
@@ -467,7 +463,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when Hex reports no release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       for report <- ["", "{}", "not json"] do
         hex_release(ctx, "muex", report)
