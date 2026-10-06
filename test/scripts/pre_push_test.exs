@@ -1,7 +1,9 @@
 defmodule Meerkat.PrePushHookTest do
   # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
   # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh is
-  # replaced, by a stub that records each run and exits with a chosen status.
+  # replaced, by a stub that records each run and exits with a chosen status,
+  # and public-root.sh, whose root this fixture lacks, by a stub that records
+  # the lines it reads; public_root_test.exs tests the real one.
   use ExUnit.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
@@ -21,6 +23,8 @@ defmodule Meerkat.PrePushHookTest do
     remote = Path.join(base, "remote.git")
     marker = Path.join(base, "outdated-ran")
     outdated_status = Path.join(base, "outdated-status")
+    root_input = Path.join(base, "public-root-input")
+    root_status = Path.join(base, "public-root-status")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     File.mkdir_p!(Path.join(work, ".lefthook/pre-push"))
@@ -44,13 +48,24 @@ defmodule Meerkat.PrePushHookTest do
     exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
     """)
 
+    File.write!(Path.join([work, "scripts", "public-root.sh"]), """
+    #!/usr/bin/env bash
+    cat > '#{root_input}'
+    exit "$(cat '#{root_status}' 2>/dev/null || echo 0)"
+    """)
+
     Meerkat.TestHelpers.install_lefthook(work)
 
     commit(work, "README.md", "hello\n", "base")
     no_hooks(work, ["push", "-q", "origin", "main"])
 
     {:ok,
-     work: work, marker: marker, outdated_status: outdated_status, private_refs: private_refs}
+     work: work,
+     marker: marker,
+     outdated_status: outdated_status,
+     root_input: root_input,
+     root_status: root_status,
+     private_refs: private_refs}
   end
 
   test "a push of new commits runs the checks", %{work: work, marker: marker} do
@@ -66,6 +81,17 @@ defmodule Meerkat.PrePushHookTest do
 
     assert {_, code} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
     assert code != 0
+  end
+
+  test "the public-root check reads Git's pushed refs and its failure blocks the push", ctx do
+    File.write!(ctx.root_status, "1")
+    commit(ctx.work, "a.txt", "a\n", "add a")
+    sha = git(ctx.work, ["rev-parse", "HEAD"])
+
+    assert {_, code} = push(ctx.work, ["origin", "HEAD:refs/heads/feature"])
+    assert code != 0
+    assert File.read!(ctx.root_input) =~ ~r/^\S+ #{sha} refs\/heads\/feature 0{40}\n$/
+    assert File.exists?(ctx.marker), "outdated.sh still runs when the public-root check fails"
   end
 
   test "a private reference on a branch other than the checked-out one blocks its push", ctx do
