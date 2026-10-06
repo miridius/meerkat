@@ -17,8 +17,10 @@ Any new feature, fix, or UX tweak follows the same loop:
    resolve, agree on the contract before any code lands.
 3. **Implement** the code change to match the (now-updated) spec.
 4. **Run the QA subagent** (see `.claude/agents/meerkat-qa.md`). It
-   reads `docs/features/*.md`, generates a test plan, executes
-   against a live meerkat instance, and reports deviations.
+   checks only the behaviour changed by the diff against the relevant
+   `docs/features/*.md` specs.
+   It exercises that behaviour at the user-facing surface and reports
+   any deviation from its spec.
    Address every deviation before the PR lands.
 
 Tests in `test/` and `tests/e2e/` are the **mechanical** contract.

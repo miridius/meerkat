@@ -2,8 +2,8 @@
 # Mutation testing for meerkat.
 #
 # Runs `mix muex` against the meerkat Elixir code. muex rewrites
-# operators / literals one at a time and re-runs the test suite
-# against each rewrite. A rewrite the suite still passes against
+# operators / literals one at a time and re-runs the tests that
+# cover each rewrite. A rewrite those tests still pass against
 # is an uncovered behaviour — fix the test or the code.
 #
 # Modes:

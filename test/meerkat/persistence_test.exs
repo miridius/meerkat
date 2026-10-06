@@ -1,7 +1,7 @@
 defmodule Meerkat.PersistenceTest do
   use ExUnit.Case, async: true
 
-  # --- Documented surviving mutants (review-and-merge step 5) ---
+  # --- Documented surviving mutants (CLAUDE.md, Mutation testing) ---
   #
   # Equivalent (no input distinguishes mutant from original):
   # * Deleting `serialise({:open_forms, _})`: Jason encodes the raw
