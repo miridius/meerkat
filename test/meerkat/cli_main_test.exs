@@ -101,8 +101,9 @@ defmodule Meerkat.CLIMainTest do
 
       {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
       assert code == 2
-      assert stderr =~ "no longer exists"
-      assert stderr =~ "defaulting to REJECT (commit aborted)."
+
+      assert stderr =~
+               ~r/^meerkat: the commit's index .+ no longer exists — defaulting to REJECT \(commit aborted\)\.$/m
     end
   end
 

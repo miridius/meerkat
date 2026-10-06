@@ -117,9 +117,12 @@ defmodule Meerkat.GitHeldIndexTest do
 
     File.mkdir_p!(outside)
     on_exit(fn -> File.rm_rf!(outside) end)
-    put_env("GIT_INDEX_FILE", temporary_index(dir, "index.lock", %{"a.txt" => "x\n"}))
+    index = temporary_index(dir, "index.lock", %{"a.txt" => "x\n"})
+    File.cp!(index, Path.join(outside, "index.lock"))
+    # Relative, so it is taken from the repo path: there is no work tree.
+    put_env("GIT_INDEX_FILE", "index.lock")
 
-    Git.hold_temporary_index(outside, held_dir)
+    assert Git.hold_temporary_index(outside, held_dir) == :ok
 
     assert File.exists?(Path.join(held_dir, "index"))
   end
