@@ -1,8 +1,8 @@
 defmodule Meerkat.LefthookRcTest do
   # Runs git through the repo's real lefthook.yml, scripts/lefthook-rc.sh
   # and scripts/auto-install.sh, plus a lefthook-local.yml that adds a
-  # commit-msg hook. install.sh and that hook are stubs that record each
-  # run.
+  # commit-msg hook. install.sh and that hook are stubs that leave a
+  # marker file when they run.
   use ExUnit.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0]
@@ -76,6 +76,7 @@ defmodule Meerkat.LefthookRcTest do
     refute out =~ "lefthook"
     assert git(ctx.work, ["log", "-1", "--format=%s"]) == "merge"
     refute File.exists?(ctx.commit_msg_marker)
+    assert File.exists?(ctx.marker), "post-merge auto-installs on main"
   end
 
   test "a checkout with its own lefthook runs commit-msg on a merge commit", ctx do
@@ -84,6 +85,58 @@ defmodule Meerkat.LefthookRcTest do
 
     assert {_, 0} = run(ctx.work, ["merge", "-q", "--no-ff", "-m", "merge", "feature"])
     assert File.exists?(ctx.commit_msg_marker)
+    assert File.exists?(ctx.marker), "post-merge auto-installs on main"
+  end
+
+  test "a checkout without its own lefthook refuses a commit, naming the setup", ctx do
+    File.rm_rf!(Path.join(ctx.work, "node_modules"))
+    assert_commit_refused(ctx.work, "run `mix deps.get && pnpm install`")
+  end
+
+  test "a checkout without lefthook or lefthook.yml refuses a commit", ctx do
+    File.rm_rf!(Path.join(ctx.work, "node_modules"))
+    File.rm!(Path.join(ctx.work, "lefthook.yml"))
+    assert_commit_refused(ctx.work, "not installed")
+  end
+
+  # A wrapper, like one a hook manager installs, that runs the shim
+  # under another name.
+  test "a checkout without its own lefthook refuses a commit through a wrapped hook", ctx do
+    hooks = Path.join(ctx.work, ".git/hooks")
+    File.rename!(Path.join(hooks, "pre-commit"), Path.join(hooks, "pre-commit.orig"))
+    File.write!(Path.join(hooks, "pre-commit"), ~s(#!/bin/sh\nexec "$0.orig" "$@"\n))
+    File.chmod!(Path.join(hooks, "pre-commit"), 0o755)
+    File.rm_rf!(Path.join(ctx.work, "node_modules"))
+
+    assert_commit_refused(ctx.work, "not installed")
+  end
+
+  test "adding a worktree on main auto-installs in it", ctx do
+    fresh = Path.join(Path.dirname(ctx.work), "fresh")
+
+    assert {out, 0} = run(ctx.work, ["worktree", "add", "-q", fresh, "main"])
+    refute out =~ "lefthook"
+    assert File.exists?(ctx.marker)
+  end
+
+  test "adding a worktree on another branch skips auto-install without error", ctx do
+    fresh = Path.join(Path.dirname(ctx.work), "fresh")
+
+    assert {out, 0} = run(ctx.work, ["worktree", "add", "-q", "-b", "other", fresh])
+    assert out =~ "HEAD=other (not main); skipping."
+    refute out =~ "lefthook"
+    refute File.exists?(ctx.marker)
+  end
+
+  defp assert_commit_refused(work, message) do
+    File.write!(Path.join(work, "a.txt"), "a\n")
+    no_hooks(work, ["add", "a.txt"])
+    head = git(work, ["rev-parse", "HEAD"])
+
+    assert {out, code} = run(work, ["commit", "-qm", "x"])
+    assert code != 0
+    assert out =~ message
+    assert git(work, ["rev-parse", "HEAD"]) == head
   end
 
   defp run(work, args) do
