@@ -14,8 +14,6 @@ defmodule Meerkat.TestHelpers do
       "GIT_CONFIG_NOSYSTEM" => "1",
       "GIT_CONFIG_COUNT" => "0",
       "GIT_CONFIG_PARAMETERS" => nil,
-      # A caller's identity would override the user.name and user.email a
-      # test sets.
       "GIT_AUTHOR_NAME" => nil,
       "GIT_AUTHOR_EMAIL" => nil,
       "GIT_COMMITTER_NAME" => nil,
