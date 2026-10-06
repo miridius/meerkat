@@ -1,0 +1,16 @@
+{
+  "name": "meerkat-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@10.29.2",
+  "scripts": {
+    "test": "bash scripts/mix-test.sh && (cd assets && bun test) && bun test tests/e2e/lib && bun run test:e2e",
+    "test:e2e": "MEERKAT_BIN=$PWD/bin/meerkat-beam playwright test",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.63.0",
+    "lefthook": "^2.1.16"
+  }
+}

@@ -1,0 +1,46 @@
+# Git hooks are shared by every worktree. Each checkout runs its own
+# lefthook, so removing another worktree cannot silently disable them;
+# a checkout without `pnpm install` refuses commits and pushes instead.
+lefthook: node_modules/.bin/lefthook
+
+# A commit on main is refused before the long checks start. The
+# dependency bump runs before the checks so they cover what it stages.
+pre-commit:
+  piped: true
+  commands:
+    no-main-commits:
+      priority: 1
+      run: bash scripts/no-main-commits.sh
+    bump-deps:
+      priority: 2
+      run: bash scripts/bump-deps.sh
+    check:
+      priority: 3
+      run: bash scripts/check.sh
+
+# A script, not a command: see .lefthook/pre-push/pre-push.sh.
+pre-push:
+  scripts:
+    "pre-push.sh":
+      runner: bash
+      use_stdin: true
+
+# Auto-install meerkat when local `main` advances through a merge or a
+# checkout. `post-merge` catches `git pull` / `git merge`;
+# `post-checkout` catches `git switch main` / `git checkout main` — the
+# path a GitHub `gh pr merge --squash` takes (it lands on origin/main,
+# never a local merge — which is why the old post-merge-only trigger
+# silently missed every squash-merged release). `git fetch origin
+# main:main` and `git reset` fire neither hook, so run
+# scripts/install.sh after them. The shared guard acts only on `main`,
+# and install.sh skips the rebuild when the commit is unchanged, so
+# firing on every checkout is cheap.
+post-merge:
+  commands:
+    install:
+      run: bash scripts/auto-install.sh
+
+post-checkout:
+  commands:
+    install:
+      run: bash scripts/auto-install.sh

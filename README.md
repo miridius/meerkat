@@ -1,0 +1,159 @@
+# Meerkat
+
+A small local diff reviewer. Open a browser, comment on the diff, block or
+pass it back to the agent that produced the change.
+
+Works against any local diff — staged, a single commit, an arbitrary
+range, a GitHub PR.
+
+```bash
+meerkat                              # review staged diff
+meerkat --commit-msg path/to/MSG     # staged diff + commit message (commit-msg hook)
+meerkat HEAD                         # a single commit (= HEAD~1...HEAD)
+meerkat main...my-branch             # three-dot: merge-base(main, my-branch)..my-branch
+meerkat main..my-branch              # two-dot:   main..my-branch directly
+meerkat --pr 123                     # fetch and review a GitHub PR via `gh`
+```
+
+No external server, no queue, no database. Each invocation spawns a
+short-lived Phoenix server on a local port, opens the browser to it,
+waits for your decision, and exits. If the invocation itself exits
+first, the review keeps running; see
+[decision-flow.md](docs/features/decision-flow.md#when-the-caller-exits).
+A countdown shows how long the review has left before it times out, 90
+minutes by default.
+`MEERKAT_REVIEW_TIMEOUT` sets a different limit, in whole seconds; `0`
+removes the deadline and the countdown. Anything else in it is ignored
+and the 90 minutes stands.
+
+`MEERKAT_AUTO_APPROVE_ON_TIMEOUT` controls what happens when the
+review deadline expires. Values are matched ignoring case and
+surrounding whitespace:
+
+- `1`, `true`, or `yes`: the commit is auto-approved unread. Meerkat
+  exits **0** with `No review within <limit>: commit auto-approved.
+  Nobody read this diff.` on stderr, followed by any comments saved
+  before the timeout.
+- `0`, `false`, `no`, empty, or unset (the default): nothing happens
+  at timeout; the review stays open until you click a button. Any other
+  value also leaves auto-approval off and prints a one-line warning
+  naming the value on stderr when the review starts.
+
+## Status
+
+**Experimental — buggy, rough, and changing often.** This is a personal
+tool under active development. Expect breakage and frequent breaking
+changes; use it at your own risk.
+
+Known issues:
+
+- Syntax highlighting sometimes breaks.
+- The suggestion-mode editor's UX is poor.
+- Only `--commit-msg` mode is exercised day to day. The other entry
+  points (`HEAD`, two/three-dot ranges, `--pr`) are very likely broken.
+
+## Install
+
+macOS. Requires [Elixir](https://elixir-lang.org) 1.18+, Erlang/OTP 28+,
+[`pnpm`](https://pnpm.io) 10.16+ (installs JS dependencies), and
+[`bun`](https://bun.sh) (runs the asset build).
+
+```bash
+git clone https://github.com/miridius/meerkat
+cd meerkat
+bash scripts/install.sh
+```
+
+This builds a Mix release and installs a launcher at
+`~/.local/bin/meerkat` — make sure that's on your `PATH`. Re-run
+`scripts/install.sh` to update.
+
+For development, `bin/meerkat-beam` runs meerkat straight from the
+checkout and hot-restarts on source edits — see `CLAUDE.md`.
+
+## As a git `commit-msg` hook
+
+`git commit` opens the review UI, blocks until you approve or send
+feedback. **Send Feedback** → exit 1, commit blocked, your comments
+render on stderr as first-party instructions the calling agent can act
+on. **Approve** → exit 0, commit proceeds.
+
+```bash
+# In each repo where you want the hook:
+echo '#!/bin/sh' > .git/hooks/commit-msg
+echo 'exec meerkat --commit-msg "$1"' >> .git/hooks/commit-msg
+chmod +x .git/hooks/commit-msg
+```
+
+## Reviewing a GitHub PR
+
+```bash
+meerkat --pr 123
+```
+
+Fetches the PR head and its base into `refs/meerkat-pr/<N>/{head,base}`,
+computes the three-dot diff, opens the UI. Optionally post the review
+back to the PR as a GitHub PENDING review via the **Post to GitHub**
+button — line-level comments become inline review comments, file-level
+and global comments concatenate into the review body, and `gh api`
+handles the POST from the repo's `gh` remote. Finalise (approve /
+request changes / comment) from github.com.
+
+## Review UI
+
+- Click a line number to comment, click-and-drag across line numbers for
+  a range. Comments anchor to the clicked side only (old vs new).
+- Five Conventional-Comments types with traffic-light colours:
+  **revert** (red), **issue** (orange, default), **suggestion**
+  (yellow), **question** (green), **thought** (muted).
+- Markdown in comment bodies. Backticks, code fences, bullets, links all
+  render in place (MDEx + html_sanitize_ex on the server).
+- **"Please learn from this"** checkbox on every comment. Tells the
+  calling agent to turn the comment into a durable learning rather than
+  just a one-off fix.
+- **Approve with feedback**. The Approve button accepts comments — label
+  flips to "Approve with feedback" when any are pending.
+- **Review countdown** in the decision footer, showing the time left
+  before the review times out, then the time it has run over. Amber
+  under five minutes, red under one.
+- **Multi-tab consistency**. State lives in `Meerkat.ReviewServer`, a
+  GenServer keyed by review_id. `Phoenix.PubSub` broadcasts every
+  change to every connected tab — open the same review URL in two
+  tabs, comment in one, see it in the other.
+- **Crash-survivable comments**. The review state is persisted
+  atomically to `<gitdir>/meerkat-precommit/in-progress/<id>.json`
+  after every mutation. If meerkat is killed mid-review, the next
+  invocation replays the saved comments.
+- **PlantUML inline render** for `.puml` files (when the `plantuml` CLI
+  is on PATH).
+- **Suggestion-mode CodeMirror editor** with syntax highlighting per
+  file extension.
+- **File filter** — substring narrowing, hide-by-extension, "only this
+  file" mode.
+
+## Architecture
+
+Phoenix LiveView + LiveSvelte on the BEAM. The CLI parses args, starts
+an OTP supervisor, binds the Phoenix endpoint on the requested port
+(trying a valid preferred port first when the port is `0`), and blocks
+on a `Meerkat.Decision` GenServer. The LiveView reflects state
+held in `Meerkat.ReviewServer` (one per review_id, single-writer);
+mutations go through PubSub broadcasts. The diff body is rendered by
+`@git-diff-view/svelte` mounted via LiveSvelte; comment forms live in
+the same LV/Svelte boundary.
+
+See `CLAUDE.md` for the development workflow.
+
+## Quality gates
+
+```bash
+bun run test                         # scripts/mix-test.sh (ExUnit, one BEAM per test file), assets bun tests, e2e/lib bun tests, then Playwright
+mix format --check-formatted         # Elixir formatting
+mix compile --warnings-as-errors     # strict compile
+```
+
+ExUnit (including LiveViewTest) and the assets bun tests cover behaviour they can reach. The Playwright suite in `tests/e2e/` drives a real meerkat binary and covers only seams those tests cannot reach: browser Svelte/JS to LiveView, CLI to BEAM exit code and stdout, and process lifecycle.
+
+## License
+
+[MIT](LICENSE).

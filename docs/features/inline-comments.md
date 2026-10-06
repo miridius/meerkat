@@ -1,0 +1,124 @@
+# Inline comments
+
+Comments anchored to a specific line range on a specific side
+(old/new) of a specific file's diff. The dominant comment surface
+in practice — the spatial association with code is what makes the
+review readable.
+
+## Opening the form
+
+The reviewer drags on the **line-number gutter** of any diff row.
+The drag captures pointerdown on the start row and pointerup on
+the end row. Selection is restricted to the line-num cell so the
+code content itself stays selectable for copy/paste.
+
+- Single click on a line-num → form opens for that single line.
+- Drag across multiple lines → form opens for the inclusive range.
+- Drag across both sides (old + new) is rejected; the side of the
+  pointerdown wins.
+
+DiffViewer injects one `<tr class="meerkat-form-row">` per open
+inline form on that file, after its anchor row and below that line's
+comment rows. Its only child is a full-colspan `<td>` containing the
+CommentForm. Forms opened earlier at the same line stay above it.
+Opening another form leaves existing forms and their typed text in
+place. After a split/unified or line-wrap toggle, open forms and
+posted comment rows are placed again in the new table, and each
+form keeps its mounted state: typed text, finding type and learn
+flag. If an open form or posted inline comment is anchored on a context
+line the reviewer expanded, that line can render collapsed again
+after a reload or split/unified toggle. DiffViewer expands the whole
+file once per diff and view mode so the form or comment stays
+visible: a collapsed hunk would hide the comment, and an open form
+blocks the decision buttons.
+
+## Form contents
+
+The form has:
+
+- A Markdown textarea (or, in Suggestion mode, a prose textarea
+  plus a CodeMirror code editor).
+- Five finding-type chips: Issue, Suggestion, Question, Follow-up,
+  Revert. Clicking switches the active type.
+- A "Please learn from this" checkbox. **Off** by default.
+- Submit + Cancel buttons.
+
+Keyboard shortcuts inside the form:
+
+- **Cmd/Ctrl+Enter** → submit (same as clicking the button).
+- **Escape** → cancel (same as clicking Cancel).
+
+The textarea persists its content to `localStorage` under
+`meerkat:draft:<review_id>:inline:<file_index>:<side>:<start_line>-<end_line>`
+(plus `:edit:<comment_id>` when editing an existing comment) on
+every keystroke and clears on submit/cancel. Re-opening the same
+anchor restores the draft.
+
+## Suggestion mode
+
+When `finding_type === "suggestion"`:
+
+- The prose textarea shrinks to 2 rows and a CodeMirror editor
+  appears below it.
+- The CodeMirror editor is seeded with the file content covered
+  by the anchor's `(start_line, end_line, side)` — the user
+  edits *toward* the proposed change rather than starting blank.
+- The editor's syntax-highlighting language is derived from the
+  file's name in the frontend (`languageFor` in
+  `assets/ts/languageFor.ts`, backed by GitHub Linguist's dataset
+  and validated against shiki's bundled languages).
+- On submit, the body is composed as
+  `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
+  same language tag so GitHub (or any markdown renderer) treats it
+  as a suggested change.
+
+## Rendered comment
+
+After submit, the form row disappears and a
+`<tr class="meerkat-comment-row">` is inserted directly below the
+anchor row, above any forms still open at that line. It hosts an
+`<InlineComment>` per comment at that anchor. Multiple comments
+sharing one anchor stack inside the same row's list.
+
+Each rendered comment shows:
+
+- Finding-type badge (colour-coded by type).
+- Line anchor label: `L<N>` or `L<A>–<B>` plus ` (old)`/` (new)`.
+- Learn checkbox (toggleable in place — flips
+  `learn_from_this` via a `comment.toggle_learn` push event
+  without re-opening the form).
+- **Edit** button → reopens the form at the same anchor, prefilled
+  with the comment's body and finding-type. Submitting an edited
+  form removes the old comment and adds a new one.
+- **Remove** button → drops the comment from the file's comment
+  list; the row removes itself when it has no remaining children.
+- Body, rendered through `Meerkat.Markdown.to_safe_html/1` (the
+  same server-side renderer the file/global/commit-msg comments
+  use). Suggestion fenced blocks become syntax-highlighted
+  `<pre><code>` blocks.
+
+## Visual line marker
+
+Every diff row covered by an inline comment range gets the
+`has-inline-comment` class, which shows:
+
+- A 3px blue bar on the left edge of the line-num cell.
+- A faint blue tint on the row background.
+
+The marker is reactive: removing the comment removes the marker;
+adding a comment immediately adds it.
+
+## Persistence
+
+All open-form metadata (surface, anchor, edit_id and edit prefill
+fields) is persisted in ReviewState's `open_forms` list, in opening
+order. After a BEAM restart or tab reload, the forms reopen at their
+anchors. An add form's localStorage draft restores its typed prose;
+an edit form reopens with the saved comment's body, not its unsaved
+edits. Add forms restore suggestion code, finding type and learn flag
+to their defaults; edit forms reopen with those values from the saved
+comment, but unsaved changes to them are lost.
+
+This is the contract the user relies on during dev iteration: a
+hot reload **never** loses an open form or the prose typed into an
+add form.

@@ -1,0 +1,10 @@
+# pnpm installs dependencies for both JS roots (this one — the
+# Playwright e2e suite — and assets/); bun runs scripts. The split
+# exists because bun has no equivalent of minimumReleaseAge.
+packages:
+  - assets
+
+# Supply-chain guard (minutes): never resolve a version published
+# less than 24h ago — compromised releases are usually yanked well
+# within that window.
+minimumReleaseAge: 1440

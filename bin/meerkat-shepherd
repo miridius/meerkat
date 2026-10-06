@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Prod shepherd for meerkat. The installed `meerkat` wrapper sets
+# MEERKAT_CURRENT_LINK (the install's `current` symlink) and execs this.
+# It runs the release BEAM in a loop. The BEAM
+# self-halts with code 75 when its VersionWatcher sees `current` flip to
+# a newer version; the shepherd re-resolves `current` and respawns,
+# preferring the port the exited BEAM bound, so the browser's LiveView
+# reconnects to the new version and ReviewServer reloads in-progress
+# comments from the snapshot.
+#
+# What git (the blocked `git commit`) waits on is the caller in
+# `meerkat-attach`, which starts this shepherd detached and relays its
+# output and exit code. So the BEAM can be torn down and respawned
+# underneath it without the commit ever ending, and the caller can exit
+# without ending the review. A crash (exit 2) is retried once (state
+# restored from the in-progress snapshot) before the commit aborts; a
+# clean decision (0/1) or a second crash reaches git through the caller,
+# so the hook proceeds (0) or aborts.
+#
+# Shares the preferred-port / signal-forwarding / open-marker
+# approach with the dev shepherd `bin/meerkat-beam`; a follow-up could
+# factor the common bits into a sourced lib.
+
+set -uo pipefail
+
+CURRENT_LINK="${MEERKAT_CURRENT_LINK:?meerkat-shepherd: MEERKAT_CURRENT_LINK not set}"
+export MEERKAT_PWD="${MEERKAT_PWD:-$PWD}"
+export MEERKAT_CURRENT_LINK="$CURRENT_LINK"
+
+RESTART_EXIT_CODE=75
+
+resolve_release() {
+  RELEASE_DIR="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
+  if [[ -z "$RELEASE_DIR" || ! -x "$RELEASE_DIR/bin/meerkat" ]]; then
+    echo "meerkat: no current release at $CURRENT_LINK; re-run scripts/install.sh from the meerkat repo." >&2
+    exit 127
+  fi
+}
+
+# `--answers` reads the answers from stdin, and the loop below starts
+# the BEAM as a background job, which bash gives /dev/null as stdin.
+# So it runs once, in the foreground, with no retry to re-read a
+# stdin already consumed.
+for arg in "$@"; do
+  if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
+    if [[ -t 0 ]]; then
+      echo "meerkat: --answers reads the answers as JSON on stdin; pipe them in, e.g. meerkat --answers < answers.json" >&2
+      exit 64
+    fi
+    resolve_release
+    exec "$RELEASE_DIR/bin/meerkat" \
+      eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
+  fi
+done
+
+# Run as the caller, which re-runs this script detached, with
+# MEERKAT_SERVE_DIR set, to serve the review.
+if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
+  # shellcheck source=bin/meerkat-attach
+  source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
+  meerkat_attach "$0" "$@"
+fi
+
+# Pass explicit --port and --port=N (including --port 0) through
+# unchanged and leave MEERKAT_PREFERRED_PORT unset. Otherwise prefer
+# MEERKAT_PORT (for tests/debugging), or the stable hash so a fresh
+# invocation of the same review keeps its browser tab working. If the
+# preferred port is taken, the CLI warns and uses an OS-assigned port.
+# The shared formula and range are documented in bin/meerkat-beam.
+unset MEERKAT_PREFERRED_PORT
+explicit_port=false
+for arg in "$@"; do
+  if [[ "$arg" == "--port" || "$arg" == --port=* ]]; then
+    explicit_port=true
+  fi
+done
+if [[ "$explicit_port" == "false" ]]; then
+  if [[ -n "${MEERKAT_PORT:-}" ]]; then
+    export MEERKAT_PREFERRED_PORT="$MEERKAT_PORT"
+  else
+    hex8=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 8)
+    export MEERKAT_PREFERRED_PORT=$(( 16#${hex8} % 20000 + 40000 ))
+  fi
+fi
+
+# Browser-open marker: the BEAM opens the review URL only on the first
+# iteration that finds the marker empty, so a respawn doesn't spawn a
+# duplicate tab (the existing tab just reconnects).
+OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
+export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
+# The caller is not this shepherd's parent, so it reads the exit code
+# from the serve dir.
+trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
+
+# Forward TERM/INT/HUP to the running BEAM. Bash never relays signals to
+# a foreground child, so without this a killed shepherd orphans a BEAM
+# that sits on its port forever. The BEAM runs as a
+# background job + `wait` so this fires immediately.
+beam_pid=""
+on_signal() {
+  local pids="${beam_pid:-$(jobs -p)}"
+  if [[ -n "$pids" ]]; then
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null
+    wait $pids 2>/dev/null
+  fi
+  exit 143
+}
+trap on_signal TERM INT HUP
+
+crashed=0
+while true; do
+  resolve_release
+
+  "$RELEASE_DIR/bin/meerkat" \
+    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &
+  beam_pid=$!
+  wait "$beam_pid"
+  exit_code=$?
+  beam_pid=""
+  # The port file records "<port> <pid>" for the port this BEAM bound.
+  # Carry it forward after every exit (version-upgrade restart or the
+  # single crash retry), including runs using explicit --port 0, so the
+  # next BEAM tries it first and the open browser tab can reconnect.
+  if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
+    read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
+    export MEERKAT_PREFERRED_PORT="$bound_port"
+    # Remove the exited BEAM's port so callers can't reattach to it
+    # while the next BEAM is starting.
+    rm -f "$MEERKAT_SERVE_DIR/port"
+  fi
+
+  if [[ "$exit_code" == "$RESTART_EXIT_CODE" ]]; then
+    crashed=0
+    echo "meerkat: new version live; restarting..." >&2
+    continue
+  fi
+
+  # Crash (exit 2): retry once (the in-progress snapshot is restored on
+  # the respawn), then abort so the commit fails closed.
+  if [[ "$exit_code" == "2" && "$crashed" == "0" ]]; then
+    crashed=1
+    echo "meerkat: BEAM crashed (exit 2); respawning once before aborting..." >&2
+    continue
+  fi
+
+  exit "$exit_code"
+done
