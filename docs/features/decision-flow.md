@@ -128,12 +128,21 @@ running. Meerkat notices an exited ancestor within about a second
 and detaches. A decision clicked while no invocation is attached
 stays held for the next invocation.
 
+For `git commit -a` and `git commit <path>`, the review keeps its own
+copy of git's temporary index, so it keeps showing those changes and
+accepting decisions after git removes the original, including after the
+review server restarts. If the review cannot keep that copy, for
+example because `git commit` was killed before the review started,
+meerkat exits 2 and the commit is rejected.
+
 A decision clicked while no invocation is attached is held. The
 next invocation of the same review attaches to the same server and
 gets that decision byte for byte, with its exit code. Cancel is held
 like any other decision. The same review means the same staged
 content and the same commit message. When either has changed, the
-old server exits and the invocation starts a new one.
+old server exits and the invocation starts a new one. The
+[`GIT_INDEX_FILE` entry in cli.md](cli.md#env-vars) says which index
+an invocation's staged content is read from.
 
 Only one invocation of a review waits on it at a time: a later
 invocation takes the review over, and the earlier one prints

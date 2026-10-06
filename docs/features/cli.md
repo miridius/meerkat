@@ -22,7 +22,8 @@ supplied (no error, the highest-precedence one wins):
 - *(no target)* — staged-diff review without a commit-msg gutter.
 
 Staged-diff reviews omit paths with unresolved merge conflicts; other
-staged files are still reviewed.
+staged files are still reviewed. For which index they read, see
+[`GIT_INDEX_FILE`](#env-vars).
 
 ## Flags
 
@@ -78,6 +79,34 @@ staged files are still reviewed.
   Unset, empty, `0`, `false`, or `no` leaves it off and the review open
   after timeout. Any other value prints a one-line stderr warning
   naming the value and leaves auto-approval off.
+- `GIT_INDEX_FILE` — Staged-diff reviews read the index git gave the
+  hook, so `git commit -a` and `git commit <path>` are reviewed as they
+  will be committed. A relative name is taken from the top of the work
+  tree, as git takes it. The review keeps its own copy of a temporary
+  index, so it keeps showing those changes and accepting decisions
+  after git removes the original, including after the review server
+  restarts. If it cannot keep that copy, because git has already
+  removed the index (for example, `git commit` was killed before the
+  review started) or the copy failed, meerkat exits `2` with a message
+  and defaults to REJECT rather than showing every file as deleted.
+  `GIT_DIR`, `GIT_WORK_TREE`, and other variables that relocate the
+  repo remain ignored.
+
+  The launcher sends the invocation's value with every attach to a
+  running review. An attach is matched by the staged content in its
+  named index and the commit message, not the index filename; if no
+  index is named, meerkat reads the repo's own index. A retried
+  `git commit <path>` therefore attaches to the same review and gets
+  its held decision even though git gives its temporary index a new,
+  process-id-based name each run. If the named index has different
+  staged content (for example, `git commit -a` after a plain
+  `git commit` when tracked files have unstaged changes that `-a` would
+  include) or the commit message differs, the old server exits and the
+  invocation starts a new one. If the named index no longer exists, the
+  invocation prints `meerkat: error resolving review target: the index
+  <path> no longer exists` and exits `64`; the running review keeps
+  going, along with any decision it holds. Reviews of other targets
+  ignore the value.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
 - `FORCE=1` — let `scripts/install.sh` override the dev-mode
@@ -97,14 +126,18 @@ staged files are still reviewed.
   with the code. A caller that cannot create its run dir while not
   attached to a serving BEAM exits 2 with a REJECT message (`could
   not create <run dir>`); an already attached caller still receives
-  the decision and exits with it. While waiting to retry after a
+  the decision and exits with it. A staged review that cannot keep a
+  copy of the commit's temporary index exits 2 with a REJECT message;
+  see [`GIT_INDEX_FILE`](#env-vars). While waiting to retry after a
   failed build, the dev launcher exits 2 with a REJECT message if its
   checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
   launcher could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`
-  fetch). The launchers pass it straight through. Under `--answers`:
+  fetch). A later invocation of a running staged review also exits 64
+  when its `GIT_INDEX_FILE` names an index that no longer exists; see
+  [`GIT_INDEX_FILE`](#env-vars). The launchers pass it straight through. Under `--answers`:
   a terminal on stdin, or a directory that is no git repository.
 - `74` — `--answers` could not read stdin, or could not write the
   answers file. Nothing was stored, and the input itself was fine.

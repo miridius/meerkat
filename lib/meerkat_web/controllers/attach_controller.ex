@@ -9,12 +9,17 @@ defmodule MeerkatWeb.AttachController do
   `n <text>` is stderr text with no trailing newline, `k` is a
   heartbeat, and `x <code>` carries the exit code, last. A later
   invocation whose review changed gets 409, and this BEAM halts so it
-  can start a fresh one. Before the 409 is sent, every attached caller
+  can start a fresh one. A staged review is compared by what the index
+  named in the caller's `index=<GIT_INDEX_FILE>` holds, not by that
+  file's name (a relative name is taken from the top of the work tree);
+  a caller sending none is read from the repo's own index. Before the
+  409 is sent, every attached caller
   gets a `d <line>` frame; a displaced caller prints `<line>` to stderr
   and exits 1. Once a caller has taken delivery, others get 503. `quiet=1`
   skips the banner, for a caller that already printed it. A later
-  invocation whose review target cannot be resolved gets 502 with the
-  error in `o` frames, and the review keeps running. A caller attaching
+  invocation whose review target cannot be resolved, or whose staged
+  review names an index that no longer exists, gets 502 with the error
+  in `o` frames, and the review keeps running. A caller attaching
   after a decision has been made, whether the outcome is held or a click
   has happened but the outcome has not yet been published, gets no banner
   and opens no browser tab.
@@ -27,7 +32,7 @@ defmodule MeerkatWeb.AttachController do
 
   import Plug.Conn
 
-  alias Meerkat.{Decision, Persistence, ReviewState}
+  alias Meerkat.{Decision, Git, Persistence, ReviewState}
 
   # The deadline runs only while a caller is attached. A dead caller is detached when a
   # heartbeat write fails. The write that kills curl and the server's first write after
@@ -42,7 +47,10 @@ defmodule MeerkatWeb.AttachController do
               "so it replaces this review — aborting."
 
   def attach(conn, %{"run" => run} = params) when is_binary(run) do
-    compared = if run == System.get_env("MEERKAT_RUN_ID"), do: :same, else: compare_review()
+    compared =
+      if run == System.get_env("MEERKAT_RUN_ID"),
+        do: :same,
+        else: compare_review(Map.get(params, "index", ""))
 
     case compared do
       :same ->
@@ -98,13 +106,21 @@ defmodule MeerkatWeb.AttachController do
     end
   end
 
-  defp compare_review do
+  defp compare_review(caller_index) do
+    target = Application.fetch_env!(:meerkat, :review_target)
+    repo_path = Application.fetch_env!(:meerkat, :repo_path)
     base = Application.fetch_env!(:meerkat, :review_state)
 
-    case ReviewState.from_target(
-           Application.fetch_env!(:meerkat, :review_target),
-           Application.fetch_env!(:meerkat, :repo_path)
-         ) do
+    # A staged review reads the index git handed the caller's hook, which holds
+    # different content for `git commit`, `git commit -a` and `git commit <path>`.
+    # Its file name says nothing: a path commit's is named after git's pid. The
+    # backend's held copy is the first invocation's index, not this caller's.
+    # Other targets do not read the index, so its name is not checked.
+    caller_index = if match?({:staged, _}, target), do: caller_index
+
+    case Git.with_index(repo_path, caller_index, fn ->
+           ReviewState.from_target(target, repo_path)
+         end) do
       {:ok, now} ->
         if Persistence.state_signature(now) == Persistence.state_signature(base) and
              now.commit_message == base.commit_message,

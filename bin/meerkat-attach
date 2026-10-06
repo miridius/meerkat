@@ -202,7 +202,11 @@ _ma_attach() {
   _MA_TOKEN="$(<"$_MA_DIR/token")"
   # Through a pipe, a killed caller's curl dies on its next write, and the
   # backend sees the caller gone. Output to a file keeps curl alive.
-  exec {fd}< <(_ma_request GET "attach?run=$_MA_RUN&quiet=$_MA_QUIET" -N -w 's %{http_code}\n' 2>/dev/null)
+  # Send the index git named for this invocation: `git commit -a` and
+  # `git commit <path>` commit from a temporary one, and a backend that
+  # reviewed a different index is not reviewing this commit.
+  exec {fd}< <(_ma_request GET "attach?run=$_MA_RUN&quiet=$_MA_QUIET" \
+    -G --data-urlencode "index=${GIT_INDEX_FILE:-}" -N -w 's %{http_code}\n' 2>/dev/null)
 
   while true; do
     if IFS= read -r -t 0.2 part <&"$fd"; then
@@ -252,7 +256,8 @@ _ma_attach() {
 
   # 409 means the review changed and 503 means another caller took delivery;
   # either way, the backend is exiting and this caller starts a fresh one.
-  # 502 means this rerun could not resolve its review target; the error was
+  # 502 means this rerun could not resolve its review target or named an
+  # index that no longer exists; the error was
   # printed from its o frames, the backend keeps its review, and this caller
   # exits 64, the CLI's unresolved-target exit code.
   case "$status" in
