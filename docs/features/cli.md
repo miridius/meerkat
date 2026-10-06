@@ -135,7 +135,13 @@ see [pending-answers.md](pending-answers.md).
   with the code. A caller that cannot create its run dir while not
   attached to a serving BEAM exits 2 with a REJECT message (`could
   not create <run dir>`); an already attached caller still receives
-  the decision and exits with it. A staged review that cannot keep a
+  the decision and exits with it. An attached caller exits 2 with a
+  REJECT message (`<run dir> was removed`) whenever its run dir is
+  gone, whether another invocation removed it after finding its
+  server dead with no exit code recorded or after finding the run
+  finished with an exit file over a minute old or a recorded caller
+  pid that ps showed was not a live meerkat process, or the runs dir
+  itself was deleted. A staged review that cannot keep a
   copy of the commit's temporary index exits 2 with a REJECT message;
   see [`GIT_INDEX_FILE`](#env-vars). A review whose server's bound
   port cannot be read exits 2 with a REJECT message, before printing
