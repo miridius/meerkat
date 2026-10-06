@@ -32,6 +32,7 @@ defmodule Meerkat.OutdatedGateTest do
     registry_out = Path.join(base, "pnpm-registry.json")
     hex_api = Path.join(base, "hex-api")
     refuse = Path.join(base, "refuse")
+    scratch_log = Path.join(base, "scratch.log")
 
     File.mkdir_p!(Path.join(base, "scripts"))
     File.mkdir_p!(refuse)
@@ -62,6 +63,11 @@ defmodule Meerkat.OutdatedGateTest do
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
         exit 1 ;;
       "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
+        # Only a scratch copy of the workspace, without the repo's scripts/.
+        [[ ! -e scripts && -f package.json && -f pnpm-workspace.yaml && -f pnpm-lock.yaml &&
+           -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
+        echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
+        echo "$PWD" >> '#{scratch_log}'
         if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
     esac
@@ -77,7 +83,8 @@ defmodule Meerkat.OutdatedGateTest do
      pnpm_out: pnpm_out,
      registry_out: registry_out,
      hex_api: hex_api,
-     refuse: refuse}
+     refuse: refuse,
+     scratch_log: scratch_log}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -219,11 +226,32 @@ defmodule Meerkat.OutdatedGateTest do
       )
     end
 
-    test "passes the gate when a package it adds is under 24h", ctx do
+    test "passes the gate when a package version it requires is under 24h", ctx do
       exempt(ctx, %{})
 
       assert {out, 0} = run(ctx)
-      assert out =~ "too young: lefthook@2.1.17 pulls in a package under the 24h floor"
+      assert out =~ "ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17"
+      assert out =~ "too young: lefthook@2.1.17 requires a package version under the 24h floor"
+    end
+
+    test "checks it on a scratch copy it removes, leaving the tree alone", ctx do
+      exempt(ctx, %{})
+
+      assert {_, 0} = run(ctx)
+      assert [scratch] = ctx.scratch_log |> File.read!() |> String.split("\n", trim: true)
+      refute File.exists?(scratch)
+
+      for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
+        assert File.read!(Path.join(ctx.base, file)) == "base\n"
+      end
+    end
+
+    test "blocks the push when it cannot copy the workspace", ctx do
+      exempt(ctx, %{})
+      File.rm!(Path.join(ctx.base, "pnpm-workspace.yaml"))
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "could not copy the workspace to a scratch dir — cannot check lefthook"
     end
 
     test "blocks the push when pnpm fails for another reason", ctx do

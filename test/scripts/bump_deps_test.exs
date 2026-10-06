@@ -116,6 +116,10 @@ defmodule Meerkat.BumpDepsHookTest do
         if [[ -e '#{npm_latest}'/"$2" ]]; then cat '#{npm_latest}'/"$2"
         else jq -r --arg n "$2" '.[$n].latest' '#{pnpm_out}'; fi ;;
       "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
+        # Only a scratch copy of the workspace, without the repo's scripts/.
+        [[ ! -e scripts && -f package.json && -f pnpm-workspace.yaml && -f pnpm-lock.yaml &&
+           -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
+        echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
         if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "pnpm -r update --latest --ignore-scripts "*)
         names="${cmd#pnpm -r update --latest --ignore-scripts }"
@@ -257,7 +261,7 @@ defmodule Meerkat.BumpDepsHookTest do
     end
   end
 
-  test "a JS release pnpm refuses for a younger package it adds is left behind", ctx do
+  test "a JS release pnpm refuses for a younger version it requires is left behind", ctx do
     File.write!(ctx.pnpm_out, ~s({"vite": {"current": "8.2.0", "latest": "8.3.1"},
                                   "lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
 
@@ -269,8 +273,12 @@ defmodule Meerkat.BumpDepsHookTest do
     stage(ctx.work, "code.txt", "change\n")
 
     assert {out, 0} = commit(ctx, ["-m", "change code"])
-    assert out =~ "lefthook@2.1.17 pulls in a package under the 24h floor; not bumped yet"
+    assert out =~ "ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17"
+    assert out =~ "lefthook@2.1.17 requires a package version under the 24h floor; not bumped yet"
     assert "pnpm -r update --latest --ignore-scripts vite" in run(ctx)
+    # The installability checks ran on scratch copies, not the tree.
+    assert committed(ctx, "package.json") == "base\nupdated vite\n"
+    assert committed(ctx, "pnpm-lock.yaml") == "base\nupdated vite\n"
     assert git(ctx.work, ["status", "--porcelain"]) == ""
   end
 
