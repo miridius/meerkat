@@ -1353,6 +1353,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view |> element(".file-filter .only-btn[phx-value-file_index='1']") |> render_click()
     refute has_element?(view, ".file-list .file-name", "src/widget.rs")
     assert has_element?(view, ".file-list .file-name", "other.ex")
+    assert has_element?(view, ".file-filter-toggle", "Files (1 of 2)")
 
     view |> element(".file-filter button", "Show all") |> render_click()
     assert has_element?(view, ".file-list .file-name", "src/widget.rs")
