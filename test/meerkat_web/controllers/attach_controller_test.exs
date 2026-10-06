@@ -84,6 +84,24 @@ defmodule MeerkatWeb.AttachControllerTest do
     |> get("/api/attach?run=#{run}&quiet=#{quiet}")
   end
 
+  defp attach_from_index(conn, run, index) do
+    conn
+    |> put_req_header("x-meerkat-token", @token)
+    |> get("/api/attach?run=#{run}&quiet=0&index=#{URI.encode_www_form(index)}")
+  end
+
+  # The backend was started by an invocation git gave this index file.
+  defp start_with_index(name) do
+    previous = System.get_env("GIT_INDEX_FILE")
+    System.put_env("GIT_INDEX_FILE", name)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("GIT_INDEX_FILE", previous),
+        else: System.delete_env("GIT_INDEX_FILE")
+    end)
+  end
+
   # An attach made before a decision arms the deadline; Decision broadcasts on its
   # deadline topic, which setup subscribes to, so receiving this confirms the caller
   # attached.
@@ -207,6 +225,93 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     assert conn.status == 409
     assert_receive {:halted, 1}, 1000
+  end
+
+  describe "the index file a staged review reads" do
+    # `git commit` hands its hook a relative `.git/index`; `git commit -a` and
+    # `git commit <path>` hand it a temporary one holding what they will commit.
+    setup do
+      start_with_index(".git/index")
+    end
+
+    test "a later invocation given the same index file replays the held outcome",
+         %{conn: conn, repo: repo} do
+      :ok = Decision.publish({0, "approved\n"})
+
+      for index <- [".git/index", Path.join(repo, ".git/index")] do
+        conn = attach_from_index(conn, "later-run", index)
+
+        assert conn.status == 200
+        assert conn.resp_body == "o approved\nx 0\n"
+      end
+
+      refute_receive {:halted, _}, 300
+    end
+
+    test "a later invocation is compared with the index it names, not the copy the backend keeps",
+         %{conn: conn, repo: repo} do
+      held = Path.join(repo, ".git/held-index")
+      File.cp!(Path.join(repo, ".git/index"), held)
+      Application.put_env(:meerkat, :held_index, held)
+      on_exit(fn -> Application.delete_env(:meerkat, :held_index) end)
+      stage(repo, "a.txt", "two\n")
+
+      conn = attach_from_index(conn, "later-run", ".git/index")
+
+      assert conn.status == 409
+      assert_receive {:halted, 1}, 1000
+    end
+
+    test "a later invocation given another index file with the same content replays the held outcome",
+         %{conn: conn, repo: repo} do
+      :ok = Decision.publish({0, "approved\n"})
+      # A retried `git commit <path>` names a new file after its pid.
+      retry = temporary_index(repo, "next-index-2.lock", %{"a.txt" => "one\n"})
+
+      conn = attach_from_index(conn, "later-run", retry)
+
+      assert conn.status == 200
+      assert conn.resp_body == "o approved\nx 0\n"
+      refute_receive {:halted, _}, 300
+    end
+
+    test "a later invocation given an index file with other content replaces the review",
+         %{conn: conn, repo: repo} do
+      :ok = Decision.publish({0, "approved\n"})
+      all = temporary_index(repo, "index.lock", %{"a.txt" => "one\n", "b.txt" => "two\n"})
+
+      conn = attach_from_index(conn, "later-run", all)
+
+      assert conn.status == 409
+      refute conn.resp_body =~ "approved"
+      assert_receive {:halted, 1}, 1000
+    end
+
+    test "a later invocation given no index file reads the repo's own index",
+         %{conn: conn, repo: repo} do
+      :ok = Decision.publish({0, "approved\n"})
+
+      assert attach(conn, "later-run").status == 200
+      refute_receive {:halted, _}, 300
+
+      stage(repo, "a.txt", "two\n")
+      assert attach(conn, "later-run").status == 409
+      assert_receive {:halted, 1}, 1000
+    end
+
+    test "a later invocation of a review that is not staged ignores the index file",
+         %{conn: conn, repo: repo} do
+      target = {:range, "HEAD", "HEAD", :two_dot}
+      {:ok, state} = ReviewState.from_target(target, repo)
+      Application.put_env(:meerkat, :review_target, target)
+      Application.put_env(:meerkat, :review_state, state)
+      :ok = Decision.publish({0, "approved\n"})
+
+      conn = attach_from_index(conn, "later-run", Path.join(repo, ".git/index.lock"))
+
+      assert conn.status == 200
+      refute_receive {:halted, _}, 300
+    end
   end
 
   test "a caller attached to a review that changed is told so before the backend halts",

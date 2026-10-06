@@ -870,29 +870,94 @@ defmodule Meerkat.Git do
     end
   end
 
+  @doc """
+  Preserve the temporary index named by `GIT_INDEX_FILE` for this
+  review.
+
+  When `GIT_INDEX_FILE` names an existing file other than the repository's
+  own index, this keeps a copy at `Path.join(dir, "index")` and makes
+  staged reads in this BEAM use it. If that copy already exists, it is
+  used as-is so a restarted BEAM can resume the same review. The
+  repository's own index is never copied; staged reads continue to use it
+  live so they reflect changes the user stages.
+
+  If the temporary index cannot be read or copied, a warning is printed
+  to stderr and staged reads are not redirected. The function always
+  returns `:ok`.
+  """
+  @spec hold_temporary_index(String.t(), String.t()) :: :ok
+  def hold_temporary_index(repo_path, dir) do
+    held = Path.join(dir, "index")
+
+    if File.exists?(held) or copy_temporary_index(repo_path, held) == :ok do
+      Application.put_env(:meerkat, :held_index, held)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Run `fun` with Git reads using the index file `name`, rather than this
+  BEAM's held copy. A relative `name` is taken from `repo_path`; `nil` or
+  `""` means the repository's own index. After `fun` returns, Git reads use
+  the held copy again.
+
+  Returns `fun`'s result.
+  """
+  @spec with_index(String.t(), String.t() | nil, (-> result)) :: result when result: var
+  def with_index(repo_path, name, fun) do
+    previous = Process.get(:meerkat_index, :unset)
+    Process.put(:meerkat_index, index_override(repo_path, name))
+
+    try do
+      fun.()
+    after
+      if previous == :unset,
+        do: Process.delete(:meerkat_index),
+        else: Process.put(:meerkat_index, previous)
+    end
+  end
+
+  defp index_override(_repo_path, name) when name in [nil, ""], do: nil
+  defp index_override(repo_path, name), do: Path.expand(name, repo_path)
+
   ## Internals
 
-  # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR /
-  # GIT_OBJECT_DIRECTORY / GIT_ALTERNATE_OBJECT_DIRECTORIES /
-  # GIT_NAMESPACE all override git's discovery process when set —
-  # making `cd:` and `GIT_CEILING_DIRECTORIES` irrelevant. The
-  # lefthook pre-commit / pre-push / post-merge hooks set these so
+  # GIT_DIR / GIT_WORK_TREE / GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY /
+  # GIT_ALTERNATE_OBJECT_DIRECTORIES / GIT_NAMESPACE all override git's
+  # discovery process when set — making `cd:` and
+  # `GIT_CEILING_DIRECTORIES` irrelevant. Git exports these to the
+  # pre-commit / pre-push / post-merge hooks it runs, so
   # meerkat-invoked-from-a-hook ends up resolving paths against the
   # parent repo's gitdir instead of the cwd the caller asked for.
   # Pass them as `{key, nil}` to `System.cmd` to strip from the child
-  # env. Same shape as `scripts/install.sh:91-97`'s `unset GIT_*`.
+  # env. Same shape as the `unset GIT_*` in `scripts/install.sh`.
+  #
+  # GIT_INDEX_FILE is not among them: it does not locate the repo, it
+  # names the index git reads. During `git commit -a` or
+  # `git commit <path>` git exports it to the hook as a temporary
+  # index holding what the commit will contain, which the real index
+  # does not yet, so a staged read must see it.
   @git_discovery_env_overrides Enum.map(
-                                 ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+                                 ~w(GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
                                     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
                                     GIT_NAMESPACE),
                                  &{&1, nil}
                                )
 
+  defp git_env do
+    case {Process.get(:meerkat_index, :unset), Application.get_env(:meerkat, :held_index)} do
+      {:unset, nil} -> @git_discovery_env_overrides
+      {:unset, held} -> [{"GIT_INDEX_FILE", held} | @git_discovery_env_overrides]
+      {name, _} -> [{"GIT_INDEX_FILE", name} | @git_discovery_env_overrides]
+    end
+  end
+
   defp run_git(repo_path, args, merge_stderr \\ true) do
     case System.cmd("git", args,
            cd: repo_path,
            stderr_to_stdout: merge_stderr,
-           env: @git_discovery_env_overrides
+           env: git_env()
          ) do
       {output, 0} ->
         {:ok, output}
@@ -908,7 +973,7 @@ defmodule Meerkat.Git do
   # Only read-only lookups run here, so the failing command is safe to
   # run a second time, merged, for the reason git wrote to stderr.
   defp run_git_unmerged(repo_path, args) do
-    case System.cmd("git", args, cd: repo_path, env: @git_discovery_env_overrides) do
+    case System.cmd("git", args, cd: repo_path, env: git_env()) do
       {output, 0} -> {:ok, output}
       {_output, _code} -> run_git(repo_path, args)
     end
@@ -932,6 +997,48 @@ defmodule Meerkat.Git do
 
       {output, code} ->
         {:error, "git #{Enum.join(args, " ")} exited #{code}: #{String.trim(output)}"}
+    end
+  end
+
+  defp copy_temporary_index(repo_path, held) do
+    with name when name not in [nil, ""] <- System.get_env("GIT_INDEX_FILE"),
+         index = Path.expand(name, repo_path),
+         true <- File.regular?(index),
+         false <- same_file?(index, repo_index(repo_path)),
+         {:ok, body} <- File.read(index) do
+      Meerkat.AtomicFile.write(held, body)
+    else
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "meerkat: warning — couldn't keep a copy of the commit's index: #{inspect(reason)}"
+        )
+
+        :error
+
+      _ ->
+        :skip
+    end
+  end
+
+  defp repo_index(repo_path) do
+    env = [{"GIT_INDEX_FILE", nil} | @git_discovery_env_overrides]
+
+    args = ["rev-parse", "--git-path", "index"]
+
+    case System.cmd("git", args, cd: repo_path, env: env, stderr_to_stdout: true) do
+      {output, 0} -> Path.expand(String.trim(output), repo_path)
+      _ -> nil
+    end
+  end
+
+  defp same_file?(_path, nil), do: false
+
+  defp same_file?(path, other) do
+    with {:ok, a} <- File.stat(path), {:ok, b} <- File.stat(other) do
+      {a.major_device, a.inode} == {b.major_device, b.inode}
+    else
+      _ -> false
     end
   end
 

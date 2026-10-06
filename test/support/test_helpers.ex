@@ -84,7 +84,8 @@ defmodule Meerkat.TestHelpers do
 
   # Any test run inside a git hook has GIT_DIR exported by git, pointing at
   # meerkat's own gitdir, which overrides `cd: dir` and would build the
-  # fixture repo in the wrong place. Same set as `Meerkat.Git` strips.
+  # fixture repo in the wrong place. The set `Meerkat.Git` strips, plus
+  # GIT_INDEX_FILE, which it leaves for the staged reads of a review.
   @git_discovery_overrides Enum.map(
                              ~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
                                 GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -99,6 +100,40 @@ defmodule Meerkat.TestHelpers do
 
     if code != 0, do: ExUnit.Assertions.flunk("git #{Enum.join(args, " ")} failed: #{out}")
     String.trim(out)
+  end
+
+  @doc """
+  Build an index like the temporary index Git gives the hook for
+  `git commit -a` or `git commit <path>`.
+
+  The index is created at `.git/<name>` under `dir`, initialized from
+  `HEAD`, and has each `files` entry staged; each file is also written to
+  the work tree. The repository's own index is left untouched. Returns
+  the path to the temporary index.
+  """
+  @spec temporary_index(String.t(), String.t(), %{String.t() => String.t()}) :: String.t()
+  def temporary_index(dir, name, files) do
+    index = Path.join(dir, ".git/" <> name)
+
+    env = [
+      {"GIT_INDEX_FILE", index} | List.keydelete(@git_discovery_overrides, "GIT_INDEX_FILE", 0)
+    ]
+
+    in_index = fn args ->
+      {out, code} = System.cmd("git", args, cd: dir, stderr_to_stdout: true, env: env)
+      if code != 0, do: ExUnit.Assertions.flunk("git #{Enum.join(args, " ")} failed: #{out}")
+    end
+
+    in_index.(["read-tree", "HEAD"])
+
+    for {file, content} <- files do
+      path = Path.join(dir, file)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, content)
+      in_index.(["add", "--", file])
+    end
+
+    index
   end
 
   @doc """

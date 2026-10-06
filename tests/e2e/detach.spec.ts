@@ -1,4 +1,13 @@
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	copyFileSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -271,6 +280,162 @@ test.describe("a review outlives the process that invoked it", () => {
 			expect(code).toBe(0);
 			expect(stderr, "the replacement review has no comments").toContain(
 				"The user approved your commit. Proceeding.",
+			);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	// Git exports GIT_INDEX_FILE to the hook: `.git/index` for `git commit`, a temporary
+	// file holding what `git commit -a` or `git commit <path>` will commit otherwise.
+	test("a retried `git commit <path>`, whose temporary index has a new name, is replayed the decision held for it", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		const firstIndex = join(fixture.dir, ".git", "next-index-1.lock");
+		copyFileSync(join(fixture.dir, ".git", "index"), firstIndex);
+		const first = await startMeerkat({
+			fixture,
+			keepFixture: true,
+			underParent: true,
+			env: { GIT_INDEX_FILE: firstIndex },
+		});
+		let second: Runner | undefined;
+		try {
+			await page.goto(first.url);
+			await first.killParent();
+			await first.awaitClose();
+			rmSync(firstIndex);
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
+
+			const retryIndex = join(fixture.dir, ".git", "next-index-2.lock");
+			copyFileSync(join(fixture.dir, ".git", "index"), retryIndex);
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				awaitUrl: false,
+				env: { GIT_INDEX_FILE: retryIndex },
+			});
+			const { code, stderr } = await second.awaitExit();
+			expect(code, "the retry receives the held decision").toBe(0);
+			expect(stderr).toContain("The user approved your commit. Proceeding.");
+			expect(stderr, "it attached to the review, not a fresh one").not.toContain(
+				"Paused for human review",
+			);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a rerun given an index file with other staged content replaces the review", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		const index = join(fixture.dir, ".git", "index");
+		const temporary = join(fixture.dir, ".git", "next-index-1.lock");
+		copyFileSync(index, temporary);
+		writeFileSync(join(fixture.dir, "EXTRA.md"), "only in the temporary index\n");
+		execFileSync("git", ["add", "EXTRA.md"], {
+			cwd: fixture.dir,
+			env: { ...process.env, GIT_INDEX_FILE: temporary },
+		});
+		const first = await startMeerkat({ fixture, keepFixture: true, env: { GIT_INDEX_FILE: index } });
+		let second: Runner | undefined;
+		try {
+			const replacedBackend = backendPid(first);
+
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				env: { GIT_INDEX_FILE: temporary },
+			});
+			expect(alive(replacedBackend), "the review of the other index has exited").toBe(false);
+			const replaced = await first.awaitExit();
+			expect(replaced.code, "the first invocation aborts its commit").toBe(1);
+			expect(replaced.stderr).toContain("diff or commit message changed");
+
+			await page.goto(second.url);
+			await expect(page.locator("body")).toContainText("EXTRA.md");
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const { code } = await second.awaitExit();
+			expect(code, "the rerun collects the decision on the new review").toBe(0);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a file ticked approved after git deletes the commit's temporary index is accepted", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		const temporary = join(fixture.dir, ".git", "index.lock");
+		copyFileSync(join(fixture.dir, ".git", "index"), temporary);
+		const meerkat = await startMeerkat({
+			fixture,
+			keepFixture: true,
+			env: { GIT_INDEX_FILE: temporary },
+		});
+		try {
+			await page.goto(meerkat.url);
+			rmSync(temporary);
+
+			const approved = page
+				.locator(".file-section")
+				.filter({ hasText: "NOTES.md" })
+				.getByRole("checkbox", { name: "Approved" });
+			await approved.click();
+			// The tick appears immediately even if rejected; reload to see whether the review accepted it.
+			await page.reload();
+			await expect(approved).toBeChecked();
+		} finally {
+			await meerkat.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a rerun given the same index file is replayed the decision held for it", async ({
+		page,
+	}) => {
+		const fixture = makeFixture();
+		// Relative, as git hands it to the hook of a plain `git commit`.
+		const index = join(".git", "index");
+		const first = await startMeerkat({
+			fixture,
+			keepFixture: true,
+			underParent: true,
+			env: { GIT_INDEX_FILE: index },
+		});
+		let second: Runner | undefined;
+		try {
+			await page.goto(first.url);
+			await first.killParent();
+			await first.awaitClose();
+
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			await expect(page.getByRole("heading", { name: /^Approved$/ })).toBeVisible();
+
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				awaitUrl: false,
+				env: { GIT_INDEX_FILE: index },
+			});
+			const { code, stderr } = await second.awaitExit();
+			expect(code, "the rerun receives the held decision").toBe(0);
+			expect(stderr).toContain("The user approved your commit. Proceeding.");
+			expect(stderr, "it attached to the review, not a fresh one").not.toContain(
+				"Paused for human review",
 			);
 		} finally {
 			await second?.kill();

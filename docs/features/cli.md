@@ -22,7 +22,9 @@ supplied (no error, the highest-precedence one wins):
 - *(no target)* — staged-diff review without a commit-msg gutter.
 
 Staged-diff reviews omit paths with unresolved merge conflicts; other
-staged files are still reviewed.
+staged files are still reviewed. They read the index git gave the hook,
+so `git commit -a` and `git commit <path>` are reviewed as they will be
+committed; see the [`GIT_INDEX_FILE`](#env-vars) entry below.
 
 ## Flags
 
@@ -78,6 +80,29 @@ staged files are still reviewed.
   Unset, empty, `0`, `false`, or `no` leaves it off and the review open
   after timeout. Any other value prints a one-line stderr warning
   naming the value and leaves auto-approval off.
+- `GIT_INDEX_FILE` — Staged-diff reviews read the index git gave the
+  hook, so `git commit -a` and `git commit <path>` are reviewed as they
+  will be committed. The launcher sends the invocation's value with
+  every attach to a running review. The review keeps showing those
+  changes and accepting decisions after git removes its temporary
+  index, including after the review server restarts. `GIT_DIR`,
+  `GIT_WORK_TREE`, and other variables that relocate the repo remain
+  ignored.
+
+  An attach is matched by the staged content in its named index and the
+  commit message, not the index filename. Relative names are resolved
+  from the repo; if no index is named, meerkat reads the repo's own
+  index. A retried `git commit <path>` therefore attaches to the same
+  review and gets its held decision even though git gives its temporary
+  index a new, process-id-based name each run. If the named index has
+  different staged content (for example, `git commit -a` after a plain
+  `git commit` when tracked files have unstaged changes that `-a` would
+  include) or the commit message differs, the old server exits and the
+  invocation starts a new one. Older launchers send no index, so their
+  invocations are read from the repo's own index. A running server from
+  a release before this change ignores the named index and compares the
+  repo's own index until the version watcher restarts it on the current
+  release.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
 - `FORCE=1` — let `scripts/install.sh` override the dev-mode

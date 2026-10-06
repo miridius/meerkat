@@ -85,6 +85,7 @@ defmodule Meerkat.CLI do
       save_answers(repo_path(), read_stdin())
     else
       target = ReviewTarget.from_opts(opts)
+      hold_temporary_index(target)
 
       case auto_approve_decision(target, repo_path()) do
         {:auto, message} ->
@@ -117,6 +118,16 @@ defmodule Meerkat.CLI do
   after
     flush_logs()
   end
+
+  # Take the copy before any staged-state read, including auto-approval:
+  # git removes a commit's temporary index when it exits, but the detached
+  # review lives on.
+  defp hold_temporary_index({:staged, _}) do
+    if serve_dir = System.get_env("MEERKAT_SERVE_DIR"),
+      do: Git.hold_temporary_index(repo_path(), serve_dir)
+  end
+
+  defp hold_temporary_index(_target), do: :ok
 
   # filesync the log file handler before the launcher calls
   # `System.halt/1` — halt tears the VM down without running handler

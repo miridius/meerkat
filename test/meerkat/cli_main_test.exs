@@ -64,6 +64,38 @@ defmodule Meerkat.CLIMainTest do
     assert stderr =~ "meerkat: no staged file changes — auto-approving."
   end
 
+  describe "under a launcher, for a commit made from a temporary index" do
+    # Stage only a linguist-generated file so auto-approval reveals which index
+    # the review read. An empty index would also auto-approve, but as having
+    # nothing staged.
+    setup %{repo: repo} do
+      File.write!(Path.join(repo, ".gitattributes"), "gen.txt linguist-generated\n")
+      index = temporary_index(repo, "index.lock", %{"gen.txt" => "generated\n"})
+      serve_dir = Path.join(repo, ".git/run")
+      File.mkdir_p!(serve_dir)
+      put_env("MEERKAT_SERVE_DIR", serve_dir)
+      put_env("GIT_INDEX_FILE", index)
+      on_exit(fn -> Application.delete_env(:meerkat, :held_index) end)
+
+      {:ok, index: index, serve_dir: serve_dir}
+    end
+
+    test "the review keeps a copy of the index, and reads it once git has deleted it",
+         %{commit_msg: commit_msg, index: index, serve_dir: serve_dir} do
+      {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
+      assert code == 0
+      assert stderr =~ "staged file(s) are linguist-generated — auto-approving."
+      assert File.exists?(Path.join(serve_dir, "index"))
+
+      File.rm!(index)
+      Application.delete_env(:meerkat, :held_index)
+
+      {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
+      assert code == 0
+      assert stderr =~ "staged file(s) are linguist-generated — auto-approving."
+    end
+  end
+
   test "a ref that does not resolve exits 64 and says the target could not be resolved",
        %{repo: repo} do
     # `gh` answers the current-branch PR lookup the way it does for a
