@@ -18,7 +18,8 @@ remove commits a merged PR still references). Before committing:
 
 ## Rules
 
-- **Elixir + pnpm + Bun.** `mix …` for backend. JS dependencies are
+- **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
+  `pnpm install`. `mix …` for backend. JS dependencies are
   installed ONLY with `pnpm install` (the workspace root covers
   `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
   age as a supply-chain guard). `bun run` / `bunx` for
@@ -71,32 +72,21 @@ The end-to-end loop for a meerkat bug report or feature request:
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
-4. **Ship.** Branch off `main`.
-   The `main` branch is branch-protected on GitHub.
-   Do not push directly to `main`.
-   Do not force-push.
-   Changes land through PRs.
+4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
+   Do not ask before pushing or opening the PR. `main` is
+   branch-protected on GitHub — no direct pushes, no force-pushes;
+   changes land via PR.
 
-   Before committing and pushing, do a cheap self-review of the diff.
-   Check whether it does what was asked.
-   Check whether it is sensible.
-   Check whether it avoids unnecessary changes and complexity.
-   Fix every finding from any review you run.
-   Do not add review agents, mutation-testing runs, or test suites to
-   these self-reviews.
-
-   Commit and push the change.
-   Report after the push.
-   In a manager session, wait for the manager to approve your report.
-   Open the draft PR with `/pr` only after the manager tells you to do
-   so.
-   In a session run directly by the user, open the draft PR yourself
-   without asking.
-   When this session opens the PR, self-review its proposed
-   description for accuracy before opening it.
-   The thorough review runs through
-   `/manager:review-and-merge` only after the user marks the PR ready
-   for review.
+   Before opening the draft PR, do a quick self-review of the diff
+   and the PR description you are about to post, so unchecked work
+   does not reach the user when the PR opens. Does it do what was
+   asked? Is it sensible? Does it avoid unnecessary changes or
+   complexity? Fix every finding from any review you run before
+   opening the PR, regardless of which review found it. Keep this
+   self-review cheap: it must not add review agents,
+   mutation-testing runs, or extra test suites of its own. The
+   thorough review still happens at merge through
+   `/manager:review-and-merge`; this self-review does not replace it.
 
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
@@ -221,7 +211,7 @@ fi
 ```
 
 Run `git fetch origin` before the full PR check.
-Use the refreshed `origin/main` as `<base>`.
+Use the PR's base branch on the refreshed `origin` as `<base>`.
 Use the commit before the fixes as `<base>` for a rerun on fix
 commits.
 The PR branch must be checked out for this command.
