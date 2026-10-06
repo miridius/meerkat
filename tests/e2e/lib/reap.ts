@@ -1,3 +1,6 @@
-import { reapOrphanedBackends } from "./runner.js";
+import { reapOrphanedBackends, reapOrphanedFixtures } from "./runner.js";
 
-export default reapOrphanedBackends;
+export default async function globalTeardown(): Promise<void> {
+	await reapOrphanedBackends();
+	reapOrphanedFixtures();
+}
