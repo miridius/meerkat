@@ -460,9 +460,38 @@ defmodule Meerkat.ShepherdTest do
   # own session and would outlive the caller.
   defp kill_launcher(port, dir) do
     {:os_pid, pid} = Port.info(port, :os_pid)
-    detached = Path.wildcard(Path.join([dir, "runs", "*", "pid"]))
-    pids = [to_string(pid) | Enum.map(detached, &String.trim(File.read!(&1)))]
-    System.cmd("pkill", ["-9", "-P", Enum.join(pids, ",")])
-    System.cmd("kill", ["-9" | pids])
+    # Kill the caller first so it cannot start more detached shepherds, then
+    # wait up to 5 seconds for each run directory's pid file before killing them.
+    # Previously, a shepherd forked after we read the runs directory survived
+    # cleanup; once its stub directory was deleted, its `mix` resolved to the
+    # real one and started a real BEAM that ran indefinitely. Waiting also
+    # covers a shepherd already started but not yet done writing its pid file.
+    caller = to_string(pid)
+    System.cmd("pkill", ["-9", "-P", caller])
+    System.cmd("kill", ["-9", caller])
+
+    detached =
+      for run <- Path.wildcard(Path.join([dir, "runs", "*"])),
+          backend = await_pid_file(run),
+          do: backend
+
+    if detached != [] do
+      System.cmd("pkill", ["-9", "-P", Enum.join(detached, ",")])
+      System.cmd("kill", ["-9" | detached])
+    end
+  end
+
+  defp await_pid_file(run, attempts \\ 100) do
+    case File.read(Path.join(run, "pid")) do
+      {:ok, pid} ->
+        String.trim(pid)
+
+      {:error, _} when attempts > 0 ->
+        Process.sleep(50)
+        await_pid_file(run, attempts - 1)
+
+      {:error, _} ->
+        nil
+    end
   end
 end

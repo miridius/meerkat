@@ -104,6 +104,8 @@ auto-approve fast path (no meaningful staged changes, so the UI never
 opens), a timeout with `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled, and a
 stored `--answers` payload, which runs no review at all.
 
+A SIGTERM sent directly to the review BEAM also defaults to REJECT. It prints "meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted)." to stderr, flushes the log file, and halts the VM immediately with exit **143**, without waiting for HTTP connections to close. Neither `bin/meerkat-beam` nor `bin/meerkat-shepherd` restarts or retries it; both propagate 143 to the caller.
+
 In dev mode (`MIX_ENV=dev`), the `bin/meerkat-beam` shepherd
 restarts the BEAM only for exit 75, preferring the port the exited
 BEAM bound (see [dev-mode.md](dev-mode.md) for when it falls back to
