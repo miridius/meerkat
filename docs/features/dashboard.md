@@ -2,7 +2,7 @@
 
 **Status: designed, not built.**
 
-A single meerkat page brings together everything waiting on the user: questions, notices and requests from Claude Code sessions, open commit reviews, and pull requests needing attention. It also shows each session’s design decisions as read-only records.
+A single meerkat page brings together everything waiting on the user: questions, notices and requests from Claude Code sessions, open commit reviews, and pull requests needing attention. It also shows each session’s design decisions, and the user can send the session feedback on a decision that is wrong or outdated, much as they comment on a diff line.
 
 ## Why
 
@@ -13,16 +13,18 @@ A Claude Code session using `AskUserQuestion` stops until the user answers. With
 - **Built in meerkat**, not on Claude Code's agent view or its
   `AskUserQuestion` dialog.
 - **One page** inside meerkat.
-- **Every question goes to the dashboard.** `AskUserQuestion`'s
-  blocking prompt is switched off in every session, so a terminal
-  never stops for a question (see
+- **Every question goes to the dashboard.** In every session, a hook
+  posts each `AskUserQuestion` call to the dashboard and completes
+  it without a prompt, so a terminal never stops for a question (see
   [Research: moving sessions off `AskUserQuestion`](#research-moving-sessions-off-askuserquestion)).
 - **Asynchronous items.** A session posts a question, notice or
   request and carries on. The answer reaches the session that asked
   it later, whether that session is busy or idle by then.
-- **Decisions are read-only.** Each session's design decisions come
-  from the fork log the `decisions` Claude Code plugin keeps (see
-  [Sessions](#sessions)).
+- **Decisions take feedback, not edits.** Each session's design
+  decisions come from the fork log the `decisions` Claude Code plugin
+  keeps. The dashboard never writes that log. Feedback on a decision
+  goes to the session, and the `decisions` plugin records it (see
+  [Decision feedback](#decision-feedback)).
 - **Every Claude Code config dir.** Sessions from every Claude Code
   config dir post items to the dashboard, and their fork logs appear
   under [Sessions](#sessions). Everything stays on this machine.
@@ -49,10 +51,31 @@ The browser tab title begins with the number of open items—for example, `(3) m
 | :- | :- | :- |
 | Question | Asks the user a question, which may carry a fork id, `Q<n>` | Choose an option or type a reply |
 | Confirmation | Checks the user’s agreement before the session continues | Choose an option or type a reply |
-| Request | Asks for an action only the user can take, such as running `/rename` | Mark it done or type a reply |
+| Request | Asks for an action only the user can take, such as signing in to a service | Mark it done or type a reply |
 | Notice | Shares information that needs no answer | Dismiss it |
 
 An `AskUserQuestion` call with several questions produces one item per question. Items from the same call remain grouped in the list.
+
+A confirmation works asynchronously like a question. The session
+posts it and carries on with work the confirmation does not gate. If
+no such work is left, the session ends its turn (see
+[What the session sees](#what-the-session-sees)), and the answer
+starts a new turn.
+
+### Limits
+
+These limits keep a session from flooding the list with items:
+
+- An item whose kind and text match an open item from the same
+  session is not added again.
+- A session may hold at most 3 open notices and 10 open items in all.
+  A post beyond either limit is refused, with a reason telling the
+  session to wait or to fold it into an existing item.
+- A re-asked fork id replaces its open item, so it does not count
+  again.
+- macOS alerts are limited to one per session every 5 minutes. Items
+  arriving inside that window are counted in the session's next
+  alert.
 
 ### Question display
 
@@ -79,7 +102,16 @@ Answered items move to the session’s history in [Sessions](#sessions), where t
 - **Delivered**: the session has received the answer. Busy sessions receive it between tool calls; idle sessions begin a new turn with it.
 - **Session ended**: the session exited before receiving the answer. Sending it resumes the session in the background, which uses tokens. The resumed session receives the answer and acts on it.
 
-A relay started with the session delivers answers. It is a long-running asynchronous `SessionStart` hook that remains in the session’s process tree, waits for answers from meerkat, and posts them to the session’s inbox socket.
+A plugin monitor delivers answers. A meerkat Claude Code plugin
+declares it in `monitors/monitors.json`, the same mechanism the
+`pr-watch` plugin uses. Claude Code runs the monitor in the
+background for the whole session, and each line it prints reaches
+Claude as a notification while Claude keeps working. The monitor
+waits for answers from meerkat and prints one line per answer, naming
+the answered fork. A session resumed with `-p` starts no monitor, so
+the **Session ended** path carries the answer in the resume prompt
+instead (see
+[Research: getting an answer into a session](#research-getting-an-answer-into-a-session)).
 
 The `decisions` plugin records the picked option and any typed reply
 in the fork log when the session receives the answer. For a session
@@ -91,10 +123,11 @@ Dismissing a notice removes it from the list without sending anything back to th
 
 ### What the session sees
 
-When the session posts the item, it is told the item went to the
-dashboard and to carry on with work the item does not decide. The
-user's answer then reaches the session as a message saying that the
-item's fork was answered. The session reads the picked option and
+When the session asks through `AskUserQuestion`, the tool result
+tells it the question went to the dashboard, that the user's answer
+will arrive later, and to carry on with work the question does not
+decide. The user's answer then reaches the session as a monitor
+notification saying that the item's fork was answered. The session reads the picked option and
 any typed reply from its fork log, where only the user's answer can
 put them.
 
@@ -102,9 +135,15 @@ How an answerable item without a fork id, such as a confirmation or
 request not posted through `AskUserQuestion`, reaches the session is
 not yet designed.
 
-The `decisions` plugin does not block edits or stops for questions
-posted to the dashboard. The session relies on its instructions not
-to build past an open question.
+The `decisions` plugin must change to support this. Today its
+`nudge-on-stop` hook blocks a stop once while a question is open,
+telling Claude to ask it, and its `block-on-open` hook gates tools
+while a question is open. Both hooks must treat a fork whose latest
+asking was posted to the dashboard and is unanswered as waiting on
+the user, like an entry set aside with `wait`. Until the answer
+arrives, such a fork blocks no stop, prompts no re-asking and gates
+no tool. A session with nothing left to do can then end its turn,
+and the answer starts a new one.
 
 ## Commit reviews
 
@@ -147,9 +186,24 @@ Each fork contains an id, a header, a date, a question, options and answer, a st
 
 Findings are read from `<session id>.md` beside the JSON file and rendered as Markdown. The dashboard never writes either file. Changes to either file on disk update the page without a reload.
 
+### Decision feedback
+
+The user can comment on a resolved or withdrawn fork, or on one of
+its options, as they would comment on a diff line. An open fork takes
+no comment, since the user answers it through its item.
+
+Sending queues the feedback to the session. It travels the same
+delivery path as an answer and shows the same delivery states:
+**Queued**, **Delivered** and **Session ended**.
+
+When the session receives the feedback, the `decisions` plugin
+records it in the fork log as the user's note and reopens the fork.
+The session then re-asks the fork with the feedback in mind, and the
+re-asking shows up as a new item.
+
 ## Alerts
 
-Every new item, including a notice, triggers a macOS notification. Clicking it opens the dashboard.
+Every new item, including a notice, triggers a macOS notification, within the per-session rate in [Limits](#limits). Clicking it opens the dashboard.
 
 ## Where it runs
 
@@ -208,12 +262,52 @@ local probes.
   when a tool runs. An `asyncRewake` hook can wake an idle session,
   but it still runs under its timeout. Hooks marked `async` have no
   timeout once they are running. Whether an async `SessionStart`
-  hook, such as the answer relay, lives for the whole session is not
-  probed.
+  hook lives for the whole session is not probed. An earlier design
+  used such a hook as the answer relay; plugin monitors supersede
+  it.
+- **Plugin monitors**, declared in a plugin's
+  `monitors/monitors.json`, as the `pr-watch` plugin does. Claude Code
+  runs each monitor in the background for the whole session, and what
+  it prints reaches Claude as notifications. The Monitor tool
+  documentation says the user keeps working in the same session and
+  Claude interjects when an event arrives. Plugin monitors start only
+  in interactive sessions, never with `-p`. They also do not start
+  where the Monitor tool is unavailable: on Amazon Bedrock, Google
+  Cloud's Agent Platform or Microsoft Foundry, or with
+  `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+  set. A monitor runs for the whole session by design, and it posts to
+  no socket, so it avoids both the unprobed hook lifetime and the held
+  messages above. Whether a background session started from agent
+  view starts plugin monitors is not probed.
 
 ## Research: moving sessions off `AskUserQuestion`
 
-- A `PreToolUse` hook on `AskUserQuestion` can deny the call and
-  return a reason, which Claude reads. The hook gets the full
-  `questions` input, so it can post them as items and say in its
-  reason that they were posted.
+- **Chosen: allow with `updatedInput`.** A `PreToolUse` hook on
+  `AskUserQuestion` gets the full `questions` input and posts each
+  question as an item. It returns `permissionDecision: "allow"` with
+  `updatedInput` that echoes `questions` and adds an `answers` entry
+  per question, saying the question was posted to the dashboard and
+  the user's answer will arrive later. Claude Code documents this
+  shape under "Tools that require user interaction" in its hooks
+  reference. The call completes with no prompt and no denial.
+  Caveats:
+  - Claude Code relays that text as the answer, so it must say
+    plainly that it is not the user's choice.
+  - The `decisions` plugin's `log` hook must record that asking as
+    posted to the dashboard. Recorded as a typed reply, it would leave
+    the fork open for re-asking.
+  - Not probed in an interactive session.
+- **Deny.** The hook could instead deny the call with a reason. Claude
+  reads the reason and the call never runs. The documentation does
+  not say how repeated denials change later tool use, but Claude
+  could turn to an alternative such as asking in plain text, which
+  bypasses the dashboard. Auto mode's thresholds of 3 blocks in a row
+  or 20 in total count classifier blocks, not hook denials, so a deny
+  would not pause auto mode.
+- **A deny rule with a replacement tool.** A bare `AskUserQuestion`
+  deny rule removes the tool from Claude's context entirely, and a
+  meerkat MCP tool could take its place. Rejected, because the user's
+  instructions and the `decisions` plugin's hooks all name
+  `AskUserQuestion`.
+- **`defer`.** Claude Code honours it only with `-p`, so it cannot
+  serve interactive sessions.
