@@ -56,7 +56,6 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     previous_app = Map.new(app_env, fn {k, _} -> {k, Application.fetch_env(:meerkat, k)} end)
     Enum.each(app_env, fn {k, v} -> Application.put_env(:meerkat, k, v) end)
-    Decision.reset()
     Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
 
     on_exit(fn ->
@@ -71,7 +70,6 @@ defmodule MeerkatWeb.AttachControllerTest do
       end)
 
       Application.delete_env(:meerkat, :review_deadline_ms)
-      Decision.reset()
       File.rm_rf(repo)
     end)
 
