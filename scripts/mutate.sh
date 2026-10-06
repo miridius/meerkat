@@ -167,6 +167,17 @@ while [[ $# -gt 0 ]]; do
     *)  extra_args+=("$1"); shift ;;
   esac
 done
+# The run is judged from the JSON report the gate below asks for; muex
+# keeps the last of a repeated flag, so a later one would move or
+# replace the report, or exit before it is judged.
+for arg in "${extra_args[@]}"; do
+  case "$arg" in
+    --format | --format=* | --output | --output=* | --fail-at | --fail-at=*)
+      echo "scripts/mutate.sh: $arg is set by this script; drop it." >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks; left set,
 # they would point Mix's checkout of git dependencies, and every test's

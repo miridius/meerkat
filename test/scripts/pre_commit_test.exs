@@ -330,7 +330,28 @@ defmodule Meerkat.PreCommitHookTest do
                )
 
       assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
-      assert "--fail-at" in muex_args(ctx)
+      pairs = Enum.chunk_every(muex_args(ctx), 2, 1)
+      assert ["--fail-at", "0"] in pairs
+      assert ["--format", "json"] in pairs
+    end
+  end
+
+  # muex keeps the last of a repeated flag, so these would override the gate's.
+  for flag <- ~w(--format=html --output --fail-at) do
+    test "`mutate.sh` refuses #{flag} after `--`", ctx do
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+      assert {out, 2} =
+               System.cmd(
+                 "bash",
+                 ["scripts/mutate.sh", "lib/meerkat/one.ex", "--", unquote(flag)],
+                 cd: ctx.work,
+                 env: [{"PATH", path}],
+                 stderr_to_stdout: true
+               )
+
+      assert out =~ "#{unquote(flag)} is set by this script"
+      refute File.exists?(Path.join(ctx.muex, "args"))
     end
   end
 
