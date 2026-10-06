@@ -70,7 +70,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
-4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
+4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR
+   with `gh pr create --draft`. Edit it with `gh pr edit`. Write its
+   title and body through `/concise:concise`.
    Do not ask before pushing or opening the PR. `main` is
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
@@ -89,7 +91,8 @@ The end-to-end loop for a meerkat bug report or feature request:
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after pair
-   can help.
+   can help. Capture them with Playwright. Attach them with
+   `gh pr edit <number> --attach '<file>#<alt text>'`.
 
 ## Quality gates
 
