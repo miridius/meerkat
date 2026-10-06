@@ -60,8 +60,10 @@ Open the review URL in the browser.
 
 Never use the user's real repositories.
 Never modify meerkat.
-Kill every meerkat process you start.
+Kill every meerkat process you start, and no other.
 This includes the process in each `pid` file under your
 `MEERKAT_RUNS_DIR`.
-Remove fixture, test, and log files when done.
+When done, remove the fixture, test, and log files you created.
 Keep only evidence cited in the report.
+Never delete a directory you were given, or anything in it that you
+did not create.
