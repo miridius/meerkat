@@ -79,6 +79,9 @@ defmodule Meerkat.CLI do
   def main(argv) do
     # Without a UTF-8 locale the BEAM opens stderr as latin1.
     :ok = :io.setopts(:standard_error, encoding: :unicode)
+    # Before any slow step: OTP's own SIGTERM handling calls
+    # `init:stop/0`, which exits 0, meaning approved.
+    :ok = Meerkat.SignalHandler.install()
     opts = parse_args(argv)
 
     if opts.answers do
@@ -118,9 +121,9 @@ defmodule Meerkat.CLI do
     flush_logs()
   end
 
-  # filesync the log file handler before the launcher calls
-  # `System.halt/1` — halt tears the VM down without running handler
-  # terminate callbacks, so the `:logger_std_h` buffer (which holds the
+  # filesync the log file handler before the launcher or
+  # `Meerkat.SignalHandler` calls `System.halt/1` — halt tears the VM
+  # down without running handler terminate callbacks, so the `:logger_std_h` buffer (which holds the
   # endpoint banner + request logs) would otherwise be discarded
   # unwritten. Guarded: a no-op when the handler was never installed
   # (auto-approve fast path) and swallows any flush error, because this
@@ -185,7 +188,6 @@ defmodule Meerkat.CLI do
 
         Application.put_env(:meerkat, :review_target, target)
         Application.put_env(:meerkat, :no_open, opts.no_open)
-        :ok = Meerkat.SignalHandler.install()
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
         open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
@@ -560,9 +562,6 @@ defmodule Meerkat.CLI do
 
   @doc false
   def decision_atom_for_test(tag), do: decision_atom(tag)
-
-  @doc false
-  def flush_logs_for_test, do: flush_logs()
 
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round. The

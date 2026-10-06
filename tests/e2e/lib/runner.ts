@@ -220,10 +220,8 @@ async function stopBackends(runsDir: string, awaitPidFiles = false): Promise<voi
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => join(runsDir, entry.name, "pid"));
 	const pidDeadline = awaitPidFiles ? Date.now() + 5_000 : 0;
-	// With awaitPidFiles, wait up to 5 seconds for every run directory's pid file.
-	// Only the missing-review-URL catch path enables this, after stopping meerkat.
-	// A backend started just before that stop may have created its run directory
-	// without writing its pid file yet; otherwise we'd miss it and leave it running.
+	// A backend started just before meerkat was stopped may have created its
+	// run directory but not yet written its pid file; missed, it keeps running.
 	while (Date.now() < pidDeadline && !pidFiles.every((path) => existsSync(path))) {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}

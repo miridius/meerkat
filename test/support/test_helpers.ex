@@ -29,6 +29,21 @@ defmodule Meerkat.TestHelpers do
     on_exit(fn -> Enum.each(previous, &put_env/1) end)
   end
 
+  # `Meerkat.CLI.main/1` installs `Meerkat.SignalHandler` VM-wide; put
+  # OTP's handler back so a SIGTERM to the test VM stops it as usual.
+  def restore_signal_handler_on_exit do
+    on_exit(fn ->
+      if Meerkat.SignalHandler in :gen_event.which_handlers(:erl_signal_server) do
+        :ok =
+          :gen_event.swap_handler(
+            :erl_signal_server,
+            {Meerkat.SignalHandler, []},
+            {:erl_signal_handler, []}
+          )
+      end
+    end)
+  end
+
   def stage(dir, name, content) do
     path = Path.join(dir, name)
     File.mkdir_p!(Path.dirname(path))
