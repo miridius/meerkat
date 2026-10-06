@@ -1,7 +1,7 @@
 defmodule Meerkat.DecisionTest do
   # async: false — Decision is a singleton GenServer, mounted by the
-  # main supervisor. Meerkat.DecisionCase clears it around each test.
-  use Meerkat.DecisionCase, async: false
+  # main supervisor. Meerkat.Case clears it around each test.
+  use Meerkat.Case, async: false
 
   alias Meerkat.Decision
 
@@ -24,7 +24,7 @@ defmodule Meerkat.DecisionTest do
       refute_receive {:awaited, _}, 50
 
       {:ok, _} = Decision.submit({:reject, [comments: ["nope"]]})
-      assert_receive {:awaited, {:reject, [comments: ["nope"]]}}, 200
+      assert_receive {:awaited, {:reject, [comments: ["nope"]]}}
     end
 
     test "current/0 is nil before submit, decision after" do
@@ -63,7 +63,7 @@ defmodule Meerkat.DecisionTest do
       # Outlives several deadline checks (`deadline_check_ms` is 5ms here).
       refute_receive {:awaited, _}, 100
       assert {:ok, {:approve, ""}} = Decision.submit({:approve, ""})
-      assert_receive {:awaited, {:approve, ""}}, 200
+      assert_receive {:awaited, {:approve, ""}}
     end
 
     test "an overdue review left open keeps its deadline directory recent" do

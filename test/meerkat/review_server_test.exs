@@ -3,7 +3,7 @@ defmodule Meerkat.ReviewServerTest do
   # across tests; each test allocates a fresh review_id so they
   # don't collide, but DynamicSupervisor.children/1 walks the full
   # list.
-  use Meerkat.DecisionCase, async: false
+  use Meerkat.Case, async: false
 
   alias Meerkat.{Comment, Persistence, ReviewServer, ReviewState}
 
@@ -79,7 +79,7 @@ defmodule Meerkat.ReviewServerTest do
       new_state = ReviewServer.add_comment(id, :global, comment)
       assert [^comment] = new_state.global_comments
 
-      assert_receive {:state_changed, %ReviewState{global_comments: [^comment]}}, 200
+      assert_receive {:state_changed, %ReviewState{global_comments: [^comment]}}
     end
 
     test "remove_comment/3 takes effect for matching surface + id",
@@ -264,7 +264,7 @@ defmodule Meerkat.ReviewServerTest do
 
       # Exactly one broadcast for the whole wipe — that's the entire
       # point of consolidating vs N remove_comment calls.
-      assert_receive {:state_changed, %ReviewState{}}, 200
+      assert_receive {:state_changed, %ReviewState{}}
       refute_receive {:state_changed, _}, 100
     end
   end
@@ -414,7 +414,7 @@ defmodule Meerkat.ReviewServerTest do
       form = %{surface: :global, anchor: %{}}
       _ = ReviewServer.open_form(id, form)
 
-      assert_receive {:state_changed, %ReviewState{open_forms: [^form]}}, 500
+      assert_receive {:state_changed, %ReviewState{open_forms: [^form]}}
     end
 
     test "persists across a process restart via Persistence", %{repo: repo, review_id: id} do

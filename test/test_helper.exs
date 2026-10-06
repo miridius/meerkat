@@ -1,4 +1,7 @@
-ExUnit.start()
+# ExUnit's 100 ms default for assert_receive can run out on a loaded CI
+# runner. A message that arrives ends the wait, so a passing test is no
+# slower.
+ExUnit.start(assert_receive_timeout: 1_000)
 
 # Controller / LiveView tests need the endpoint started so Phoenix's
 # `Phoenix.ConnTest.dispatch/5` can find its persistent_term config.

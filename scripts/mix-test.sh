@@ -10,7 +10,7 @@
 # loads the machine less.
 #
 # On failure, print each failing file's output, list the failing files, and
-# exit non-zero. CI still runs plain `mix test` for the whole suite in one BEAM.
+# exit non-zero. CI runs this script too, so both run the files the same way.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
