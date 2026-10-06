@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared guard for the lefthook post-merge / post-checkout hooks:
-# (re)install meerkat only when HEAD is on `main`. `install.sh` is
+# (re)install meerkat, and refresh the test env's deps and build, only
+# when HEAD is on `main`. `install.sh` is
 # idempotent (it skips the rebuild when the release is already built
 # from the current commit), so firing this on every `main` checkout is
 # cheap — only a genuine commit change triggers the minutes-long build.
@@ -18,6 +19,16 @@ branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
 case "$branch" in
   main)
     bash scripts/install.sh
+    # install.sh builds only prod. New Claude worktrees copy main's deps/
+    # and _build/ (see .worktreeinclude), so also bring the test env up to
+    # date. Git exports GIT_DIR and friends to hooks; left set, they would
+    # point git dependencies' checkouts at this repository.
+    (
+      # shellcheck disable=SC2046
+      unset $(git rev-parse --local-env-vars)
+      MIX_ENV=test mix deps.get
+      MIX_ENV=test mix compile
+    )
     ;;
   "")
     echo "meerkat auto-install: couldn't resolve HEAD; skipping." >&2

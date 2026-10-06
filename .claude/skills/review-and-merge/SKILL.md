@@ -9,7 +9,7 @@ description: Shepherd a GitHub PR through review-to-merge. Runs /pr-review-toolk
 2. Discard findings that are not worth fixing, detrimental to our goals, or would make the code worse. A finding kept past this step MUST be addressed on this PR's branch before merge — see "No follow-up PRs" below.
 3. Verify the remaining findings empirically — run the code, don't just read it — and fix the accurate ones on the PR's branch.
 4. Anything debatable on accuracy or actionability → raise it to the user as a question with concrete options, then wait for the answer.
-5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Every surviving mutant gets fixed on this branch (a test that kills it) or escalated — no discarding, no "pre-existing" pass (see "Fix every surviving mutant"). The only exceptions are provably-equivalent mutants and pure-observability mutations, each documented. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
+5. **Run mutation testing** on the Elixir files the PR changed (see "Mutation testing" below). Every surviving mutant gets fixed on this branch (a test that kills it) or escalated — no discarding, no "pre-existing" pass (see "Fix every surviving mutant"). The only exceptions are the kinds under "Acceptable non-fixes", each documented. No follow-ups. (The Playwright e2e suite has no mutation tooling; a PR that only touches `tests/e2e/` or `assets/` skips this step.)
 6. Once every kept finding, including surviving mutants, is resolved on this PR’s branch and all required fixes are committed and pushed, mark the PR ready with `gh pr ready <N>`. For a manager-delegated review, stop after marking the PR ready and do not run `scripts/merge-queue.sh`; include the line `<N> ready <sha>` in your final message, where `<sha>` is the full SHA of the pushed PR head from `git rev-parse HEAD`. Outside manager delegation, run `scripts/merge-queue.sh <N>@<sha>` after marking the PR ready, using the full pushed head SHA; if it stops for a conflict or because checks failed, fix the issue on the PR branch, push the fix, and rerun it with the new pushed head SHA. If it refuses the merge or stops for any other reason, raise the stop to the user as a question under step 4 and wait for the answer.
    - When checks fail, also find out how CI could fail at all.
    - Fix what lets that class of failure through.
@@ -77,7 +77,7 @@ part — see `cli.ex`'s `decide_from_verdicts/2` and its `*_for_test` shim.
 `mix muex` runs ExUnit **only** and is blind to the Playwright e2e suite, and
 its `StatementDeletion` mutants on thin I/O glue are unreliable (they survive
 even with a direct test, and the score flips between runs as slow mutants
-time-out vs survive). So treat the score as a **guide, not a hard gate**: chase
+time-out vs survive). So treat step 5's score as a **guide, not a hard gate**: chase
 it for pure logic, don't chase it to zero on I/O glue.
 
 ### Acceptable non-fixes (prove it, don't assert it)
