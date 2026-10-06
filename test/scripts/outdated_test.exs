@@ -32,6 +32,11 @@ defmodule Meerkat.OutdatedGateTest do
     registry_out = Path.join(base, "pnpm-registry.json")
     hex_api = Path.join(base, "hex-api")
     github_api = Path.join(base, "github-api")
+    synced = Path.join(base, "deps-synced")
+    fail_get = Path.join(base, "fail-deps-get")
+    js_synced = Path.join(base, "node-modules-synced")
+    fail_install = Path.join(base, "fail-pnpm-install")
+    git_env = Path.join(base, "git-env")
 
     File.mkdir_p!(Path.join(base, "scripts"))
     File.write!(Path.join(base, "mix.lock"), @hex_lock)
@@ -46,10 +51,33 @@ defmodule Meerkat.OutdatedGateTest do
     File.mkdir_p!(stubs)
     File.mkdir_p!(hex_api)
 
+    # Like real deps/ and node_modules/ after a rebase changes the
+    # lockfiles, hex.outdated aborts until deps.get has fetched the locked
+    # versions, and pnpm outdated reports a release node_modules/ holds
+    # until pnpm install has installed the locked ones. Each sync records
+    # the GIT_INDEX_FILE it sees.
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
-    case "$(basename "$0") $*" in
-      "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
+    cmd="$(basename "$0") $*"
+    if [[ "$cmd" == "pnpm -r outdated "* && ! -e '#{js_synced}' ]]; then
+      echo '{"vite": {"current": "8.2.0", "latest": "8.3.1"}}'; exit 1
+    fi
+    case "$cmd" in
+      "mix deps.get --check-locked")
+        echo "deps.get ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
+        if [[ -e '#{fail_get}' ]]; then echo "** (Mix) lock would change"; exit 1; fi
+        touch '#{synced}' ;;
+      "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline")
+        echo "pnpm install ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
+        if [[ -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi
+        touch '#{js_synced}' ;;
+      "mix hex.outdated")
+        if [[ ! -e '#{synced}' ]]; then
+          echo "  lock mismatch: the dependency is out of date. To fetch locked version run \\"mix deps.get\\""
+          echo "** (Mix) Can't continue due to errors on dependencies"
+          exit 1
+        fi
+        cat '#{hex_out}'; exit 1 ;;
       "pnpm -r outdated --format json") cat '#{pnpm_out}'; exit 1 ;;
       "pnpm -r outdated --format json --config.minimum-release-age=0")
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
@@ -69,7 +97,10 @@ defmodule Meerkat.OutdatedGateTest do
      pnpm_out: pnpm_out,
      registry_out: registry_out,
      hex_api: hex_api,
-     github_api: github_api}
+     github_api: github_api,
+     fail_get: fail_get,
+     fail_install: fail_install,
+     git_env: git_env}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -120,6 +151,51 @@ defmodule Meerkat.OutdatedGateTest do
       assert {out, 1} = run(ctx)
       assert out =~ "cannot check Hex deps"
     end
+  end
+
+  test "deps/ out of sync with mix.lock is fetched before the Hex report", ctx do
+    exempt(ctx, %{})
+    File.write!(ctx.hex_out, @hex_header <> "jason  1.4.3  1.4.5  Update possible\n")
+
+    assert {out, 1} = run(ctx)
+    assert out =~ "BLOCKED: jason is outdated (latest: 1.4.5)"
+    refute out =~ "lock mismatch"
+  end
+
+  test "a fetch that would change mix.lock blocks the push", ctx do
+    exempt(ctx, %{})
+    File.write!(ctx.fail_get, "")
+
+    assert {out, 1} = run(ctx)
+    assert out =~ "** (Mix) lock would change"
+    assert out =~ "mix deps.get --check-locked failed — cannot check Hex deps"
+  end
+
+  test "node_modules/ out of sync with pnpm-lock.yaml is installed before the JS report",
+       ctx do
+    exempt(ctx, %{})
+
+    assert {out, 0} = run(ctx)
+    refute out =~ "vite"
+  end
+
+  test "an install that would change pnpm-lock.yaml blocks the push", ctx do
+    exempt(ctx, %{})
+    File.write!(ctx.fail_install, "")
+
+    assert {out, 1} = run(ctx)
+    assert out =~ "ERR_PNPM_OUTDATED_LOCKFILE"
+    assert out =~ "pnpm install --frozen-lockfile failed — cannot check JS deps"
+  end
+
+  # Git exports GIT_INDEX_FILE to hooks; a git dependency fetched with it
+  # set would write to this checkout's index.
+  test "the syncs run without the index Git exports to hooks", ctx do
+    exempt(ctx, %{})
+
+    assert {_, 0} = run(ctx, [{"GIT_INDEX_FILE", "/nonexistent/index"}])
+    assert File.read!(ctx.git_env) =~ "deps.get unset"
+    assert File.read!(ctx.git_env) =~ "pnpm install unset"
   end
 
   test "an exemption covering the latest release passes the gate", ctx do
@@ -391,11 +467,11 @@ defmodule Meerkat.OutdatedGateTest do
     File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.0  Update not possible\n")
   end
 
-  defp run(ctx) do
+  defp run(ctx, env \\ []) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
     System.cmd("bash", [Path.join(ctx.base, "scripts/outdated.sh")],
-      env: [{"PATH", path}],
+      env: [{"PATH", path} | env],
       stderr_to_stdout: true
     )
   end
