@@ -73,7 +73,7 @@ defmodule Meerkat.MixProject do
       # parallel runs of same-file mutants; see scripts/dep-exemptions.json.
       {:muex,
        github: "miridius/muex",
-       ref: "9ba8336d668443281ef69443e827e3034fcc75b9",
+       ref: "dc4d6859004e3364c2ef683742eed016455e2063",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}

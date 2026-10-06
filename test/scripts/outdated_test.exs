@@ -31,6 +31,7 @@ defmodule Meerkat.OutdatedGateTest do
     pnpm_out = Path.join(base, "pnpm.json")
     registry_out = Path.join(base, "pnpm-registry.json")
     hex_api = Path.join(base, "hex-api")
+    github_api = Path.join(base, "github-api")
 
     File.mkdir_p!(Path.join(base, "scripts"))
     File.write!(Path.join(base, "mix.lock"), @hex_lock)
@@ -54,6 +55,7 @@ defmodule Meerkat.OutdatedGateTest do
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
         exit 1 ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
+      "curl "*api.github.com/*) url="${@: -1}"; cat '#{github_api}'/"${url#https://api.github.com/}" ;;
     esac
     """)
 
@@ -66,7 +68,8 @@ defmodule Meerkat.OutdatedGateTest do
      hex_out: hex_out,
      pnpm_out: pnpm_out,
      registry_out: registry_out,
-     hex_api: hex_api}
+     hex_api: hex_api,
+     github_api: github_api}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -264,8 +267,10 @@ defmodule Meerkat.OutdatedGateTest do
   describe "a Hex package taken from git" do
     setup ctx do
       File.write!(Path.join(ctx.base, "mix.lock"), @git_lock)
-      hex_release(ctx, "muex", ~s({"latest_stable_version": "0.11.2"}))
-      hex_release(ctx, "plug_x", ~s({"latest_stable_version": "1.0.0"}))
+      hex_release(ctx, "muex", git_release("0.11.2", "upstream/muex"))
+      hex_release(ctx, "plug_x", git_release("1.0.0", "upstream/plug_x"))
+      compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", "ahead")
+      compare(ctx, "upstream/plug_x", "v1.0.0...someone:plug_x:b1c2d3e", "identical")
     end
 
     test "blocks the push without an exemption", ctx do
@@ -290,6 +295,52 @@ defmodule Meerkat.OutdatedGateTest do
 
       assert {out, 1} = run(ctx)
       assert out =~ "stale exemption: muex covers 0.11.1, but latest is 0.11.2"
+    end
+
+    test "fails when the pinned commit does not contain the named release", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+
+      for status <- ["diverged", "behind"] do
+        compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", status)
+        assert {out, 1} = run(ctx)
+
+        assert out =~
+                 "BLOCKED: muex is pinned to a628d48, which does not contain upstream/muex v0.11.2"
+
+        refute out =~ "plug_x is pinned"
+      end
+    end
+
+    test "finds a release tag without a v prefix", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+
+      File.rm!(
+        Path.join(ctx.github_api, "repos/upstream/plug_x/compare/v1.0.0...someone:plug_x:b1c2d3e")
+      )
+
+      compare(ctx, "upstream/plug_x", "1.0.0...someone:plug_x:b1c2d3e", "ahead")
+
+      assert {_out, 0} = run(ctx)
+    end
+
+    test "fails closed when GitHub cannot compare the pin", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+
+      for report <- ["", "{}", "not json"] do
+        compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", nil, report)
+        assert {out, 1} = run(ctx)
+
+        assert out =~
+                 "BLOCKED: muex — could not compare its pin with upstream/muex release 0.11.2"
+      end
+    end
+
+    test "fails closed when Hex links no GitHub repo", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      hex_release(ctx, "muex", ~s({"latest_stable_version": "0.11.2"}))
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "BLOCKED: muex — no pinned GitHub commit or upstream GitHub repo"
     end
 
     test "fails closed when Hex reports no release", ctx do
@@ -319,6 +370,21 @@ defmodule Meerkat.OutdatedGateTest do
 
   defp hex_release(ctx, name, report),
     do: File.write!(Path.join(ctx.hex_api, name <> ".json"), report)
+
+  defp git_release(version, repo),
+    do:
+      Jason.encode!(%{
+        "latest_stable_version" => version,
+        "meta" => %{"links" => %{"GitHub" => "https://github.com/" <> repo}}
+      })
+
+  # Writes GitHub's compare report for BASE...HEAD in REPO, as the curl
+  # stub serves it.
+  defp compare(ctx, repo, range, status, report \\ nil) do
+    path = Path.join([ctx.github_api, "repos", repo, "compare", range])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, report || Jason.encode!(%{"status" => status}))
+  end
 
   defp behind(ctx) do
     File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))

@@ -5,6 +5,6 @@
   },
   "muex": {
     "version": "0.11.3",
-    "reason": "pinned to the fork commit with the test-selection fixes (multi-alias test selection, crediting each test file with only the lines it executed), parallel coverage collection, and parallel runs of same-file mutants, none of which 0.11.3 has: https://github.com/miridius/muex/commit/9ba8336d668443281ef69443e827e3034fcc75b9"
+    "reason": "pinned to the fork commit that adds the test-selection fixes, parallel coverage collection, and parallel runs of same-file mutants on top of 0.11.3: https://github.com/miridius/muex/commit/dc4d6859004e3364c2ef683742eed016455e2063"
   }
 }

@@ -7,7 +7,8 @@
 # admit. Hex does not mark a cooldown release the requirements exclude,
 # so that one blocks. A too-young release still makes an exemption for
 # an older one stale. The gate also fails on every git dependency unless
-# it has a stable Hex release and an exemption names the latest one, and
+# it has a stable Hex release, an exemption names the latest one, and its
+# pinned commit contains that release's upstream tag, and
 # on a missing or malformed scripts/dep-exemptions.json or a stale entry
 # there. It fails CLOSED on its own breakage: missing tools, unreachable
 # registries, or unparseable probe output block the push rather than
@@ -101,16 +102,48 @@ if ! git_deps=$(sed -nE 's/^  "([a-z0-9_]+)": \{:git,.*/\1/p' mix.lock); then
   echo "scripts/outdated.sh: could not read mix.lock — cannot check git deps."
   exit 1
 fi
+
+# pin_contains NAME VERSION HEX_JSON: 0 when the GitHub commit mix.lock
+# pins NAME to contains VERSION's tag (vVERSION or VERSION) in the GitHub
+# repo HEX_JSON links, per GitHub's compare API. An exemption naming a
+# release the pin lacks would claim fixes the project does not have.
+pin_contains() {
+  local pin upstream tag status
+  pin=$(sed -nE 's#^  "'"$1"'": \{:git, "https://github\.com/([^/"]+)/([^/"]+)", "([0-9a-f]{7,40})".*#\1:\2:\3#p' mix.lock)
+  pin=${pin/.git:/:}
+  upstream=$(jq -r '[.meta.links // {} | .[] | strings
+                     | capture("^https://github\\.com/(?<r>[^/#?]+/[^/#?]+)").r]
+                    | first // empty' <<<"$3")
+  upstream=${upstream%.git}
+  if [[ -z "$pin" || -z "$upstream" ]]; then
+    echo "BLOCKED: $1 — no pinned GitHub commit or upstream GitHub repo to check against $2; failing closed"
+    return 1
+  fi
+  for tag in "v$2" "$2"; do
+    status=$(curl -sSf --max-time 10 "https://api.github.com/repos/$upstream/compare/$tag...$pin" |
+      jq -er '.status') || continue
+    [[ "$status" == ahead || "$status" == identical ]] && return 0
+    echo "BLOCKED: $1 is pinned to ${pin##*:}, which does not contain $upstream $tag;"
+    echo "  move the pin onto a commit that contains $2, or depend on the Hex release"
+    return 1
+  done
+  echo "BLOCKED: $1 — could not compare its pin with $upstream release $2; failing closed"
+  return 1
+}
+
 while read -r name; do
-  if ! latest=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$name" |
-    jq -er '.latest_stable_version'); then
+  if ! hex_json=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$name") ||
+    ! latest=$(jq -er '.latest_stable_version' <<<"$hex_json"); then
     echo "BLOCKED: $name — no latest Hex release found for this git dependency; failing closed"
     # Its entry was not checked, so it is not stale.
     matched+=("$name")
     fail=1
     continue
   fi
-  exempt "$name" "$latest" && continue
+  if exempt "$name" "$latest"; then
+    pin_contains "$name" "$latest" "$hex_json" || fail=1
+    continue
+  fi
   echo "BLOCKED: $name is a git dependency (latest Hex release: $latest);"
   echo "  add or update its exemption to name $latest, or depend on the Hex release"
   fail=1
