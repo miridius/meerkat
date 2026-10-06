@@ -6,7 +6,7 @@ A single meerkat page brings together everything waiting on the user: questions,
 
 ## Why
 
-A Claude Code session using `AskUserQuestion` stops until the user answers. With several sessions running, the user must switch between terminals while waiting sessions sit idle. The dashboard makes these questions asynchronous: a session posts an item and continues working, then receives the user’s answer later.
+A Claude Code session using `AskUserQuestion` stops until the user answers. With several sessions running, the user must switch between terminals while waiting sessions sit idle. The dashboard makes these questions asynchronous.
 
 ## What is settled
 
@@ -15,24 +15,19 @@ A Claude Code session using `AskUserQuestion` stops until the user answers. With
 - **One page** inside meerkat.
 - **Every question goes to the dashboard.** `AskUserQuestion`'s
   blocking prompt is switched off in every session, so a terminal
-  never stops for a question.
+  never stops for a question (see
+  [Research: moving sessions off `AskUserQuestion`](#research-moving-sessions-off-askuserquestion)).
 - **Asynchronous items.** A session posts a question, notice or
   request and carries on. The answer reaches the session that asked
   it later, whether that session is busy or idle by then.
 - **Decisions are read-only.** Each session's design decisions come
-  from its fork log, which the `decisions` Claude Code plugin keeps.
-  The log is one JSON file per session, at
-  `<config dir>/miridius/sessions/<session id>.json`. It holds each
-  fork with its id, header, date, question, options and answer,
-  whether it is resolved or withdrawn, its history, and its notes.
-  The session's findings sit next to it in `<session id>.md`. The
-  dashboard never writes either file.
+  from the fork log the `decisions` Claude Code plugin keeps (see
+  [Sessions](#sessions)).
 - **Every Claude Code config dir.** Sessions from every Claude Code
   config dir post items to the dashboard, and their fork logs appear
   under [Sessions](#sessions). Everything stays on this machine.
 - **PRs shown** are every open PR, in any repository, that needs the
-  user: PRs whose review is requested from the user's GitHub login,
-  and the user's own draft PRs whose CI has passed.
+  user (see [Pull requests](#pull-requests)).
 
 ## Page layout
 
@@ -42,7 +37,7 @@ The page has five sections, from top to bottom:
 2. **Waiting on you**: open session items, oldest first. Each item shows the session’s name, working directory and branch, the item’s kind, how long it has waited, and whether the session is still running.
 3. **Commit reviews**: all currently open meerkat reviews, across repositories.
 4. **Pull requests**: PRs that need the user’s attention.
-5. **Sessions**: running sessions and sessions with open items, their decisions and findings, and a search for the remaining sessions with decision records.
+5. **Sessions**: sessions with their decisions and findings.
 
 The browser tab title begins with the number of open items—for example, `(3) meerkat`—so the count is visible from another tab.
 
@@ -82,13 +77,13 @@ Answered items move to the session’s history in [Sessions](#sessions), where t
 
 - **Queued**: the session has not yet received the answer.
 - **Delivered**: the session has received the answer. Busy sessions receive it between tool calls; idle sessions begin a new turn with it.
-- **Session ended**: the session exited before receiving the answer. Sending it resumed the session in the background, using tokens. The resumed session receives the answer and acts on it.
+- **Session ended**: the session exited before receiving the answer. Sending it resumes the session in the background, which uses tokens. The resumed session receives the answer and acts on it.
 
-A relay started with the session delivers answers. It is a long-running asynchronous `SessionStart` hook that remains in the session’s process tree, waits for answers from meerkat, and posts them to the session’s inbox socket. The delivery was probed; the hook's lifetime was not.
+A relay started with the session delivers answers. It is a long-running asynchronous `SessionStart` hook that remains in the session’s process tree, waits for answers from meerkat, and posts them to the session’s inbox socket.
 
-The `decisions` plugin records a picked option in the fork log when
-the session receives the answer. For a session that had ended, the
-log updates once the background resume delivers it. A typed reply
+The `decisions` plugin records the picked option and any typed reply
+in the fork log when the session receives the answer. For a session
+that had ended, the log updates once the background resume delivers it. A typed reply
 with no option picked leaves the fork open. The session then re-asks
 the fork, and the re-asking shows up as a new item.
 
@@ -99,24 +94,30 @@ Dismissing a notice removes it from the list without sending anything back to th
 When the session posts the item, it is told the item went to the
 dashboard and to carry on with work the item does not decide. The
 user's answer then reaches the session as a message saying that the
-item's fork was answered. The session reads the answer from its fork
-log, where only the user's pick can put it.
+item's fork was answered. The session reads the picked option and
+any typed reply from its fork log, where only the user's answer can
+put them.
 
-While its question is open, the session carries on with everything
-the question does not decide. The `decisions` plugin does not block
-edits or stops for questions posted to the dashboard. The session
-relies on its instructions not to build past an open question.
+How an answerable item without a fork id, such as a confirmation or
+request not posted through `AskUserQuestion`, reaches the session is
+not yet designed.
+
+The `decisions` plugin does not block edits or stops for questions
+posted to the dashboard. The session relies on its instructions not
+to build past an open question.
 
 ## Commit reviews
 
 This section lists every open meerkat review whose decision is still waiting, across all repositories. Each row shows:
 
 - The repository and branch.
-- The review target: staged changes with the commit message’s subject, a ref, a range, or `PR #N`.
-- How long the review has been open and, if it has a deadline, how much time remains.
+- The review target: staged changes with the commit message’s subject when there is one, a ref, a range, or `PR #N`.
+- How long the review has been open and, while a caller is attached and the review has a deadline, how much time remains.
 - The session that started it, if it came from a Claude Code session.
 
-Selecting a row opens the review page in a new tab—the same page reached through the pause banner. Reviews with a completed decision that are waiting for their caller to attach again need no user action and are omitted.
+Meerkat does not yet keep a list of open reviews across repositories, nor record which Claude Code session started a review; the dashboard needs both.
+
+Selecting a row opens the review page in a new tab—the same page the invocation opens. Reviews with a completed decision that are waiting for their caller to attach again need no user action and are omitted.
 
 ## Pull requests
 
@@ -136,17 +137,15 @@ This section lists running sessions and any session with an open item. Search fi
 Each session shows:
 
 - Its name, working directory, branch, and running status. Running sessions also show whether they are busy or waiting.
-- Its findings, rendered as Markdown.
+- Its findings.
 - Its answered items and their delivery states.
 - Its decisions.
 
-Decision records are the fork log the `decisions` plugin keeps; meerkat only reads them. Each session has one JSON file, at `<config dir>/miridius/sessions/<session id>.json`. The file holds that session’s forks.
+Decision records are the fork log the `decisions` plugin keeps. Each session has one JSON file, at `<config dir>/miridius/sessions/<session id>.json`. The file holds that session’s forks.
 
 Each fork contains an id, a header, a date, a question, options and answer, a state (open, resolved or withdrawn), notes, and its earlier askings. The page displays these fields. Earlier askings fold out below the fork, and withdrawn forks are hidden behind a toggle.
 
 Findings are read from `<session id>.md` beside the JSON file and rendered as Markdown. The dashboard never writes either file. Changes to either file on disk update the page without a reload.
-
-Session details are read-only.
 
 ## Alerts
 
@@ -156,7 +155,7 @@ Every new item, including a notice, triggers a macOS notification. Clicking it o
 
 A login agent keeps the dashboard running at a fixed, bookmarkable URL, allowing alerts to fire even with no tab open. Like review pages, the dashboard serves only loopback connections.
 
-Sessions can post items without an open dashboard tab. Items survive meerkat restarts and remain until answered or dismissed. Answered items remain in their session’s history.
+Sessions can post items without an open dashboard tab. Items survive meerkat restarts and remain until answered or dismissed.
 
 ## Research: getting an answer into a session
 
@@ -199,8 +198,7 @@ local probes.
   Enterprise plans, the `channelsEnabled` policy blocks channels
   until an admin enables them. Channels therefore cannot reach
   sessions already running, nor background sessions started without
-  the flag. This was not probed: the worker could not start
-  throwaway sessions.
+  the flag. Not probed.
 - **Mods** (Claude Code 2.1.287 and later) can poll the dashboard
   on a timer, and can call `$.prompt.submit({ text, asUser: true })`.
   That call starts a turn that reads as the user's own words, but
@@ -209,7 +207,9 @@ local probes.
 - **Hooks**: a `PostToolUse` hook can add context mid-turn, but only
   when a tool runs. An `asyncRewake` hook can wake an idle session,
   but it still runs under its timeout. Hooks marked `async` have no
-  timeout once they are running.
+  timeout once they are running. Whether an async `SessionStart`
+  hook, such as the answer relay, lives for the whole session is not
+  probed.
 
 ## Research: moving sessions off `AskUserQuestion`
 
@@ -217,6 +217,3 @@ local probes.
   return a reason, which Claude reads. The hook gets the full
   `questions` input, so it can post them as items and say in its
   reason that they were posted.
-- The `decisions` plugin records answers given on the dashboard when
-  the session receives them, and does not block the session's work
-  while a question posted to the dashboard is open.
