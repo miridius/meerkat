@@ -2,7 +2,8 @@ defmodule Meerkat.PreCommitHookTest do
   # Commits through the repo's real lefthook.yml, scripts/no-main-commits.sh,
   # scripts/check.sh and scripts/mutate.sh. Only the tools those scripts run
   # (mix, pnpm, bun, bunx) are replaced, by stubs on PATH that log each run
-  # and can fail it. The `mix muex` stub writes the report STUB_REPORT names.
+  # and can fail it. The `mix muex` stub writes the report STUB_REPORT names,
+  # or none when it is `none`, and exits with STUB_MUEX_EXIT.
   use ExUnit.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
@@ -95,8 +96,9 @@ defmodule Meerkat.PreCommitHookTest do
       while [ $# -gt 0 ] && [ "$1" != --output ]; do shift; done
       [ $# -gt 0 ] || exit 0
       echo "$2" > '#{muex}/output'
-      cp "${STUB_REPORT:-#{report}}" "$2"
-      exit 0
+      # Like real muex, write no report when there is nothing to mutate.
+      [ "${STUB_REPORT:-}" = none ] || cp "${STUB_REPORT:-#{report}}" "$2"
+      exit "${STUB_MUEX_EXIT:-0}"
     fi
     cmd="$(basename "$0")${*:+ $*}"
     echo "$cmd" >> '#{log}'
@@ -256,12 +258,42 @@ defmodule Meerkat.PreCommitHookTest do
     assert {_, 0} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
   end
 
-  test "a staged line with no mutants passes", ctx do
+  # muex writes no report then, so an earlier run's report must not be judged.
+  test "a staged line with no mutants passes, whatever an earlier run reported", ctx do
     stage(ctx.work, "lib/meerkat/one.ex", "one\n# comment\n")
-    report = write_report(ctx.base, "empty", [])
+    stale = write_report(ctx.base, "stale", [mutant("survived")])
+    File.mkdir_p!(Path.join(ctx.work, "_build"))
+    File.cp!(stale, Path.join(ctx.work, "_build/mutate-staged.json"))
 
-    assert {_, 0} = commit(ctx, ["-m", "comment"], [{"STUB_REPORT", report}])
+    assert {out, 0} = commit(ctx, ["-m", "comment"], [{"STUB_REPORT", "none"}])
+    assert out =~ "produce no mutants"
     assert gates_run(ctx) == @gates ++ @mutation
+  end
+
+  test "a failed muex run blocks the commit", ctx do
+    head = git(ctx.work, ["rev-parse", "HEAD"])
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+    assert {_, code} = commit(ctx, ["-m", "change lib"], [{"STUB_MUEX_EXIT", "1"}])
+    assert code != 0
+    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
+  end
+
+  test "a mutant status the gate does not know blocks the commit", ctx do
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+    report = write_report(ctx.base, "unknown", [mutant("killed"), mutant("pending")])
+
+    assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
+    assert code != 0
+    assert out =~ "unknown mutant status(es): pending"
+  end
+
+  test "an external diff tool does not hide staged lib/ lines", ctx do
+    stage(ctx.work, "lib/meerkat_web/live/view.ex", "view\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "add view"], [{"GIT_EXTERNAL_DIFF", "true"}])
+    assert gates_run(ctx) == @gates ++ @mutation
+    assert muex_staged(ctx) == ["lib/meerkat_web/live/view.ex"]
   end
 
   # `changed` scores the same lines a commit would, so it must keep every

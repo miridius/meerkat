@@ -25,7 +25,7 @@
 #                                   files.
 #
 # Pass extra muex flags through after `--`:
-#   scripts/mutate.sh changed -- --fail-at 95 --concurrency 4
+#   scripts/mutate.sh changed -- --concurrency 4
 
 set -euo pipefail
 
@@ -72,10 +72,11 @@ collect_files() {
 # Whether `git diff <args>` adds or changes any lib/**/*.ex line, the
 # only lines muex's --since / --staged can mutate. The diff is captured
 # first: piped straight into `grep -q`, git could die of SIGPIPE and
-# pipefail would read a match as a failure.
+# pipefail would read a match as a failure. An external diff tool or
+# textconv filter would print no `+` lines and skip the gate.
 has_added_lines() {
   local diff
-  if ! diff=$(git diff --unified=0 --no-color --diff-filter=d "$@" -- ':(glob)lib/**/*.ex'); then
+  if ! diff=$(git diff --no-ext-diff --no-textconv --unified=0 --no-color --diff-filter=d "$@" -- ':(glob)lib/**/*.ex'); then
     echo "scripts/mutate.sh: git diff $* failed." >&2
     exit 2
   fi
@@ -190,8 +191,13 @@ joined=$(IFS=,; echo "${files[*]}")
 # --coverage-guided runs each mutant against the test files that execute
 # its line, and skips mutants on lines no test executes (reported as
 # no coverage). For lines `:cover` has no data for, it falls back to
-# muex's dependency analysis, then to the full suite.
-muex=(mix muex --files "$joined" --coverage-guided "${scope_args[@]}")
+# muex's dependency analysis, then to the full suite. muex runs as many
+# test BEAMs at once as there are cores; like scripts/mix-test.sh, cap
+# them at half (at least one) so a commit leaves the machine usable. A
+# --concurrency after `--` overrides this.
+jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+((jobs >= 1)) || jobs=1
+muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs" "${scope_args[@]}")
 
 if [[ "$gate" != true ]]; then
   "${muex[@]}" "${extra_args[@]}"
@@ -205,8 +211,27 @@ fi
 # GIT_INDEX_FILE from the test runs it starts.
 mkdir -p _build
 report="$PWD/_build/mutate-staged.json"
+# muex writes no report when there is nothing to mutate, as for staged
+# comments or lib/meerkat/application.ex alone, so an earlier run's
+# report must not be left for this run to judge.
+rm -f "$report"
 GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
   --format json --output "$report" "${extra_args[@]}"
+
+if [[ ! -f "$report" ]]; then
+  echo "scripts/mutate.sh: the staged lib/ lines produce no mutants."
+  exit 0
+fi
+
+# Only the statuses below are judged; one muex adds later would
+# otherwise pass unseen.
+unknown=$(jq -r '[.mutations[].status]
+  - ["killed", "survived", "no_coverage", "timeout", "invalid", "equivalent", "ignored"]
+  | unique | join(", ")' "$report")
+if [[ -n "$unknown" ]]; then
+  echo "scripts/mutate.sh: muex reported unknown mutant status(es): $unknown." >&2
+  exit 2
+fi
 
 # A survivor is a staged line whose behaviour the tests do not pin
 # down. A no-coverage mutant is the same gap, found without running:
