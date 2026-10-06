@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
 # behind its latest release, except exempted releases and releases too
-# young to install, so not yet actionable: JS releases younger than the
-# 24h supply-chain floor (minimumReleaseAge in pnpm-workspace.yaml), and
+# young to install, so not yet actionable: JS releases that are, or
+# require a package version that is, younger than the 24h supply-chain
+# floor (minimumReleaseAge in pnpm-workspace.yaml), and
 # Hex releases in the configured cooldown window that the requirements
 # admit. Hex does not mark a cooldown release the requirements exclude,
 # so that one blocks. A too-young release still makes an exemption for
@@ -11,8 +12,9 @@
 # pinned GitHub commit contains that release's tag in the GitHub repo Hex
 # links. It also fails on a missing or malformed
 # scripts/dep-exemptions.json or a stale entry there. It fails CLOSED
-# on its own breakage: missing tools, unreachable registries, or
-# unparseable probe output block the push rather than skipping a check.
+# on its own breakage: missing tools, unreachable registries,
+# unparseable probe output, or a pnpm resolution that fails for another
+# reason block the push rather than skipping a check.
 
 set -uo pipefail
 
@@ -73,6 +75,14 @@ done < <(grep . <<<"$PNPM_ROWS")
 pnpm_outdated || exit 1
 while IFS=$'\t' read -r name latest; do
   [[ " ${exempted[*]-} " == *" $name "* ]] && continue
+  # pnpm outdated still reports a release past the floor that requires a
+  # package version under it, which pnpm refuses to install.
+  pnpm_installable "$name" && rc=0 || rc=$?
+  if ((rc == 2)); then
+    echo "too young: $name@$latest requires a package version under the 24h floor"
+    continue
+  fi
+  ((rc == 0)) || exit 1
   echo "BLOCKED: $name is outdated (latest: $latest)"
   fail=1
 done < <(grep . <<<"$PNPM_ROWS")
