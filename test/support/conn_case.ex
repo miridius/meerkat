@@ -20,7 +20,9 @@ defmodule MeerkatWeb.ConnCase do
     end
   end
 
-  setup _tags do
+  setup tags do
+    Meerkat.DecisionCase.reset_decision(tags)
+
     # meerkat binds 127.0.0.1 and MeerkatWeb.Loopback rejects non-loopback
     # Host headers; ConnTest defaults to "www.example.com", so pin the test
     # host to loopback. Tests asserting the guard override this per-request.

@@ -7,10 +7,9 @@ defmodule MeerkatWeb.ReviewLivePlantUMLTest do
 
   import Phoenix.LiveViewTest
 
-  alias Meerkat.{Decision, PlantUML, ReviewState}
+  alias Meerkat.{PlantUML, ReviewState}
 
   setup do
-    Decision.reset()
     prev_state = Application.get_env(:meerkat, :review_state)
     prev_path = System.get_env("PATH")
 
