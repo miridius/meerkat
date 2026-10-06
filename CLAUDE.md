@@ -26,7 +26,8 @@ remove commits a merged PR still references). Before committing:
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
   when a direct JS or Hex dependency trails its latest release unless
-  that release is exempt. JS releases under 24h are not required, and a
+  that release is exempt. A JS release isn't required while it, or a
+  package version it requires, is under the 24h minimum release age. A
   Hex release in cooldown is not required only when all requirements in
   `mix.exs` and other dependencies admit it; otherwise, it is treated as
   outdated and blocks the gate unless exempted. In either ecosystem, an
@@ -34,13 +35,12 @@ remove commits a merged PR still references). Before committing:
   version does not match the latest reported version (the JS registry's
   latest or `Latest` in `mix hex.outdated` for Hex), even if that latest
   release is not yet required.
-  The gate also fails on any git dependency unless an exemption names
-  its latest stable Hex release and its pinned commit contains that
-  release; one without a stable Hex release cannot be exempted, and a
-  new stable release makes its entry stale immediately. The pre-commit
+  A git dependency counts as its latest stable Hex release when its
+  pinned GitHub commit contains that release's tag. The gate fails for
+  all other git dependencies. None is exempt. The pre-commit
   hook bumps registry packages; do not bump them by hand. It never
   moves git dependencies, so maintain
-  their exemptions by hand. Fix fallout rather than pinning old
+  their pins by hand. Fix fallout rather than pinning old
   releases. Each `scripts/dep-exemptions.json` entry needs a `version`
   and non-empty `reason`; missing or malformed files and stale entries
   fail the gate. The gate fails closed.
@@ -96,7 +96,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, `scripts/bump-deps.sh`, `scripts/check.sh`, then `scripts/mutate.sh staged`. They are piped, so if one script refuses the commit, later scripts do not run.
 
-`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It refuses the commit when it cannot rewrite a requirement or an update fails, never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, it runs these steps in order:
 

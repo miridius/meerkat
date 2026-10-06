@@ -69,10 +69,11 @@ defmodule Meerkat.MixProject do
       # in `lib/` and runs the tests that reach each rewrite. A
       # mutation that every selected test passes = a test gap. See
       # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
-      # with the test-selection fixes, parallel coverage collection,
-      # parallel runs of same-file mutants, per-process coverage export
-      # names, staged-line scoping, and `# muex:ignore` directives; see
-      # scripts/dep-exemptions.json.
+      # that adds, on top of 0.11.3, test-selection fixes (multi-alias
+      # test selection, crediting each test file with only the lines it
+      # executed), parallel coverage collection, parallel runs of
+      # same-file mutants, per-process coverage export names,
+      # staged-line scoping, and `# muex:ignore` directives.
       {:muex,
        github: "miridius/muex",
        ref: "d04ecf60294511d69ab177561cd3d05479d9f855",

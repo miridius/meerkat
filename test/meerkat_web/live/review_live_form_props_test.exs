@@ -7,7 +7,7 @@ defmodule MeerkatWeb.ReviewLiveFormPropsTest do
 
   import Phoenix.LiveViewTest
 
-  alias Meerkat.{Decision, ReviewState}
+  alias Meerkat.ReviewState
 
   @rs_file %{
     status: :modified,
@@ -22,7 +22,6 @@ defmodule MeerkatWeb.ReviewLiveFormPropsTest do
   }
 
   setup do
-    Decision.reset()
     prev = Application.get_env(:meerkat, :review_state)
     Application.put_env(:meerkat, :review_state, %ReviewState{files: [@rs_file]})
     on_exit(fn -> restore(:review_state, prev) end)

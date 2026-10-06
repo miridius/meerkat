@@ -3,7 +3,7 @@ defmodule Meerkat.ReviewServerTest do
   # across tests; each test allocates a fresh review_id so they
   # don't collide, but DynamicSupervisor.children/1 walks the full
   # list.
-  use ExUnit.Case, async: false
+  use Meerkat.DecisionCase, async: false
 
   alias Meerkat.{Comment, Persistence, ReviewServer, ReviewState}
 
@@ -158,7 +158,6 @@ defmodule Meerkat.ReviewServerTest do
   describe "a failed save" do
     test "keeps the mutation in memory and broadcasts :persistence_failed",
          %{repo: repo, review_id: id} do
-      Meerkat.Decision.reset()
       # A directory where the snapshot file belongs makes every save fail.
       File.mkdir_p!(Persistence.path_for(repo, id))
 
@@ -178,11 +177,6 @@ defmodule Meerkat.ReviewServerTest do
   end
 
   describe "delete_snapshot/2" do
-    setup do
-      Meerkat.Decision.reset()
-      on_exit(&Meerkat.Decision.reset/0)
-    end
-
     test "deletes the running server's snapshot, which no later mutation recreates",
          %{repo: repo, review_id: id} do
       {:ok, _} =

@@ -32,8 +32,17 @@ defmodule Meerkat.OutdatedGateTest do
     registry_out = Path.join(base, "pnpm-registry.json")
     hex_api = Path.join(base, "hex-api")
     github_api = Path.join(base, "github-api")
+    refuse = Path.join(base, "refuse")
+    scratch_log = Path.join(base, "scratch.log")
 
     File.mkdir_p!(Path.join(base, "scripts"))
+    File.mkdir_p!(refuse)
+
+    for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
+      File.mkdir_p!(Path.dirname(Path.join(base, file)))
+      File.write!(Path.join(base, file), "base\n")
+    end
+
     File.write!(Path.join(base, "mix.lock"), @hex_lock)
 
     for script <- ~w(outdated.sh deps-common.sh) do
@@ -54,6 +63,13 @@ defmodule Meerkat.OutdatedGateTest do
       "pnpm -r outdated --format json --config.minimum-release-age=0")
         if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
         exit 1 ;;
+      "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
+        # Only a scratch copy of the workspace, without the repo's scripts/.
+        [[ ! -e scripts && -f package.json && -f pnpm-workspace.yaml && -f pnpm-lock.yaml &&
+           -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
+        echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
+        echo "$PWD" >> '#{scratch_log}'
+        if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
       "curl "*api.github.com/*)
         cat >>'#{base}/curl-config'
@@ -74,7 +90,9 @@ defmodule Meerkat.OutdatedGateTest do
      pnpm_out: pnpm_out,
      registry_out: registry_out,
      hex_api: hex_api,
-     github_api: github_api}
+     github_api: github_api,
+     refuse: refuse,
+     scratch_log: scratch_log}
   end
 
   test "a package behind latest without an exemption blocks the push", ctx do
@@ -206,6 +224,49 @@ defmodule Meerkat.OutdatedGateTest do
     end
   end
 
+  describe "a JS release pnpm outdated reports but pnpm refuses to install" do
+    setup ctx do
+      exempt(ctx, %{})
+      File.write!(ctx.pnpm_out, ~s({"lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
+
+      File.write!(
+        Path.join(ctx.refuse, "lefthook"),
+        " ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17 (released 24 hours ago) of lefthook-windows-x64 does not meet the minimumReleaseAge constraint\n"
+      )
+    end
+
+    test "passes the gate when a package version it requires is under 24h", ctx do
+      assert {out, 0} = run(ctx)
+      assert out =~ "ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17"
+      assert out =~ "too young: lefthook@2.1.17 requires a package version under the 24h floor"
+    end
+
+    test "checks it on a scratch copy it removes, leaving the tree alone", ctx do
+      assert {_, 0} = run(ctx)
+      assert [scratch] = ctx.scratch_log |> File.read!() |> String.split("\n", trim: true)
+      refute File.exists?(scratch)
+
+      for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
+        assert File.read!(Path.join(ctx.base, file)) == "base\n"
+      end
+    end
+
+    test "blocks the push when it cannot copy the workspace", ctx do
+      File.rm!(Path.join(ctx.base, "pnpm-workspace.yaml"))
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "could not copy the workspace to a scratch dir — cannot check lefthook"
+    end
+
+    test "blocks the push when pnpm fails for another reason", ctx do
+      File.write!(Path.join(ctx.refuse, "lefthook"), " ERR_PNPM_META_FETCH_FAIL  GET failed\n")
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "ERR_PNPM_META_FETCH_FAIL"
+      assert out =~ "pnpm could not resolve lefthook's latest release (exit 1)"
+    end
+  end
+
   test "each exempted JS package passes, and an unexempted one blocks", ctx do
     exempt(ctx, %{"shiki" => entry("4.4.3"), "vite" => entry("8.3.2")})
 
@@ -278,32 +339,24 @@ defmodule Meerkat.OutdatedGateTest do
       compare(ctx, "upstream/plug_x", "v1.0.0...someone:plug_x:b1c2d3e", "identical")
     end
 
-    test "blocks the push without an exemption", ctx do
-      exempt(ctx, %{"plug_x" => entry("1.0.0")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "exempt: plug_x@1.0.0"
-      assert out =~ "BLOCKED: muex is a git dependency (latest Hex release: 0.11.2)"
-      assert out =~ "add or update its exemption"
-    end
-
-    test "passes with an exemption naming its latest Hex release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+    test "counts as the latest Hex release its pinned commit contains", ctx do
+      exempt(ctx, %{})
 
       assert {out, 0} = run(ctx)
-      assert out =~ "exempt: muex@0.11.2"
-      assert out =~ "exempt: plug_x@1.0.0"
+      assert out =~ "current: muex is pinned to a628d48, which contains upstream/muex v0.11.2"
+      assert out =~ "current: plug_x is pinned to b1c2d3e, which contains upstream/plug_x v1.0.0"
     end
 
-    test "fails once a newer Hex release is out", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.1"), "plug_x" => entry("1.0.0")})
+    test "makes an exemption for a pin containing the latest Hex release stale", ctx do
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: muex covers 0.11.1, but latest is 0.11.2"
+      assert out =~ "stale exemption: muex is not behind latest; remove its entry"
     end
 
-    test "fails when the pinned commit does not contain the named release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+    test "fails when the pinned commit does not contain the latest Hex release", ctx do
+      # An exemption naming the release does not cover a pin without it.
+      exempt(ctx, %{"muex" => entry("0.11.2")})
       # The v-tag verdict stands; the gate does not go on to try this one.
       compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
 
@@ -314,12 +367,14 @@ defmodule Meerkat.OutdatedGateTest do
         assert out =~
                  "BLOCKED: muex is pinned to a628d48, which does not contain upstream/muex v0.11.2"
 
-        refute out =~ "plug_x is pinned"
+        refute out =~ "plug_x is pinned to b1c2d3e, which does not"
+        refute out =~ "exempt: muex"
+        refute out =~ "stale exemption"
       end
     end
 
     test "finds a release tag without a v prefix", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       File.rm!(
         Path.join(ctx.github_api, "repos/upstream/plug_x/compare/v1.0.0...someone:plug_x:b1c2d3e")
@@ -331,7 +386,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when GitHub finds neither release tag", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       File.rm!(
         Path.join(ctx.github_api, "repos/upstream/muex/compare/v0.11.2...someone:muex:a628d48")
@@ -341,10 +396,12 @@ defmodule Meerkat.OutdatedGateTest do
 
       assert out =~
                "BLOCKED: muex — GitHub finds neither tag v0.11.2 nor 0.11.2 in upstream/muex, or not pin a628d48"
+
+      refute out =~ "stale exemption"
     end
 
     test "fails closed when GitHub's comparison is unreadable", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       for report <- ["", "{}", "not json"] do
         compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", nil, report)
@@ -356,7 +413,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed on any other HTTP answer, naming a likely rate limit", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       # A later tag spelling would pass, but an error answer is not a missing tag.
       compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
 
@@ -372,7 +429,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "sends GITHUB_TOKEN, or else gh's token, to GitHub", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       config = Path.join(ctx.base, "curl-config")
       File.write!(Path.join(ctx.base, "gh-token"), "gh-t0k")
 
@@ -386,7 +443,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when Hex links no GitHub repo", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
       hex_release(ctx, "muex", ~s({"latest_stable_version": "0.11.2"}))
 
       assert {out, 1} = run(ctx)
@@ -394,7 +451,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when mix.lock pins it outside https://github.com", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{})
 
       File.write!(
         Path.join(ctx.base, "mix.lock"),
@@ -406,7 +463,7 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when Hex reports no release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2"), "plug_x" => entry("1.0.0")})
+      exempt(ctx, %{"muex" => entry("0.11.2")})
 
       for report <- ["", "{}", "not json"] do
         hex_release(ctx, "muex", report)

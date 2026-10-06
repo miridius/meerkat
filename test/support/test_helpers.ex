@@ -10,19 +10,17 @@ defmodule Meerkat.TestHelpers do
   # synchronous test cases. Restore it even when the test fails. The
   # caller's identity variables would override the fixture's user.email.
   def isolate_git_config do
-    overrides =
-      Map.merge(
-        %{
-          "GIT_CONFIG_GLOBAL" => "/dev/null",
-          "GIT_CONFIG_NOSYSTEM" => "1",
-          "GIT_CONFIG_COUNT" => "0",
-          "GIT_CONFIG_PARAMETERS" => nil
-        },
-        Map.new(
-          ~w(GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL),
-          &{&1, nil}
-        )
-      )
+    overrides = %{
+      "GIT_CONFIG_GLOBAL" => "/dev/null",
+      "GIT_CONFIG_NOSYSTEM" => "1",
+      "GIT_CONFIG_COUNT" => "0",
+      "GIT_CONFIG_PARAMETERS" => nil,
+      "GIT_AUTHOR_NAME" => nil,
+      "GIT_AUTHOR_EMAIL" => nil,
+      "GIT_COMMITTER_NAME" => nil,
+      "GIT_COMMITTER_EMAIL" => nil,
+      "EMAIL" => nil
+    }
 
     previous = Map.new(overrides, fn {key, _} -> {key, System.get_env(key)} end)
     Enum.each(overrides, &put_env/1)
