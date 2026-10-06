@@ -1,6 +1,8 @@
 # Gitignored paths Claude Code copies from the main checkout into each
 # worktree it creates. The main checkout's compiled deps and build let a
 # new worktree's first `mix test` reuse them instead of compiling
-# everything; scripts/auto-install.sh keeps them fresh on `main`.
+# everything; scripts/auto-install.sh keeps them fresh on `main`. The copy
+# leaves out symlinks, so .claude/hooks/setup-worktree.sh recreates
+# _build/'s.
 /deps/
 /_build/

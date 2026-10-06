@@ -51,11 +51,13 @@ defmodule Meerkat.AutoInstallScriptTest do
     {:ok, repo: repo, log: log, env: env}
   end
 
-  test "on main, installs and then refreshes the test env's deps and build", ctx do
+  test "on main, installs and then refreshes the dev and test envs' deps and builds", ctx do
     assert {_, 0} = auto_install(ctx)
 
     assert log(ctx) == [
              "install.sh",
+             "MIX_ENV=dev mix deps.get",
+             "MIX_ENV=dev mix compile",
              "MIX_ENV=test mix deps.get",
              "MIX_ENV=test mix compile"
            ]

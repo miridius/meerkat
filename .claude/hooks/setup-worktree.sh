@@ -11,6 +11,10 @@
 # also lists optional deps that are never fetched, so other entries are
 # not checked. JS deps count as missing when node_modules has no pnpm
 # state.
+# In a linked worktree, the hook also recreates the symlinks under the
+# main checkout's _build/ that the worktree's copy lacks: Claude Code's
+# .worktreeinclude copy leaves them out, and Mix recreates a dep's
+# priv/ link only when it recompiles that dep.
 # Parallel subagents can start in one checkout at once, so each run holds
 # a per-checkout lock; the kernel drops it if the hook is killed.
 # Nothing is printed when nothing is missing. A failed install is reported
@@ -48,6 +52,15 @@ run() {
 if mix_deps_missing; then run mix deps.get; fi
 if [ ! -f node_modules/.modules.yaml ]; then
   run pnpm install --frozen-lockfile --prefer-offline
+fi
+main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+if [ "$main" != "$(git rev-parse --show-toplevel)" ] && [ -d "$main/_build" ]; then
+  while IFS= read -r link; do
+    link=${link#"$main/"}
+    if [ -d "$(dirname "$link")" ] && [ ! -L "$link" ] && [ ! -e "$link" ]; then
+      run ln -s "$(readlink "$main/$link")" "$link"
+    fi
+  done < <(find "$main/_build" -type l)
 fi
 rm -f "$log"
 

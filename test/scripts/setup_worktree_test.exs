@@ -107,6 +107,38 @@ defmodule Meerkat.SetupWorktreeHookTest do
     assert calls(ctx.dir) == ["pnpm install --frozen-lockfile --prefer-offline"]
   end
 
+  test "a linked worktree gets back the _build symlinks its copy lacks", ctx do
+    git = fn args -> {_, 0} = System.cmd("git", ["-C", ctx.checkout | args], env: @unset_git) end
+    git.(~w(add mix.lock pnpm-lock.yaml))
+    git.(~w(-c user.name=t -c user.email=t@example.com commit -q -m init))
+    worktree = Path.join(ctx.dir, "worktree")
+    git.(["worktree", "add", "-q", worktree])
+
+    links = %{
+      "_build/dev/lib/file_system/priv" => "../../../../deps/file_system/priv",
+      "_build/test/lib/meerkat/priv" => "../../../../priv",
+      "_build/test/lib/stream_data/priv" => "../../../../deps/stream_data/priv"
+    }
+
+    for {link, target} <- links do
+      path = Path.join(ctx.checkout, link)
+      File.mkdir_p!(Path.dirname(path))
+      File.ln_s!(target, path)
+    end
+
+    set_up(worktree)
+    File.mkdir_p!(Path.join(worktree, "_build/dev/lib/file_system"))
+    File.mkdir_p!(Path.join(worktree, "_build/test/lib/meerkat/priv"))
+
+    assert run_hook(ctx.dir, worktree) == {"", 0}
+
+    assert File.read_link(Path.join(worktree, "_build/dev/lib/file_system/priv")) ==
+             {:ok, "../../../../deps/file_system/priv"}
+
+    assert File.dir?(Path.join(worktree, "_build/test/lib/meerkat/priv"))
+    refute File.exists?(Path.join(worktree, "_build/test/lib/stream_data"))
+  end
+
   test "hooks starting at once in one checkout install only once", ctx do
     File.write!(Path.join(ctx.dir, "mix-sleep"), "1")
 

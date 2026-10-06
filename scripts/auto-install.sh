@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared guard for the lefthook post-merge / post-checkout hooks:
-# (re)install meerkat, and refresh the test env's deps and build, only
+# (re)install meerkat, and refresh the dev and test envs' deps and builds, only
 # when HEAD is on `main`. `install.sh` is
 # idempotent (it skips the rebuild when the release is already built
 # from the current commit), so firing this on every `main` checkout is
@@ -20,14 +20,18 @@ case "$branch" in
   main)
     bash scripts/install.sh
     # install.sh builds only prod. New Claude worktrees copy main's deps/
-    # and _build/ (see .worktreeinclude), so also bring the test env up to
-    # date. Git exports GIT_DIR and friends to hooks; left set, they would
-    # point git dependencies' checkouts at this repository.
+    # and _build/ (see .worktreeinclude), so also bring the dev and test
+    # envs up to date. The copy is newer than the worktree's sources, so
+    # bin/meerkat-beam would not rebuild a stale dev build. Git exports
+    # GIT_DIR and friends to hooks; left set, they would point git
+    # dependencies' checkouts at this repository.
     (
       # shellcheck disable=SC2046
       unset $(git rev-parse --local-env-vars)
-      MIX_ENV=test mix deps.get
-      MIX_ENV=test mix compile
+      for env in dev test; do
+        MIX_ENV=$env mix deps.get
+        MIX_ENV=$env mix compile
+      done
     )
     ;;
   "")
