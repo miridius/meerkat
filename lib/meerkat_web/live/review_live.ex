@@ -1752,11 +1752,11 @@ defmodule MeerkatWeb.ReviewLive do
   attr :visible_indices, :any, required: true
 
   defp file_filter(assigns) do
-    # Sidebar that lists every file with hover-revealed "hide *.ext"
+    # Panel that lists every file with hover-revealed "hide *.ext"
     # and "only" buttons, plus a `.filter-input` for substring narrowing.
     # The list filters by `filter_input` (substring on base_name); the
-    # actual diff body in `.file-list` further filters by hidden
-    # extensions + `only_file_index`.
+    # title count and the main `.file-list` use `@visible_indices`
+    # (see `visible_indices/3`).
     visible_in_sidebar =
       filter_sidebar_entries(assigns.state.files, assigns.filter_input)
 
@@ -1769,7 +1769,7 @@ defmodule MeerkatWeb.ReviewLive do
       assign(assigns,
         sidebar_entries: visible_in_sidebar,
         total_count: length(assigns.state.files),
-        visible_count: length(visible_in_sidebar),
+        visible_count: MapSet.size(assigns.visible_indices),
         matched_visible?: matched_visible?
       )
 

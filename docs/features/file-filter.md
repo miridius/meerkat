@@ -28,6 +28,9 @@ Top to bottom:
    on whether every currently-filtered file is visible) and
    `Show all` (visible when `only_file_index != nil` OR any
    `file_overrides` entry is set; clears overrides).
+   `visible_count` is the number of files the main file list shows
+   after all rules in **Composition**; `total_count` is the number
+   of files in the diff.
 2. **Filter input**: a debounced (50ms) `phx-change="filter.set_input"`
    text box. Filters the panel's list AND the main file list by
    case-insensitive substring on the file's base name.
