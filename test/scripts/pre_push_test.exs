@@ -34,7 +34,8 @@ defmodule Meerkat.PrePushHookTest do
     File.mkdir_p!(Path.dirname(private_refs))
     File.write!(private_refs, "# private names\n\n(^|[^a-z])acme-internal([^a-z]|$)\n")
 
-    for file <- ~w(lefthook.yml .lefthook/pre-push/pre-push.sh scripts/no-private-refs.sh) do
+    for file <-
+          ~w(lefthook.yml scripts/lefthook-rc.sh .lefthook/pre-push/pre-push.sh scripts/no-private-refs.sh) do
       File.cp!(Path.join(@root, file), Path.join(work, file))
     end
 

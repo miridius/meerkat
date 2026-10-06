@@ -2,6 +2,7 @@
 # lefthook, so removing another worktree cannot silently disable them;
 # a checkout without `pnpm install` refuses commits and pushes instead.
 lefthook: node_modules/.bin/lefthook
+rc: scripts/lefthook-rc.sh
 
 # A commit on main is refused before the long checks start. The
 # dependency bump runs before the checks so they cover what it stages.
