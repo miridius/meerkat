@@ -118,6 +118,40 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  describe "when a review's backend is killed and the review rerun at once" do
+    test "its caller gets that backend's exit code, not the rerun's" do
+      review = open_killable_review()
+
+      # Holds the first caller still, so the rerun runs in the window
+      # between the backend's exit and the first caller's next look.
+      System.cmd("kill", ["-STOP", review.first_pid])
+
+      on_exit(fn ->
+        System.cmd("kill", ["-CONT", review.first_pid], stderr_to_stdout: true)
+      end)
+
+      second = kill_backend_and_rerun(review)
+      System.cmd("kill", ["-CONT", review.first_pid])
+      File.write!(review.go, "")
+
+      assert await_exit(review.first, review.dir) == 143
+      assert await_exit(second, review.dir) == 7
+      assert File.ls!(review.runs) == []
+    end
+
+    test "a rerun removes the run dir its killed caller left" do
+      review = open_killable_review()
+      System.cmd("kill", ["-KILL", review.first_pid])
+      await_exit(review.first, review.dir)
+
+      second = kill_backend_and_rerun(review)
+      File.write!(review.go, "")
+
+      assert await_exit(second, review.dir) == 7
+      assert File.ls!(review.runs) == []
+    end
+  end
+
   describe "once the review is removed" do
     test "a caller whose runs dir is deleted exits 2 instead of retrying" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
@@ -376,18 +410,103 @@ defmodule Meerkat.ShepherdTest do
     {port, dir}
   end
 
-  # The detached shepherd's pid, once the caller has started it.
-  defp await_backend_pid(runs, attempts \\ 100) do
-    case Path.wildcard(Path.join([runs, "*", "pid"])) do
-      [pid_file | _] ->
-        String.trim(File.read!(pid_file))
+  # Starts a caller whose first BEAM never binds and waits to be killed;
+  # every later BEAM exits 7 once the `go` file exists.
+  defp open_killable_review do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    runs = Path.join(dir, "runs")
+    rel = Path.join(dir, "rel")
+    File.mkdir_p!(Path.join(rel, "bin"))
+    File.ln_s!(rel, Path.join(dir, "current"))
+    File.write!(Path.join(dir, "i"), "0")
+    go = Path.join(dir, "go")
+
+    File.write!(Path.join([rel, "bin", "meerkat"]), ~S"""
+    #!/usr/bin/env bash
+    i=$(cat "$I_FILE"); echo $((i + 1)) > "$I_FILE"
+    touch "$(dirname "$I_FILE")/beam-$((i + 1))"
+    if [[ "$i" == 0 ]]; then exec sleep 60; fi
+    while [[ ! -f "$GO_FILE" ]]; do sleep 0.05; done
+    exit 7
+    """)
+
+    File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+
+    env = [
+      {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+      {"GO_FILE", go},
+      {"INPUT_FILE", "/dev/null"}
+    ]
+
+    first = open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, env)
+    {:os_pid, first_pid} = Port.info(first, :os_pid)
+    backend = await_backend_pid(runs)
+    # Once its BEAM runs, the shepherd turns a SIGTERM into exit 143.
+    await_file(Path.join(dir, "beam-1"))
+
+    %{
+      dir: dir,
+      runs: runs,
+      go: go,
+      env: env,
+      first: first,
+      first_pid: to_string(first_pid),
+      backend: backend
+    }
+  end
+
+  # SIGTERMs the review's backend and, once it has recorded its exit
+  # code, reruns the review; returns the rerun once it has a backend.
+  defp kill_backend_and_rerun(review) do
+    System.cmd("kill", ["-TERM", review.backend])
+    await_file(Path.join([review.runs, "*", "exit"]))
+
+    second =
+      open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], review.dir, review.env)
+
+    await_backend_pid(review.runs, 100, [review.backend])
+    second
+  end
+
+  # The pid of a detached shepherd not in `known`, once a caller has
+  # started it.
+  defp await_backend_pid(runs, attempts \\ 100, known \\ []) do
+    pids =
+      Path.join([runs, "*", "pid"])
+      |> Path.wildcard()
+      # A caller may remove a run dir between the listing and the read.
+      |> Enum.flat_map(fn path ->
+        case File.read(path) do
+          {:ok, pid} -> [String.trim(pid)]
+          {:error, _} -> []
+        end
+      end)
+
+    case Enum.reject(pids, &(&1 in known)) do
+      [pid | _] ->
+        pid
 
       [] when attempts > 0 ->
         Process.sleep(50)
-        await_backend_pid(runs, attempts - 1)
+        await_backend_pid(runs, attempts - 1, known)
 
       [] ->
         flunk("the caller started no backend in #{runs}")
+    end
+  end
+
+  defp await_file(pattern, attempts \\ 100) do
+    cond do
+      Path.wildcard(pattern) != [] ->
+        :ok
+
+      attempts > 0 ->
+        Process.sleep(50)
+        await_file(pattern, attempts - 1)
+
+      true ->
+        flunk("nothing matched #{pattern}")
     end
   end
 
