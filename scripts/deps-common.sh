@@ -15,6 +15,14 @@ require_tools() {
   done
 }
 
+# without_git_env CMD...: runs CMD without the GIT_INDEX_FILE and other
+# variables Git exports to hooks, as scripts/check.sh does, so fetching a
+# git dependency into deps/ leaves this checkout's index alone.
+without_git_env() {
+  # shellcheck disable=SC2046
+  (unset $(git rev-parse --local-env-vars) && "$@")
+}
+
 # load_exemptions: sets EXEMPT_JSON from scripts/dep-exemptions.json, a
 # map of package name → {version, reason}. `version` is the newest
 # upstream release being declined, and `reason` says why.
@@ -42,6 +50,14 @@ exemption_version() {
 # so --config.minimum-release-age=0 reports the registry's latest instead.
 pnpm_outdated() {
   local json err rc
+  # pnpm outdated reads current releases from node_modules/, which a
+  # rebase or branch switch leaves at the previous lockfile's, so install
+  # pnpm-lock.yaml's first. --frozen-lockfile fails rather than rewrite it.
+  json=$(without_git_env pnpm install --frozen-lockfile --ignore-scripts --prefer-offline 2>&1) || {
+    echo "$json"
+    echo "$prefix pnpm install --frozen-lockfile failed — cannot check JS deps against pnpm-lock.yaml."
+    return 1
+  }
   err=$(mktemp)
   # pnpm outdated exits 1 when it FINDS outdated deps, so the exit code
   # alone can't tell findings from breakage: a JSON object on stdout is
@@ -80,6 +96,14 @@ npm_latest() {
 # release the requirements exclude, so that one is "not".
 hex_outdated() {
   local rc
+  # hex.outdated aborts while deps/ differs from mix.lock, as after a
+  # rebase or branch switch, so fetch the locked versions first.
+  # --check-locked fails rather than rewrite mix.lock to match mix.exs.
+  HEX_OUT=$(without_git_env mix deps.get --check-locked 2>&1) || {
+    echo "$HEX_OUT"
+    echo "$prefix mix deps.get --check-locked failed — cannot check Hex deps against mix.lock."
+    return 1
+  }
   # hex.outdated exits 1 when updates exist.
   HEX_OUT=$(mix hex.outdated 2>&1) && rc=0 || rc=$?
   if ((rc > 1)) || ! HEX_ROWS=$(awk '
