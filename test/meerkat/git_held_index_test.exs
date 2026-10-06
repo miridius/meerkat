@@ -1,5 +1,5 @@
 defmodule Meerkat.GitHeldIndexTest do
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, put_env: 2, stage: 3, temporary_index: 3]
 

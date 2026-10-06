@@ -4,7 +4,7 @@ defmodule Meerkat.GitCommitIndexTest do
   # `git commit <path>`, git hands the hook the index holding what the commit
   # will contain in GIT_INDEX_FILE; the real index does not hold it. What the
   # hook reads must be what the commit records.
-  use ExUnit.Case, async: false
+  use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0, stage: 3]
 
