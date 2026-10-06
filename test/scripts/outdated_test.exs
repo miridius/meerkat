@@ -218,6 +218,7 @@ defmodule Meerkat.OutdatedGateTest do
 
   describe "a JS release pnpm outdated reports but pnpm refuses to install" do
     setup ctx do
+      exempt(ctx, %{})
       File.write!(ctx.pnpm_out, ~s({"lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
 
       File.write!(
@@ -227,16 +228,12 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "passes the gate when a package version it requires is under 24h", ctx do
-      exempt(ctx, %{})
-
       assert {out, 0} = run(ctx)
       assert out =~ "ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17"
       assert out =~ "too young: lefthook@2.1.17 requires a package version under the 24h floor"
     end
 
     test "checks it on a scratch copy it removes, leaving the tree alone", ctx do
-      exempt(ctx, %{})
-
       assert {_, 0} = run(ctx)
       assert [scratch] = ctx.scratch_log |> File.read!() |> String.split("\n", trim: true)
       refute File.exists?(scratch)
@@ -247,7 +244,6 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "blocks the push when it cannot copy the workspace", ctx do
-      exempt(ctx, %{})
       File.rm!(Path.join(ctx.base, "pnpm-workspace.yaml"))
 
       assert {out, 1} = run(ctx)
@@ -255,7 +251,6 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "blocks the push when pnpm fails for another reason", ctx do
-      exempt(ctx, %{})
       File.write!(Path.join(ctx.refuse, "lefthook"), " ERR_PNPM_META_FETCH_FAIL  GET failed\n")
 
       assert {out, 1} = run(ctx)

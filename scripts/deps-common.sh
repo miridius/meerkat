@@ -83,10 +83,7 @@ pnpm_installable() {
     rc=0 || rc=$?
   rm -rf "$tmp"
   ((rc == 0)) && return 0
-  if [[ "$out" == *ERR_PNPM_NO_MATURE_MATCHING_VERSION* ]]; then
-    grep -m1 ERR_PNPM_NO_MATURE_MATCHING_VERSION <<<"$out"
-    return 2
-  fi
+  grep -m1 ERR_PNPM_NO_MATURE_MATCHING_VERSION <<<"$out" && return 2
   echo "$out"
   echo "$prefix pnpm could not resolve $1's latest release (exit $rc) — cannot check it is installable."
   return 1
