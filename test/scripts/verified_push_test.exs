@@ -42,7 +42,11 @@ defmodule Meerkat.VerifiedPushTest do
     #!/usr/bin/env bash
     echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
     pwd -P >> '#{dirs}'
-    [ -z "${STUB_FIFO:-}" ] || { echo started > "$STUB_FIFO"; sleep 30; }
+    if [ -n "${STUB_FIFO:-}" ] && [ ! -e "$STUB_FIFO.used" ]; then
+      touch "$STUB_FIFO.used"
+      echo started > "$STUB_FIFO"
+      sleep 30
+    fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
     [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
     """)
@@ -138,25 +142,31 @@ defmodule Meerkat.VerifiedPushTest do
     assert_cleaned_up(ctx)
   end
 
-  test "interrupting the check of a tip other than HEAD removes its temporary worktree", ctx do
-    other = other_tip(ctx.work)
+  test "interrupting the check of a tip other than HEAD removes its temporary worktree and stops the push",
+       ctx do
+    commit(ctx.work, "code.txt", "lower\n", "lower")
+    lower = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "code.txt", "upper\n", "upper")
+    upper = git(ctx.work, ["rev-parse", "HEAD"])
+    git(ctx.work, ["reset", "-q", "--hard", "HEAD~2"])
     fifo = ctx.log <> ".fifo"
     {_, 0} = System.cmd("mkfifo", [fifo])
-    on_exit(fn -> File.rm(fifo) end)
+    on_exit(fn -> Enum.each([fifo, fifo <> ".used"], &File.rm/1) end)
 
     # As Ctrl-C does, interrupt the whole process group once the check has started.
     driver = """
     set -m
-    bash scripts/verified-push.sh "$1" &
-    read -r _ < "$2"
+    bash scripts/verified-push.sh "$1" "$2" &
+    read -r _ < "$3"
     kill -INT -- -$!
     wait $!
     """
 
     assert {_, code} =
-             run(ctx.work, ["-c", driver, "driver", other, fifo], [{"STUB_FIFO", fifo}])
+             run(ctx.work, ["-c", driver, "driver", lower, upper, fifo], [{"STUB_FIFO", fifo}])
 
     assert code != 0
+    assert checks_run(ctx) == ["check.sh --head in #{lower}"]
     assert_cleaned_up(ctx)
   end
 

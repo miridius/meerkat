@@ -20,8 +20,8 @@ cd "$(git rev-parse --show-toplevel)"
 # even when the check is interrupted.
 check_elsewhere() (
   tmp=$(mktemp -d) || exit 1
-  trap 'git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
-  trap 'exit 130' INT TERM HUP
+  # Bash also runs this when a signal such as Ctrl-C's kills it.
+  trap '[ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
   # No hooks: post-checkout would run lefthook, which the new worktree lacks.
   git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" || exit 1
   cd "$tmp/tree" || exit 1
