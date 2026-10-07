@@ -71,10 +71,10 @@ path and resumes the live review with its Approved ticks and comments,
 even when every staged file is ticked Approved. This covers exit-75
 restarts onto a new version or after a code change, and the prod
 shepherd's single retry after crash exit 2. When the CLI announces the
-review, it writes a `served` marker file in the review's serve dir;
+review, it writes a `served` marker file in the review's run dir;
 a BEAM that starts and finds this marker skips the fast path. The
-launcher creates a fresh serve dir for each review and deletes it when
-the review ends, so a new invocation still gets the fast path.
+launcher starts each review's backend in a newly created run dir, so
+a new invocation still gets the fast path.
 
 ## Review timeout
 

@@ -8,9 +8,10 @@
 # leaves the review running for the next invocation to reattach to.
 #
 # A backend's run dir holds `pid` (its shepherd), `token`, `log` (its
-# stderr), `port` ("<port> <BEAM pid>" while a BEAM serves) and, once it
-# has exited, `exit`. The attach stream's frames are documented in
-# `MeerkatWeb.AttachController`.
+# stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
+# (once a BEAM has announced the review), `index` (a held temporary
+# index, if any) and, once it has exited, `exit`. The attach stream's
+# frames are documented in `MeerkatWeb.AttachController`.
 
 meerkat_attach() {
   local self="$1"

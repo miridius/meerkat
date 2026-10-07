@@ -27,7 +27,9 @@ test.describe("a review that restarts onto a new version", () => {
 		const meerkat = await startMeerkat({
 			fixture: makeFixture({ files: { "a.txt": "one\n" } }),
 			env: { MEERKAT_CURRENT_LINK: link },
+			keepFixture: true,
 		});
+		let rerun: Runner | undefined;
 		try {
 			await page.goto(meerkat.url);
 			await page.getByRole("button", { name: "+ Add global comment" }).click();
@@ -69,8 +71,19 @@ test.describe("a review that restarts onto a new version", () => {
 			expect(code).toBe(0);
 			expect(stderr).not.toContain("auto-approving");
 			expect(stderr).toContain("kept across the restart");
+
+			rerun = await startMeerkat({
+				fixture: meerkat.fixture,
+				runsDir: meerkat.runsDir,
+				awaitUrl: false,
+			});
+			const again = await rerun.awaitExit();
+			expect(again.code).toBe(0);
+			expect(again.stderr).toContain("auto-approving");
 		} finally {
+			await rerun?.kill();
 			await meerkat.kill();
+			meerkat.fixture.cleanup?.();
 			rmSync(versions, { recursive: true, force: true });
 		}
 	});

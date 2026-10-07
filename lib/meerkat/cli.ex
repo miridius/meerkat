@@ -130,7 +130,10 @@ defmodule Meerkat.CLI do
   defp hold_temporary_index(_target), do: :ok
 
   defp review(target, opts) do
-    # muex:ignore unreachable I/O seam: only a served review tells this read apart, and it boots the endpoint, which ExUnit cannot run; killed by restart.spec.ts
+    # Only a served review distinguishes this read; resuming it serves the
+    # review, which ExUnit cannot do: tests run the endpoint with
+    # server: false.
+    # muex:ignore unreachable I/O seam: killed by restart.spec.ts
     serve_dir = System.get_env("MEERKAT_SERVE_DIR")
 
     case auto_approve_decision(target, repo_path(), serve_dir) do
@@ -385,9 +388,10 @@ defmodule Meerkat.CLI do
           :live | {:auto, String.t()}
   defp auto_approve_decision({:staged, _}, repo_path, serve_dir) do
     # A BEAM respawned for a review its serve dir already served (a restart
-    # onto a new version, a crash retry) resumes it: ticking a file Approved
-    # records it in the approval cache at once, so with every file ticked
-    # the fast path would exit 0 with no Approve click and drop the comments.
+    # onto a new version or after a code change, a crash retry) resumes it:
+    # ticking a file Approved records it in the approval cache at once, so
+    # with every file ticked the fast path would exit 0 with no Approve
+    # click and drop the comments.
     #
     # A prior review's **question**-type comments are answered on disk
     # (pending-answers.json) but not yet shown to the reviewer. The
@@ -406,7 +410,7 @@ defmodule Meerkat.CLI do
     end
   end
 
-  # muex:ignore equivalent: every argument is ignored, so swapping them changes nothing
+  # muex:ignore equivalent: swapping ignored arguments changes nothing
   defp auto_approve_decision(_target, _repo_path, _serve_dir), do: :live
 
   # The staged-diff auto-approve fast path. Unreachable while pending
@@ -819,7 +823,9 @@ defmodule Meerkat.CLI do
       Application.put_env(:meerkat, :review_banner, banner)
       {:ok, {_ip, port}} = MeerkatWeb.Endpoint.server_info(:http)
 
-      # muex:ignore unreachable I/O seam: announcing runs only after the endpoint boots, which ExUnit cannot run; killed by restart.spec.ts
+      # Announcing reads the bound HTTP port; tests run the endpoint with
+      # server: false.
+      # muex:ignore unreachable I/O seam: killed by restart.spec.ts
       :ok = mark_served(serve_dir)
       # The caller attaches on the port, and kills this BEAM by pid if its
       # shepherd dies before a decision.

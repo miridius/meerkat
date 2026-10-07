@@ -1061,8 +1061,9 @@ defmodule Meerkat.CLITest do
   describe "auto_approve_decision/3 — restarted review (real git fixture)" do
     # Ticking a file Approved records it in the approval cache at once, so
     # once every file is ticked, a BEAM respawned for the same review
-    # (restart onto a new version, crash retry) would find them all
-    # approved and exit 0 with no Approve click, dropping the comments.
+    # (restart onto a new version or after a code change, crash retry)
+    # would find them all approved and exit 0 with no Approve click,
+    # dropping the comments.
     setup do
       dir = make_git_repo("meerkat-cli-restart")
       git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
