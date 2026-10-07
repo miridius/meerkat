@@ -11,9 +11,7 @@ if Mix.env() == :dev do
 
     Only started under `MIX_ENV=dev` when the CLI flips
     `:start_endpoint` on (i.e. the review UI is actually rendering —
-    `mix test` paths skip it). The module compiles in every env so
-    the supervisor's start logic stays uniform; the body just never
-    runs outside dev.
+    `mix test` paths skip it). The module compiles only in dev.
 
     Debounce — file-system events can fire dozens of times per save
     (editors write temp files, mv-rename, fsync). We collect events
@@ -47,9 +45,9 @@ if Mix.env() == :dev do
 
           {:ok, %{fs_pid: fs_pid, repo_root: repo_root, restart_timer: nil}}
 
-        {:error, reason} ->
+        failure ->
           Logger.warning(
-            "Meerkat.DevWatcher: couldn't start file_system (#{inspect(reason)}); " <>
+            "Meerkat.DevWatcher: couldn't start file_system (#{inspect(failure)}); " <>
               "auto-restart on code change disabled."
           )
 

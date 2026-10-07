@@ -22,7 +22,9 @@ Two halves:
    any meaningful event (created / modified / renamed / removed /
    moved) for a watched extension (`.ex`, `.exs`, `.heex`,
    `.svelte`, `.css`, `.js`, `.ts`, `.mjs`, `.cjs`), it debounces
-   for 150ms and then `System.halt(75)`.
+   for 150ms and then `System.halt(75)`. If `file_system` can't
+   start (e.g., its macOS listener is missing), it logs a warning;
+   the review runs without auto-restart.
 
 2. **`bin/meerkat-beam` shepherd loop** — the bash wrapper around
    `mix run --no-start --no-compile`. Exit code 75 restarts after a
