@@ -43,13 +43,13 @@ defmodule Meerkat.VerifiedPushTest do
     echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
     pwd -P >> '#{dirs}'
     # Blocks only the first check, so a test can see whether a later tip is
-    # still checked after an interrupt. Like the BEAM, it handles the
-    # interrupt itself and exits 0.
+    # still checked after an interrupt. Like the BEAM, it handles SIGINT
+    # itself and exits 0.
     if [ -n "${STUB_FIFO:-}" ] && [ ! -e "$STUB_FIFO.used" ]; then
       touch "$STUB_FIFO.used"
       sleep 30 &
       sleeper=$!
-      trap 'kill "$sleeper" 2>/dev/null; exit 0' INT HUP TERM
+      trap 'kill "$sleeper"; exit 0' INT
       echo started > "$STUB_FIFO"
       wait "$sleeper"
     fi
@@ -169,16 +169,17 @@ defmodule Meerkat.VerifiedPushTest do
     # Signal the whole process group once the check has started, as Ctrl-C does.
     driver = """
     set -m
-    bash scripts/verified-push.sh "$1" "$2" &
+    { bash scripts/verified-push.sh "$1" "$2"; echo "caller carried on after $1"; } &
     read -r _ < "$3"
     kill -"$4" -- -$!
     wait $!
     """
 
     args = ["-c", driver, "driver", lower, upper, fifo, signal]
-    assert {_, code} = run(ctx.work, args, [{"STUB_FIFO", fifo}])
+    assert {out, code} = run(ctx.work, args, [{"STUB_FIFO", fifo}])
 
     assert code != 0
+    refute out =~ "caller carried on after #{lower}"
     assert checks_run(ctx) == ["check.sh --head in #{lower}"]
     assert_cleaned_up(ctx)
   end
