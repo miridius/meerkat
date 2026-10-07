@@ -7,11 +7,37 @@
 #   verified-push.sh <sha>...
 #
 # An unchecked tip that is HEAD, with nothing uncommitted or untracked, is
-# checked now with `check.sh --head`. Any other unchecked tip is refused:
-# check it out and push again.
+# checked now with `check.sh --head`. An unchecked HEAD in a worktree holding
+# anything else is refused. Any other unchecked tip, such as a branch below
+# HEAD that `gh stack sync` rebased and pushes with it, is checked with
+# `check.sh --head` in a temporary worktree of that commit.
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
+
+# check_elsewhere <commit>: runs that commit's `check.sh --head` in a new
+# detached worktree, which builds everything from scratch, then removes it,
+# even when the check is interrupted.
+check_elsewhere() (
+  tmp=$(mktemp -d) || exit 1
+  # A second Ctrl-C does not cut the cleanup short.
+  trap 'trap "" INT; [ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
+  # An exit, not death by SIGINT: bash 3.2 can skip the EXIT trap then.
+  trap 'exit 130' INT
+  # No hooks: post-checkout would run lefthook, which the new worktree lacks.
+  git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" || exit 1
+  cd "$tmp/tree" || exit 1
+  # Git exports GIT_DIR and friends to hooks; left set, they would point
+  # the check's git commands at this checkout instead.
+  # shellcheck disable=SC2046
+  unset $(git rev-parse --local-env-vars)
+  bash scripts/check.sh --head
+)
+
+# Stop at Ctrl-C, however the interrupted child exited: bash carries on after
+# a child that handled SIGINT itself, as the BEAM does. Dying by SIGINT, not
+# exiting, makes a calling bash stop too.
+trap 'trap - INT; kill -INT $$' INT
 
 status=0
 for sha in "$@"; do
@@ -29,8 +55,15 @@ for sha in "$@"; do
 
   short=$(git rev-parse --short "$commit")
   if [[ "$commit" != "$(git rev-parse HEAD)" ]]; then
-    echo "pre-push: $short has not passed scripts/check.sh. Check it out and push again." >&2
-    status=1
+    echo "pre-push: $short has not passed scripts/check.sh; checking it now in a" >&2
+    echo "temporary worktree." >&2
+    if ! check_elsewhere "$commit"; then
+      echo "pre-push: $short failed scripts/check.sh." >&2
+      status=1
+    elif ! bash scripts/checked-trees.sh has "$commit"; then
+      echo "pre-push: $short passed scripts/check.sh but was not recorded." >&2
+      status=1
+    fi
   elif ! bash scripts/checked-trees.sh holds "$commit"; then
     echo "pre-push: HEAD ($short) has not passed scripts/check.sh, and the worktree has" >&2
     echo "uncommitted or untracked files, so it cannot be checked as committed." >&2
