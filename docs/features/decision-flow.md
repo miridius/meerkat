@@ -66,6 +66,16 @@ meerkat exits **0** before binding the server:
 
 The UI never opens in these cases.
 
+A BEAM respawned by the shepherd for the same review skips the fast
+path and resumes the live review with its Approved ticks and comments,
+even when every staged file is ticked Approved. This covers exit-75
+restarts onto a new version or after a code change, and the prod
+shepherd's single retry after crash exit 2. When the CLI announces the
+review, it writes a `served` marker file in the review's serve dir;
+a BEAM that starts and finds this marker skips the fast path. The
+launcher creates a fresh serve dir for each review and deletes it when
+the review ends, so a new invocation still gets the fast path.
+
 ## Review timeout
 
 A review's deadline is 90 minutes by default. `MEERKAT_REVIEW_TIMEOUT`

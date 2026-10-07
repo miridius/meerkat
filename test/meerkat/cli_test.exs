@@ -45,7 +45,7 @@ defmodule Meerkat.CLITest do
   #   exits 64 and names the option".
   # - The staged-diff auto-approve path in `auto_approve_staged/1`
   #   (statement deletion among the Git shell-outs) — real-git I/O
-  #   wiring; covered by the real-git `auto_approve_decision/2` tests
+  #   wiring; covered by the real-git `auto_approve_decision/3` tests
   #   below.
 
   import Meerkat.TestHelpers
@@ -954,7 +954,7 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "auto_approve_decision/2 — pending-answers gate (real git fixture)" do
+  describe "auto_approve_decision/3 — pending-answers gate (real git fixture)" do
     # Real-git fixture (not async: each test owns a tmp repo and shells
     # out to `git`). A prior review's **question**-type comments leave a
     # pending-answers.json in the worktree's gitdir; the staged
@@ -1033,7 +1033,7 @@ defmodule Meerkat.CLITest do
       assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
-    test "auto_approve_decision/2 with pending answers leaves the file in place", %{dir: dir} do
+    test "auto_approve_decision/3 with pending answers leaves the file in place", %{dir: dir} do
       path = write_pending_answers(dir)
       assert CLI.auto_approve_decision_for_test(dir) == :live
       assert File.exists?(path)
@@ -1058,7 +1058,45 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "auto_approve_decision/2 — mid-rebase (real git fixture)" do
+  describe "auto_approve_decision/3 — restarted review (real git fixture)" do
+    # Ticking a file Approved records it in the approval cache at once, so
+    # once every file is ticked, a BEAM respawned for the same review
+    # (restart onto a new version, crash retry) would find them all
+    # approved and exit 0 with no Approve click, dropping the comments.
+    setup do
+      dir = make_git_repo("meerkat-cli-restart")
+      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
+      stage(dir, "a.rs", "fn a() {}\n")
+      oid = git(dir, ["rev-parse", ":a.rs"])
+      path = ApprovalCache.path_for(dir)
+      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      serve_dir = Path.join(dir, ".git/run")
+      File.mkdir_p!(serve_dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir, serve_dir: serve_dir}
+    end
+
+    test "a review already served from its serve dir stays live", %{
+      dir: dir,
+      serve_dir: serve_dir
+    } do
+      CLI.mark_served_for_test(serve_dir)
+      assert CLI.auto_approve_decision_for_test(dir, serve_dir) == :live
+    end
+
+    test "a new invocation's fresh serve dir still auto-approves", %{
+      dir: dir,
+      serve_dir: serve_dir
+    } do
+      assert CLI.auto_approve_decision_for_test(dir, serve_dir) ==
+               {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
+    end
+  end
+
+  describe "auto_approve_decision/3 — mid-rebase (real git fixture)" do
     test "each half of a split approved commit auto-approves" do
       dir = split_approved_commit_mid_rebase("meerkat-cli-rebase")
 
