@@ -180,7 +180,7 @@ defmodule Meerkat.VerifiedPushTest do
     assert {_, 0} = checked(ctx.work, other)
   end
 
-  test "a rebased stack's HEAD and the branch below it are both checked", ctx do
+  test "a stack's HEAD and the unchecked branch below it are both checked", ctx do
     commit(ctx.work, "code.txt", "lower\n", "lower")
     lower = git(ctx.work, ["rev-parse", "HEAD"])
     commit(ctx.work, "code.txt", "upper\n", "upper")

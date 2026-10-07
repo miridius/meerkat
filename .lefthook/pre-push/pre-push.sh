@@ -43,9 +43,8 @@ status=0
 bash scripts/no-private-refs.sh "${scan_args[@]}" || status=1
 bash scripts/outdated.sh || status=1
 
-# verified-push.sh can run the whole pre-commit gate once per unchecked tip,
-# which takes minutes each, so it runs only when the push would otherwise go
-# through.
+# verified-push.sh can run scripts/check.sh once per unchecked tip, which
+# takes minutes each, so it runs only when the push would otherwise go through.
 if [ "$status" = 0 ]; then
   bash scripts/verified-push.sh "${pushed[@]}" || status=1
 fi
