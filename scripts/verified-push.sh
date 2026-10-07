@@ -20,8 +20,9 @@ cd "$(git rev-parse --show-toplevel)"
 # even when the check is interrupted.
 check_elsewhere() (
   tmp=$(mktemp -d) || exit 1
-  # Bash also runs this when a signal such as Ctrl-C's kills it.
   trap '[ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
+  # An exit, not death by the signal: bash 3.2 skips the EXIT trap then.
+  trap 'exit 130' INT TERM HUP
   # No hooks: post-checkout would run lefthook, which the new worktree lacks.
   git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" || exit 1
   cd "$tmp/tree" || exit 1
@@ -31,6 +32,10 @@ check_elsewhere() (
   unset $(git rev-parse --local-env-vars)
   bash scripts/check.sh --head
 )
+
+# Stop at an interrupt, however the interrupted child exited: bash carries on
+# after a child that handled the signal itself, as the BEAM does.
+trap 'exit 130' INT TERM HUP
 
 status=0
 for sha in "$@"; do

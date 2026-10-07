@@ -109,6 +109,11 @@ defmodule Meerkat.PreCommitHookTest do
     if [ "$cmd" = "${STUB_EDIT:-}" ]; then
       echo "edited mid-run" >> code.txt
     fi
+    # Like the BEAM after Ctrl-C: check.sh gets the interrupt, this step exits 0.
+    if [ "$cmd" = "${STUB_INTERRUPT:-}" ]; then
+      kill -INT "$PPID"
+      exit 0
+    fi
     [ "$cmd" != "${STUB_FAIL:-}" ]
     """)
 
@@ -229,6 +234,13 @@ defmodule Meerkat.PreCommitHookTest do
     test "records nothing when its checks fail", ctx do
       assert {_, code} = check_head(ctx, [{"STUB_FAIL", "bun run test:e2e"}])
       assert code != 0
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "stops at an interrupt the interrupted step handled, and records nothing", ctx do
+      assert {_, code} = check_head(ctx, [{"STUB_INTERRUPT", "mix credo --strict"}])
+      assert code != 0
+      assert List.last(gates_run(ctx)) == "mix credo --strict"
       refute checked?(ctx, "HEAD")
     end
   end

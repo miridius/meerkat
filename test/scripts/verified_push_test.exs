@@ -42,10 +42,16 @@ defmodule Meerkat.VerifiedPushTest do
     #!/usr/bin/env bash
     echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
     pwd -P >> '#{dirs}'
+    # Blocks only the first check, so a test can see whether a later tip is
+    # still checked after an interrupt. Like the BEAM, it handles the
+    # interrupt itself and exits 0.
     if [ -n "${STUB_FIFO:-}" ] && [ ! -e "$STUB_FIFO.used" ]; then
       touch "$STUB_FIFO.used"
+      sleep 30 &
+      sleeper=$!
+      trap 'kill "$sleeper" 2>/dev/null; exit 0' INT HUP TERM
       echo started > "$STUB_FIFO"
-      sleep 30
+      wait "$sleeper"
     fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
     [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
@@ -142,8 +148,15 @@ defmodule Meerkat.VerifiedPushTest do
     assert_cleaned_up(ctx)
   end
 
-  test "interrupting the check of a tip other than HEAD removes its temporary worktree and stops the push",
-       ctx do
+  # INT as from Ctrl-C, HUP as from a closed terminal, TERM as from kill.
+  for signal <- ~w(INT HUP TERM) do
+    test "SIG#{signal} during the check of a tip other than HEAD removes its temporary worktree and checks no later tip",
+         ctx do
+      interrupt_check(ctx, unquote(signal))
+    end
+  end
+
+  defp interrupt_check(ctx, signal) do
     commit(ctx.work, "code.txt", "lower\n", "lower")
     lower = git(ctx.work, ["rev-parse", "HEAD"])
     commit(ctx.work, "code.txt", "upper\n", "upper")
@@ -153,17 +166,17 @@ defmodule Meerkat.VerifiedPushTest do
     {_, 0} = System.cmd("mkfifo", [fifo])
     on_exit(fn -> Enum.each([fifo, fifo <> ".used"], &File.rm/1) end)
 
-    # As Ctrl-C does, interrupt the whole process group once the check has started.
+    # Signal the whole process group once the check has started, as Ctrl-C does.
     driver = """
     set -m
     bash scripts/verified-push.sh "$1" "$2" &
     read -r _ < "$3"
-    kill -INT -- -$!
+    kill -"$4" -- -$!
     wait $!
     """
 
-    assert {_, code} =
-             run(ctx.work, ["-c", driver, "driver", lower, upper, fifo], [{"STUB_FIFO", fifo}])
+    args = ["-c", driver, "driver", lower, upper, fifo, signal]
+    assert {_, code} = run(ctx.work, args, [{"STUB_FIFO", fifo}])
 
     assert code != 0
     assert checks_run(ctx) == ["check.sh --head in #{lower}"]

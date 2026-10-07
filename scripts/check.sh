@@ -14,6 +14,11 @@
 # scripts/checked-trees.sh records those contents.
 set -euo pipefail
 
+# Stop at an interrupt, however the interrupted step exited: bash carries on
+# after a child that handled the signal itself, as the BEAM does, and the
+# remaining steps could then record contents whose checks never finished.
+trap 'exit 130' INT TERM HUP
+
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
