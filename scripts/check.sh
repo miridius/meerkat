@@ -14,6 +14,12 @@
 # scripts/checked-trees.sh records those contents.
 set -euo pipefail
 
+# Stop at Ctrl-C, however the interrupted step exited: bash carries on after
+# a child that handled SIGINT itself, as the BEAM does, and the run could
+# then go on to record contents whose checks never finished. Dying by SIGINT,
+# not exiting, makes a calling bash stop too.
+trap 'trap - INT; kill -INT $$' INT
+
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 

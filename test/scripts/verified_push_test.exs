@@ -15,6 +15,19 @@ defmodule Meerkat.VerifiedPushTest do
     File.rm_rf!(Path.join(work, ".git"))
     log = Path.join(Path.dirname(work), Path.basename(work) <> ".log")
     on_exit(fn -> File.rm(log) end)
+    # Where each check ran, so a test can see what a temporary worktree leaves.
+    dirs = Path.join(Path.dirname(work), Path.basename(work) <> ".dirs")
+
+    on_exit(fn ->
+      # A temporary worktree the script failed to remove is not left behind.
+      with {:ok, ran_in} <- File.read(dirs) do
+        for tree <- String.split(ran_in, "\n", trim: true), Path.basename(tree) == "tree" do
+          File.rm_rf!(Path.dirname(tree))
+        end
+      end
+
+      File.rm(dirs)
+    end)
 
     git(Path.dirname(work), ["init", "-q", "--initial-branch=main", work])
     git(work, ["config", "user.email", "t@t.t"])
@@ -27,7 +40,19 @@ defmodule Meerkat.VerifiedPushTest do
 
     File.write!(Path.join([work, "scripts", "check.sh"]), """
     #!/usr/bin/env bash
-    echo "check.sh $*" >> '#{log}'
+    echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
+    pwd -P >> '#{dirs}'
+    # Blocks only the first check, so a test can see whether a later tip is
+    # still checked after an interrupt. Like the BEAM, it handles SIGINT
+    # itself and exits 0.
+    if [ -n "${STUB_FIFO:-}" ] && [ ! -e "$STUB_FIFO.used" ]; then
+      touch "$STUB_FIFO.used"
+      sleep 30 &
+      sleeper=$!
+      trap 'kill "$sleeper"; exit 0' INT
+      echo started > "$STUB_FIFO"
+      wait "$sleeper"
+    fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
     [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
     """)
@@ -36,7 +61,7 @@ defmodule Meerkat.VerifiedPushTest do
     git(work, ["add", "-A"])
     git(work, ["commit", "-qm", "base"])
 
-    {:ok, work: work, log: log}
+    {:ok, work: work, log: log, dirs: dirs}
   end
 
   test "a tip already checked is pushed without checking it again", ctx do
@@ -59,7 +84,7 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {out, 0} = verified_push(ctx, ["HEAD"])
     assert out =~ "checking it now"
-    assert checks_run(ctx) == ["check.sh --head"]
+    assert checks_run(ctx) == ["check.sh --head in #{git(ctx.work, ["rev-parse", "HEAD"])}"]
     assert {_, 0} = checked(ctx.work, "HEAD")
   end
 
@@ -68,7 +93,7 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {_, code} = verified_push(ctx, ["HEAD"], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert checks_run(ctx) == ["check.sh --head"]
+    assert checks_run(ctx) == ["check.sh --head in #{git(ctx.work, ["rev-parse", "HEAD"])}"]
   end
 
   test "an unchecked HEAD beside an untracked file is refused unchecked", ctx do
@@ -91,38 +116,122 @@ defmodule Meerkat.VerifiedPushTest do
     assert out =~ "uncommitted or untracked files"
   end
 
-  test "an unchecked tip other than HEAD is refused and named", ctx do
-    commit(ctx.work, "code.txt", "other\n", "other")
-    other = git(ctx.work, ["rev-parse", "HEAD"])
-    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+  test "an unchecked tip other than HEAD is checked in a temporary worktree, then recorded",
+       ctx do
+    other = other_tip(ctx.work)
     mark(ctx.work, "HEAD")
 
-    assert {out, code} = verified_push(ctx, [other])
-    assert code != 0
+    assert {out, 0} = verified_push(ctx, [other])
     short = git(ctx.work, ["rev-parse", "--short", other])
-    assert out =~ "#{short} has not passed scripts/check.sh"
-    assert checks_run(ctx) == []
+    assert out =~ "#{short} has not passed scripts/check.sh; checking it now"
+    assert checks_run(ctx) == ["check.sh --head in #{other}"]
+    assert {_, 0} = checked(ctx.work, other)
+    assert_cleaned_up(ctx)
   end
 
-  test "an unchecked tip is refused after a checked one", ctx do
+  test "a failing check of a tip other than HEAD blocks the push", ctx do
+    other = other_tip(ctx.work)
+
+    assert {out, code} = verified_push(ctx, [other], [{"STUB_FAIL", "1"}])
+    assert code != 0
+    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed scripts/check.sh"
+    assert {_, 1} = checked(ctx.work, other)
+    assert_cleaned_up(ctx)
+  end
+
+  test "a tip other than HEAD whose check records nothing blocks the push", ctx do
+    other = other_tip(ctx.work)
+
+    assert {out, code} = verified_push(ctx, [other], [{"STUB_NO_MARK", "1"}])
+    assert code != 0
+    assert out =~ "passed scripts/check.sh but was not recorded"
+    assert_cleaned_up(ctx)
+  end
+
+  # INT as from Ctrl-C, HUP as from a closed terminal, TERM as from kill.
+  for signal <- ~w(INT HUP TERM) do
+    test "SIG#{signal} during the check of a tip other than HEAD removes its temporary worktree and checks no later tip",
+         ctx do
+      interrupt_check(ctx, unquote(signal))
+    end
+  end
+
+  defp interrupt_check(ctx, signal) do
+    commit(ctx.work, "code.txt", "lower\n", "lower")
+    lower = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "code.txt", "upper\n", "upper")
+    upper = git(ctx.work, ["rev-parse", "HEAD"])
+    git(ctx.work, ["reset", "-q", "--hard", "HEAD~2"])
+    fifo = ctx.log <> ".fifo"
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    on_exit(fn -> Enum.each([fifo, fifo <> ".used"], &File.rm/1) end)
+
+    # Signal the whole process group once the check has started, as Ctrl-C does.
+    driver = """
+    set -m
+    { bash scripts/verified-push.sh "$1" "$2"; echo "caller carried on after $1"; } &
+    read -r _ < "$3"
+    kill -"$4" -- -$!
+    wait $!
+    """
+
+    args = ["-c", driver, "driver", lower, upper, fifo, signal]
+    assert {out, code} = run(ctx.work, args, [{"STUB_FIFO", fifo}])
+
+    assert code != 0
+    refute out =~ "caller carried on after #{lower}"
+    assert checks_run(ctx) == ["check.sh --head in #{lower}"]
+    assert_cleaned_up(ctx)
+  end
+
+  test "the check of a tip other than HEAD ignores the git location exported to hooks", ctx do
+    other = other_tip(ctx.work)
+
+    assert {_, 0} = verified_push(ctx, [other], [{"GIT_DIR", Path.join(ctx.work, ".git")}])
+    assert checks_run(ctx) == ["check.sh --head in #{other}"]
+    assert {_, 0} = checked(ctx.work, other)
+  end
+
+  test "the temporary worktree is made without running the repo's hooks", ctx do
+    hooks = Path.join(ctx.work, ".git/failing-hooks")
+    File.mkdir_p!(hooks)
+    File.write!(Path.join(hooks, "post-checkout"), "#!/bin/sh\nexit 1\n")
+    File.chmod!(Path.join(hooks, "post-checkout"), 0o755)
+    git(ctx.work, ["config", "core.hooksPath", hooks])
+    other = other_tip(ctx.work)
+
+    assert {_, 0} = verified_push(ctx, [other])
+    assert {_, 0} = checked(ctx.work, other)
+  end
+
+  test "a stack's HEAD and the unchecked branch below it are both checked", ctx do
+    commit(ctx.work, "code.txt", "lower\n", "lower")
+    lower = git(ctx.work, ["rev-parse", "HEAD"])
+    commit(ctx.work, "code.txt", "upper\n", "upper")
+    upper = git(ctx.work, ["rev-parse", "HEAD"])
+
+    assert {_, 0} = verified_push(ctx, [lower, upper])
+    assert checks_run(ctx) == ["check.sh --head in #{lower}", "check.sh --head in #{upper}"]
+    assert {_, 0} = checked(ctx.work, lower)
+    assert {_, 0} = checked(ctx.work, upper)
+  end
+
+  test "an unchecked tip fails after a checked one", ctx do
     checked = git(ctx.work, ["rev-parse", "HEAD"])
     mark(ctx.work, "HEAD")
-    commit(ctx.work, "code.txt", "other\n", "other")
-    other = git(ctx.work, ["rev-parse", "HEAD"])
-    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+    other = other_tip(ctx.work)
 
-    assert {out, code} = verified_push(ctx, [checked, other])
+    assert {out, code} = verified_push(ctx, [checked, other], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} has not passed"
+    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed"
+    assert checks_run(ctx) == ["check.sh --head in #{other}"]
   end
 
-  test "an unchecked tip is refused after a tag of something other than a commit", ctx do
+  test "an unchecked tip fails after a tag of something other than a commit", ctx do
     blob = git(ctx.work, ["hash-object", "-w", "code.txt"])
-    commit(ctx.work, "code.txt", "other\n", "other")
-    other = git(ctx.work, ["rev-parse", "HEAD"])
-    git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
+    other = other_tip(ctx.work)
 
-    assert {_, code} = verified_push(ctx, [blob, other])
+    assert {_, code} = verified_push(ctx, [blob, other], [{"STUB_FAIL", "1"}])
     assert code != 0
   end
 
@@ -147,18 +256,45 @@ defmodule Meerkat.VerifiedPushTest do
     assert out =~ "cannot read"
   end
 
-  test "an annotated tag of an unchecked commit is refused", ctx do
+  test "an annotated tag of an unchecked commit is checked as that commit", ctx do
     commit(ctx.work, "code.txt", "tagged\n", "tagged")
     git(ctx.work, ["tag", "-a", "-m", "release", "v1"])
+    tagged = git(ctx.work, ["rev-parse", "HEAD"])
     git(ctx.work, ["reset", "-q", "--hard", "HEAD~1"])
 
-    assert {_, code} = verified_push(ctx, ["v1"])
+    assert {_, code} = verified_push(ctx, ["v1"], [{"STUB_FAIL", "1"}])
     assert code != 0
+    assert checks_run(ctx) == ["check.sh --head in #{tagged}"]
   end
 
   defp commit(work, name, content, message) do
     stage(work, name, content)
     git(work, ["commit", "-qm", message])
+  end
+
+  # An unchecked commit that is not HEAD. verified-push.sh treats every such
+  # tip alike, whether it is a stack branch below HEAD or, as here, one HEAD
+  # was reset off.
+  defp other_tip(work) do
+    commit(work, "code.txt", "other\n", "other")
+    other = git(work, ["rev-parse", "HEAD"])
+    git(work, ["reset", "-q", "--hard", "HEAD~1"])
+    other
+  end
+
+  defp worktrees(work) do
+    git(work, ["worktree", "list", "--porcelain"])
+    |> String.split("\n")
+    |> Enum.flat_map(fn
+      "worktree " <> path -> [path]
+      _ -> []
+    end)
+  end
+
+  defp assert_cleaned_up(ctx) do
+    assert worktrees(ctx.work) == [git(ctx.work, ["rev-parse", "--show-toplevel"])]
+    [tree] = ctx.dirs |> File.read!() |> String.split("\n", trim: true)
+    refute File.exists?(Path.dirname(tree))
   end
 
   defp mark(work, rev), do: {_, 0} = run(work, ["scripts/checked-trees.sh", "mark", rev])

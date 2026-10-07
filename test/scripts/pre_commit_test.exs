@@ -109,6 +109,12 @@ defmodule Meerkat.PreCommitHookTest do
     if [ "$cmd" = "${STUB_EDIT:-}" ]; then
       echo "edited mid-run" >> code.txt
     fi
+    # Like the BEAM after Ctrl-C: its process group gets the interrupt, and
+    # this step handles it and exits 0.
+    if [ "$cmd" = "${STUB_INTERRUPT:-}" ]; then
+      trap 'exit 0' INT
+      kill -INT 0
+    fi
     [ "$cmd" != "${STUB_FAIL:-}" ]
     """)
 
@@ -229,6 +235,31 @@ defmodule Meerkat.PreCommitHookTest do
     test "records nothing when its checks fail", ctx do
       assert {_, code} = check_head(ctx, [{"STUB_FAIL", "bun run test:e2e"}])
       assert code != 0
+      refute checked?(ctx, "HEAD")
+    end
+
+    test "stops at an interrupt the interrupted step handled, records nothing, and stops its caller",
+         ctx do
+      # In its own process group, so the stub's interrupt reaches only this job.
+      driver = """
+      set -m
+      { bash scripts/check.sh --head; echo "caller carried on after $1"; } &
+      wait $!
+      """
+
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+      env = [{"PATH", path}, {"STUB_INTERRUPT", "mix credo --strict"} | hook_env()]
+
+      assert {out, code} =
+               System.cmd("bash", ["-c", driver, "driver", "check.sh"],
+                 cd: ctx.work,
+                 env: env,
+                 stderr_to_stdout: true
+               )
+
+      assert code != 0
+      refute out =~ "caller carried on after check.sh"
+      assert List.last(gates_run(ctx)) == "mix credo --strict"
       refute checked?(ctx, "HEAD")
     end
   end
