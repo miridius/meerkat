@@ -71,10 +71,14 @@ The end-to-end loop for a meerkat bug report or feature request:
    ends when every requirement is met and the work is on a
    reviewable branch, not when a response boundary feels
    convenient.
-4. **Ship.** Branch off `main`, commit, push, and open a **draft** PR.
+4. **Ship.** Branch off `main`, or off the branch of the open PR
+   this work builds on, commit, push, and open a **draft** PR.
    Do not ask before pushing or opening the PR. `main` is
    branch-protected on GitHub — no direct pushes, no force-pushes;
    changes land via PR.
+
+   Link a PR built on another open PR into a GitHub stack with
+   `gh stack link`. Its text does not say it is stacked.
 
    Before opening the draft PR, do a quick self-review of the diff
    and the PR description you are about to post, so unchecked work
@@ -90,7 +94,8 @@ The end-to-end loop for a meerkat bug report or feature request:
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after pair
-   can help.
+   can help. Crop each screenshot to the changed element. Put each in
+   its own table row so they read on a phone.
 
 ## Quality gates
 
