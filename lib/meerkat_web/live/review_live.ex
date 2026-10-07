@@ -1973,11 +1973,14 @@ defmodule MeerkatWeb.ReviewLive do
         </button>
         <button
           type="button"
+          id="send-feedback-btn"
           class="warn-btn reject-btn"
           phx-click="decision.reject"
+          phx-hook="SendFeedbackShortcut"
           disabled={@dirty? or not @comments?}
         >
           Send Feedback
+          <kbd id="send-feedback-hint" class="shortcut-hint" aria-hidden="true" phx-update="ignore"></kbd>
         </button>
         <button
           type="button"

@@ -37,6 +37,11 @@ GitHub PR.
    if collapsed), switches an inline form from rendered markdown
    back to the diff, then scrolls to the form and focuses its text
    box. Exit **1** with the formatted comment payload on stderr.
+   Cmd+Shift+Enter on macOS or Ctrl+Shift+Enter elsewhere works from
+   anywhere on the review page, does exactly what clicking Send
+   Feedback does, and does nothing while the button is disabled. The
+   button shows “⇧⌘↩” after its label on macOS and
+   “Ctrl+Shift+Enter” elsewhere.
 
 4. **Approve** — labelled **Approve with feedback** when the review
    has any comments, and **Approve** otherwise. Submits `:approve`
@@ -65,6 +70,16 @@ meerkat exits **0** before binding the server:
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 
 The UI never opens in these cases.
+
+A BEAM respawned by the shepherd for the same review skips the fast
+path and resumes the live review with its Approved ticks and comments,
+even when every staged file is ticked Approved. This covers exit-75
+restarts onto a new version or after a code change, and the prod
+shepherd's single retry after crash exit 2. When the CLI announces the
+review, it writes a `served` marker file in the review's run dir;
+a BEAM that starts and finds this marker skips the fast path. The
+launcher starts each review's backend in a newly created run dir, so
+a new invocation still gets the fast path.
 
 ## Review timeout
 

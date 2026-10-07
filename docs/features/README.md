@@ -14,7 +14,9 @@ Any new feature, fix, or UX tweak follows the same loop:
    doesn't fit any existing file cleanly, add a new one.
 2. **Plannotator-review the spec change.** Treat the markdown
    update as a reviewable artefact in its own right — annotate,
-   resolve, agree on the contract before any code lands.
+   resolve, agree on the contract before any code lands. For a big
+   feature, first open a PR changing only the spec. Settle the
+   design in that PR before building. Small changes skip that PR.
 3. **Implement** the code change to match the (now-updated) spec.
 4. **Run the QA subagent** (see `.claude/agents/meerkat-qa.md`). It
    reads `docs/features/*.md`, generates a test plan, executes
