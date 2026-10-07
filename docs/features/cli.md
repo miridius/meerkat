@@ -143,6 +143,13 @@ staged files are still reviewed. For which index they read, see
   answers file. Nothing was stored, and the input itself was fine.
 - `75` — DevWatcher restart sentinel. Internal to
   `bin/meerkat-beam`'s shepherd loop — never reaches the git hook.
+- `143` — a SIGTERM reached the review BEAM after
+  `Meerkat.CLI.main/1` started. It defaults to REJECT (commit
+  aborted): the BEAM prints a message to stderr, flushes the log
+  file, and halts at once. Both launchers pass it straight through,
+  without a restart or retry. A launcher that receives SIGTERM,
+  SIGINT or SIGHUP also exits 143, without a message, after
+  SIGKILLing its BEAM.
 
 ## Output
 

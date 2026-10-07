@@ -205,6 +205,31 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
+	test("a SIGTERM to the BEAM ends the review at once and the caller exits 143", async ({ page }) => {
+		const fixture = makeFixture();
+		const first = await startMeerkat({ fixture, keepFixture: true });
+		try {
+			await page.goto(first.url);
+			const [dir] = readdirSync(first.runsDir);
+			const [, beam] = readFileSync(join(first.runsDir, dir, "port"), "utf8").trim().split(" ");
+			const backend = backendPid(first);
+			const signalled = Date.now();
+			process.kill(Number(beam), "SIGTERM");
+
+			const { code, stderr } = await first.awaitExit();
+			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(5_000);
+			expect(code).toBe(143);
+			expect(stderr).toContain(
+				"meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted).",
+			);
+			expect(alive(Number(beam))).toBe(false);
+			await expect.poll(() => alive(backend), "the shepherd does not restart the BEAM").toBe(false);
+		} finally {
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
 	test("a decision made after the runs dir is deleted still reaches the caller and ends the backend", async ({
 		page,
 	}) => {

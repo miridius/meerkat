@@ -112,7 +112,7 @@ defmodule Meerkat.CLITest do
       :sys.suspend(handler)
       line = "meerkat-cli-flush-#{System.unique_integer([:positive])}"
       ExUnit.CaptureLog.capture_log(fn -> Logger.error(line) end)
-      flush = Task.async(&CLI.flush_logs_for_test/0)
+      flush = Task.async(&CLI.flush_logs/0)
 
       try do
         assert Task.yield(flush, 200) == nil, "flush_logs waits on the log file handler"
