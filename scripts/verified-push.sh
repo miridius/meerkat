@@ -16,27 +16,21 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # check_elsewhere <commit>: runs that commit's `check.sh --head` in a new
-# detached worktree, which builds everything from scratch, then removes it.
-check_elsewhere() {
-  local tmp rc=0
-  tmp=$(mktemp -d) || return 1
+# detached worktree, which builds everything from scratch, then removes it,
+# even when the check is interrupted.
+check_elsewhere() (
+  tmp=$(mktemp -d) || exit 1
+  trap 'git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
+  trap 'exit 130' INT TERM HUP
   # No hooks: post-checkout would run lefthook, which the new worktree lacks.
-  if git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1"; then
-    (
-      cd "$tmp/tree" || exit 1
-      # Git exports GIT_DIR and friends to hooks; left set, they would point
-      # the check's git commands at this checkout instead.
-      # shellcheck disable=SC2046
-      unset $(git rev-parse --local-env-vars)
-      bash scripts/check.sh --head
-    ) || rc=1
-    git worktree remove --force "$tmp/tree" || rc=1
-  else
-    rc=1
-  fi
-  rm -rf "$tmp"
-  return "$rc"
-}
+  git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" || exit 1
+  cd "$tmp/tree" || exit 1
+  # Git exports GIT_DIR and friends to hooks; left set, they would point
+  # the check's git commands at this checkout instead.
+  # shellcheck disable=SC2046
+  unset $(git rev-parse --local-env-vars)
+  bash scripts/check.sh --head
+)
 
 status=0
 for sha in "$@"; do
