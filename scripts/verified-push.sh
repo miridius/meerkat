@@ -22,7 +22,7 @@ check_elsewhere() (
   tmp=$(mktemp -d) || exit 1
   # A second Ctrl-C does not cut the cleanup short.
   trap 'trap "" INT; [ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
-  # An exit, not death by SIGINT: bash 3.2 skips the EXIT trap then.
+  # An exit, not death by SIGINT: bash 3.2 can skip the EXIT trap then.
   trap 'exit 130' INT
   # No hooks: post-checkout would run lefthook, which the new worktree lacks.
   git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$1" || exit 1
