@@ -16,7 +16,14 @@ defmodule Meerkat.TimeoutTest do
   import ExUnit.CaptureIO
   import Meerkat.TestHelpers
 
-  alias Meerkat.{Persistence, ReviewState, Timeout}
+  alias Meerkat.{
+    PendingAnswers,
+    PendingQuestions,
+    Persistence,
+    ReviewServer,
+    ReviewState,
+    Timeout
+  }
 
   setup do
     repo = make_tmp_repo("meerkat-timeout")
@@ -357,10 +364,16 @@ defmodule Meerkat.TimeoutTest do
   end
 
   describe "decision/2" do
-    test "with no review state to read, the timeout carries no feedback", %{repo: repo} do
+    test "with no review state to read, the timeout carries no feedback or question obligations",
+         %{
+           repo: repo
+         } do
       Application.delete_env(:meerkat, :review_state)
+      :ok = PendingQuestions.replace(repo, [%{location: "global", question: "Previous round?"}])
 
       assert {:timeout, ""} = Timeout.decision(repo, "abc123")
+      assert {:ok, []} = PendingQuestions.unanswered(repo)
+      refute File.exists?(PendingQuestions.path_for(repo))
     end
 
     test "with no review state to read, no comments are reported lost", %{repo: repo} do
@@ -385,23 +398,100 @@ defmodule Meerkat.TimeoutTest do
       assert payload =~ "Nobody reviewed this commit"
     end
 
+    test "restored questions are owed after timeout, even with no browser connected", %{
+      repo: repo
+    } do
+      state = %ReviewState{
+        global_comments: [
+          %{id: "q1", finding_type: :question, body: "Timeout question?", learn_from_this: false}
+        ]
+      }
+
+      :ok = Persistence.save(repo, "abc123", state)
+      Application.put_env(:meerkat, :review_state, %ReviewState{})
+      on_exit(fn -> Application.delete_env(:meerkat, :review_state) end)
+      assert {:timeout, payload} = Timeout.decision(repo, "abc123")
+      assert payload =~ "▶ ACTION: answer 1 question"
+      assert payload =~ "meerkat --answers"
+      Persistence.delete(repo, "abc123")
+
+      assert {:ok, [%{location: "global", question: "Timeout question?"}]} =
+               PendingQuestions.unanswered(repo)
+    end
+
+    test "timeout clears answers from the completed round before a repeated question can be satisfied",
+         %{repo: repo} do
+      File.mkdir_p!(Path.dirname(PendingAnswers.path_for(repo)))
+
+      File.write!(
+        PendingAnswers.path_for(repo),
+        Jason.encode!(%{
+          version: 1,
+          createdAt: "now",
+          answers: [%{location: "global", question: "Why again?", answer: "Old answer"}]
+        })
+      )
+
+      state = %ReviewState{
+        global_comments: [
+          %{id: "q", finding_type: :question, body: "Why again?", learn_from_this: false}
+        ]
+      }
+
+      :ok = Persistence.save(repo, "again", state)
+      Application.put_env(:meerkat, :review_state, %ReviewState{})
+      on_exit(fn -> Application.delete_env(:meerkat, :review_state) end)
+      assert {:timeout, _} = Timeout.decision(repo, "again")
+      refute PendingAnswers.load(repo)
+      assert {:ok, [%{question: "Why again?"}]} = PendingQuestions.unanswered(repo)
+    end
+
+    test "timeout reads live question state and does not swallow obligation write failures", %{
+      repo: repo
+    } do
+      state = %ReviewState{
+        global_comments: [
+          %{id: "q1", finding_type: :question, body: "Live question?", learn_from_this: false}
+        ]
+      }
+
+      {:ok, pid} =
+        ReviewServer.ensure_started("live-timeout", %{initial_state: state, repo_path: repo})
+
+      on_exit(fn -> DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, pid) end)
+      assert {:timeout, payload} = Timeout.decision(repo, "live-timeout")
+      assert payload =~ "Live question?"
+      assert {:ok, [%{question: "Live question?"}]} = PendingQuestions.unanswered(repo)
+      File.rm!(PendingQuestions.path_for(repo))
+      File.rm_rf!(Path.dirname(PendingQuestions.path_for(repo)))
+      File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
+      assert_raise MatchError, fn -> Timeout.decision(repo, "live-timeout") end
+    end
+
     test "a snapshot the loader cannot make sense of costs the commit nothing", %{repo: repo} do
       :ok = Persistence.save(repo, "abc123", state_with_comment("tighten this"))
       Application.put_env(:meerkat, :review_state, %ReviewState{})
       on_exit(fn -> Application.delete_env(:meerkat, :review_state) end)
-      File.write!(Persistence.path_for(repo, "abc123"), ~s({"comments": [{"id": "c1"}]}))
 
-      warning =
-        capture_io(:stderr, fn ->
-          send(self(), {:decision, Timeout.decision(repo, "abc123")})
-        end)
+      for comment <- [
+            %{id: "c1"},
+            %{id: "q1", finding_type: "question", body: "Missing inline anchor?"}
+          ] do
+        File.write!(Persistence.path_for(repo, "abc123"), Jason.encode!(%{comments: [comment]}))
 
-      assert_received {:decision, {:timeout, ""}}
+        warning =
+          capture_io(:stderr, fn ->
+            send(self(), {:decision, Timeout.decision(repo, "abc123")})
+          end)
 
-      assert warning =~ "couldn't read the comments saved for abc123",
-             "the commit is told its comments were lost rather than losing them silently"
+        assert_received {:decision, {:timeout, ""}}
 
-      assert warning =~ "Auto-approving without them."
+        assert warning =~ "couldn't read the comments saved for abc123",
+               "the commit is told its comments were lost rather than losing them silently"
+
+        assert warning =~ "Auto-approving without them."
+        assert {:ok, []} = PendingQuestions.unanswered(repo)
+      end
     end
   end
 end

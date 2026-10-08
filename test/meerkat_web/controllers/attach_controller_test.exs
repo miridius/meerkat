@@ -9,7 +9,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
   import Meerkat.TestHelpers
 
-  alias Meerkat.{Decision, ReviewState}
+  alias Meerkat.{Decision, PendingAnswers, PendingQuestions, ReviewState}
   alias MeerkatWeb.AttachController
 
   @token "test-token"
@@ -120,6 +120,89 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert IO.iodata_to_binary(AttachController.frames("a\n\nb\n")) == "o a\no \no b\n"
     assert IO.iodata_to_binary(AttachController.frames("a\ntail")) == "o a\nn tail\n"
     assert IO.iodata_to_binary(AttachController.frames("")) == ""
+  end
+
+  test "reattaching a waiting review cannot bypass another round's questions, even with a changed index",
+       %{conn: conn, repo: repo} do
+    Application.put_env(:meerkat, :no_open, false)
+    answered = %{location: "global", question: "Already answered?"}
+    missing = %{location: "file: a.txt", question: "Still owed?"}
+    :ok = PendingQuestions.replace(repo, [answered, missing])
+
+    {:ok, 1} =
+      PendingAnswers.save(repo, Jason.encode!(%{answers: [Map.put(answered, :answer, "Yes.")]}))
+
+    refused = attach_from_index(conn, "later-run", "missing-index")
+    assert refused.status == 200
+    assert refused.resp_body =~ "o meerkat: review refused because these questions are unanswered"
+    assert refused.resp_body =~ "Still owed?"
+    refute refused.resp_body =~ "Already answered?"
+    assert refused.resp_body =~ "meerkat --answers"
+    assert String.ends_with?(refused.resp_body, "d meerkat: review refused — commit aborted.\n")
+    refute refused.resp_body =~ "x "
+    assert Decision.current() == nil
+    assert :sys.get_state(Decision).callers == %{}
+    refute_received {:opened, _}
+    refute_received {:halted, _}
+
+    # A complete set reaches the real index comparison, without consuming the answers.
+    {:ok, 2} =
+      PendingAnswers.save(
+        repo,
+        Jason.encode!(%{answers: Enum.map([answered, missing], &Map.put(&1, :answer, "Yes."))})
+      )
+
+    assert attach_from_index(conn, "answered-run", "missing-index").status == 502
+    assert length(PendingAnswers.load(repo).answers) == 2
+  end
+
+  test "reattach still delivers the accepted round's held question feedback", %{
+    conn: conn,
+    repo: repo
+  } do
+    review = %ReviewState{
+      global_comments: [%{finding_type: :question, body: "Why this?", learn_from_this: false}]
+    }
+
+    {:ok, {:reject, feedback}} = Decision.submit_review(:reject, review, repo)
+    :ok = Decision.publish({1, feedback})
+    delivered = attach(conn, "later-run")
+
+    assert delivered.resp_body ==
+             IO.iodata_to_binary([AttachController.frames(feedback), "x 1\n"])
+
+    assert {:ok, [%{question: "Why this?"}]} = PendingQuestions.unanswered(repo)
+    refute_received {:opened, _}
+  end
+
+  test "corrupt obligations refuse only the reattaching caller and leave the file intact", %{
+    conn: conn,
+    repo: repo
+  } do
+    path = PendingQuestions.path_for(repo)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "broken JSON")
+    {:error, reason} = PendingQuestions.unanswered(repo)
+    refused = attach(conn, "later-run")
+    assert refused.status == 200
+
+    assert refused.resp_body ==
+             "o meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted).\n" <>
+               "d meerkat: review refused — commit aborted.\n"
+
+    assert Decision.current() == nil
+    assert File.read!(path) == "broken JSON"
+    refute_received {:halted, _}
+  end
+
+  test "an authorized attach with no run or a non-string run is a bad request", %{conn: conn} do
+    for path <- ["/api/attach", "/api/attach?run[]=later-run"] do
+      refused = conn |> put_req_header("x-meerkat-token", @token) |> get(path)
+      assert refused.status == 400
+      assert refused.resp_body == "bad request\n"
+      assert Decision.current() == nil
+      assert :sys.get_state(Decision).callers == %{}
+    end
   end
 
   test "a request without the backend's token is refused", %{conn: conn} do

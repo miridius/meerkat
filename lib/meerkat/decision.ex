@@ -3,7 +3,7 @@ defmodule Meerkat.Decision do
   Single source of truth for the review's terminal decision.
 
   The CLI starts and blocks on `await/0`. Two things end that wait:
-  `ReviewLive` calling `submit/1` from the user's button click, and the
+  `ReviewLive` calling `submit_review/3` from the user's button click, and the
   review's deadline passing with nobody having clicked, unless
   `Meerkat.Timeout.action/0` is `:wait`. `current/0`
   returns the decision if it's already been made — used by
@@ -80,6 +80,18 @@ defmodule Meerkat.Decision do
   def submit({tag, _payload} = decision)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
     GenServer.call(__MODULE__, {:submit, decision})
+  end
+
+  @doc """
+  Submit a review-page decision, durably recording exactly the questions in
+  its feedback before waking the CLI. A later tab cannot replace obligations
+  belonging to the already accepted decision.
+  """
+  @spec submit_review(tag(), Meerkat.ReviewState.t(), String.t()) ::
+          {:ok, decision()} | {:already_decided, decision()}
+  def submit_review(tag, state, repo_path)
+      when tag in [:approve, :approve_with_feedback, :reject, :cancel] do
+    GenServer.call(__MODULE__, {:submit_review, tag, state, repo_path})
   end
 
   @doc """
@@ -196,6 +208,32 @@ defmodule Meerkat.Decision do
 
   def handle_call({:submit, decision}, _from, %{decision: nil} = state) do
     {:reply, {:ok, decision}, put_decision(state, decision)}
+  end
+
+  def handle_call({:submit_review, tag, review, repo_path}, _from, %{decision: nil} = state) do
+    payload =
+      case tag do
+        :reject ->
+          Meerkat.Feedback.prepare(review, :rejection, repo_path)
+
+        :approve_with_feedback ->
+          Meerkat.Feedback.prepare(review, :approval_with_feedback, repo_path)
+
+        _ ->
+          :ok = Meerkat.PendingQuestions.replace(repo_path, [])
+          ""
+      end
+
+    decision = {tag, payload}
+    {:reply, {:ok, decision}, put_decision(state, decision)}
+  end
+
+  def handle_call(
+        {:submit_review, _tag, _review, _repo_path},
+        _from,
+        %{decision: existing} = state
+      ) do
+    {:reply, {:already_decided, existing}, state}
   end
 
   def handle_call({:submit, _new}, _from, %{decision: existing} = state) do

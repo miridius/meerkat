@@ -21,7 +21,6 @@ defmodule MeerkatWeb.ReviewLive do
     ApprovalCache,
     Comment,
     Decision,
-    Feedback,
     GitHub,
     OpenForms,
     PendingAnswers,
@@ -695,13 +694,8 @@ defmodule MeerkatWeb.ReviewLive do
     # exits ~750ms later — a slow bulk write could be cut short.
     bulk_persist_approval_cache(repo_path, state)
 
-    submitted =
-      if comments?(state) do
-        payload = Feedback.format(state, :approval_with_feedback)
-        Decision.submit({:approve_with_feedback, payload})
-      else
-        Decision.submit({:approve, ""})
-      end
+    tag = if comments?(state), do: :approve_with_feedback, else: :approve
+    submitted = Decision.submit_review(tag, state, repo_path)
 
     clear_pending_answers()
 
@@ -712,9 +706,9 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("decision.reject", _, socket) do
-    %{state: state} = socket.assigns
-    payload = Feedback.format(state, :rejection)
-    submitted = Decision.submit({:reject, payload})
+    # muex:ignore equivalent: distinct map-pattern keys can reorder without changing matches or bindings.
+    %{state: state, repo_path: repo_path} = socket.assigns
+    submitted = Decision.submit_review(:reject, state, repo_path)
     clear_pending_answers()
 
     {:noreply,
@@ -761,7 +755,7 @@ defmodule MeerkatWeb.ReviewLive do
       _ = ReviewServer.clear_all_comments(rid)
     end
 
-    submitted = Decision.submit({:cancel, ""})
+    submitted = Decision.submit_review(:cancel, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
     {:noreply,

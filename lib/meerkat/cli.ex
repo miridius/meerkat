@@ -23,7 +23,10 @@ defmodule Meerkat.CLI do
   or when every staged file is approved on the current branch by content or
   marked as linguist-generated. It applies to plain `meerkat` and
   `meerkat --commit-msg <PATH>`, unless answers to a previous review's
-  question comments are pending on disk, which forces a live review. Supplying
+  question comments are pending on disk, which forces a live review.
+  Every review target first refuses unanswered questions from the last round,
+  with exit 1 and answer instructions, before opening any UI. `--answers`
+  bypasses this obligation gate. Supplying
   a ref/range positional argument or `--pr` takes precedence over
   `--commit-msg` and always opens the review UI, even for an empty diff.
   """
@@ -34,6 +37,7 @@ defmodule Meerkat.CLI do
     Feedback,
     Git,
     PendingAnswers,
+    PendingQuestions,
     PortInUseError,
     ReviewId,
     ReviewLog,
@@ -87,16 +91,7 @@ defmodule Meerkat.CLI do
     if opts.answers do
       save_answers(repo_path(), read_stdin())
     else
-      target = ReviewTarget.from_opts(opts)
-
-      case hold_temporary_index(target) do
-        :ok ->
-          review(target, opts)
-
-        {:error, message} ->
-          IO.puts(:stderr, "meerkat: #{message} — defaulting to REJECT (commit aborted).")
-          2
-      end
+      review_if_answered(opts)
     end
   rescue
     e ->
@@ -118,6 +113,34 @@ defmodule Meerkat.CLI do
       2
   after
     flush_logs()
+  end
+
+  defp review_if_answered(opts) do
+    case PendingQuestions.unanswered(repo_path()) do
+      {:ok, []} ->
+        target = ReviewTarget.from_opts(opts)
+
+        case hold_temporary_index(target) do
+          :ok ->
+            review(target, opts)
+
+          {:error, message} ->
+            IO.puts(:stderr, "meerkat: #{message} — defaulting to REJECT (commit aborted).")
+            2
+        end
+
+      {:ok, questions} ->
+        IO.write(:stderr, Feedback.unanswered(questions))
+        1
+
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted)."
+        )
+
+        2
+    end
   end
 
   # Take the copy before any staged-state read, including auto-approval:

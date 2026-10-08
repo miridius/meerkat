@@ -80,6 +80,38 @@ defmodule Meerkat.ShepherdTest do
            }
   end
 
+  test "a fake BEAM's port announcement cannot reach an unrelated HTTP client" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep-http")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    fifo = Path.join(dir, "attach-ready")
+    marker = Path.join(dir, "uncontrolled-http")
+    assert {_, 0} = System.cmd("mkfifo", [fifo])
+
+    # If the caller escapes the fixture's HTTP boundary, record it and
+    # release the BEAM so the test fails by assertion, not by hanging.
+    File.write!(Path.join(dir, "curl"), """
+    #!/usr/bin/env bash
+    touch '#{marker}'
+    if mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+      printf 'attach\\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+    fi
+    printf 's 000\\n'
+    exit 7
+    """)
+
+    File.chmod!(Path.join(dir, "curl"), 0o755)
+
+    assert run_shepherd([0],
+             env: [
+               {"PATH", dir <> ":" <> System.fetch_env!("PATH")},
+               {"SHEPHERD_TEST_ATTACH_FIFO", fifo}
+             ]
+           ) == %{code: 0, iterations: 1}
+
+    assert File.dir?(fifo <> ".sent")
+    refute File.exists?(marker)
+  end
+
   # A caller that re-reads a stale `port` file reattaches to the exited
   # BEAM's port, which by then another process may hold.
   describe "between a BEAM's exit and its respawn" do
@@ -233,7 +265,9 @@ defmodule Meerkat.ShepherdTest do
     echo $((i + 1)) > "$I_FILE"
     if [[ -n "${STDIN_FILE:-}" ]]; then cat >> "$STDIN_FILE"; fi
     echo "${MEERKAT_PREFERRED_PORT:-none} ${*:3}" >> "$PORTS_FILE"
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]]; then exec 3<> "$SHEPHERD_TEST_ATTACH_FIFO"; fi
     if [[ -n "${MEERKAT_SERVE_DIR:-}" ]]; then echo "$((i + 1)) $$" > "$MEERKAT_SERVE_DIR/port"; fi
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && ! read -r -t 10 _ <&3; then exit 2; fi
     exit "${codes[$i]:-0}"
     """)
 
@@ -252,7 +286,7 @@ defmodule Meerkat.ShepherdTest do
     ]
 
     args = Keyword.get(opts, :args, ["--commit-msg", "/tmp/msg", "--no-open"])
-    code = run_launcher(@shepherd, args, env, dir)
+    code = run_launcher(@shepherd, args, env ++ Keyword.get(opts, :env, []), dir)
     iterations = String.to_integer(String.trim(File.read!(Path.join(dir, "i"))))
 
     cond do
@@ -461,6 +495,30 @@ defmodule Meerkat.ShepherdTest do
     """
 
     env = base |> Map.new() |> Map.merge(Map.new(env))
+
+    # These BEAMs announce scripted ports but never serve HTTP. The caller
+    # can catch a port file before the BEAM exits; a real curl would then
+    # contact an unrelated service or wait indefinitely for a connection.
+    # Refuse at that external boundary, keeping the caller, detach, restart
+    # and exit-file delivery real. The FIFO makes that window deterministic
+    # in the regression above without a delay or polling loop. The BEAM
+    # opens its reader before announcing the port, so the signal cannot be
+    # lost. Read/write opens and a bounded read also prevent a failed caller
+    # from stranding a fixture process waiting for a peer that never arrives.
+    http = Path.join(dir, "http")
+    File.mkdir_p!(http)
+
+    File.write!(Path.join(http, "curl"), ~S"""
+    #!/usr/bin/env bash
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+      printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+    fi
+    printf 's 000\n'
+    exit 7
+    """)
+
+    File.chmod!(Path.join(http, "curl"), 0o755)
+    env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))
 
     Port.open(
       {:spawn_executable, "/bin/sh"},
