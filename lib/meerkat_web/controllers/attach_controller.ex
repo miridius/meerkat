@@ -50,29 +50,30 @@ defmodule MeerkatWeb.AttachController do
               "so it replaces this review — aborting."
 
   def attach(conn, %{"run" => run} = params) when is_binary(run) do
-    # A finished review must still deliver its held feedback. A waiting review
-    # cannot bypass another round's question gate merely by being reattached.
-    gate =
-      if Decision.current(),
-        do: {:ok, []},
-        else: PendingQuestions.unanswered(Application.fetch_env!(:meerkat, :repo_path))
-
-    case gate do
-      {:ok, []} ->
-        attach_to_review(conn, run, params)
-
-      {:ok, questions} ->
-        refuse_attachment(conn, Feedback.unanswered(questions))
-
-      {:error, reason} ->
-        refuse_attachment(
-          conn,
-          "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n"
-        )
+    # A waiting review cannot bypass another round's question gate merely by
+    # being reattached. A finished review must still deliver its held
+    # feedback, so the decision is read after the obligations: a decision
+    # that records new questions between the two reads is still delivered.
+    case PendingQuestions.unanswered(Application.fetch_env!(:meerkat, :repo_path)) do
+      {:ok, []} -> attach_to_review(conn, run, params)
+      refusal -> refuse_unless_decided(conn, run, params, refusal)
     end
   end
 
   def attach(conn, _params), do: send_resp(conn, 400, "bad request\n")
+
+  defp refuse_unless_decided(conn, run, params, refusal) do
+    case {Decision.current(), refusal} do
+      {nil, {:ok, questions}} ->
+        refuse_attachment(conn, Feedback.unanswered(questions))
+
+      {nil, {:error, reason}} ->
+        refuse_attachment(conn, "meerkat: couldn't read owed questions: #{reason}\n")
+
+      _decided ->
+        attach_to_review(conn, run, params)
+    end
+  end
 
   defp refuse_attachment(conn, text) do
     # The d frame exits only this caller, without acknowledging delivery,

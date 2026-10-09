@@ -5,8 +5,9 @@ defmodule Meerkat.Feedback do
   in-line. The shell that ran `meerkat --commit-msg` sees this on
   stderr as first-party feedback to the agent that drove the commit.
 
-  When any comment is a fresh `:question` or restored `"question"`, the output is prefixed
-  with a directive block telling the agent to hand its answers to
+  When any comment is a fresh `:question` or restored `"question"`, the
+  output is prefixed with a directive block telling the agent to hand its
+  answers to
   `meerkat --answers`, which stores them for the next invocation to
   surface as a banner above the diff so the human reviewer sees the
   answers in context.
@@ -186,8 +187,7 @@ defmodule Meerkat.Feedback do
   defp question_location(_state, _comment), do: "global"
 
   @doc "Persist obligations before the terminal feedback can reach the agent."
-  @spec prepare(ReviewState.t(), :rejection | :approval_with_feedback | :timeout, String.t()) ::
-          String.t()
+  @spec prepare(ReviewState.t(), :rejection | :approval_with_feedback, String.t()) :: String.t()
   def prepare(state, mode, repo_path) do
     :ok = PendingQuestions.replace(repo_path, questions(state))
     format(state, mode)
@@ -225,7 +225,7 @@ defmodule Meerkat.Feedback do
 
     """
 
-    ⚠ This feedback contains **question**-type comments. Answer them with analysis — \
+    ⚠ Answer the reviewer's **question**-type comments with analysis — \
     do NOT modify code in response. (Non-question comments — issue / suggestion / revert / \
     follow-up — still apply, change code for those as usual.)
 

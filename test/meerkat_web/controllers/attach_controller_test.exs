@@ -187,12 +187,19 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert refused.status == 200
 
     assert refused.resp_body ==
-             "o meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n" <>
+             "o meerkat: couldn't read owed questions: #{reason}\n" <>
                "d meerkat: review refused — commit aborted.\n"
 
     assert Decision.current() == nil
     assert File.read!(path) == "broken JSON"
     refute_received {:halted, _}
+
+    # Corrupt obligations do not withhold an already decided review's feedback.
+    {:ok, _} = Decision.submit({:reject, "Fix it."})
+    :ok = Decision.publish({1, "Fix it."})
+
+    assert attach(conn, "decided-run").resp_body ==
+             IO.iodata_to_binary([AttachController.frames("Fix it."), "x 1\n"])
   end
 
   test "an authorized attach with no run or a non-string run is a bad request", %{conn: conn} do

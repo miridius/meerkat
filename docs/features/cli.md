@@ -22,11 +22,12 @@ supplied (no error, the highest-precedence one wins):
 - *(no target)* — staged-diff review without a commit-msg gutter.
 
 Staged-diff reviews omit paths with unresolved merge conflicts; other
-staged files are still reviewed. Every review target is refused with exit
-`1`, before opening a page or auto-approving, while questions from the
-last round remain unanswered; see [pending-answers.md](pending-answers.md).
-For which index they read, see
+staged files are still reviewed. For which index they read, see
 [`GIT_INDEX_FILE`](#env-vars).
+
+Every review target is refused with exit `1`, before opening a page or
+auto-approving, while questions from the last round remain unanswered;
+see [pending-answers.md](pending-answers.md).
 
 ## Flags
 

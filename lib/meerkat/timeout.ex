@@ -160,7 +160,8 @@ defmodule Meerkat.Timeout do
   @doc """
   Returns the decision for a review that ran out of time, carrying whatever
   comments were saved before it did. An unreadable snapshot yields no
-  comments; inability to persist question obligations defaults to rejection.
+  comments. Failing to persist question obligations raises, so the review
+  fails closed (exit 2) rather than deliver unrecorded questions.
   """
   @spec decision(String.t(), String.t()) :: {:timeout, String.t()}
   def decision(repo_path, review_id) do

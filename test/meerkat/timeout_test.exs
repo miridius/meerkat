@@ -465,7 +465,7 @@ defmodule Meerkat.TimeoutTest do
       File.rm!(PendingQuestions.path_for(repo))
       File.rm_rf!(Path.dirname(PendingQuestions.path_for(repo)))
       File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
-      assert_raise MatchError, fn -> Timeout.decision(repo, "live-timeout") end
+      assert_raise File.Error, fn -> Timeout.decision(repo, "live-timeout") end
     end
 
     test "a snapshot the loader cannot make sense of costs the commit nothing", %{repo: repo} do

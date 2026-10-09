@@ -65,6 +65,52 @@ defmodule Meerkat.DecisionTest do
       end
     end
 
+    test "accept side effects finish before the CLI wakes", %{repo: repo} do
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+
+      # on_accept runs inside the Decision server, which it blocks until told to finish.
+      on_accept = fn ->
+        send(parent, {:accepting, self()})
+        receive do: (:finish -> :ok)
+      end
+
+      spawn_link(fn ->
+        send(
+          parent,
+          {:submitted, Decision.submit_review(:approve, %ReviewState{}, repo, on_accept)}
+        )
+      end)
+
+      assert_receive {:accepting, server}
+      refute_receive {:awaited, _}, 50
+      send(server, :finish)
+      assert_receive {:submitted, {:ok, {:approve, ""}}}
+      assert_receive {:awaited, {:approve, ""}}
+    end
+
+    test "unrecorded questions are never delivered as a decision", %{repo: repo} do
+      File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
+      parent = self()
+      spawn(fn -> send(parent, {:awaited, catch_exit(Decision.await())}) end)
+      # Let the waiter reach the server before the submit crashes it.
+      refute_receive {:awaited, _}, 50
+
+      review = %ReviewState{
+        global_comments: [%{finding_type: :question, body: "Why?", learn_from_this: false}]
+      }
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {{%File.Error{action: "record owed questions"}, _}, _} =
+                 catch_exit(
+                   Decision.submit_review(:reject, review, repo, fn -> send(parent, :accepted) end)
+                 )
+      end)
+
+      assert_receive {:awaited, {{%File.Error{}, _}, _}}
+      refute_received :accepted
+    end
+
     test "non-page decision tags cannot record a decision or erase owed questions", %{repo: repo} do
       questions = [%{location: "global", question: "Still owed?"}]
       :ok = PendingQuestions.replace(repo, questions)

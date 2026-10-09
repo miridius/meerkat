@@ -141,8 +141,12 @@ defmodule Meerkat.PendingQuestionsTest do
   end
 
   test "failure to persist is not treated as successful feedback", %{repo: repo} do
-    File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
-    assert_raise MatchError, fn -> PendingQuestions.replace(repo, @questions) end
+    path = PendingQuestions.path_for(repo)
+    File.write!(Path.dirname(path), "not a directory")
+    error = assert_raise File.Error, fn -> PendingQuestions.replace(repo, @questions) end
+    assert error.action == "record owed questions"
+    assert error.path == path
+    assert error.reason == :enotdir
   end
 
   test "obligations follow the worktree across branches and subdirectories, not other worktrees",

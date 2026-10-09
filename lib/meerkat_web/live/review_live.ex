@@ -155,7 +155,7 @@ defmodule MeerkatWeb.ReviewLive do
   # no-update cases (and tests, which capture the restart).
   defp maybe_apply_update(socket) do
     # Don't restart once a decision is in flight: the CLI holds the BEAM
-    # alive briefly after Decision.submit/1 to flush state before halting
+    # alive briefly after Decision.submit_review/4 to flush state before halting
     # with the decision's exit code (0/1), and a restart (75) here would
     # preempt that code and lose the reviewer's approve/reject.
     if socket.assigns[:update_pending] and socket.assigns.open_forms == [] and
@@ -708,9 +708,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("decision.reject", _, socket) do
-    # muex:ignore equivalent: distinct map-pattern keys can reorder without changing matches or bindings.
-    %{state: state, repo_path: repo_path} = socket.assigns
-    submitted = Decision.submit_review(:reject, state, repo_path)
+    submitted = Decision.submit_review(:reject, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
     {:noreply,

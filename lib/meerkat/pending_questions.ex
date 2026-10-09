@@ -30,7 +30,17 @@ defmodule Meerkat.PendingQuestions do
   def replace(repo_path, questions) do
     # muex:ignore equivalent: distinct literal keys with constant/bound values have no order effects.
     payload = %{version: 1, questions: questions}
-    :ok = AtomicFile.write(path_for(repo_path), Jason.encode!(payload))
+
+    case AtomicFile.write(path_for(repo_path), Jason.encode!(payload)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise File.Error,
+          reason: reason,
+          action: "record owed questions",
+          path: path_for(repo_path)
+    end
   end
 
   @doc "Return only questions without a matching, nonblank pending answer."
