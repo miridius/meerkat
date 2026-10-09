@@ -150,6 +150,51 @@ defmodule Meerkat.CLIMainTest do
     assert output =~ "meerkat: received SIGTERM"
   end
 
+  # As in `test_helper.exs`, the endpoint is already running under the
+  # test config's `server: false` when `main/1` starts the review, so it
+  # binds no port. A review that waited would halt with 124 after 10 s.
+  test "a review whose server bound no port opens no browser and rejects",
+       %{repo: repo, commit_msg: commit_msg} do
+    stage(repo, "a.txt", "a\n")
+    opened = Path.join(repo, "opened")
+    bin = Path.join(repo, "open-stub")
+    File.mkdir_p!(bin)
+
+    for opener <- ["open", "xdg-open"] do
+      File.write!(Path.join(bin, opener), ~s(#!/bin/sh\necho "$@" >> "#{opened}"\n))
+      File.chmod!(Path.join(bin, opener), 0o755)
+    end
+
+    {output, code} =
+      System.cmd(
+        "mix",
+        [
+          "run",
+          "--no-start",
+          "--no-compile",
+          "-e",
+          "{:ok, _} = :timer.apply_after(10_000, System, :halt, [124]); " <>
+            "Application.put_env(:meerkat, :start_endpoint, true); " <>
+            "{:ok, _} = Application.ensure_all_started(:meerkat); " <>
+            "System.halt(Meerkat.CLI.main(System.argv()))",
+          "--",
+          "--commit-msg",
+          commit_msg
+        ],
+        env: [
+          {"MIX_ENV", to_string(Mix.env())},
+          {"PATH", bin <> ":" <> System.fetch_env!("PATH")}
+        ],
+        stderr_to_stdout: true
+      )
+
+    assert File.read(opened) == {:error, :enoent}
+    assert code == 2
+    assert output =~ "could not read the review server's bound port"
+    assert output =~ "defaulting to REJECT (commit aborted)"
+    refute output =~ "Paused for human review"
+  end
+
   # A regression that opens a review would block on a human forever.
   defp run_main(argv) do
     task =

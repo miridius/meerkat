@@ -128,7 +128,10 @@ staged files are still reviewed. For which index they read, see
   not create <run dir>`); an already attached caller still receives
   the decision and exits with it. A staged review that cannot keep a
   copy of the commit's temporary index exits 2 with a REJECT message;
-  see [`GIT_INDEX_FILE`](#env-vars). While waiting to retry after a
+  see [`GIT_INDEX_FILE`](#env-vars). A review whose server's bound
+  port cannot be read exits 2 with a REJECT message, before printing
+  a URL or opening a browser: meerkat never opens or announces a URL
+  on any port but the one it bound. While waiting to retry after a
   failed build, the dev launcher exits 2 with a REJECT message if its
   checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
   launcher could not build meerkat, so it stored nothing.
