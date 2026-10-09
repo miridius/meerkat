@@ -124,6 +124,27 @@ defmodule Meerkat.Persistence do
   end
 
   @doc """
+  Whether `review_id`'s snapshot holds a comment that `load/3` would
+  restore into a review whose signature is `signature`. A snapshot that
+  cannot be read or parsed counts as holding one: only the review can
+  report it and set it aside.
+  """
+  @spec held_comments?(String.t(), String.t(), String.t()) :: boolean()
+  def held_comments?(repo_path, review_id, signature) do
+    with {:ok, json} <- File.read(path_for(repo_path, review_id)),
+         {:ok, decoded} <- safe_decode(json) do
+      Map.get(decoded, :state_signature) in [signature, nil] and
+        Enum.any?(
+          [:comments, :file_comments, :global_comments, :commit_message_comments],
+          &(Map.get(decoded, &1, []) != [])
+        )
+    else
+      {:error, :enoent} -> false
+      _ -> true
+    end
+  end
+
+  @doc """
   Fingerprint the current review's staged content as a hex string. Two
   invocations against the same staged tree (same file names + blob
   OIDs) produce the same signature; any change to either set produces
