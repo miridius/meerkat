@@ -8,7 +8,7 @@
 #
 # In pre-commit mode, a commit that changes only Markdown files, or nothing,
 # skips the checks; CI still runs them on the PR. Otherwise the checks wait
-# for a slot from scripts/gate-lock.pl.
+# for a slot from scripts/gate-lock.sh.
 #
 # When the checks pass and the worktree held exactly the contents checked,
 # with no untracked file, both when they started and when they finished,
@@ -43,23 +43,24 @@ else
   tree=$(git write-tree)
 fi
 
-# At most two gates in all of this repo's worktrees run the checks at once:
-# re-run this script holding one of their slots, waiting for one if need be.
-lock="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
-[[ "${MEERKAT_GATE_LOCK:-}" == "$lock" ]] || exec perl scripts/gate-lock.pl "$lock" bash scripts/check.sh "$@"
+# At most two gates in all of this repo's worktrees run the checks at once.
+# Every command from here on starts with the slot's fd 9 closed, so none
+# that outlives this script holds the slot.
+source scripts/gate-lock.sh
+gate_lock
 
-holds() { bash scripts/checked-trees.sh holds "$tree"; }
+holds() { bash scripts/checked-trees.sh holds "$tree" 9>&-; }
 holds && clean=1 || clean=0
 
 # Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
 # point every test's fixture repo at this checkout's index.
 # shellcheck disable=SC2046
-unset $(git rev-parse --local-env-vars)
+unset $(git rev-parse --local-env-vars 9>&-)
 
 step() {
   echo
   echo "=== $label: $* ==="
-  "$@"
+  "$@" 9>&-
 }
 
 step mix deps.get
@@ -69,15 +70,15 @@ step mix format --check-formatted
 step mix credo --strict
 step bunx biome lint --error-on-warnings
 step bash scripts/mix-test.sh
-(cd assets && step bun test)
+(cd assets && step bun test) 9>&-
 step bun test tests/e2e/lib
-(cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
+(cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build) 9>&-
 step bunx playwright install --only-shell chromium
 step bun run test:e2e
 
 # Checked again in case the worktree changed while the checks ran.
 if [[ "$clean" == 1 ]] && holds; then
-  bash scripts/checked-trees.sh mark "$tree"
+  bash scripts/checked-trees.sh mark "$tree" 9>&-
 fi
 
 echo

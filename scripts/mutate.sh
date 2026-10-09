@@ -91,7 +91,6 @@ line_scope() {
   scope_args=("$@" --no-filter --no-optimize)
 }
 
-args=("$@")
 mode=${1:-default}
 shift || true
 # `scripts/mutate.sh -- <muex flags>` is the default mode with flags.
@@ -130,10 +129,6 @@ case "$mode" in
       echo "scripts/mutate.sh: no lib/**/*.ex lines staged — nothing to mutate."
       exit 0
     fi
-    # Like scripts/check.sh, the gate re-runs itself holding a slot from
-    # scripts/gate-lock.pl, waiting for one if need be.
-    lock="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
-    [[ "${MEERKAT_GATE_LOCK:-}" == "$lock" ]] || exec perl scripts/gate-lock.pl "$lock" bash scripts/mutate.sh "${args[@]}"
     collect_files lib '*.ex'
     line_scope --staged
     gate=true
@@ -186,10 +181,17 @@ else
   echo "scripts/mutate.sh: mutating the $mode lines of lib/**/*.ex."
 fi
 
-MIX_ENV=test mix deps.get
+# Like scripts/check.sh, the gate holds a slot from scripts/gate-lock.sh
+# and starts every command with the slot's fd 9 closed.
+if [[ "$gate" == true ]]; then
+  source scripts/gate-lock.sh
+  gate_lock
+fi
+
+MIX_ENV=test mix deps.get 9>&-
 # The suite needs node_modules, which a fresh worktree lacks.
-pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
-MIX_ENV=test mix compile --warnings-as-errors
+pnpm install --frozen-lockfile --ignore-scripts --prefer-offline 9>&-
+MIX_ENV=test mix compile --warnings-as-errors 9>&-
 
 # muex's `--files` accepts comma-separated globs/paths.
 joined=$(IFS=,; echo "${files[*]}")
@@ -200,7 +202,7 @@ joined=$(IFS=,; echo "${files[*]}")
 # test BEAMs at once as there are cores; like scripts/mix-test.sh, cap
 # them at half (at least one) so a commit leaves the machine usable. A
 # --concurrency after `--` overrides this.
-jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+jobs=$(($(getconf _NPROCESSORS_ONLN 9>&-) / 2))
 ((jobs >= 1)) || jobs=1
 muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs" "${scope_args[@]}")
 
@@ -214,14 +216,14 @@ fi
 # must pass. muex prints the report's path, so the report is kept, in
 # _build/, until the next gate run replaces it. muex strips
 # GIT_INDEX_FILE from the test runs it starts.
-mkdir -p _build
+mkdir -p _build 9>&-
 report="$PWD/_build/mutate-staged.json"
 # muex writes no report when there is nothing to mutate, as for staged
 # comments or lib/meerkat/application.ex alone, so an earlier run's
 # report must not be left for this run to judge.
-rm -f "$report"
+rm -f "$report" 9>&-
 GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
-  --format json --output "$report" "${extra_args[@]}"
+  --format json --output "$report" "${extra_args[@]}" 9>&-
 
 if [[ ! -f "$report" ]]; then
   echo "scripts/mutate.sh: the staged lib/ lines produce no mutants."
@@ -232,7 +234,7 @@ fi
 # otherwise pass unseen.
 unknown=$(jq -r '[.mutations[].status]
   - ["killed", "survived", "no_coverage", "timeout", "invalid", "equivalent", "ignored"]
-  | unique | join(", ")' "$report")
+  | unique | join(", ")' "$report" 9>&-)
 if [[ -n "$unknown" ]]; then
   echo "scripts/mutate.sh: muex reported unknown mutant status(es): $unknown." >&2
   exit 2
@@ -257,7 +259,7 @@ failing=$(jq -r '
          | (.patch.after | split("\n")) as $a
          | only("-"; $b; $a) + only("+"; $a; $b)
        else "" end)
-' "$report")
+' "$report" 9>&-)
 
 if [[ -n "$failing" ]]; then
   echo

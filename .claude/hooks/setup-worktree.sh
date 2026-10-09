@@ -30,7 +30,7 @@ cwd=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)
 
 lock=$(git rev-parse --path-format=absolute --git-path meerkat-setup.lock 2>/dev/null) || exit 0
 exec 9>"$lock"
-perl -MFcntl=:flock -e 'open(LOCK, ">&=", 9) && flock(LOCK, LOCK_EX) or exit 1'
+lockf -s 9
 
 mix_deps_missing() {
   local name

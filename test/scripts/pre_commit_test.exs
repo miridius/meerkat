@@ -46,6 +46,7 @@ defmodule Meerkat.PreCommitHookTest do
     seen = Path.join(base, "seen")
     places = Path.join(base, "places")
     muex = Path.join(base, "muex")
+    slot_fd = Path.join(base, "slot_fd")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
@@ -54,7 +55,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
-    for script <- ~w(check.sh checked-trees.sh gate-lock.pl no-main-commits.sh mutate.sh) do
+    for script <- ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -88,6 +89,9 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
+    # A tool holding the gate slot's fd would keep the slot if it outlived
+    # the gate.
+    [ ! -e /dev/fd/9 ] || echo "$(basename "$0") $1" >> '#{slot_fd}'
     if [ "$(basename "$0") $1" = "mix muex" ]; then
       echo "mix muex" >> '#{log}'
       printf '%s\\n' "$@" > '#{muex}/args'
@@ -121,7 +125,15 @@ defmodule Meerkat.PreCommitHookTest do
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm bun bunx mix-test.sh), do: File.ln_s!("stub", Path.join(stubs, tool))
 
-    {:ok, base: base, work: work, stubs: stubs, log: log, seen: seen, places: places, muex: muex}
+    {:ok,
+     base: base,
+     work: work,
+     stubs: stubs,
+     log: log,
+     seen: seen,
+     places: places,
+     muex: muex,
+     slot_fd: slot_fd}
   end
 
   test "a commit runs every gate in the checkout", ctx do
@@ -298,6 +310,8 @@ defmodule Meerkat.PreCommitHookTest do
     assert {out, 0} = commit(ctx, ["-m", "change lib"])
     assert out =~ "no mutant of the staged lib/ lines survived"
     assert gates_run(ctx) == @gates ++ @mutation
+    # The stub logs each tool that ran holding the gate slot.
+    assert File.read(ctx.slot_fd) == {:error, :enoent}
 
     args = muex_args(ctx)
     assert "--staged" in args
@@ -434,8 +448,7 @@ defmodule Meerkat.PreCommitHookTest do
 
   describe "while two other gates run" do
     setup ctx do
-      lock = Path.join(ctx.work, ".git/meerkat-gate-lock")
-      {:ok, first: hold_gate_slot(lock), second: hold_gate_slot(lock)}
+      {:ok, first: hold_gate_slot(ctx.work), second: hold_gate_slot(ctx.work)}
     end
 
     test "a commit waits, saying so, then runs every gate once one ends", ctx do

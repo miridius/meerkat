@@ -65,7 +65,7 @@ defmodule Meerkat.BumpDepsHookTest do
 
     for script <-
           ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
-             deps-common.sh gate-lock.pl) do
+             deps-common.sh gate-lock.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 

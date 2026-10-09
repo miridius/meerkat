@@ -192,35 +192,39 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  Runs `command` under this repo's scripts/gate-lock.pl with lock dir
-  `lock_dir`, in a port that delivers its output, stderr included, line by
-  line, and its exit status. Closing the port closes the command's stdin.
+  Runs a bash `gate` in the git repo `repo`: it takes a slot with this
+  repo's scripts/gate-lock.sh, then runs the bash `command`. The port
+  delivers its output, stderr included, line by line, and its exit status.
+  Closing the port closes the gate's stdin.
   """
-  @spec gate_lock_port(String.t(), [String.t()]) :: port()
-  def gate_lock_port(lock_dir, command) do
-    script = Path.expand("../../scripts/gate-lock.pl", __DIR__)
+  @spec gate_lock_port(String.t(), String.t()) :: port()
+  def gate_lock_port(repo, command) do
+    lib = Path.expand("../../scripts/gate-lock.sh", __DIR__)
+    env = for {name, nil} <- @git_discovery_overrides, do: {String.to_charlist(name), false}
 
-    Port.open({:spawn_executable, System.find_executable("perl")}, [
+    Port.open({:spawn_executable, System.find_executable("bash")}, [
       :binary,
       :exit_status,
       :stderr_to_stdout,
       {:line, 4096},
-      args: [script, lock_dir | command]
+      args: ["-c", ~s(set -e; source "$0"; gate_lock; #{command}), lib],
+      cd: repo,
+      env: env
     ])
   end
 
   @doc """
-  Takes a slot of the gate lock in `lock_dir` and returns once it holds it.
+  Takes a gate slot in the git repo `repo` and returns once it holds it.
   The slot stays taken until the returned port is closed.
   """
   @spec hold_gate_slot(String.t()) :: port()
-  def hold_gate_slot(lock_dir) do
-    port = gate_lock_port(lock_dir, ["bash", "-c", "echo held; read -r _"])
+  def hold_gate_slot(repo) do
+    port = gate_lock_port(repo, "echo held; read -r _")
 
     receive do
       {^port, {:data, {:eol, "held"}}} -> port
     after
-      10_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{lock_dir}")
+      10_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{repo}")
     end
   end
 
