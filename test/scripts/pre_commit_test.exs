@@ -341,6 +341,55 @@ defmodule Meerkat.PreCommitHookTest do
     assert muex_staged(ctx) == ["lib/meerkat/two.ex"]
   end
 
+  describe "a merge commit" do
+    # `other` changes one.ex's first line and two.ex, and the feature
+    # branch changes one.ex's last line, so merging `other` stages lines
+    # from it. Each test then stages its own resolution of one.ex.
+    setup ctx do
+      lines = Enum.map_join(1..7, &"#{&1}\n")
+      stage(ctx.work, "lib/meerkat/one.ex", lines)
+      no_hooks(ctx.work, ["commit", "-qm", "seven lines"])
+      no_hooks(ctx.work, ["switch", "-q", "-c", "other"])
+      stage(ctx.work, "lib/meerkat/one.ex", String.replace(lines, "1\n", "other\n"))
+      stage(ctx.work, "lib/meerkat/two.ex", "two\nother\n")
+      no_hooks(ctx.work, ["commit", "-qm", "other"])
+      no_hooks(ctx.work, ["switch", "-q", "feature"])
+      stage(ctx.work, "lib/meerkat/one.ex", String.replace(lines, "7\n", "feature\n"))
+      no_hooks(ctx.work, ["commit", "-qm", "feature"])
+      no_hooks(ctx.work, ["merge", "-q", "--no-commit", "other"])
+      :ok
+    end
+
+    test "mutates only the lines no parent has", ctx do
+      stage(ctx.work, "lib/meerkat/one.ex", "other\n2\n3\n4\n5\n6\nresolved\n")
+      from_other = write_report(ctx.base, "from-other", [mutant("survived", 1)])
+
+      assert {out, 0} = commit(ctx, ["--no-edit"], [{"STUB_REPORT", from_other}])
+      assert gates_run(ctx) == @gates ++ @mutation
+      assert ["--files", "lib/meerkat/one.ex"] in Enum.chunk_every(muex_args(ctx), 2, 1)
+      refute out =~ "lib/meerkat/one.ex:1"
+    end
+
+    test "blocks on a surviving mutant of a line it introduces", ctx do
+      head = git(ctx.work, ["rev-parse", "HEAD"])
+      stage(ctx.work, "lib/meerkat/one.ex", "other\n2\n3\n4\n5\n6\nresolved\n")
+      resolved = write_report(ctx.base, "resolved", [mutant("survived", 7)])
+
+      assert {out, code} = commit(ctx, ["--no-edit"], [{"STUB_REPORT", resolved}])
+      assert code != 0
+      assert git(ctx.work, ["rev-parse", "HEAD"]) == head
+      assert out =~ "lib/meerkat/one.ex:7  survived"
+    end
+
+    test "that takes every line from a parent skips mutation testing", ctx do
+      stage(ctx.work, "lib/meerkat/one.ex", "other\n2\n3\n4\n5\n6\nfeature\n")
+
+      assert {out, 0} = commit(ctx, ["--no-edit"])
+      assert out =~ "the merge introduces no lib/**/*.ex lines"
+      assert gates_run(ctx) == @gates
+    end
+  end
+
   test "staging only deleted lib/ lines skips mutation testing", ctx do
     stage(ctx.work, "lib/meerkat/one.ex", "one\n")
 
@@ -506,11 +555,11 @@ defmodule Meerkat.PreCommitHookTest do
   defp read_lines(path), do: path |> File.read!() |> String.split("\n", trim: true)
 
   # A mutant in the shape of muex's JSON report.
-  defp mutant(status) do
+  defp mutant(status, line \\ 2) do
     %{
       status: status,
       description: "Comparison: == to !=",
-      location: %{file: "lib/meerkat/one.ex", line: 2},
+      location: %{file: "lib/meerkat/one.ex", line: line},
       patch: %{before: "a == b", after: "a != b"}
     }
   end

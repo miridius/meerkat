@@ -17,7 +17,8 @@
 #                                   included (muex --since).
 #   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
 #                                   staged for the next commit (muex
-#                                   --staged), and fail when any
+#                                   --staged) that differ from every
+#                                   parent, and fail when any
 #                                   mutant survives or no test reaches
 #                                   it. The lefthook pre-commit hook
 #                                   runs this mode.
@@ -83,6 +84,36 @@ has_added_lines() {
   awk '/^\+/ && !/^\+\+\+ / { found = 1 } END { exit !found }' <<<"$diff"
 }
 
+# Prints, as sorted `path:line`, the lib/**/*.ex lines of the index that
+# `git diff --cached <commit>` adds or changes, numbered as in the index.
+added_lines() {
+  local diff
+  if ! diff=$(git diff --cached --no-ext-diff --no-textconv --no-prefix --unified=0 --no-color --diff-filter=d "$1" -- ':(glob)lib/**/*.ex'); then
+    echo "scripts/mutate.sh: git diff --cached $1 failed." >&2
+    exit 2
+  fi
+  awk '
+    /^\+\+\+ / { path = substr($0, 5); next }
+    /^@@ / {
+      count = split(substr($3, 2), range, ",") > 1 ? range[2] : 1
+      for (i = 0; i < count; i++) print path ":" (range[1] + i)
+    }
+  ' <<<"$diff" | LC_ALL=C sort
+}
+
+# Sets `introduced` to the lib/**/*.ex lines a merge commit introduces:
+# those the index adds relative to every parent, HEAD and each commit
+# listed in the MERGE_HEAD file $1. A line that comes unchanged from a
+# parent was gated where that parent was committed.
+merge_lines() {
+  local parent added
+  introduced=$(added_lines HEAD)
+  while IFS= read -r parent; do
+    added=$(added_lines "$parent")
+    introduced=$(LC_ALL=C comm -12 <(printf '%s\n' "$introduced") <(printf '%s\n' "$added"))
+  done < "$1"
+}
+
 # Scopes muex to the lines its diff flags ($@) select. Every such line
 # counts, so --no-filter keeps muex from skipping a file it rates too
 # simple to be worth mutating, and --no-optimize from dropping the
@@ -102,6 +133,7 @@ fi
 files=()
 scope_args=()
 gate=false
+introduced=
 case "$mode" in
   default)
     collect_files lib/meerkat '*.ex' 1
@@ -125,11 +157,27 @@ case "$mode" in
     # it (or the usual index) to an absolute path, which muex --staged
     # reads after the rest of git's hook environment is cleared below.
     index=$(git rev-parse --path-format=absolute --git-path index)
-    if ! has_added_lines --cached; then
+    merge_heads=$(git rev-parse --path-format=absolute --git-path MERGE_HEAD)
+    if [[ -f "$merge_heads" ]]; then
+      # muex --staged mutates the lines added relative to HEAD alone, so
+      # the run is limited to the files holding lines the merge introduces
+      # and the gate judges only the mutants on those lines.
+      merge_lines "$merge_heads"
+      if [[ -n "$introduced" ]]; then
+        while IFS= read -r f; do
+          skip_file "$f" || files+=("$f")
+        done <<<"$(cut -d: -f1 <<<"$introduced" | uniq)"
+      fi
+      if [[ ${#files[@]} -eq 0 ]]; then
+        echo "scripts/mutate.sh: the merge introduces no lib/**/*.ex lines to mutate."
+        exit 0
+      fi
+    elif ! has_added_lines --cached; then
       echo "scripts/mutate.sh: no lib/**/*.ex lines staged — nothing to mutate."
       exit 0
+    else
+      collect_files lib '*.ex'
     fi
-    collect_files lib '*.ex'
     line_scope --staged
     gate=true
     ;;
@@ -238,15 +286,19 @@ fi
 # no ExUnit test executes its line.
 # muex's patch holds the whole enclosing expression, which for a deleted
 # statement is the whole module body, so print only the lines one side
-# has and the other lacks, at most six per side.
-failing=$(jq -r '
+# has and the other lacks, at most six per side. For a merge, only the
+# lines it introduces are judged.
+failing=$(jq -r --arg introduced "$introduced" '
   def only($sign; $lines; $other):
     ($lines - $other) as $diff
     | $diff[:6] | map("\n    \($sign) " + .) | join("")
       + (if ($diff | length) > 6 then "\n    \($sign) …" else "" end);
-  .mutations[]
+  ($introduced | split("\n")) as $introduced_lines
+  | .mutations[]
   | select(.status == "survived" or .status == "no_coverage")
-  | "\(.location.file):\(.location.line)  \(.status)  \(.description)"
+  | "\(.location.file):\(.location.line)" as $at
+  | select($introduced == "" or any($introduced_lines[]; . == $at))
+  | "\($at)  \(.status)  \(.description)"
     + (if .patch then
          (.patch.before | split("\n")) as $b
          | (.patch.after | split("\n")) as $a
