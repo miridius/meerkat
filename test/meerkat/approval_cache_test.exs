@@ -82,7 +82,7 @@ defmodule Meerkat.ApprovalCacheTest do
   describe "save / load round-trip" do
     setup do
       tmp =
-        Path.join(System.tmp_dir!(), "meerkat-approval-#{:erlang.unique_integer([:positive])}")
+        Meerkat.TestHelpers.tmp_path("meerkat-approval")
 
       on_exit(fn -> File.rm_rf!(tmp) end)
       {:ok, dir: tmp}
@@ -129,7 +129,7 @@ defmodule Meerkat.ApprovalCacheTest do
   describe "modify/2" do
     setup do
       tmp =
-        Path.join(System.tmp_dir!(), "meerkat-approval-#{:erlang.unique_integer([:positive])}")
+        Meerkat.TestHelpers.tmp_path("meerkat-approval")
 
       on_exit(fn -> File.rm_rf!(tmp) end)
       {:ok, path: Path.join(tmp, "approved.json")}

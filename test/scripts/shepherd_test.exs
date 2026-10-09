@@ -176,6 +176,16 @@ defmodule Meerkat.ShepherdTest do
 
       await_output(port, dir, "waiting for source change")
       kill_launcher(port, dir)
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
+    end
+
+    test "a successful compile stamps the build with its checkout" do
+      {port, dir} = open_dev_shepherd(built: "/elsewhere", exit_codes: [0])
+
+      assert await_exit(port, dir) == 0
+
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) ==
+               Path.join(dir, "root") <> "\n"
     end
 
     test "the dev shepherd skips `mix compile` for a fresh build compiled in its own checkout" do
@@ -338,12 +348,13 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
-  # caller), copied into a checkout at `root` that has no build, from a
-  # fresh `review` dir, with `mix` and `bunx` replaced by stubs: `mix
-  # compile` exits `compile_code`, and each `mix run` exits the next of
-  # `exit_codes`, counting runs in the temp dir's `i`. With `built`, `root`
-  # has a source, a build manifest newer than it, and a stamp naming the
-  # checkout that compiled the build: `built`, or with `:root`, `root`.
+  # caller), copied into a checkout at `root` that has no build unless
+  # `built` is given, from a fresh `review` dir, with `mix` and `bunx`
+  # replaced by stubs: `mix compile` exits `compile_code`, and each `mix
+  # run` exits the next of `exit_codes`, counting runs in the temp dir's
+  # `i`. With `built`, `root` has a source, a build manifest newer than
+  # it, and a stamp naming `built` as the checkout that compiled the build
+  # (`:root` names `root` itself).
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)

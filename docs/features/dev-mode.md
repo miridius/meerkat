@@ -28,13 +28,12 @@ Two halves:
 
 2. **`bin/meerkat-beam` shepherd loop** — the bash wrapper around
    `mix run --no-start --no-compile`. Before each BEAM start it runs
-   `mix compile` when a source is newer than the build or the build
-   was last compiled in another checkout, so a build copied into a new
+   `mix compile` when a source is newer than the build or the launcher
+   last compiled it in another checkout, so a build copied into a new
    worktree never stands in for that worktree's sources. Exit code 75
-   restarts after a
-   code change; after every BEAM exit, the loop reads the run dir's
-   `port` file, sets `MEERKAT_PREFERRED_PORT` to its port for the next
-   BEAM, and deletes the file. With the default port or `--port 0`,
+   restarts after a code change; after every BEAM exit, the loop
+   reads the run dir's `port` file, sets `MEERKAT_PREFERRED_PORT` to
+   its port for the next BEAM, and deletes the file. With the default port or `--port 0`,
    the next BEAM tries that port first and falls back to an
    OS-assigned port if it is occupied; an explicit nonzero port is
    bound again. In `MIX_ENV=dev`, every exit other than 75 is

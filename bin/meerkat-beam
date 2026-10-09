@@ -29,7 +29,7 @@ export MEERKAT_PWD="$ORIG_PWD"
 # circuits on first newer file. A new worktree's build is copied from
 # the main checkout after its sources are checked out, so it can look
 # newer than sources it was not compiled from; a stamp naming the
-# checkout that last compiled the build makes the first launch in any
+# checkout whose launcher last compiled the build makes the first launch in any
 # other checkout run `mix compile`, which decides what is stale. On
 # compile error, return non-zero WITHOUT aborting the shepherd (set -e
 # is locally disabled around the call so a syntax error in the user's

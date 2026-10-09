@@ -867,11 +867,7 @@ defmodule Meerkat.CLITest do
     test "empty payload still announces the verdict, writes no file" do
       # Unique path so a leftover file from another run can't fail the
       # "writes no file" assertion below.
-      unwritten =
-        Path.join(
-          System.tmp_dir!(),
-          "meerkat-cli-unwritten-#{System.unique_integer([:positive])}.txt"
-        )
+      unwritten = tmp_path("meerkat-cli-unwritten") <> ".txt"
 
       out = CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten)
 
@@ -964,7 +960,7 @@ defmodule Meerkat.CLITest do
     # instead, and only a terminal decision clears the file.
     setup do
       dir =
-        Path.join(System.tmp_dir!(), "meerkat-cli-gate-#{System.unique_integer([:positive])}")
+        Meerkat.TestHelpers.tmp_path("meerkat-cli-gate")
 
       File.mkdir_p!(dir)
       git(dir, ["init", "-q", "-b", "main"])

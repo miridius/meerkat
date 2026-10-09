@@ -11,7 +11,7 @@ defmodule Meerkat.GitOidsTest do
   alias Meerkat.Git
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "meerkat-oids-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-oids")
     File.mkdir_p!(dir)
     git(dir, ["init", "-q"])
     git(dir, ["config", "user.email", "t@t.t"])
@@ -151,7 +151,7 @@ defmodule Meerkat.GitOidsTest do
     test "strips an inherited GIT_DIR so fixtures build in dir, not the ambient gitdir",
          %{dir: dir} do
       poison =
-        Path.join(System.tmp_dir!(), "meerkat-oids-poison-#{System.unique_integer([:positive])}")
+        Meerkat.TestHelpers.tmp_path("meerkat-oids-poison")
 
       File.mkdir_p!(poison)
       System.cmd("git", ["init", "-q", poison])

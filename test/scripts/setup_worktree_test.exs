@@ -17,7 +17,7 @@ defmodule Meerkat.SetupWorktreeHookTest do
   """
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "meerkat-setup-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-setup")
     on_exit(fn -> File.rm_rf!(dir) end)
     checkout = Path.join(dir, "checkout")
     bin = Path.join(dir, "bin")
