@@ -811,9 +811,9 @@ defmodule Meerkat.CLI do
     Then read the process output to learn the outcome: it says whether the user
     approved or requested changes, and carries any comments to act on. Read the
     whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
-    the feedback. If the output ends with no outcome line, this process was
-    killed and the review is still open: run the same command again to wait
-    for its outcome.
+    the feedback. If the output ends with no outcome line, this process
+    stopped before the review completed and the review is still open: run the
+    same command again to wait for its outcome.
     """
   end
 

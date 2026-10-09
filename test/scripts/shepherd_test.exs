@@ -154,6 +154,39 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
+    test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      rel = Path.join(dir, "rel")
+      File.mkdir_p!(Path.join(rel, "bin"))
+      File.ln_s!(rel, Path.join(dir, "current"))
+      # A BEAM that never binds, so the review has no URL yet.
+      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+      File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      backend = await_backend_pid(Path.join(dir, "runs"))
+      on_exit(fn -> System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true) end)
+      {:os_pid, caller} = Port.info(port, :os_pid)
+      System.cmd("kill", ["-#{unquote(signal)}", to_string(caller)])
+
+      assert {code, output} = await_result(port, dir)
+      assert code == 128 + unquote(number)
+
+      assert output =~
+               "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
+                 "The review is still open; run the same command again to wait for its outcome.\n"
+
+      assert {_, 0} = System.cmd("kill", ["-0", backend], stderr_to_stdout: true)
+    end
+  end
+
   describe "once the review is removed" do
     test "a caller whose runs dir is deleted exits 2 instead of retrying" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
@@ -523,10 +556,13 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  defp await_exit(port, dir) do
+  defp await_exit(port, dir), do: port |> await_result(dir) |> elem(0)
+
+  # The launcher's exit code and everything it printed.
+  defp await_result(port, dir, seen \\ "") do
     receive do
-      {^port, {:data, _}} -> await_exit(port, dir)
-      {^port, {:exit_status, code}} -> code
+      {^port, {:data, data}} -> await_result(port, dir, seen <> data)
+      {^port, {:exit_status, code}} -> {code, seen}
     after
       @timeout_ms ->
         kill_launcher(port, dir)

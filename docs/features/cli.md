@@ -152,7 +152,8 @@ staged files are still reviewed. For which index they read, see
   SIGKILLing its BEAM. The invocation waiting on the review is
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
   the decision prints that the review is still open and dies of that
-  signal, and the review keeps running; see
+  signal (128 plus its number to a shell, so 130 for SIGINT and 129
+  for SIGHUP), and the review keeps running; see
   [decision-flow.md](decision-flow.md#when-the-caller-exits).
 
 ## Output
