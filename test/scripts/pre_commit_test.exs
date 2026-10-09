@@ -6,7 +6,7 @@ defmodule Meerkat.PreCommitHookTest do
   # or none when it is `none`, and exits with STUB_MUEX_EXIT.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
+  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0, hold_gate_slot: 1]
 
   @root File.cwd!()
 
@@ -54,7 +54,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
-    for script <- ~w(check.sh checked-trees.sh no-main-commits.sh mutate.sh) do
+    for script <- ~w(check.sh checked-trees.sh gate-lock.pl no-main-commits.sh mutate.sh) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -432,6 +432,45 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-optimize" in args
   end
 
+  describe "while two other gates run" do
+    setup ctx do
+      lock = Path.join(ctx.work, ".git/meerkat-gate-lock")
+      {:ok, first: hold_gate_slot(lock), second: hold_gate_slot(lock)}
+    end
+
+    test "a commit waits, saying so, then runs every gate once one ends", ctx do
+      stage(ctx.work, "code.txt", "staged\n")
+      port = in_port(ctx, ["git", "commit", "-q", "-m", "change code"])
+
+      await_line(port, "waiting for one to finish")
+      refute_receive {^port, {:exit_status, _}}, 1_000
+      assert gates_run(ctx) == []
+
+      Port.close(ctx.first)
+      assert_receive {^port, {:exit_status, 0}}, 30_000
+      assert gates_run(ctx) == @gates
+    end
+
+    test "staged mutation testing waits, saying so, then runs once a gate ends", ctx do
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+      port = in_port(ctx, ["bash", "scripts/mutate.sh", "staged"])
+
+      await_line(port, "waiting for one to finish")
+      refute_receive {^port, {:exit_status, _}}, 1_000
+      assert gates_run(ctx) == []
+
+      Port.close(ctx.second)
+      assert_receive {^port, {:exit_status, 0}}, 30_000
+      assert gates_run(ctx) == @mutation
+    end
+
+    test "a commit changing only Markdown files does not wait", ctx do
+      stage(ctx.work, "README.md", "hello\n")
+
+      assert {_, 0} = commit(ctx, ["-m", "docs"])
+    end
+  end
+
   test "a commit on main is refused before any check runs", ctx do
     no_hooks(ctx.work, ["switch", "-q", "main"])
     stage(ctx.work, "code.txt", "staged\n")
@@ -466,6 +505,36 @@ defmodule Meerkat.PreCommitHookTest do
       env: [{"PATH", path} | hook_env()] ++ env,
       stderr_to_stdout: true
     )
+  end
+
+  # Runs `command` in the checkout, as commit/3 does, in a port that delivers
+  # its output line by line and its exit status.
+  defp in_port(ctx, [cmd | args]) do
+    env =
+      for {name, value} <- [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")} | hook_env()],
+          do: {String.to_charlist(name), if(value, do: String.to_charlist(value), else: false)}
+
+    Port.open({:spawn_executable, System.find_executable(cmd)}, [
+      :binary,
+      :exit_status,
+      :stderr_to_stdout,
+      {:line, 4096},
+      args: args,
+      cd: ctx.work,
+      env: env
+    ])
+  end
+
+  defp await_line(port, text) do
+    receive do
+      {^port, {:data, {:eol, line}}} ->
+        if line =~ text, do: :ok, else: await_line(port, text)
+
+      {^port, {:exit_status, status}} ->
+        flunk("exited #{status} before printing #{inspect(text)}")
+    after
+      10_000 -> flunk("no line containing #{inspect(text)}")
+    end
   end
 
   defp check_head(ctx, env \\ []) do

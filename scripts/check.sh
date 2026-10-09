@@ -7,7 +7,8 @@
 # of the commit being made.
 #
 # In pre-commit mode, a commit that changes only Markdown files, or nothing,
-# skips the checks; CI still runs them on the PR.
+# skips the checks; CI still runs them on the PR. Otherwise the checks wait
+# for a slot from scripts/gate-lock.pl.
 #
 # When the checks pass and the worktree held exactly the contents checked,
 # with no untracked file, both when they started and when they finished,
@@ -41,6 +42,11 @@ else
 
   tree=$(git write-tree)
 fi
+
+# At most two gates in all of this repo's worktrees run the checks at once:
+# re-run this script holding one of their slots, waiting for one if need be.
+lock="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
+[[ "${MEERKAT_GATE_LOCK:-}" == "$lock" ]] || exec perl scripts/gate-lock.pl "$lock" bash scripts/check.sh "$@"
 
 holds() { bash scripts/checked-trees.sh holds "$tree"; }
 holds && clean=1 || clean=0

@@ -9,6 +9,9 @@ lefthook: node_modules/.bin/lefthook
 # it judges with is known to pass.
 pre-commit:
   piped: true
+  # Print each line as it comes rather than once its command ends, so a gate
+  # waiting for a slot (scripts/gate-lock.pl) says so while it waits.
+  follow: true
   commands:
     no-main-commits:
       priority: 1

@@ -9,6 +9,10 @@
 # files can run together. Half the cores took as long as all of them and
 # loads the machine less.
 #
+# Each test BEAM runs four schedulers that do not busy-wait (`+S 4 +sbwt
+# none`); ELIXIR_ERL_OPTIONS already set comes after them, so it wins. Timed
+# file by file, that used a fifth to a third less CPU in no more wall time.
+#
 # On failure, print each failing file's output, list the failing files, and
 # exit non-zero. CI and the pre-commit gate both run this script, so each
 # runs the files the same way.
@@ -42,7 +46,8 @@ xargs -P "$jobs" -n 1 bash -c '
   log="$logs/$1"
   mkdir -p "$(dirname "$log")"
   status=0
-  mix test --no-compile "$1" >"$log" 2>&1 || status=$?
+  ELIXIR_ERL_OPTIONS="+S 4 +sbwt none ${ELIXIR_ERL_OPTIONS:-}" \
+    mix test --no-compile "$1" >"$log" 2>&1 || status=$?
   echo "$status" >"$log.status"
 ' _ <<<"$files" || true
 

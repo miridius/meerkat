@@ -191,6 +191,39 @@ defmodule Meerkat.TestHelpers do
     :ok
   end
 
+  @doc """
+  Runs `command` under this repo's scripts/gate-lock.pl with lock dir
+  `lock_dir`, in a port that delivers its output, stderr included, line by
+  line, and its exit status. Closing the port closes the command's stdin.
+  """
+  @spec gate_lock_port(String.t(), [String.t()]) :: port()
+  def gate_lock_port(lock_dir, command) do
+    script = Path.expand("../../scripts/gate-lock.pl", __DIR__)
+
+    Port.open({:spawn_executable, System.find_executable("perl")}, [
+      :binary,
+      :exit_status,
+      :stderr_to_stdout,
+      {:line, 4096},
+      args: [script, lock_dir | command]
+    ])
+  end
+
+  @doc """
+  Takes a slot of the gate lock in `lock_dir` and returns once it holds it.
+  The slot stays taken until the returned port is closed.
+  """
+  @spec hold_gate_slot(String.t()) :: port()
+  def hold_gate_slot(lock_dir) do
+    port = gate_lock_port(lock_dir, ["bash", "-c", "echo held; read -r _"])
+
+    receive do
+      {^port, {:data, {:eol, "held"}}} -> port
+    after
+      10_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{lock_dir}")
+    end
+  end
+
   defp lefthook_bin do
     root = Path.expand("../..", __DIR__)
 

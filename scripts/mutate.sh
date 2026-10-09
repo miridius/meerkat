@@ -91,6 +91,7 @@ line_scope() {
   scope_args=("$@" --no-filter --no-optimize)
 }
 
+args=("$@")
 mode=${1:-default}
 shift || true
 # `scripts/mutate.sh -- <muex flags>` is the default mode with flags.
@@ -129,6 +130,10 @@ case "$mode" in
       echo "scripts/mutate.sh: no lib/**/*.ex lines staged — nothing to mutate."
       exit 0
     fi
+    # Like scripts/check.sh, the gate re-runs itself holding a slot from
+    # scripts/gate-lock.pl, waiting for one if need be.
+    lock="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
+    [[ "${MEERKAT_GATE_LOCK:-}" == "$lock" ]] || exec perl scripts/gate-lock.pl "$lock" bash scripts/mutate.sh "${args[@]}"
     collect_files lib '*.ex'
     line_scope --staged
     gate=true
