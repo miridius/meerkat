@@ -1150,6 +1150,25 @@ defmodule Meerkat.CLITest do
       assert CLI.auto_approve_decision_for_test(dir) == @all_approved
     end
 
+    # The fast path runs before the review's modules load, so a snapshot
+    # key may name no existing atom yet.
+    test "a snapshot of other staged content holding a key that is no atom still auto-approves",
+         %{dir: dir} do
+      stage(dir, "a.rs", "fn earlier() {}\n")
+      path = save_snapshot(dir, global_comments: [@comment])
+      key = "no_atom_#{System.unique_integer([:positive])}"
+
+      json =
+        path
+        |> File.read!()
+        |> Jason.decode!()
+        |> put_in(["global_comments", Access.at(0), key], 1)
+
+      File.write!(path, Jason.encode!(json))
+      stage(dir, "a.rs", "fn a() {}\n")
+      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
+    end
+
     test "a snapshot written before signatures existed keeps the rerun live", %{dir: dir} do
       path = save_snapshot(dir, global_comments: [@comment])
       legacy = path |> File.read!() |> Jason.decode!() |> Map.delete("state_signature")
