@@ -25,6 +25,10 @@ Staged-diff reviews omit paths with unresolved merge conflicts; other
 staged files are still reviewed. For which index they read, see
 [`GIT_INDEX_FILE`](#env-vars).
 
+Every review target is refused with exit `1`, before opening a page or
+auto-approving, while questions from the last round remain unanswered;
+see [pending-answers.md](pending-answers.md).
+
 ## Flags
 
 - `--answers` — no review. Read the agent's answers to a prior
@@ -116,11 +120,16 @@ staged files are still reviewed. For which index they read, see
 
 - `0` — approved (with or without feedback). The git hook proceeds
   with the commit. Under `--answers`: the answers were stored.
-- `1` — rejected, or cancelled. The git hook aborts. Under
+- `1` — rejected, cancelled, or refused because prior questions are
+  unanswered (with the unanswered questions and answer instructions on
+  stderr; no browser opens). A reattaching caller also exits 1 if owed
+  question state is unreadable, leaving the existing backend running.
+  The git hook aborts. Under
   `--answers`: the input was rejected and nothing was written.
 - `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
   outer `try/rescue` defaults to REJECT + exit 2 so a crash never
   silently lands a commit; see [decision-flow.md](decision-flow.md).
+  Unreadable owed-question state also fails closed with exit 2.
   The dev launcher (`bin/meerkat-beam`) propagates exit 2; the prod
   launcher (`bin/meerkat-shepherd`) retries a crash once, then exits
   with the code. A caller that cannot create its run dir while not

@@ -15,8 +15,10 @@ that ran `git commit` (or to a GitHub PENDING review).
   `meerkat A..B` / `A...B` for a range, `meerkat --pr <N>` for a
   GitHub PR.
 
-Each invocation parses args and derives a review target, then
-decides whether to auto-approve (see
+Each invocation parses args and first refuses to review while the
+agent owes answers to the last round's questions (see
+[pending-answers.md](pending-answers.md)). It then derives a review
+target and decides whether to auto-approve (see
 [decision-flow.md](decision-flow.md) for the auto-approve fast
 path). Otherwise, from the invocation's perspective, a localhost
 HTTP port is bound, the URL is opened in the browser, and it blocks

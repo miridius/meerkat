@@ -21,7 +21,6 @@ defmodule MeerkatWeb.ReviewLive do
     ApprovalCache,
     Comment,
     Decision,
-    Feedback,
     GitHub,
     OpenForms,
     PendingAnswers,
@@ -156,7 +155,7 @@ defmodule MeerkatWeb.ReviewLive do
   # no-update cases (and tests, which capture the restart).
   defp maybe_apply_update(socket) do
     # Don't restart once a decision is in flight: the CLI holds the BEAM
-    # alive briefly after Decision.submit/1 to flush state before halting
+    # alive briefly after Decision.submit_review/4 to flush state before halting
     # with the decision's exit code (0/1), and a restart (75) here would
     # preempt that code and lose the reviewer's approve/reject.
     if socket.assigns[:update_pending] and socket.assigns.open_forms == [] and
@@ -690,18 +689,15 @@ defmodule MeerkatWeb.ReviewLive do
     # Mirror every staged file's current blob OID into the per-branch
     # approval cache so the next staged-mode hook run on this branch
     # auto-collapses approved files instead of forcing the reviewer to
-    # re-tick everything. Run BEFORE `Decision.submit/1` because the
-    # CLI's `await` returns immediately after that call and the BEAM
-    # exits ~750ms later — a slow bulk write could be cut short.
-    bulk_persist_approval_cache(repo_path, state)
+    # re-tick everything. Run as the decision is accepted, BEFORE the
+    # CLI's `await` returns (the BEAM exits ~750ms later, so a slow bulk
+    # write could be cut short), and never for a late tab's Approve.
+    tag = if comments?(state), do: :approve_with_feedback, else: :approve
 
     submitted =
-      if comments?(state) do
-        payload = Feedback.format(state, :approval_with_feedback)
-        Decision.submit({:approve_with_feedback, payload})
-      else
-        Decision.submit({:approve, ""})
-      end
+      Decision.submit_review(tag, state, repo_path, fn ->
+        bulk_persist_approval_cache(repo_path, state)
+      end)
 
     clear_pending_answers()
 
@@ -712,9 +708,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def handle_event("decision.reject", _, socket) do
-    %{state: state} = socket.assigns
-    payload = Feedback.format(state, :rejection)
-    submitted = Decision.submit({:reject, payload})
+    submitted = Decision.submit_review(:reject, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
     {:noreply,
@@ -761,7 +755,7 @@ defmodule MeerkatWeb.ReviewLive do
       _ = ReviewServer.clear_all_comments(rid)
     end
 
-    submitted = Decision.submit({:cancel, ""})
+    submitted = Decision.submit_review(:cancel, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
     {:noreply,

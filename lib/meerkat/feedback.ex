@@ -5,14 +5,15 @@ defmodule Meerkat.Feedback do
   in-line. The shell that ran `meerkat --commit-msg` sees this on
   stderr as first-party feedback to the agent that drove the commit.
 
-  When any comment is `:question`, the formatted output is prefixed
-  with a directive block telling the agent to hand its answers to
+  When any comment is a fresh `:question` or restored `"question"`, the
+  output is prefixed with a directive block telling the agent to hand its
+  answers to
   `meerkat --answers`, which stores them for the next invocation to
   surface as a banner above the diff so the human reviewer sees the
   answers in context.
   """
 
-  alias Meerkat.ReviewState
+  alias Meerkat.{PendingQuestions, ReviewState}
 
   @doc """
   Build the feedback string. Returns `""` when there's nothing to
@@ -54,7 +55,7 @@ defmodule Meerkat.Feedback do
       {blocks, _} ->
         framing = framing_header(mode)
         action_summary = action_summary(state)
-        directive = if has_questions?(state), do: question_directive(), else: ""
+        directive = if has_questions?(state), do: question_directive(questions(state)), else: ""
         framing <> action_summary <> directive <> Enum.join(blocks, "") <> "\n"
     end
   end
@@ -90,7 +91,7 @@ defmodule Meerkat.Feedback do
     all = all_comments(state)
 
     {questions, actionable} =
-      Enum.split_with(all, &(&1.finding_type == :question))
+      Enum.split_with(all, &question?/1)
 
     case {questions, actionable} do
       {[], _} ->
@@ -142,12 +143,12 @@ defmodule Meerkat.Feedback do
   end
 
   @doc """
-  True when any comment in `state` carries `finding_type: :question`.
+  True when any comment in `state` is a fresh or restored question.
   Triggers the question directive prelude in `format/2`.
   """
   @spec has_questions?(ReviewState.t()) :: boolean()
   def has_questions?(%ReviewState{} = state) do
-    Enum.any?(all_comments(state), &(&1.finding_type == :question))
+    Enum.any?(all_comments(state), &question?/1)
   end
 
   @doc "Total number of comments across all four surfaces (inline, file, global, commit-message)."
@@ -159,37 +160,83 @@ defmodule Meerkat.Feedback do
       state.file_comments ++ state.global_comments ++ state.commit_message_comments
   end
 
+  defp question?(comment), do: comment.finding_type in [:question, "question"]
+
+  @doc "Question identity uses the feedback's location and verbatim body on every surface."
+  @spec questions(ReviewState.t()) :: [PendingQuestions.question()]
+  def questions(%ReviewState{} = state) do
+    state
+    |> all_comments()
+    |> Enum.filter(&question?/1)
+    |> Enum.map(fn comment ->
+      %{location: question_location(state, comment), question: comment.body}
+    end)
+  end
+
+  defp question_location(state, %{file_index: idx, side: side, start_line: s, end_line: e}),
+    do: "#{file_name_for(state, idx)}:#{line_range(s, e)} (#{side_str(side)})"
+
+  defp question_location(state, %{file_index: idx}), do: "file: #{file_name_for(state, idx)}"
+
+  defp question_location(_state, %{start_line: s, end_line: e}),
+    do: "commit-message:#{line_range(s, e)}"
+
+  defp question_location(%ReviewState{}, _comment), do: "global"
+
+  @doc "Persist obligations before the terminal feedback can reach the agent."
+  @spec prepare(ReviewState.t(), :rejection | :approval_with_feedback, String.t()) :: String.t()
+  def prepare(state, mode, repo_path) do
+    :ok = PendingQuestions.replace(repo_path, questions(state))
+    format(state, mode)
+  end
+
+  @doc "Agent-only refusal, with the same handoff walkthrough as terminal feedback."
+  @spec unanswered([PendingQuestions.question()]) :: String.t()
+  def unanswered(questions) do
+    listed = Enum.map_join(questions, "\n", &"  #{&1.location}\n    #{&1.question}\n")
+
+    "meerkat: review refused because these questions are unanswered:\n\n" <>
+      listed <> answer_walkthrough(questions) <> "Then re-run the command that was refused.\n"
+  end
+
   # Directive prepended to feedback when at least one comment is
-  # :question. Tells the agent to answer with analysis (not code) and
-  # to hand the answers to `meerkat --answers` so meerkat can pin them
-  # on the next review.
-  defp question_directive do
+  # :question. Tells the agent to answer with analysis (not code), to
+  # hand the answers to `meerkat --answers`, and how to trigger the review
+  # that pins them.
+  defp question_directive(questions) do
+    answer_walkthrough(questions) <>
+      """
+      Then trigger a new meerkat review so the reviewer sees your answers:
+        • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
+        • If there are no code changes to make, run `meerkat` (no args) from this repo. It reopens the review with your answers pinned above the diff, and blocks until the reviewer decides — even when the commit already consumed everything you staged, in which case the answers appear above an empty diff. Meerkat will not auto-approve while answers are pending, so it cannot silently discard them.
+
+      """
+  end
+
+  defp answer_walkthrough(questions) do
+    template =
+      Jason.encode!(
+        %{answers: Enum.map(questions, &Map.put(&1, :answer, "<your answer, markdown OK>"))},
+        pretty: true
+      )
+
     """
 
-    ⚠ This feedback contains **question**-type comments. Answer them with analysis — \
+    ⚠ Answer the reviewer's **question**-type comments with analysis — \
     do NOT modify code in response. (Non-question comments — issue / suggestion / revert / \
     follow-up — still apply, change code for those as usual.)
 
     Hand your answers to meerkat by running this from the repo. It validates and stores them \
     itself (exit 0 on success, exit 1 with a message on bad input); do NOT write the answers \
-    file yourself. Running it again replaces any earlier answers. The heredoc's closing JSON \
-    must stay at the start of its line, so run it exactly as printed:
+    file yourself. Running it again replaces any earlier answers, so include the complete \
+    answer set — on a partial-answer refusal, add your previously submitted answers to this JSON \
+    too. Keep each location and question exactly as printed below and replace each \
+    answer placeholder with a nonblank answer. The next review is refused until every question \
+    has an answer. The heredoc's closing JSON must stay at the start of its line:
 
     meerkat --answers <<'JSON'
-    {
-      "answers": [
-        {
-          "location": "<human-readable origin of the question — we suggest 'src/foo.rs:42 (new)' for a line comment, 'file: src/foo.rs' for a file-level comment, or 'global' — rendered as-is in the UI>",
-          "question": "<verbatim body of the **question:** comment>",
-          "answer": "<your answer, markdown OK>"
-        }
-      ]
-    }
+    #{template}
     JSON
-
-    Then trigger a new meerkat review so the reviewer sees your answers:
-      • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
-      • If there are no code changes to make, run `meerkat` (no args) from this repo. It reopens the review with your answers pinned above the diff, and blocks until the reviewer decides — even when the commit already consumed everything you staged, in which case the answers appear above an empty diff. Meerkat will not auto-approve while answers are pending, so it cannot silently discard them.
 
     """
   end

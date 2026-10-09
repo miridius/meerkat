@@ -6,7 +6,7 @@ defmodule Meerkat.CLIMainTest do
 
   import Meerkat.TestHelpers
 
-  alias Meerkat.CLI
+  alias Meerkat.{CLI, PendingAnswers, PendingQuestions}
 
   setup do
     isolate_git_config()
@@ -37,6 +37,81 @@ defmodule Meerkat.CLIMainTest do
     # Starting a review puts its target and endpoint config in the app env.
     assert Application.get_all_env(:meerkat) == env_before
   end
+
+  test "unanswered questions refuse every review target before resolving it or opening a page",
+       %{repo: repo, commit_msg: commit_msg} do
+    question = %{location: "src/x.rs:2 (old)", question: "Why remove this?"}
+    :ok = PendingQuestions.replace(repo, [question])
+    env_before = Application.get_all_env(:meerkat)
+
+    for argv <- [[], ["--commit-msg", commit_msg], ["HEAD"], ["A..B"], ["A...B"], ["--pr", "123"]] do
+      {code, stderr} = run_main(argv ++ ["--no-open"])
+      assert code == 1
+      assert stderr =~ "review refused because these questions are unanswered"
+      assert stderr =~ "src/x.rs:2 (old)"
+      assert stderr =~ "Why remove this?"
+      assert stderr =~ "meerkat --answers <<'JSON'"
+      assert stderr =~ "re-run the command that was refused"
+      refute stderr =~ "auto-approving"
+      refute stderr =~ "Paused for human review"
+      assert Application.get_all_env(:meerkat) == env_before
+    end
+  end
+
+  test "partial answers list only the remaining question; a complete set passes the question gate",
+       %{repo: repo} do
+    answered = %{location: "global", question: "Answered question?"}
+    missing = %{location: "file: src/x.rs", question: "Still missing?"}
+    :ok = PendingQuestions.replace(repo, [answered, missing])
+    {:ok, 1} = PendingAnswers.save(repo, answer_json([answered]))
+
+    {1, stderr} = run_main(["--no-open"])
+    assert stderr =~ "file: src/x.rs"
+    assert stderr =~ "Still missing?"
+    refute stderr =~ "Answered question?"
+
+    # This ref cannot resolve. Reaching its 64 proves the gate has let the
+    # complete set through without starting an endpoint or waiting on a user.
+    stub_gh(repo, "exit 1")
+    {:ok, 2} = PendingAnswers.save(repo, answer_json([answered, missing]))
+    {64, stderr} = run_main(["no-such-ref", "--no-open"])
+    assert stderr =~ "error resolving review target"
+    refute stderr =~ "review refused"
+    assert length(PendingAnswers.load(repo).answers) == 2
+    assert CLI.auto_approve_decision_for_test(repo) == :live
+  end
+
+  test "a served restart and a missing temporary index cannot bypass the question gate", %{
+    repo: repo
+  } do
+    :ok = PendingQuestions.replace(repo, [%{location: "global", question: "Still owed?"}])
+    serve_dir = Path.join(repo, "run")
+    File.mkdir_p!(serve_dir)
+    File.write!(Path.join(serve_dir, "served"), "")
+    put_env("MEERKAT_SERVE_DIR", serve_dir)
+    put_env("GIT_INDEX_FILE", Path.join(repo, "missing-index"))
+    {1, stderr} = run_main(["--no-open"])
+    assert stderr =~ "Still owed?"
+    refute stderr =~ "index"
+  end
+
+  test "corrupt obligations reject instead of opening or auto-approving", %{repo: repo} do
+    :ok = PendingQuestions.replace(repo, [])
+    path = PendingQuestions.path_for(repo)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "broken JSON")
+    {:error, reason} = PendingQuestions.unanswered(repo)
+    {2, stderr} = run_main(["--no-open"])
+
+    assert stderr ==
+             "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n"
+
+    refute stderr =~ "auto-approving"
+    assert File.read!(path) == "broken JSON"
+  end
+
+  defp answer_json(questions),
+    do: Jason.encode!(%{answers: Enum.map(questions, &Map.put(&1, :answer, "Because."))})
 
   # Without a UTF-8 locale the BEAM opens stderr as latin1 and writes
   # each non-latin1 character as an escape like `\x{2014}`.
