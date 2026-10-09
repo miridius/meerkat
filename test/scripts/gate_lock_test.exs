@@ -4,7 +4,8 @@ defmodule Meerkat.GateLockTest do
   # test must end it, waits for its stdin to close.
   use ExUnit.Case, async: true
 
-  import Meerkat.TestHelpers, only: [git: 2, gate_lock_port: 2, hold_gate_slot: 1]
+  import Meerkat.TestHelpers,
+    only: [git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1]
 
   @waiting "gate-lock: 2 gates are already running checks in this repo; waiting for one to finish."
 
@@ -48,7 +49,7 @@ defmodule Meerkat.GateLockTest do
     assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
   end
 
-  test "waiting gates take free slots in the order they arrived", ctx do
+  test "the waiting gate at the head of the queue takes the next free slot", ctx do
     first = hold_gate_slot(ctx.repo)
     second = hold_gate_slot(ctx.repo)
 
@@ -67,6 +68,39 @@ defmodule Meerkat.GateLockTest do
 
     Port.close(second)
     assert_receive {^later, {:data, {:eol, "later ran"}}}, 5_000
+  end
+
+  # A gate behind the head of the queue waits for the queue lock, and one at
+  # the head waits for a slot; neither may burn CPU while it waits.
+  test "waiting gates sleep rather than spin", ctx do
+    _first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+    head = gate_lock_port(ctx.repo, "echo head ran")
+    assert_receive {^head, {:data, {:eol, @waiting}}}, 5_000
+    behind = gate_lock_port(ctx.repo, "echo behind ran")
+    assert_receive {^behind, {:data, {:eol, @waiting}}}, 5_000
+
+    Process.sleep(2_000)
+    assert cpu_seconds(head) < 0.5
+    assert cpu_seconds(behind) < 0.5
+  end
+
+  test "a gate that gets no slot in time gives up, saying so, and leaves the queue", ctx do
+    _first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+
+    gate = gate_lock_port(ctx.repo, "echo ran", 1)
+    assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
+
+    assert_receive {^gate,
+                    {:data,
+                     {:eol,
+                      "gate-lock: no slot came free in 1s; giving up. Set MEERKAT_GATE_LOCK_TIMEOUT to wait longer."}}},
+                   5_000
+
+    assert_receive {^gate, {:exit_status, 1}}, 5_000
+    queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
+    assert {_, 0} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
   end
 
   # The kernel drops a dead process's flock, and the child, started with the
@@ -99,5 +133,31 @@ defmodule Meerkat.GateLockTest do
   defp kill(port) do
     {:os_pid, pid} = Port.info(port, :os_pid)
     {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(pid)])
+  end
+
+  # The CPU time, in seconds, of the port's live process tree.
+  defp cpu_seconds(port) do
+    {:os_pid, root} = Port.info(port, :os_pid)
+    {out, 0} = System.cmd("ps", ["-A", "-o", "pid=,ppid=,time="])
+
+    procs =
+      for line <- String.split(out, "\n", trim: true),
+          [pid, ppid, time] <- [String.split(line)],
+          do: {String.to_integer(pid), String.to_integer(ppid), seconds(time)}
+
+    procs |> tree([root]) |> Enum.sum()
+  end
+
+  defp tree(procs, pids) do
+    children = for {pid, ppid, _} <- procs, ppid in pids, do: pid
+    own = for {pid, _, time} <- procs, pid in pids, do: time
+    if children == [], do: own, else: own ++ tree(procs, children)
+  end
+
+  # ps prints CPU time as [hh:]mm:ss.cc.
+  defp seconds(time) do
+    time
+    |> String.split(":")
+    |> Enum.reduce(0.0, fn part, acc -> acc * 60 + elem(Float.parse(part), 0) end)
   end
 end

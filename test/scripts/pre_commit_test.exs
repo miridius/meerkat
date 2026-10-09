@@ -89,9 +89,21 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
-    # A tool holding the gate slot's fd would keep the slot if it outlived
-    # the gate.
-    [ ! -e /dev/fd/9 ] || echo "$(basename "$0") $1" >> '#{slot_fd}'
+    # With STUB_PROBE_SLOTS set, log each tool that runs while it, or a
+    # process between it and the gate, holds a gate slot too: that process
+    # would keep the slot if it outlived the gate.
+    if [ -n "${STUB_PROBE_SLOTS:-}" ]; then
+      holders=" $(lsof -t '#{work}/.git/meerkat-gate-lock/slot1' \\
+        '#{work}/.git/meerkat-gate-lock/slot2' 2>/dev/null | tr '\\n' ' ') "
+      n=0
+      p=$$
+      while [ "$p" -gt 1 ]; do
+        case "$holders" in *" $p "*) n=$((n + 1)) ;; esac
+        p=$(ps -o ppid= -p "$p" | tr -d ' ')
+        p=${p:-0}
+      done
+      [ "$n" -le 1 ] || echo "$(basename "$0") $1" >> '#{slot_fd}'
+    fi
     if [ "$(basename "$0") $1" = "mix muex" ]; then
       echo "mix muex" >> '#{log}'
       printf '%s\\n' "$@" > '#{muex}/args'
@@ -304,14 +316,21 @@ defmodule Meerkat.PreCommitHookTest do
     assert gates_run(ctx) == @gates
   end
 
+  test "no step of either gate runs where a process other than the gate holds its slot",
+       ctx do
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change lib"], [{"STUB_PROBE_SLOTS", "1"}])
+    assert gates_run(ctx) == @gates ++ @mutation
+    assert File.read(ctx.slot_fd) == {:error, :enoent}
+  end
+
   test "a commit staging lib/ lines mutates those lines after the checks", ctx do
     stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
 
     assert {out, 0} = commit(ctx, ["-m", "change lib"])
     assert out =~ "no mutant of the staged lib/ lines survived"
     assert gates_run(ctx) == @gates ++ @mutation
-    # The stub logs each tool that ran holding the gate slot.
-    assert File.read(ctx.slot_fd) == {:error, :enoent}
 
     args = muex_args(ctx)
     assert "--staged" in args

@@ -195,12 +195,17 @@ defmodule Meerkat.TestHelpers do
   Runs a bash `gate` in the git repo `repo`: it takes a slot with this
   repo's scripts/gate-lock.sh, then runs the bash `command`. The port
   delivers its output, stderr included, line by line, and its exit status.
-  Closing the port closes the gate's stdin.
+  Closing the port closes the gate's stdin. A gate that gets no slot gives
+  up after `timeout` seconds.
   """
-  @spec gate_lock_port(String.t(), String.t()) :: port()
-  def gate_lock_port(repo, command) do
+  @spec gate_lock_port(String.t(), String.t(), pos_integer()) :: port()
+  def gate_lock_port(repo, command, timeout \\ 60) do
     lib = Path.expand("../../scripts/gate-lock.sh", __DIR__)
-    env = for {name, nil} <- @git_discovery_overrides, do: {String.to_charlist(name), false}
+
+    env = [
+      {~c"MEERKAT_GATE_LOCK_TIMEOUT", ~c"#{timeout}"}
+      | for({name, nil} <- @git_discovery_overrides, do: {String.to_charlist(name), false})
+    ]
 
     Port.open({:spawn_executable, System.find_executable("bash")}, [
       :binary,
@@ -250,9 +255,18 @@ defmodule Meerkat.TestHelpers do
   Git exports GIT_DIR and friends to hooks; clearing them lets a run from
   inside a hook still act on the fixture. LEFTHOOK=0 would silently disable
   the hook, and LEFTHOOK_BIN would bypass lefthook.yml's `lefthook:` setting.
+  A gate that gets no slot gives up after a minute rather than the default
+  hour, so a test that leaves slots taken fails instead of hanging.
   """
-  @spec hook_env() :: [{String.t(), nil}]
-  def hook_env, do: [{"LEFTHOOK_BIN", nil}, {"LEFTHOOK", nil} | @git_discovery_overrides]
+  @spec hook_env() :: [{String.t(), String.t() | nil}]
+  def hook_env do
+    [
+      {"LEFTHOOK_BIN", nil},
+      {"LEFTHOOK", nil},
+      {"MEERKAT_GATE_LOCK_TIMEOUT", "60"}
+      | @git_discovery_overrides
+    ]
+  end
 
   @doc """
   Like `make_tmp_repo/1`, but the `.git` is a real `git init` so

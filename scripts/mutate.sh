@@ -270,9 +270,12 @@ run_mutate() {
 }
 
 # Like scripts/check.sh, the gate holds a slot from scripts/gate-lock.sh
-# and runs with the slot's fd 9 closed.
+# and runs in a subshell that closes the slot's fd 9 first.
 if [[ "$gate" == true ]]; then
   source scripts/gate-lock.sh
   gate_lock
 fi
-run_mutate 9>&-
+(
+  exec 9>&-
+  run_mutate
+)

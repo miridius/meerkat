@@ -82,8 +82,16 @@ run_checks() {
 }
 
 # At most two gates in all of this repo's worktrees run the checks at once.
-# The checks run with the slot's fd 9 closed, so no command that outlives
-# this script holds the slot; this shell keeps it until it exits.
+# This shell holds the slot until it exits. The checks run in a subshell
+# that closes the slot's fd first, so nothing they start can keep the slot
+# once this shell is gone; `run_checks 9>&-` would not do, as bash keeps a
+# copy of fd 9 that its subshells, and under bash 3.2 every child, inherit.
+# The subshell resets the INT trap, so it gets one that ends it at Ctrl-C,
+# after which this shell's own trap stops this script.
 source scripts/gate-lock.sh
 gate_lock
-run_checks 9>&-
+(
+  exec 9>&-
+  trap 'exit 130' INT
+  run_checks
+)

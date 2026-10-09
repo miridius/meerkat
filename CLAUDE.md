@@ -49,7 +49,9 @@ remove commits a merged PR still references). Before committing:
   Bash only for a few lines of glue that set up and exec. Elixir
   (`.exs`) only for jobs on Elixir/Mix source or needing app code. No
   Perl or other runtime; adding a language needs the manager's approval.
-  Existing bash scripts are being moved to TypeScript, one family per PR.
+  Existing bash scripts are being moved to TypeScript, one family per PR;
+  until a bash script moves, code that must run in its own process, such
+  as `scripts/gate-lock.sh`, stays bash with it.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
 
@@ -109,7 +111,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Pre-commit:** Lefthook runs `scripts/no-main-commits.sh`, `scripts/bump-deps.sh`, `scripts/check.sh`, then `scripts/mutate.sh staged`. They are piped, so if one script refuses the commit, later scripts do not run. Lefthook prints their output as it comes.
 
-**Gate slots:** At most two gates in all worktrees of the repo run their checks at once. `check.sh`, in either mode, and `mutate.sh staged` each take one of two slots from `scripts/gate-lock.sh` before their checks and free it when they end. A gate that finds both slots taken prints that it is waiting, and waiting gates take freed slots in the order they arrived. Each slot is a `lockf` lock on a file in `meerkat-gate-lock` in the git common dir, held on the gate's fd 9, which the kernel frees when the gate exits, however it exits. The gate runs its checks with `9>&-`, so a command that outlives it does not hold the slot.
+**Gate slots:** At most two gates in all worktrees of the repo run their checks at once. `check.sh`, in either mode, and `mutate.sh staged` each take one of two slots from `scripts/gate-lock.sh` before their checks and free it when they end. A gate that finds both slots taken prints that it is waiting. Waiting gates queue: the one at the head takes the next freed slot, so a newcomer never jumps ahead of it, but which waiter moves to the head next is not ordered. A waiting gate tries the locks once a second rather than blocking, since `lockf` blocked on an fd spins a core, and gives up, failing the gate, after `MEERKAT_GATE_LOCK_TIMEOUT` seconds (default 3600). Each slot is a `lockf` lock on a file in `meerkat-gate-lock` in the git common dir, held on the gate's fd 9, which the kernel frees when the gate exits, however it exits. The gate runs its checks in a subshell that closes fd 9 first, so a command that outlives it does not hold the slot.
 
 `bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
 
