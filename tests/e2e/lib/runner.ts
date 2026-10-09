@@ -47,8 +47,8 @@ export type Runner = {
 	killParent: () => Promise<void>;
 	// Signals meerkat's whole process group (requires `ownGroup`), as the caller's parent app does when signaling its process tree.
 	signalGroup: (signal: NodeJS.Signals) => void;
-	// Resolves once meerkat and every process holding its stderr pipe have exited.
-	awaitClose: () => Promise<void>;
+	// Resolves with all of stderr once meerkat and every process holding its stderr pipe have exited.
+	awaitClose: () => Promise<string>;
 	runsDir: string;
 };
 
@@ -195,7 +195,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			}
 			process.kill(-proc.pid, signal);
 		},
-		awaitClose: () => closePromise,
+		awaitClose: () => closePromise.then(() => stderrBuf),
 		runsDir,
 	};
 }

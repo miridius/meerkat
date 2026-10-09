@@ -145,11 +145,25 @@ what it streams, and exits with the code it sends. When the
 invocation exits first, by any signal, Ctrl-C included, the server
 keeps serving the review and saving its comments.
 
+So whoever ran it never sees it end without being told what
+happened, an invocation stopped by SIGTERM, SIGINT or SIGHUP before
+it has the decision prints
+`meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
+(naming the signal it got, and leaving out ` at <url>` while the
+server is still starting), then dies of that signal. The pause
+banner says the same for an invocation that is killed without a
+chance to print, by SIGKILL: an output that ends after the banner
+with no outcome line means the review is still open.
+
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
-running. Meerkat notices an exited ancestor within about a second
-and detaches. A decision clicked while no invocation is attached
-stays held for the next invocation.
+running. Meerkat notices an exited ancestor within about a second,
+prints the same line with `the process that ran meerkat exited` in
+place of `stopped waiting (SIGTERM)`, and exits 1. Where `ps` is
+denied, as in Claude Code's sandbox, it cannot tell and keeps
+waiting. A decision
+clicked while no invocation is attached stays held for the next
+invocation.
 
 For `git commit -a` and `git commit <path>`, the review keeps its own
 copy of git's temporary index, so it keeps showing those changes and

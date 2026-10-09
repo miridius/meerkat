@@ -122,6 +122,38 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  # Claude Code's sandbox denies ps, so the caller cannot tell whether the
+  # process that ran it is alive, nor what a pid runs.
+  test "a caller that ps cannot see keeps waiting and gets the decision" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    rel = Path.join(dir, "rel")
+    fake_bin = Path.join(dir, "fakebin")
+    File.mkdir_p!(Path.join(rel, "bin"))
+    File.mkdir_p!(fake_bin)
+    File.ln_s!(rel, Path.join(dir, "current"))
+
+    File.write!(
+      Path.join(fake_bin, "ps"),
+      "#!/bin/sh\necho 'ps: Operation not permitted' >&2\nexit 1\n"
+    )
+
+    # Decides after the caller's first checks, without binding a port.
+    File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nsleep 1.5\nexit 0\n")
+
+    for file <- [Path.join(fake_bin, "ps"), Path.join([rel, "bin", "meerkat"])],
+        do: File.chmod!(file, 0o755)
+
+    port =
+      open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+        {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+        {"INPUT_FILE", "/dev/null"},
+        {"PATH", fake_bin <> ":" <> System.get_env("PATH")}
+      ])
+
+    assert await_exit(port, dir) == 0
+  end
+
   describe "once the review is removed" do
     test "a caller whose runs dir is deleted exits 2 instead of retrying" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")

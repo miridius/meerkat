@@ -571,6 +571,18 @@ defmodule Meerkat.CLITest do
         assert flat =~ "not a `tail`/`head` of it"
       end
     end
+
+    # A process killed by SIGKILL, or whose last words its caller read too
+    # early, leaves only the banner behind.
+    test "says an output ending without an outcome line means the review is still open" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        flat = target |> CLI.pause_banner_for_test(@url) |> String.replace(~r/\s+/, " ")
+
+        assert flat =~
+                 "If the output ends with no outcome line, this process was killed and " <>
+                   "the review is still open: run the same command again to wait for its outcome."
+      end
+    end
   end
 
   describe "repo_path/0" do

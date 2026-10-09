@@ -68,7 +68,10 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			const backend = backendPid(first);
 			first.signalGroup("SIGTERM");
-			await first.awaitExit();
+			expect(await first.awaitClose(), "the caller says the review lives on").toContain(
+				`meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
+			);
+			expect((await first.awaitExit()).code, "the caller dies of the signal").toBeNull();
 			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(0);
 			expect(alive(backend), "the backend survives the signal to its caller's group").toBe(true);
 
@@ -125,7 +128,9 @@ test.describe("a review outlives the process that invoked it", () => {
 		try {
 			await page.goto(first.url);
 			await first.killParent();
-			await first.awaitClose();
+			expect(await first.awaitClose(), "the orphaned caller says the review lives on").toContain(
+				`meerkat: the process that ran meerkat exited before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
+			);
 
 			await addGlobalComment(page, "sent after git was killed");
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
