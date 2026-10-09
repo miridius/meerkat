@@ -149,17 +149,23 @@ staged files are still reviewed. For which index they read, see
   file, and halts at once. Both launchers pass it straight through,
   without a restart or retry. A launcher that receives SIGTERM,
   SIGINT or SIGHUP also exits 143, without a message, after
-  SIGKILLing its BEAM.
+  SIGKILLing its BEAM. The invocation waiting on the review is
+  separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
+  the decision prints that the review is still open and dies of that
+  signal (128 plus its number to a shell, so 130 for SIGINT and 129
+  for SIGHUP), and the review keeps running; see
+  [decision-flow.md](decision-flow.md#when-the-caller-exits).
 
 ## Output
 
 - **stdout**: nothing in normal operation.
 - **stderr**: an agent-facing pause banner when the review UI comes up
   (`⏸ Paused for human review at <url> — may take minutes or hours.`
-  followed by wait-don't-poll instructions and the exit-code meanings;
+  followed by wait-don't-poll instructions and what an output ending
+  with no outcome line means; it names no exit codes, and
   the wording is target-aware — only a staged review with a
-  commit-msg path, i.e. the hook flow, says `git commit` /
-  "approved & landed"), `debug logs at: <path>`, auto-approve
+  commit-msg path, i.e. the hook flow, says `git commit`),
+  `debug logs at: <path>`, auto-approve
   breadcrumbs, warnings, a plain user-attributed verdict line on every
   terminal decision, and — on approve-with-feedback / reject — the
   rendered comment feedback (see [decision-flow.md](decision-flow.md)).
