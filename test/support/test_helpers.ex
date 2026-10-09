@@ -89,17 +89,16 @@ defmodule Meerkat.TestHelpers do
   defp shell_quote(value), do: "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
 
   @doc """
-  Build a unique `<tmpdir>/<prefix>-<unique>-<os_time>-<rand>` directory
-  with a `.git` subdir so `Meerkat.Git.git_dir/1` resolves under the
-  ceiling.
+  A path `<tmpdir>/<prefix>-<unique>-<os_time>-<rand>` that no other test
+  run uses, without creating it.
 
-  `unique_integer/1` is monotonic *within* a BEAM lifetime — across
-  restarts it can repeat, so a leftover dir from a previous run could
-  rehydrate state into the new test. Stamping with `os_time` and a
-  random suffix avoids ever aliasing an old one.
+  `unique_integer/1` is unique only *within* a BEAM, and test runs in
+  other checkouts share the tmp dir, so a bare `unique_integer/1` suffix
+  can land on a dir another run is using or left behind. Stamping with
+  `os_time` and a random suffix avoids aliasing one.
   """
-  @spec make_tmp_repo(String.t()) :: String.t()
-  def make_tmp_repo(prefix \\ "meerkat-test") do
+  @spec tmp_path(String.t()) :: String.t()
+  def tmp_path(prefix) do
     suffix =
       [
         System.unique_integer([:positive]),
@@ -108,7 +107,16 @@ defmodule Meerkat.TestHelpers do
       ]
       |> Enum.join("-")
 
-    dir = Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
+    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
+  end
+
+  @doc """
+  Build a unique `tmp_path/1` directory with a `.git` subdir so
+  `Meerkat.Git.git_dir/1` resolves under the ceiling.
+  """
+  @spec make_tmp_repo(String.t()) :: String.t()
+  def make_tmp_repo(prefix \\ "meerkat-test") do
+    dir = tmp_path(prefix)
     File.mkdir_p!(Path.join(dir, ".git"))
     dir
   end

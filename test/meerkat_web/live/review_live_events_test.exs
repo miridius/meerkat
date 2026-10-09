@@ -244,7 +244,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(view, ".version-chip-btn[disabled]")
 
     root =
-      Path.join(System.tmp_dir!(), "meerkat-lv-release-#{System.unique_integer([:positive])}")
+      Meerkat.TestHelpers.tmp_path("meerkat-lv-release")
 
     File.mkdir_p!(root)
     on_exit(fn -> File.rm_rf!(root) end)
@@ -1274,7 +1274,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "approving outside a git repo skips persistence without flashing", %{conn: conn} do
-    dir = Path.join(System.tmp_dir!(), "meerkat-lv-nogit-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit")
     File.mkdir_p!(dir)
 
     put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}], precommit?: true})
@@ -1682,8 +1682,20 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute Map.has_key?(cache["main"] || %{}, "blank.ex")
   end
 
+  test "an approve after another tab's decision marks no file approved", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "main"}
+    {view, _rid} = mount_bound(conn, state, repo)
+    {:ok, _} = Decision.submit({:reject, "feedback"})
+
+    render_click(view, "decision.approve", %{})
+
+    assert Decision.current() == {:reject, "feedback"}
+    refute ApprovalCache.approved?(ApprovalCache.load_for(repo), "main", "src/widget.rs", "oid1")
+  end
+
   test "approve outside a git repo skips the approval cache and still decides", %{conn: conn} do
-    dir = Path.join(System.tmp_dir!(), "meerkat-lv-nogit-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     assert ApprovalCache.path_for(dir) == nil

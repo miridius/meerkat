@@ -113,7 +113,7 @@ defmodule Meerkat.GitHeldIndexTest do
   test "when the repo path is not a repository, the named index is still copied",
        %{dir: dir, held_dir: held_dir} do
     outside =
-      Path.join(System.tmp_dir!(), "meerkat-no-repo-#{System.unique_integer([:positive])}")
+      Meerkat.TestHelpers.tmp_path("meerkat-no-repo")
 
     File.mkdir_p!(outside)
     on_exit(fn -> File.rm_rf!(outside) end)

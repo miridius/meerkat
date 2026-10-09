@@ -49,7 +49,35 @@ GitHub PR.
    Disabled while any comment form is open. Exit **0**. With no
    comments, stderr prints `The user approved your commit.
    Proceeding.` With comments, stderr prints the formatted feedback
-   (so the calling agent sees the approving feedback too).
+   (so the calling agent sees the approving feedback too). Approve also
+   marks every staged file approved for the branch, which feeds the
+   auto-approve fast path below. An Approve clicked after another tab
+   already decided the review is ignored and marks no file approved.
+
+## Questions block the next review
+
+Every question in Send Feedback, Approve with feedback, or timeout
+feedback is saved as a per-worktree obligation before the feedback can
+reach the agent. Restored questions receive the same ▶ ACTION count,
+answer walkthrough and re-review instructions as fresh questions.
+
+While any question has no matching nonblank answer, **every** next
+review in that worktree exits **1** before resolving its target, opening
+a browser or auto-approving. The agent sees the refusal, each unanswered
+question's location and text, the `meerkat --answers` walkthrough, and
+an instruction to re-run the refused command. No page opens for the
+reviewer. Reattaching a waiting review also checks this gate; its refusal
+ends only the new caller, preserving that review and its comments.
+Collecting an already completed review's held feedback still delivers
+that feedback. A partial answer set lists only the questions still owed.
+`--answers` itself is never blocked.
+
+Once all questions are answered, the next review opens with the existing
+Pending answers banner, including for an empty staged diff. Obligations
+survive BEAM restarts, reinstalls and new agent sessions, independently
+of the in-progress snapshot. Cancel wipes the current round and owes
+nothing. See [pending-answers.md](pending-answers.md) for matching,
+storage and lifecycle details.
 
 ## Auto-approve fast path
 
@@ -69,7 +97,8 @@ meerkat exits **0** before binding the server:
 - No staged files at all (e.g. `git commit --amend` for message only)
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 
-The UI never opens in these cases.
+The UI never opens in these cases. This fast path is unreachable while
+questions are unanswered, or while answers await the reviewer's reading.
 
 A BEAM respawned by the shepherd for the same review skips the fast
 path and resumes the live review with its Approved ticks and comments,
@@ -156,11 +185,23 @@ what it streams, and exits with the code it sends. When the
 invocation exits first, by any signal, Ctrl-C included, the server
 keeps serving the review and saving its comments.
 
+An invocation stopped by SIGTERM, SIGINT or SIGHUP before it has the
+decision tells whoever ran it so, printing
+`meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
+(naming the signal it got, and leaving out ` at <url>` while the
+server is still starting), then dies of that signal. The pause
+banner covers an invocation killed without a chance to print, as by
+SIGKILL: an output that ends after the banner with no outcome line
+means the review is still open.
+
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
-running. Meerkat notices an exited ancestor within about a second
-and detaches. A decision clicked while no invocation is attached
-stays held for the next invocation.
+running. Meerkat notices an exited ancestor within about a second,
+prints the same line with `the process that ran meerkat exited` in
+place of `stopped waiting (SIGTERM)`, and exits 1. Where `ps` is
+denied, as in Claude Code's sandbox, it cannot tell and keeps
+waiting. A decision clicked while no invocation is attached stays
+held for the next invocation.
 
 For `git commit -a` and `git commit <path>`, the review keeps its own
 copy of git's temporary index, so it keeps showing those changes and
@@ -207,7 +248,9 @@ deleted.
 The decision broadcast switches all connected tabs to the done view,
 and tabs mounted later also open on done. The next invocation for the
 same `review_id` starts without comments, including a replacement
-after only the commit message has changed.
+after only the commit message has changed. Questions delivered to the
+agent remain owed in `pending-questions.json`, outside that snapshot;
+a fresh review cannot start until they have answers.
 
 ## Review log
 

@@ -32,6 +32,9 @@ meerkat_attach() {
   _MA_PID_WAIT=0
   _MA_TICK=0
   _ma_record_ancestors
+  trap '_ma_stopped TERM' TERM
+  trap '_ma_stopped INT' INT
+  trap '_ma_stopped HUP' HUP
 
   while true; do
     if [[ -f "$_MA_DIR/exit" ]]; then
@@ -93,15 +96,44 @@ _ma_record_ancestors() {
 # A killed git commit can leave its hook (and this caller) running and attached.
 # It would then receive the decision and print it where nobody can read it, so
 # exit once any recorded ancestor exits and leave the decision held for the next
-# invocation. Check at most once a second (every fifth 0.2 s tick).
+# invocation. Check at most once a second (every fifth 0.2 s tick). Where ps
+# cannot tell (a sandbox denies it), assume the ancestors live: taking them
+# for dead would end every review the moment it started.
 _ma_exit_if_orphaned() {
   ((_MA_TICK++ % 5 == 0)) || return 0
   ((${#_MA_ANCESTORS[@]})) || return 0
+  _ma_ps_works || return 0
   local joined live
   joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
   live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
-  ((live < ${#_MA_ANCESTORS[@]})) && exit 1
+  if ((live < ${#_MA_ANCESTORS[@]})); then
+    _ma_still_open "the process that ran meerkat exited"
+    exit 1
+  fi
   return 0
+}
+
+# Whether ps can see processes at all: it lists this caller.
+_ma_ps_works() {
+  [[ -n "$(ps -o pid= -p $$ 2>/dev/null)" ]]
+}
+
+# A caller stopped before the decision says the review lives on, so whoever
+# ran it learns to rerun instead of reading only an exit status. It then dies
+# of the signal, as it would have untrapped.
+_ma_stopped() {
+  _ma_still_open "stopped waiting (SIG$1)"
+  trap - "$1"
+  kill -s "$1" $$
+}
+
+_ma_still_open() {
+  # A trap can run during `IFS= read`, whose empty IFS would keep the port
+  # file's fields together.
+  local IFS=$' \t\n' port beam at=""
+  # No port while a BEAM starts; the review is still open then too.
+  read -r port beam 2>/dev/null <"$_MA_DIR/port" && at=" at http://127.0.0.1:$port/"
+  echo "meerkat: $1 before the review completed. The review is still open$at; run the same command again to wait for its outcome." >&2
 }
 
 _ma_log_size() {
@@ -151,8 +183,12 @@ _ma_server_alive() {
   fi
   local pid
   pid="$(<"$_MA_DIR/pid")"
-  # The command check stops a reused pid passing for the backend.
-  kill -0 "$pid" 2>/dev/null && [[ -f "$_MA_DIR/exit" || "$(ps -p "$pid" -o command= 2>/dev/null)" == *meerkat* ]]
+  kill -0 "$pid" 2>/dev/null || return 1
+  [[ -f "$_MA_DIR/exit" ]] && return 0
+  # The command check stops a reused pid passing for the backend. Where ps
+  # cannot tell, the live pid is all there is to go on.
+  _ma_ps_works || return 0
+  [[ "$(ps -p "$pid" -o command= 2>/dev/null)" == *meerkat* ]]
 }
 
 _ma_bury_server() {
@@ -218,7 +254,11 @@ _ma_attach() {
       case "$line" in
         "o "*) printf '%s\n' "${line:2}" >&2 ;;
         "n "*) printf '%s' "${line:2}" >&2 ;;
-        "x "*) code="${line:2}" ;;
+        "x "*)
+          code="${line:2}"
+          # The outcome is printed: a signal now just ends the caller.
+          trap - TERM INT HUP
+          ;;
         "s "*) status="${line:2}" ;;
         # Keep for older backends that send bare d; an orphaned review lives
         # until reattached, so the backend can outlast an upgrade.

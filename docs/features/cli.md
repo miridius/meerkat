@@ -25,6 +25,10 @@ Staged-diff reviews omit paths with unresolved merge conflicts; other
 staged files are still reviewed. For which index they read, see
 [`GIT_INDEX_FILE`](#env-vars).
 
+Every review target is refused with exit `1`, before opening a page or
+auto-approving, while questions from the last round remain unanswered;
+see [pending-answers.md](pending-answers.md).
+
 ## Flags
 
 - `--answers` — no review. Read the agent's answers to a prior
@@ -116,11 +120,16 @@ staged files are still reviewed. For which index they read, see
 
 - `0` — approved (with or without feedback). The git hook proceeds
   with the commit. Under `--answers`: the answers were stored.
-- `1` — rejected, or cancelled. The git hook aborts. Under
+- `1` — rejected, cancelled, or refused because prior questions are
+  unanswered (with the unanswered questions and answer instructions on
+  stderr; no browser opens). A reattaching caller also exits 1 if owed
+  question state is unreadable, leaving the existing backend running.
+  The git hook aborts. Under
   `--answers`: the input was rejected and nothing was written.
 - `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
   outer `try/rescue` defaults to REJECT + exit 2 so a crash never
   silently lands a commit; see [decision-flow.md](decision-flow.md).
+  Unreadable owed-question state also fails closed with exit 2.
   The dev launcher (`bin/meerkat-beam`) propagates exit 2; the prod
   launcher (`bin/meerkat-shepherd`) retries a crash once, then exits
   with the code. A caller that cannot create its run dir while not
@@ -128,7 +137,10 @@ staged files are still reviewed. For which index they read, see
   not create <run dir>`); an already attached caller still receives
   the decision and exits with it. A staged review that cannot keep a
   copy of the commit's temporary index exits 2 with a REJECT message;
-  see [`GIT_INDEX_FILE`](#env-vars). While waiting to retry after a
+  see [`GIT_INDEX_FILE`](#env-vars). A review whose server's bound
+  port cannot be read exits 2 with a REJECT message, before printing
+  a URL or opening a browser: meerkat never opens or announces a URL
+  on any port but the one it bound. While waiting to retry after a
   failed build, the dev launcher exits 2 with a REJECT message if its
   checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
   launcher could not build meerkat, so it stored nothing.
@@ -149,17 +161,23 @@ staged files are still reviewed. For which index they read, see
   file, and halts at once. Both launchers pass it straight through,
   without a restart or retry. A launcher that receives SIGTERM,
   SIGINT or SIGHUP also exits 143, without a message, after
-  SIGKILLing its BEAM.
+  SIGKILLing its BEAM. The invocation waiting on the review is
+  separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
+  the decision prints that the review is still open and dies of that
+  signal (128 plus its number to a shell, so 130 for SIGINT and 129
+  for SIGHUP), and the review keeps running; see
+  [decision-flow.md](decision-flow.md#when-the-caller-exits).
 
 ## Output
 
 - **stdout**: nothing in normal operation.
 - **stderr**: an agent-facing pause banner when the review UI comes up
   (`⏸ Paused for human review at <url> — may take minutes or hours.`
-  followed by wait-don't-poll instructions and the exit-code meanings;
+  followed by wait-don't-poll instructions and what an output ending
+  with no outcome line means; it names no exit codes, and
   the wording is target-aware — only a staged review with a
-  commit-msg path, i.e. the hook flow, says `git commit` /
-  "approved & landed"), `debug logs at: <path>`, auto-approve
+  commit-msg path, i.e. the hook flow, says `git commit`),
+  `debug logs at: <path>`, auto-approve
   breadcrumbs, warnings, a plain user-attributed verdict line on every
   terminal decision, and — on approve-with-feedback / reject — the
   rendered comment feedback (see [decision-flow.md](decision-flow.md)).

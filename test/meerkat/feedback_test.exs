@@ -42,6 +42,7 @@ defmodule Meerkat.FeedbackTest do
 
   test "auto mode has no framing header" do
     out = Feedback.format(state_with_global_comment(), :auto)
+    assert out == "\nGlobal comments:\n  > **issue:** needs work\n\n"
     refute out =~ "user reviewed your commit"
     refute out =~ "user approved the commit"
     assert out =~ "needs work"
@@ -104,6 +105,131 @@ defmodule Meerkat.FeedbackTest do
       assert Feedback.format(one, :rejection) =~ "answer 1 question "
       assert Feedback.format(many, :rejection) =~ "answer 2 questions"
     end
+  end
+
+  test "restoring every question surface preserves instructions, locations and mixed counts" do
+    repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-restored-questions")
+    on_exit(fn -> File.rm_rf!(repo) end)
+
+    state = %ReviewState{
+      files: [%{file_name: "src/x.rs", old_content: "a", new_content: "b"}],
+      comments: [inline_comment(body: "line?", finding_type: :question, side: :old)],
+      file_comments: [comment(file_index: 0, body: "file?", finding_type: :question)],
+      global_comments: [comment(body: "global?", finding_type: :question), comment(body: "fix")],
+      commit_message_comments: [
+        comment(start_line: 1, end_line: 2, body: "message?", finding_type: :question)
+      ]
+    }
+
+    :ok = Meerkat.Persistence.save(repo, "round", state)
+    restored = Meerkat.Persistence.load(repo, "round", %ReviewState{files: state.files})
+    assert hd(restored.comments).finding_type == "question"
+    assert Feedback.has_questions?(restored)
+
+    assert Feedback.questions(restored) == [
+             %{location: "src/x.rs:1 (old)", question: "line?"},
+             %{location: "file: src/x.rs", question: "file?"},
+             %{location: "global", question: "global?"},
+             %{location: "commit-message:1-2", question: "message?"}
+           ]
+
+    for mode <- [:rejection, :approval_with_feedback, :timeout] do
+      out = Feedback.format(restored, mode)
+      assert out =~ "▶ ACTION:"
+      assert out =~ "Answer 4 questions"
+      assert out =~ "Address 1 feedback comment"
+      assert out =~ "meerkat --answers <<'JSON'"
+      assert out =~ "re-run `git commit`"
+      assert out =~ "run `meerkat` (no args)"
+      assert out =~ ~s("question": "line?")
+      # The review trigger sits between the walkthrough and the comments.
+      assert out =~ "\nJSON\n\nThen trigger a new meerkat review"
+      assert out =~ "cannot silently discard them.\n\n\nLine-level comments:\n"
+    end
+  end
+
+  test "restored question-only feedback is counted, and JSON safely preserves verbatim text" do
+    state = %ReviewState{
+      global_comments: [comment(body: "why \"this\"?\nAnd that?", finding_type: "question")]
+    }
+
+    out = Feedback.format(state, :rejection)
+    assert out =~ "▶ ACTION: answer 1 question"
+    refute out =~ "Address"
+    [_, heredoc] = String.split(out, "meerkat --answers <<'JSON'\n", parts: 2)
+    [json, _] = String.split(heredoc, "\nJSON", parts: 2)
+
+    assert %{"answers" => [%{"location" => "global", "question" => "why \"this\"?\nAnd that?"}]} =
+             Jason.decode!(json)
+  end
+
+  test "inline ranges, string sides and absent files keep usable question locations" do
+    state = %ReviewState{
+      comments: [
+        inline_comment(
+          file_index: 2,
+          side: "new",
+          start_line: 3,
+          end_line: 5,
+          finding_type: :question
+        )
+      ]
+    }
+
+    assert Feedback.questions(state) == [%{location: "file #2:3-5 (new)", question: "x"}]
+  end
+
+  test "malformed question anchors are diagnosed before their missing bodies" do
+    state = %ReviewState{
+      files: :not_enumerable,
+      file_comments: [%{file_index: 0, finding_type: :question}]
+    }
+
+    # Reordering these computed map values is not equivalent on bad input:
+    # reading the missing body first would mask the malformed anchor.
+    error = assert_raise Protocol.UndefinedError, fn -> Feedback.questions(state) end
+    assert error.protocol == Enumerable
+    assert error.value == :not_enumerable
+  end
+
+  test "unanswered refusal keeps questions before the walkthrough and the rerun instruction last" do
+    questions = [
+      %{location: "file: src/x.rs", question: "First question?"},
+      %{location: "global", question: "Second question?"}
+    ]
+
+    out = Feedback.unanswered(questions)
+
+    assert String.starts_with?(
+             out,
+             "meerkat: review refused because these questions are unanswered:\n\n" <>
+               "  file: src/x.rs\n    First question?\n\n" <>
+               "  global\n    Second question?\n\n⚠ Answer the reviewer's **question**"
+           )
+
+    assert String.ends_with?(out, "\nThen re-run the command that was refused.\n")
+    # The refused command is the only next step; no competing review trigger.
+    refute out =~ "trigger a new meerkat review"
+  end
+
+  test "the answer walkthrough resets existing answers to the exact nonblank placeholder" do
+    out =
+      Feedback.unanswered([
+        %{location: "global", question: "Why?", answer: "A previous answer"}
+      ])
+
+    [_, heredoc] = String.split(out, "meerkat --answers <<'JSON'\n", parts: 2)
+    [json, _] = String.split(heredoc, "\nJSON", parts: 2)
+
+    assert Jason.decode!(json) == %{
+             "answers" => [
+               %{
+                 "location" => "global",
+                 "question" => "Why?",
+                 "answer" => "<your answer, markdown OK>"
+               }
+             ]
+           }
   end
 
   describe "has_questions?" do

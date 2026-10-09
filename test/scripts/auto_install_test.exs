@@ -45,18 +45,21 @@ defmodule Meerkat.AutoInstallScriptTest do
     env = [
       {"PATH", shim <> ":" <> System.get_env("PATH")},
       {"GIT_DIR", Path.join(repo, ".git")},
-      {"GIT_INDEX_FILE", Path.join(repo, ".git/index")}
+      {"GIT_INDEX_FILE", Path.join(repo, ".git/index")},
+      # Git runs the hook with the user's env, which sets no MIX_ENV.
+      {"MIX_ENV", nil}
     ]
 
     {:ok, repo: repo, log: log, env: env}
   end
 
-  test "on main, installs and then refreshes the test env's deps and build", ctx do
+  test "on main, installs and then refreshes the dev and test envs' deps and builds", ctx do
     assert {_, 0} = auto_install(ctx)
 
     assert log(ctx) == [
              "install.sh",
-             "MIX_ENV=test mix deps.get",
+             "MIX_ENV= mix deps.get",
+             "MIX_ENV=dev mix compile",
              "MIX_ENV=test mix compile"
            ]
   end

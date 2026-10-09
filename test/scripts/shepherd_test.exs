@@ -80,6 +80,38 @@ defmodule Meerkat.ShepherdTest do
            }
   end
 
+  test "a fake BEAM's port announcement cannot reach an unrelated HTTP client" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep-http")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    fifo = Path.join(dir, "attach-ready")
+    marker = Path.join(dir, "uncontrolled-http")
+    assert {_, 0} = System.cmd("mkfifo", [fifo])
+
+    # If the caller escapes the fixture's HTTP boundary, record it and
+    # release the BEAM so the test fails by assertion, not by hanging.
+    File.write!(Path.join(dir, "curl"), """
+    #!/usr/bin/env bash
+    touch '#{marker}'
+    if mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+      printf 'attach\\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+    fi
+    printf 's 000\\n'
+    exit 7
+    """)
+
+    File.chmod!(Path.join(dir, "curl"), 0o755)
+
+    assert run_shepherd([0],
+             env: [
+               {"PATH", dir <> ":" <> System.fetch_env!("PATH")},
+               {"SHEPHERD_TEST_ATTACH_FIFO", fifo}
+             ]
+           ) == %{code: 0, iterations: 1}
+
+    assert File.dir?(fifo <> ".sent")
+    refute File.exists?(marker)
+  end
+
   # A caller that re-reads a stale `port` file reattaches to the exited
   # BEAM's port, which by then another process may hold.
   describe "between a BEAM's exit and its respawn" do
@@ -119,6 +151,71 @@ defmodule Meerkat.ShepherdTest do
         )
 
       assert seen == ["beam: none", "beam: 1"]
+    end
+  end
+
+  # Claude Code's sandbox denies ps, so the caller cannot tell whether the
+  # process that ran it is alive, nor what a pid runs.
+  test "a caller that ps cannot see keeps waiting and gets the decision" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    rel = Path.join(dir, "rel")
+    fake_bin = Path.join(dir, "fakebin")
+    File.mkdir_p!(Path.join(rel, "bin"))
+    File.mkdir_p!(fake_bin)
+    File.ln_s!(rel, Path.join(dir, "current"))
+
+    File.write!(
+      Path.join(fake_bin, "ps"),
+      "#!/bin/sh\necho 'ps: Operation not permitted' >&2\nexit 1\n"
+    )
+
+    # Decides after the caller's first checks, without binding a port.
+    File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nsleep 1.5\nexit 0\n")
+
+    for file <- [Path.join(fake_bin, "ps"), Path.join([rel, "bin", "meerkat"])],
+        do: File.chmod!(file, 0o755)
+
+    port =
+      open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+        {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+        {"INPUT_FILE", "/dev/null"},
+        {"PATH", fake_bin <> ":" <> System.get_env("PATH")}
+      ])
+
+    assert await_exit(port, dir) == 0
+  end
+
+  for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
+    test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      rel = Path.join(dir, "rel")
+      File.mkdir_p!(Path.join(rel, "bin"))
+      File.ln_s!(rel, Path.join(dir, "current"))
+      # A BEAM that never binds, so the review has no URL yet.
+      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+      File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      backend = await_backend_pid(Path.join(dir, "runs"))
+      on_exit(fn -> System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true) end)
+      {:os_pid, caller} = Port.info(port, :os_pid)
+      System.cmd("kill", ["-#{unquote(signal)}", to_string(caller)])
+
+      assert {code, output} = await_result(port, dir)
+      assert code == 128 + unquote(number)
+
+      assert output =~
+               "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
+                 "The review is still open; run the same command again to wait for its outcome.\n"
+
+      assert {_, 0} = System.cmd("kill", ["-0", backend], stderr_to_stdout: true)
     end
   end
 
@@ -175,6 +272,29 @@ defmodule Meerkat.ShepherdTest do
       assert File.read!(Path.join(dir, "i")) |> String.trim() == "1"
     end
 
+    test "the dev shepherd compiles a build that looks fresh but was compiled in another checkout" do
+      {port, dir} = open_dev_shepherd(compile_code: 1, built: "/elsewhere")
+
+      await_output(port, dir, "waiting for source change")
+      kill_launcher(port, dir)
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
+    end
+
+    test "a successful compile stamps the build with its checkout" do
+      {port, dir} = open_dev_shepherd(built: "/elsewhere", exit_codes: [0])
+
+      assert await_exit(port, dir) == 0
+
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) ==
+               Path.join(dir, "root") <> "\n"
+    end
+
+    test "the dev shepherd skips `mix compile` for a fresh build compiled in its own checkout" do
+      {port, dir} = open_dev_shepherd(compile_code: 1, built: :root, exit_codes: [0])
+
+      assert await_exit(port, dir) == 0
+    end
+
     for deleted <- ["review", "root"] do
       test "the dev shepherd exits 2 when its #{deleted} dir is deleted while it waits for a source change" do
         {port, dir} = open_dev_shepherd(compile_code: 1)
@@ -210,7 +330,9 @@ defmodule Meerkat.ShepherdTest do
     echo $((i + 1)) > "$I_FILE"
     if [[ -n "${STDIN_FILE:-}" ]]; then cat >> "$STDIN_FILE"; fi
     echo "${MEERKAT_PREFERRED_PORT:-none} ${*:3}" >> "$PORTS_FILE"
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]]; then exec 3<> "$SHEPHERD_TEST_ATTACH_FIFO"; fi
     if [[ -n "${MEERKAT_SERVE_DIR:-}" ]]; then echo "$((i + 1)) $$" > "$MEERKAT_SERVE_DIR/port"; fi
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && ! read -r -t 10 _ <&3; then exit 2; fi
     exit "${codes[$i]:-0}"
     """)
 
@@ -229,7 +351,7 @@ defmodule Meerkat.ShepherdTest do
     ]
 
     args = Keyword.get(opts, :args, ["--commit-msg", "/tmp/msg", "--no-open"])
-    code = run_launcher(@shepherd, args, env, dir)
+    code = run_launcher(@shepherd, args, env ++ Keyword.get(opts, :env, []), dir)
     iterations = String.to_integer(String.trim(File.read!(Path.join(dir, "i"))))
 
     cond do
@@ -329,10 +451,13 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
-  # caller), copied into a checkout at `root` that has no build, from a
-  # fresh `review` dir, with `mix` and `bunx` replaced by stubs: `mix
-  # compile` exits `compile_code`, and each `mix run` exits the next of
-  # `exit_codes`, counting runs in the temp dir's `i`.
+  # caller), copied into a checkout at `root` that has no build unless
+  # `built` is given, from a fresh `review` dir, with `mix` and `bunx`
+  # replaced by stubs: `mix compile` exits `compile_code`, and each `mix
+  # run` exits the next of `exit_codes`, counting runs in the temp dir's
+  # `i`. With `built`, `root` has a source, a build manifest newer than
+  # it, and a stamp naming `built` as the checkout that compiled the build
+  # (`:root` names `root` itself).
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -342,6 +467,18 @@ defmodule Meerkat.ShepherdTest do
       ["review", "serve", "stubs", "root/bin", "root/assets"],
       &File.mkdir_p!(Path.join(dir, &1))
     )
+
+    if built = Keyword.get(opts, :built) do
+      source = Path.join(dir, "root/lib/meerkat.ex")
+      manifest = Path.join(dir, "root/_build/dev/lib/meerkat/.mix/compile.elixir")
+      File.mkdir_p!(Path.dirname(source))
+      File.mkdir_p!(Path.dirname(manifest))
+      File.write!(source, "")
+      File.touch!(source, {{2020, 1, 1}, {0, 0, 0}})
+      File.write!(manifest, "")
+      root = if built == :root, do: Path.join(dir, "root"), else: built
+      File.write!(Path.join(dir, "root/_build/dev/.meerkat-root"), root <> "\n")
+    end
 
     launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
     File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)
@@ -424,6 +561,30 @@ defmodule Meerkat.ShepherdTest do
 
     env = base |> Map.new() |> Map.merge(Map.new(env))
 
+    # These BEAMs announce scripted ports but never serve HTTP. The caller
+    # can catch a port file before the BEAM exits; a real curl would then
+    # contact an unrelated service or wait indefinitely for a connection.
+    # Refuse at that external boundary, keeping the caller, detach, restart
+    # and exit-file delivery real. The FIFO makes that window deterministic
+    # in the regression above without a delay or polling loop. The BEAM
+    # opens its reader before announcing the port, so the signal cannot be
+    # lost. Read/write opens and a bounded read also prevent a failed caller
+    # from stranding a fixture process waiting for a peer that never arrives.
+    http = Path.join(dir, "http")
+    File.mkdir_p!(http)
+
+    File.write!(Path.join(http, "curl"), ~S"""
+    #!/usr/bin/env bash
+    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+      printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+    fi
+    printf 's 000\n'
+    exit 7
+    """)
+
+    File.chmod!(Path.join(http, "curl"), 0o755)
+    env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))
+
     Port.open(
       {:spawn_executable, "/bin/sh"},
       [
@@ -453,10 +614,13 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  defp await_exit(port, dir) do
+  defp await_exit(port, dir), do: port |> await_result(dir) |> elem(0)
+
+  # The launcher's exit code and everything it printed.
+  defp await_result(port, dir, seen \\ "") do
     receive do
-      {^port, {:data, _}} -> await_exit(port, dir)
-      {^port, {:exit_status, code}} -> code
+      {^port, {:data, data}} -> await_result(port, dir, seen <> data)
+      {^port, {:exit_status, code}} -> {code, seen}
     after
       @timeout_ms ->
         kill_launcher(port, dir)

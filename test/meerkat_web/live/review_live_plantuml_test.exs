@@ -14,7 +14,7 @@ defmodule MeerkatWeb.ReviewLivePlantUMLTest do
     prev_path = System.get_env("PATH")
 
     stub_dir =
-      Path.join(System.tmp_dir!(), "meerkat-plantuml-lv-#{System.unique_integer([:positive])}")
+      Meerkat.TestHelpers.tmp_path("meerkat-plantuml-lv")
 
     File.mkdir_p!(stub_dir)
     :persistent_term.erase({PlantUML, :available?})

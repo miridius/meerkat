@@ -573,6 +573,19 @@ defmodule Meerkat.CLITest do
         assert flat =~ "not a `tail`/`head` of it"
       end
     end
+
+    # A process killed by SIGKILL, or read before it finished, shows the
+    # banner with no outcome line after it.
+    test "says an output ending without an outcome line means the review is still open" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        flat = target |> CLI.pause_banner_for_test(@url) |> String.replace(~r/\s+/, " ")
+
+        assert flat =~
+                 "If the output ends with no outcome line, this process stopped before " <>
+                   "the review completed and " <>
+                   "the review is still open: run the same command again to wait for its outcome."
+      end
+    end
   end
 
   describe "repo_path/0" do
@@ -693,24 +706,26 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "open_browser_unless_disabled/2" do
+  describe "open_browser_unless_disabled/3" do
+    @url "http://127.0.0.1:4321/"
+
     defp recording_open(url) do
       send(self(), {:opened, url})
       :ok
     end
 
     test "--no-open never opens a tab" do
-      assert CLI.open_browser_unless_disabled_for_test(true, &flunk("opened #{&1}")) == :ok
+      assert CLI.open_browser_unless_disabled_for_test(true, @url, &flunk("opened #{&1}")) == :ok
     end
 
     test "with no shepherd marker, opens the review URL" do
       with_env("MEERKAT_OPEN_MARKER", nil, fn ->
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+          assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) == :ok
         end)
       end)
 
-      assert_received {:opened, "http://127.0.0.1:" <> _}
+      assert_received {:opened, @url}
     end
 
     test "the first open stamps the shepherd marker, so a respawn opens no second tab" do
@@ -719,13 +734,14 @@ defmodule Meerkat.CLITest do
 
       with_env("MEERKAT_OPEN_MARKER", marker, fn ->
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+          assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) == :ok
         end)
 
         assert_received {:opened, _}
         assert File.read!(marker) == "1\n"
 
-        assert CLI.open_browser_unless_disabled_for_test(false, &flunk("reopened #{&1}")) == :ok
+        assert CLI.open_browser_unless_disabled_for_test(false, @url, &flunk("reopened #{&1}")) ==
+                 :ok
       end)
     end
 
@@ -736,7 +752,7 @@ defmodule Meerkat.CLITest do
       err =
         with_env("MEERKAT_OPEN_MARKER", marker, fn ->
           ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert CLI.open_browser_unless_disabled_for_test(false, fn _ ->
+            assert CLI.open_browser_unless_disabled_for_test(false, @url, fn _ ->
                      {:error, "no opener here"}
                    end) == :ok
           end)
@@ -753,7 +769,8 @@ defmodule Meerkat.CLITest do
       err =
         with_env("MEERKAT_OPEN_MARKER", marker, fn ->
           ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+            assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) ==
+                     :ok
           end)
         end)
 
@@ -763,20 +780,15 @@ defmodule Meerkat.CLITest do
   end
 
   describe "review_url/0" do
-    test "falls back to the configured port when the endpoint reports no bound one" do
+    test "raises, naming no URL, when the endpoint reports no bound port" do
       # Under test the endpoint runs with `server: false`, so it has no
       # bound port to report.
-      port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port]
-      assert is_integer(port) and port > 0, "the test config names a real port"
+      reported = MeerkatWeb.Endpoint.server_info(:http)
 
-      err =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          send(self(), {:url, CLI.review_url_for_test()})
-        end)
-
-      assert_received {:url, url}
-      assert url == "http://127.0.0.1:#{port}/"
-      assert err =~ "unable to read bound port"
+      assert_raise RuntimeError,
+                   "could not read the review server's bound port (#{inspect(reported)}), " <>
+                     "so meerkat opens no browser and serves no review",
+                   fn -> CLI.review_url_for_test() end
     end
   end
 
@@ -869,11 +881,7 @@ defmodule Meerkat.CLITest do
     test "empty payload still announces the verdict, writes no file" do
       # Unique path so a leftover file from another run can't fail the
       # "writes no file" assertion below.
-      unwritten =
-        Path.join(
-          System.tmp_dir!(),
-          "meerkat-cli-unwritten-#{System.unique_integer([:positive])}.txt"
-        )
+      unwritten = tmp_path("meerkat-cli-unwritten") <> ".txt"
 
       out = CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten)
 
@@ -966,7 +974,7 @@ defmodule Meerkat.CLITest do
     # instead, and only a terminal decision clears the file.
     setup do
       dir =
-        Path.join(System.tmp_dir!(), "meerkat-cli-gate-#{System.unique_integer([:positive])}")
+        Meerkat.TestHelpers.tmp_path("meerkat-cli-gate")
 
       File.mkdir_p!(dir)
       git(dir, ["init", "-q", "-b", "main"])
@@ -1136,6 +1144,20 @@ defmodule Meerkat.CLITest do
         save_snapshot(dir, [{unquote(key), [@comment]}])
         assert CLI.auto_approve_decision_for_test(dir) == :live
       end
+    end
+
+    # The review leaves whitespace-only changes out of its files and so out
+    # of its signature.
+    test "a snapshot holding comments keeps the rerun live beside an approved whitespace-only change",
+         %{dir: dir} do
+      stage(dir, "b.rs", "fn b() {}\n")
+      git(dir, ["commit", "-qm", "b"])
+      stage(dir, "b.rs", "fn b()  {}\n")
+      oid = git(dir, ["rev-parse", ":b.rs"])
+      path = ApprovalCache.path_for(dir)
+      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "b.rs", oid))
+      save_snapshot(dir, global_comments: [@comment])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
     test "a snapshot holding no comment still auto-approves", %{dir: dir} do
