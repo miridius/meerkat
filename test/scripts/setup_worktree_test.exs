@@ -17,7 +17,7 @@ defmodule Meerkat.SetupWorktreeHookTest do
   """
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "meerkat-setup-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-setup")
     on_exit(fn -> File.rm_rf!(dir) end)
     checkout = Path.join(dir, "checkout")
     bin = Path.join(dir, "bin")
@@ -105,6 +105,49 @@ defmodule Meerkat.SetupWorktreeHookTest do
 
     assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
     assert calls(ctx.dir) == ["pnpm install --frozen-lockfile --prefer-offline"]
+  end
+
+  test "a linked worktree gets back the _build symlinks its copy lacks", ctx do
+    git = fn args -> {_, 0} = System.cmd("git", ["-C", ctx.checkout | args], env: @unset_git) end
+    git.(~w(add mix.lock pnpm-lock.yaml))
+    git.(~w(-c user.name=t -c user.email=t@example.com commit -q -m init))
+    worktree = Path.join(ctx.dir, "worktree")
+    git.(["worktree", "add", "-q", worktree])
+
+    links = %{
+      "_build/dev/lib/file_system/priv" => "../../../../deps/file_system/priv",
+      "_build/dev/lib/phoenix/priv" => "../../../../deps/phoenix/priv",
+      "_build/test/lib/meerkat/priv" => "../../../../priv",
+      "_build/test/lib/stream_data/priv" => "../../../../deps/stream_data/priv"
+    }
+
+    for {link, target} <- links do
+      path = Path.join(ctx.checkout, link)
+      File.mkdir_p!(Path.dirname(path))
+      File.ln_s!(target, path)
+    end
+
+    set_up(worktree)
+    File.mkdir_p!(Path.join(worktree, "_build/dev/lib/file_system"))
+    File.mkdir_p!(Path.join(worktree, "_build/test/lib/meerkat/priv"))
+    # A link already in the worktree, dangling until its dep is fetched.
+    File.mkdir_p!(Path.join(worktree, "_build/dev/lib/phoenix"))
+
+    File.ln_s!(
+      "../../../../deps/phoenix/priv",
+      Path.join(worktree, "_build/dev/lib/phoenix/priv")
+    )
+
+    assert run_hook(ctx.dir, worktree) == {"", 0}
+
+    assert File.read_link(Path.join(worktree, "_build/dev/lib/file_system/priv")) ==
+             {:ok, "../../../../deps/file_system/priv"}
+
+    assert File.read_link(Path.join(worktree, "_build/dev/lib/phoenix/priv")) ==
+             {:ok, "../../../../deps/phoenix/priv"}
+
+    assert File.dir?(Path.join(worktree, "_build/test/lib/meerkat/priv"))
+    refute File.exists?(Path.join(worktree, "_build/test/lib/stream_data"))
   end
 
   test "hooks starting at once in one checkout install only once", ctx do

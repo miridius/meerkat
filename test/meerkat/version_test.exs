@@ -17,7 +17,7 @@ defmodule Meerkat.VersionTest do
   end
 
   defp with_manifest(lines) do
-    dir = Path.join(System.tmp_dir!(), "meerkat-ver-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-ver")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "meerkat_version"), Enum.join(lines, "\n") <> "\n")
     System.put_env("RELEASE_ROOT", dir)
@@ -69,7 +69,7 @@ defmodule Meerkat.VersionTest do
   end
 
   test "warns and falls back to dev when a release manifest is unreadable" do
-    dir = Path.join(System.tmp_dir!(), "meerkat-rr-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-rr")
     File.mkdir_p!(dir)
     System.put_env("RELEASE_ROOT", dir)
     on_exit(fn -> File.rm_rf!(dir) end)

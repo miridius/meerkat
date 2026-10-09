@@ -175,6 +175,29 @@ defmodule Meerkat.ShepherdTest do
       assert File.read!(Path.join(dir, "i")) |> String.trim() == "1"
     end
 
+    test "the dev shepherd compiles a build that looks fresh but was compiled in another checkout" do
+      {port, dir} = open_dev_shepherd(compile_code: 1, built: "/elsewhere")
+
+      await_output(port, dir, "waiting for source change")
+      kill_launcher(port, dir)
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
+    end
+
+    test "a successful compile stamps the build with its checkout" do
+      {port, dir} = open_dev_shepherd(built: "/elsewhere", exit_codes: [0])
+
+      assert await_exit(port, dir) == 0
+
+      assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) ==
+               Path.join(dir, "root") <> "\n"
+    end
+
+    test "the dev shepherd skips `mix compile` for a fresh build compiled in its own checkout" do
+      {port, dir} = open_dev_shepherd(compile_code: 1, built: :root, exit_codes: [0])
+
+      assert await_exit(port, dir) == 0
+    end
+
     for deleted <- ["review", "root"] do
       test "the dev shepherd exits 2 when its #{deleted} dir is deleted while it waits for a source change" do
         {port, dir} = open_dev_shepherd(compile_code: 1)
@@ -329,10 +352,13 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
-  # caller), copied into a checkout at `root` that has no build, from a
-  # fresh `review` dir, with `mix` and `bunx` replaced by stubs: `mix
-  # compile` exits `compile_code`, and each `mix run` exits the next of
-  # `exit_codes`, counting runs in the temp dir's `i`.
+  # caller), copied into a checkout at `root` that has no build unless
+  # `built` is given, from a fresh `review` dir, with `mix` and `bunx`
+  # replaced by stubs: `mix compile` exits `compile_code`, and each `mix
+  # run` exits the next of `exit_codes`, counting runs in the temp dir's
+  # `i`. With `built`, `root` has a source, a build manifest newer than
+  # it, and a stamp naming `built` as the checkout that compiled the build
+  # (`:root` names `root` itself).
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -342,6 +368,18 @@ defmodule Meerkat.ShepherdTest do
       ["review", "serve", "stubs", "root/bin", "root/assets"],
       &File.mkdir_p!(Path.join(dir, &1))
     )
+
+    if built = Keyword.get(opts, :built) do
+      source = Path.join(dir, "root/lib/meerkat.ex")
+      manifest = Path.join(dir, "root/_build/dev/lib/meerkat/.mix/compile.elixir")
+      File.mkdir_p!(Path.dirname(source))
+      File.mkdir_p!(Path.dirname(manifest))
+      File.write!(source, "")
+      File.touch!(source, {{2020, 1, 1}, {0, 0, 0}})
+      File.write!(manifest, "")
+      root = if built == :root, do: Path.join(dir, "root"), else: built
+      File.write!(Path.join(dir, "root/_build/dev/.meerkat-root"), root <> "\n")
+    end
 
     launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
     File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)

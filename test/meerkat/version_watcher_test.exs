@@ -5,7 +5,7 @@ defmodule Meerkat.VersionWatcherTest do
   alias Meerkat.VersionWatcher
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "meerkat-vw-#{System.unique_integer([:positive])}")
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-vw")
     File.mkdir_p!(Path.join(dir, "v1"))
     File.mkdir_p!(Path.join(dir, "v2"))
     link = Path.join(dir, "current")

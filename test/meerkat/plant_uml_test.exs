@@ -6,7 +6,7 @@ defmodule Meerkat.PlantUMLTest do
 
   setup do
     stub_dir =
-      Path.join(System.tmp_dir!(), "meerkat-plantuml-#{System.unique_integer([:positive])}")
+      Meerkat.TestHelpers.tmp_path("meerkat-plantuml")
 
     File.mkdir_p!(stub_dir)
     calls = Path.join(stub_dir, "calls")
