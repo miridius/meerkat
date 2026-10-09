@@ -704,24 +704,26 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "open_browser_unless_disabled/2" do
+  describe "open_browser_unless_disabled/3" do
+    @url "http://127.0.0.1:4321/"
+
     defp recording_open(url) do
       send(self(), {:opened, url})
       :ok
     end
 
     test "--no-open never opens a tab" do
-      assert CLI.open_browser_unless_disabled_for_test(true, &flunk("opened #{&1}")) == :ok
+      assert CLI.open_browser_unless_disabled_for_test(true, @url, &flunk("opened #{&1}")) == :ok
     end
 
     test "with no shepherd marker, opens the review URL" do
       with_env("MEERKAT_OPEN_MARKER", nil, fn ->
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+          assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) == :ok
         end)
       end)
 
-      assert_received {:opened, "http://127.0.0.1:" <> _}
+      assert_received {:opened, @url}
     end
 
     test "the first open stamps the shepherd marker, so a respawn opens no second tab" do
@@ -730,13 +732,14 @@ defmodule Meerkat.CLITest do
 
       with_env("MEERKAT_OPEN_MARKER", marker, fn ->
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+          assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) == :ok
         end)
 
         assert_received {:opened, _}
         assert File.read!(marker) == "1\n"
 
-        assert CLI.open_browser_unless_disabled_for_test(false, &flunk("reopened #{&1}")) == :ok
+        assert CLI.open_browser_unless_disabled_for_test(false, @url, &flunk("reopened #{&1}")) ==
+                 :ok
       end)
     end
 
@@ -747,7 +750,7 @@ defmodule Meerkat.CLITest do
       err =
         with_env("MEERKAT_OPEN_MARKER", marker, fn ->
           ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert CLI.open_browser_unless_disabled_for_test(false, fn _ ->
+            assert CLI.open_browser_unless_disabled_for_test(false, @url, fn _ ->
                      {:error, "no opener here"}
                    end) == :ok
           end)
@@ -764,7 +767,8 @@ defmodule Meerkat.CLITest do
       err =
         with_env("MEERKAT_OPEN_MARKER", marker, fn ->
           ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert CLI.open_browser_unless_disabled_for_test(false, &recording_open/1) == :ok
+            assert CLI.open_browser_unless_disabled_for_test(false, @url, &recording_open/1) ==
+                     :ok
           end)
         end)
 
@@ -774,20 +778,15 @@ defmodule Meerkat.CLITest do
   end
 
   describe "review_url/0" do
-    test "falls back to the configured port when the endpoint reports no bound one" do
+    test "raises, naming no URL, when the endpoint reports no bound port" do
       # Under test the endpoint runs with `server: false`, so it has no
       # bound port to report.
-      port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port]
-      assert is_integer(port) and port > 0, "the test config names a real port"
+      reported = MeerkatWeb.Endpoint.server_info(:http)
 
-      err =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          send(self(), {:url, CLI.review_url_for_test()})
-        end)
-
-      assert_received {:url, url}
-      assert url == "http://127.0.0.1:#{port}/"
-      assert err =~ "unable to read bound port"
+      assert_raise RuntimeError,
+                   "could not read the review server's bound port (#{inspect(reported)}), " <>
+                     "so meerkat opens no browser and serves no review",
+                   fn -> CLI.review_url_for_test() end
     end
   end
 

@@ -219,7 +219,10 @@ defmodule Meerkat.CLI do
         Application.put_env(:meerkat, :no_open, opts.no_open)
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
-        open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
+        # No in-VM test gets here: the test VM's endpoint already runs
+        # without a server, so `review_url/0` raises in `announce_url/2`.
+        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
+        open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
@@ -590,8 +593,8 @@ defmodule Meerkat.CLI do
   def secret_key_base_for_test, do: secret_key_base()
 
   @doc false
-  def open_browser_unless_disabled_for_test(no_open, open),
-    do: open_browser_unless_disabled(no_open, open)
+  def open_browser_unless_disabled_for_test(no_open, url, open),
+    do: open_browser_unless_disabled(no_open, url, open)
 
   @doc false
   def review_url_for_test, do: review_url()
@@ -855,9 +858,9 @@ defmodule Meerkat.CLI do
     Decision.await_delivery()
   end
 
-  defp open_browser_unless_disabled(true, _open), do: :ok
+  defp open_browser_unless_disabled(true, _url, _open), do: :ok
 
-  defp open_browser_unless_disabled(false, open) do
+  defp open_browser_unless_disabled(false, url, open) do
     # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
     # duplicate tab. The shepherd creates the file empty; we check
     # for non-empty contents on every call and only open + stamp it
@@ -868,7 +871,7 @@ defmodule Meerkat.CLI do
         :ok
 
       :first_open ->
-        do_open_browser(open)
+        do_open_browser(url, open)
     end
   end
 
@@ -912,9 +915,7 @@ defmodule Meerkat.CLI do
     end
   end
 
-  defp do_open_browser(open) do
-    url = review_url()
-
+  defp do_open_browser(url, open) do
     case open.(url) do
       :ok ->
         stamp_marker()
@@ -933,23 +934,19 @@ defmodule Meerkat.CLI do
   # Pull the actually-bound port from the running endpoint. Bandit
   # exposes it via Phoenix.Endpoint.server_info/1, which the
   # documented spec returns `{:ok, {ip, port}}` on. This is the only
-  # way to honour `--port 0` (OS-assigned).
+  # way to honour `--port 0` (OS-assigned). Raises when the endpoint
+  # reports no bound port, as when it was already running without a
+  # server: no other port serves this review, and the configured one
+  # may be 0. `run_live_review_safe/2` turns the raise into a REJECT
+  # before any URL is announced or opened.
   defp review_url do
     case MeerkatWeb.Endpoint.server_info(:http) do
       {:ok, {_ip, port}} ->
         "http://127.0.0.1:#{port}/"
 
-      # Older Phoenix shapes / unexpected returns: fall back to the
-      # configured value rather than crash. Logged so a regression
-      # surfaces.
       other ->
-        IO.puts(
-          :stderr,
-          "meerkat: warning — unable to read bound port from endpoint (#{inspect(other)})"
-        )
-
-        port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port] || 0
-        "http://127.0.0.1:#{port}/"
+        raise "could not read the review server's bound port (#{inspect(other)}), " <>
+                "so meerkat opens no browser and serves no review"
     end
   end
 

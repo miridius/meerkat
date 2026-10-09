@@ -150,6 +150,95 @@ defmodule Meerkat.CLIMainTest do
     assert output =~ "meerkat: received SIGTERM"
   end
 
+  # The review binds a real port only outside the test VM, whose endpoint
+  # already runs without a server.
+  test "a review opens the browser at the port it bound",
+       %{repo: repo, commit_msg: commit_msg} do
+    stage(repo, "a.txt", "a\n")
+
+    {output, code, opened} =
+      run_review_with_stub_opener(repo, "", ["--commit-msg", commit_msg, "--port", "0"])
+
+    assert [_, url, port] =
+             Regex.run(~r{Paused for human review at (http://127\.0\.0\.1:(\d+)/)}, output)
+
+    assert String.to_integer(port) > 0
+    # Any HTTP status shows the server answers there; curl reports 000
+    # when nothing listens. Whether the page renders is not this test's
+    # concern, and under MIX_ENV=test it may answer 500.
+    assert {:ok, record} = opened
+    assert [^url, status] = String.split(record)
+    assert status != "000"
+    assert code == 143
+  end
+
+  # As in `test_helper.exs`, the endpoint is already running under the
+  # test config's `server: false` when `main/1` starts the review, so it
+  # binds no port.
+  test "a review whose server bound no port opens no browser and rejects",
+       %{repo: repo, commit_msg: commit_msg} do
+    stage(repo, "a.txt", "a\n")
+
+    {output, code, opened} =
+      run_review_with_stub_opener(
+        repo,
+        "Application.put_env(:meerkat, :start_endpoint, true); " <>
+          "{:ok, _} = Application.ensure_all_started(:meerkat); ",
+        ["--commit-msg", commit_msg]
+      )
+
+    assert opened == {:error, :enoent}
+    assert code == 2
+    assert output =~ "could not read the review server's bound port"
+    assert output =~ "defaulting to REJECT (commit aborted)"
+    refute output =~ "Paused for human review"
+  end
+
+  # Runs `main/1` in a fresh BEAM after `setup`, with `open` and `xdg-open`
+  # stubbed to record the URL they get and its HTTP status, then end the
+  # review with a SIGTERM. A review that waited would halt with 124 after
+  # 10 s. Returns the output, exit code and the `File.read/1` of the record.
+  defp run_review_with_stub_opener(repo, setup, argv) do
+    opened = Path.join(repo, "opened")
+    bin = Path.join(repo, "open-stub")
+    File.mkdir_p!(bin)
+
+    stub = """
+    #!/bin/sh
+    printf '%s %s\\n' "$1" "$(curl -s -o /dev/null -w '%{http_code}' "$1")" >> "#{opened}"
+    kill -TERM "$MEERKAT_TEST_BEAM"
+    """
+
+    for opener <- ["open", "xdg-open"] do
+      File.write!(Path.join(bin, opener), stub)
+      File.chmod!(Path.join(bin, opener), 0o755)
+    end
+
+    {output, code} =
+      System.cmd(
+        "mix",
+        [
+          "run",
+          "--no-start",
+          "--no-compile",
+          "-e",
+          "{:ok, _} = :timer.apply_after(10_000, System, :halt, [124]); " <>
+            ~s|System.put_env("MEERKAT_TEST_BEAM", System.pid()); | <>
+            setup <> "System.halt(Meerkat.CLI.main(System.argv()))",
+          "--" | argv
+        ],
+        env: [
+          {"MIX_ENV", to_string(Mix.env())},
+          {"PATH", bin <> ":" <> System.fetch_env!("PATH")},
+          {"MEERKAT_OPEN_MARKER", nil},
+          {"MEERKAT_PREFERRED_PORT", nil}
+        ],
+        stderr_to_stdout: true
+      )
+
+    {output, code, File.read(opened)}
+  end
+
   # A regression that opens a review would block on a human forever.
   defp run_main(argv) do
     task =
