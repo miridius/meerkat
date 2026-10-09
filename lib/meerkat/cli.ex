@@ -219,9 +219,9 @@ defmodule Meerkat.CLI do
         Application.put_env(:meerkat, :no_open, opts.no_open)
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
-        # No ExUnit test reaches this call with a bound port: tests run the
-        # endpoint with server: false, so `review_url/0` raises above.
-        # muex:ignore unreachable I/O seam: opens a browser, which e2e skips with --no-open
+        # No in-VM test gets here: the test VM's endpoint already runs
+        # without a server, so `review_url/0` raises in `announce_url/2`.
+        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Remove this review's snapshot before the delay or delivery: a held
