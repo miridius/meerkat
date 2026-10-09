@@ -3,10 +3,11 @@ import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 
-// The seam from a decision clicked in the browser, through the CLI and the
+// The seam from a decision sent in the browser, through the CLI and the
 // launcher's attach stream, to what the calling agent reads: stderr and the
 // exit code. How each decision maps to its code and text is covered by
-// test/meerkat/cli_test.exs; the view's handlers by the LiveView tests.
+// test/meerkat/cli_test.exs; the view's handlers by the LiveView tests; the
+// shortcut's key test by assets/ts/sendFeedbackShortcut.test.ts.
 test.describe("decision flow", () => {
 	test("Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs", async ({
 		page,
@@ -21,27 +22,59 @@ test.describe("decision flow", () => {
 		try {
 			await page.goto(meerkat.url);
 			await expect(page).toHaveTitle("meerkat commit review");
+			// Desktop Chrome emulation sends a Windows user agent, so the page
+			// detects a non-Mac platform even on a macOS runner.
+			const mod = "Control";
+			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
+			const hint = sendFeedback.locator(".shortcut-hint");
+			await expect(hint).toHaveText("Ctrl+Shift+Enter");
 
-			// First global comment uses "+ Add global comment"; once one
-			// exists the control becomes "+ Add another".
-			const addButtons = [/^\+ Add global comment$/, /^\+ Add another$/];
-			for (const [i, body] of ["first finding here", "second finding here"].entries()) {
-				await page.getByRole("button", { name: addButtons[i] }).click();
-				// Scope to the form root — both the form and the page have a
-				// "Cancel" button.
-				const form = page.locator(".comment-form");
-				await expect(form).toBeVisible();
-				await form.locator("textarea").fill(body);
-				await form.getByRole("button", { name: /^Issue$/ }).click();
-				await form.getByRole("button", { name: /^Add Global Comment$/ }).click();
-				// Form closes once the comment lands.
-				await expect(form).toBeHidden();
-			}
+			// Inside an open comment form the send shortcut neither submits
+			// the form nor sends the feedback; the submit shortcut does submit.
+			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+			const form = page.locator(".comment-form");
+			const textarea = form.locator("textarea");
+			await textarea.fill("unsent draft");
+			await textarea.press(`${mod}+Shift+Enter`);
+			await expect(textarea).toHaveValue("unsent draft");
 
-			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
+			await textarea.fill("first finding here");
+			await textarea.press(`${mod}+Enter`);
+			await expect(form).toBeHidden();
+			await expect(page.locator(".comment-count")).toHaveText("1 comment");
+			await expect(sendFeedback).toBeEnabled();
+			await expect(hint).toHaveText("Ctrl+Shift+Enter");
 
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(1);
+			// Suggestion swaps the textarea for a CodeMirror editor whose
+			// contents land in a fence tagged with the file's language: the
+			// language-rust class is the observable end of the fileName →
+			// languageFor → fence-tag chain.
+			const fileSection = page.locator(".file-section").filter({ hasText: "src/main.rs" });
+			await fileSection.getByRole("button", { name: /^\+ Add file comment$/ }).click();
+			await expect(sendFeedback).toBeDisabled();
+			await expect(form.locator("textarea"), "plain mode renders a single textarea").toHaveCount(1);
+			await form.getByRole("button", { name: /^Suggestion$/ }).click();
+			await expect(form.locator(".code-host .cm-editor")).toBeVisible();
+			await expect(form.locator("textarea.prose"), "the prose textarea sits above the editor").toBeVisible();
+			await form.locator(".code-host .cm-content").click();
+			await page.keyboard.type("fn renamed() {}");
+			await page.keyboard.press(`${mod}+Shift+Enter`);
+			await expect(form.locator(".code-host .cm-line")).toHaveCount(1);
+			await form.locator("textarea.prose").fill("second finding here");
+			await form.getByRole("button", { name: /^Add File Comment$/ }).click();
+			await expect(form).toBeHidden();
+			await expect(page.locator(".comment-count")).toHaveText("2 comments");
+
+			// Without the fence GitHub doesn't render a suggestion block.
+			const card = fileSection.locator(".note.file-note").first();
+			await expect(card).toContainText("second finding here");
+			const code = card.locator("pre code.language-rust");
+			await expect(code).toContainText("fn renamed() {}");
+			await expect(code, "the prose stays outside the fence").not.toContainText("second finding here");
+
+			await page.keyboard.press(`${mod}+Shift+Enter`);
+			const { code: exit, stderr } = await meerkat.awaitExit();
+			expect(exit).toBe(1);
 
 			// The outcome is stated in the output, not left to the exit code:
 			// the banner states the verdict and the true count, bracketed top
@@ -50,6 +83,8 @@ test.describe("decision flow", () => {
 			expect(stderr.match(/User requested changes/g)?.length).toBe(2);
 			expect(stderr).toContain("first finding here");
 			expect(stderr).toContain("second finding here");
+			expect(stderr).toContain("fn renamed() {}");
+			expect(stderr).not.toContain("unsent draft");
 
 			// The recovery file lives at the exact path the banner prints — a
 			// per-review name under reviews/, not a clobberable fixed name.
@@ -72,57 +107,6 @@ test.describe("decision flow", () => {
 		} finally {
 			await meerkat.kill();
 			meerkat.fixture.cleanup?.();
-		}
-	});
-
-	test("Cmd/Ctrl+Shift+Enter sends feedback, and inside an open comment form neither submits nor sends", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-			// Desktop Chrome emulation sends a Windows user agent, so the page
-			// detects a non-Mac platform even on a macOS runner.
-			const mod = "Control";
-			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
-			const hint = sendFeedback.locator(".shortcut-hint");
-			await expect(hint).toHaveText("Ctrl+Shift+Enter");
-
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			const form = page.locator(".comment-form");
-			const textarea = form.locator("textarea");
-			await textarea.fill("unsent draft");
-			await textarea.press(`${mod}+Shift+Enter`);
-			await expect(textarea).toHaveValue("unsent draft");
-
-			await textarea.fill("sent by shortcut");
-			await textarea.press(`${mod}+Enter`);
-			await expect(form).toBeHidden();
-			await expect(page.locator(".comment-count")).toHaveText("1 comment");
-			await expect(sendFeedback).toBeEnabled();
-			await expect(hint).toHaveText("Ctrl+Shift+Enter");
-
-			const fileSection = page.locator(".file-section").filter({ hasText: "src/main.rs" });
-			await fileSection.getByRole("button", { name: /^\+ Add file comment$/ }).click();
-			await expect(sendFeedback).toBeDisabled();
-			await form.getByRole("button", { name: /^Suggestion$/ }).click();
-			await form.locator(".code-host .cm-content").click();
-			await page.keyboard.type("fn renamed() {}");
-			await page.keyboard.press(`${mod}+Shift+Enter`);
-			await expect(form.locator(".code-host .cm-line")).toHaveCount(1);
-			await form.locator("textarea.prose").fill("suggested by shortcut test");
-			await form.getByRole("button", { name: /^Add File Comment$/ }).click();
-			await expect(form).toBeHidden();
-			await expect(page.locator(".comment-count")).toHaveText("2 comments");
-
-			await page.keyboard.press(`${mod}+Shift+Enter`);
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code).toBe(1);
-			expect(stderr).toContain("sent by shortcut");
-			expect(stderr).toContain("suggested by shortcut test");
-			expect(stderr).not.toContain("unsent draft");
-		} finally {
-			await meerkat.kill();
 		}
 	});
 });

@@ -8,7 +8,9 @@ import { startMeerkat } from "./lib/runner";
 // The browser seam of several open comment forms: DiffViewer.svelte
 // mounts each form as its own table row and must keep every mounted
 // form's draft, finding type and learn flag while others open, close and
-// post, and while the diff re-renders. Which forms are open, the footer
+// post, and while the diff re-renders. Posted comments are injected as
+// rows at their anchors, marking the anchor row, and torn down on Remove.
+// Which forms are open, the footer
 // that lists them, and closing an edit form when its comment is removed
 // are covered by the LiveView and ReviewServer tests.
 
@@ -61,6 +63,7 @@ test.describe("multiple open comment forms", () => {
 			await newLine(fileSection, 1).click();
 			const first = formAt(fileSection, 1);
 			await expect(first).toBeVisible();
+			await expect(first.locator("input[type=checkbox]"), "learn-from-this defaults off").not.toBeChecked();
 			await first.locator("textarea").fill("comment for line 1");
 
 			await dragLines(page, fileSection, 3, 5);
@@ -90,11 +93,22 @@ test.describe("multiple open comment forms", () => {
 			await expect(first).toBeHidden();
 			await expect(commentRowAt(fileSection, 1)).toContainText("comment for line 1");
 			await expect(commentRowAt(fileSection, 1)).toContainText("L1 (new)");
+			await expect(commentRowAt(fileSection, 1), "each comment gets exactly one row").toHaveCount(1);
 			await expect(commentRowAt(fileSection, 5)).toHaveCount(0);
 			await expect(second.locator("textarea")).toHaveValue("comment for lines 3-5");
+			const anchorRow = fileSection
+				.locator('tr.diff-line:has(td.diff-line-num span[data-line-new-num="1"])')
+				.first();
+			await expect(anchorRow).toHaveClass(/has-inline-comment/);
+			const learn = commentRowAt(fileSection, 1).locator(".inline-comment .learn-toggle input");
+			await expect(learn).not.toBeChecked();
+			await learn.check();
+			await expect(learn, "the rendered comment's learn toggle flips").toBeChecked();
 
-			await second.getByRole("button", { name: /^Add Comment$/ }).click();
-			await expect(second).toBeHidden();
+			// Meta+Enter on macOS / Ctrl+Enter elsewhere: both map to the
+			// form's handler because the JS check is (metaKey || ctrlKey).
+			await second.locator("textarea").press("Meta+Enter");
+			await expect(second, "Cmd+Enter inside the form submits").toBeHidden();
 			await expect(commentRowAt(fileSection, 5)).toContainText("comment for lines 3-5");
 			await expect(commentRowAt(fileSection, 5)).toContainText("L3–5 (new)");
 			await expect(commentRowAt(fileSection, 1)).not.toContainText("comment for lines 3-5");
@@ -124,6 +138,11 @@ test.describe("multiple open comment forms", () => {
 			await expect(formAt(fileSection, 7).locator("textarea")).toHaveValue("gamma");
 			await expect(commentRowAt(fileSection, 7)).toContainText("beta");
 			await expect(commentRowAt(fileSection, 7)).not.toContainText("alpha");
+
+			await commentRowAt(fileSection, 1).getByRole("button", { name: /^Remove$/ }).click();
+			await expect(commentRowAt(fileSection, 1)).toHaveCount(0);
+			await expect(commentRowAt(fileSection, 5)).toContainText("comment for lines 3-5");
+			await expect(anchorRow, "the marker clears with its comment").not.toHaveClass(/has-inline-comment/);
 
 			// The unsaved-form gate holds until the last form closes.
 			await expect(approve).toBeDisabled();

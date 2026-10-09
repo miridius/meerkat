@@ -276,6 +276,32 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
            )
   end
 
+  test "the toolbar links the review's PR and names its branches, whole on hover",
+       %{conn: conn} do
+    url = "https://github.com/example/example/pull/77"
+
+    view =
+      mount_unbound(conn, %ReviewState{
+        files: [@plain_file],
+        pr: %{number: 77, title: "PR 77", url: url},
+        base_branch: "main",
+        head_branch: "feature/rebased"
+      })
+
+    assert has_element?(view, ~s(a.chip-link[href="#{url}"] .chip-value), ~r/^#77$/)
+    assert has_element?(view, ~s(.branch-chip .chip-value[title="main"]), ~r/^main$/)
+
+    assert has_element?(
+             view,
+             ~s(.branch-chip .chip-value[title="feature/rebased"]),
+             ~r/^feature\/rebased$/
+           )
+
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file], head_branch: "fix/typo"})
+    refute has_element?(view, "a.chip-link")
+    assert has_element?(view, ~s(.branch-chip .chip-value[title="fix/typo"]), ~r/^fix\/typo$/)
+  end
+
   ## --- Page ---
 
   test "a staged review renders its file rows, commit-message gutter and decision buttons", %{
