@@ -21,15 +21,15 @@ case "$branch" in
     bash scripts/install.sh
     # install.sh builds only prod. New Claude worktrees copy main's deps/
     # and _build/ (see .worktreeinclude), so also bring the dev and test
-    # envs up to date. The copy is newer than the worktree's sources, so
-    # bin/meerkat-beam would not rebuild a stale dev build. Git exports
-    # GIT_DIR and friends to hooks; left set, they would point git
-    # dependencies' checkouts at this repository.
+    # envs up to date, so a worktree's first dev review or test run
+    # recompiles little. `mix deps.get` fetches every env's deps. Git
+    # exports GIT_DIR and friends to hooks; left set, they would point
+    # git dependencies' checkouts at this repository.
     (
       # shellcheck disable=SC2046
       unset $(git rev-parse --local-env-vars)
+      mix deps.get
       for env in dev test; do
-        MIX_ENV=$env mix deps.get
         MIX_ENV=$env mix compile
       done
     )

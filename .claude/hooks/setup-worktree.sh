@@ -11,13 +11,14 @@
 # also lists optional deps that are never fetched, so other entries are
 # not checked. JS deps count as missing when node_modules has no pnpm
 # state.
-# In a linked worktree, the hook also recreates the symlinks under the
-# main checkout's _build/ that the worktree's copy lacks: Claude Code's
-# .worktreeinclude copy leaves them out, and Mix recreates a dep's
+# In a linked worktree, the hook also recreates each symlink under the
+# main checkout's _build/ that is missing from the worktree's copy, where
+# the link's parent directory exists in the worktree: Claude Code's
+# .worktreeinclude copy leaves symlinks out, and Mix recreates a dep's
 # priv/ link only when it recompiles that dep.
 # Parallel subagents can start in one checkout at once, so each run holds
 # a per-checkout lock; the kernel drops it if the hook is killed.
-# Nothing is printed when nothing is missing. A failed install is reported
+# Nothing is printed when nothing is missing. A failed step is reported
 # to Claude as additional context, never blocking the session.
 set -uo pipefail
 

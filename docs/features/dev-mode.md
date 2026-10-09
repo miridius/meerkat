@@ -27,7 +27,11 @@ Two halves:
    the review runs without auto-restart.
 
 2. **`bin/meerkat-beam` shepherd loop** — the bash wrapper around
-   `mix run --no-start --no-compile`. Exit code 75 restarts after a
+   `mix run --no-start --no-compile`. Before each BEAM start it runs
+   `mix compile` when a source is newer than the build or the build
+   was last compiled in another checkout, so a build copied into a new
+   worktree never stands in for that worktree's sources. Exit code 75
+   restarts after a
    code change; after every BEAM exit, the loop reads the run dir's
    `port` file, sets `MEERKAT_PREFERRED_PORT` to its port for the next
    BEAM, and deletes the file. With the default port or `--port 0`,

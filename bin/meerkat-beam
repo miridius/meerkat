@@ -26,16 +26,22 @@ export MIX_ENV="${MIX_ENV:-dev}"
 export MEERKAT_PWD="$ORIG_PWD"
 
 # Pre-compile guard. Cheap when the build is warm — `find` short-
-# circuits on first newer file. On compile error, return non-zero
-# WITHOUT aborting the shepherd (set -e is locally disabled around
-# the call so a syntax error in the user's edits keeps the loop
-# alive — we wait for the next source change and retry).
+# circuits on first newer file. A new worktree's build is copied from
+# the main checkout after its sources are checked out, so it can look
+# newer than sources it was not compiled from; a stamp naming the
+# checkout that last compiled the build makes the first launch in any
+# other checkout run `mix compile`, which decides what is stale. On
+# compile error, return non-zero WITHOUT aborting the shepherd (set -e
+# is locally disabled around the call so a syntax error in the user's
+# edits keeps the loop alive — we wait for the next source change and
+# retry).
 precompile_if_stale() {
   local lock="_build/${MIX_ENV}/lib/meerkat/.mix/compile.elixir"
-  if [[ ! -f "$lock" ]] || \
+  local stamp="_build/${MIX_ENV}/.meerkat-root"
+  if [[ ! -f "$lock" ]] || [[ "$(cat "$stamp" 2>/dev/null)" != "$ROOT" ]] || \
      [[ -n "$(find lib config mix.exs mix.lock -newer "$lock" -print -quit 2>/dev/null)" ]]; then
-    mix compile --no-warnings-as-errors >&2
-    return $?
+    mix compile --no-warnings-as-errors >&2 || return $?
+    printf '%s\n' "$ROOT" >"$stamp"
   fi
   return 0
 }

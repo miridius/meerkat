@@ -116,6 +116,7 @@ defmodule Meerkat.SetupWorktreeHookTest do
 
     links = %{
       "_build/dev/lib/file_system/priv" => "../../../../deps/file_system/priv",
+      "_build/dev/lib/phoenix/priv" => "../../../../deps/phoenix/priv",
       "_build/test/lib/meerkat/priv" => "../../../../priv",
       "_build/test/lib/stream_data/priv" => "../../../../deps/stream_data/priv"
     }
@@ -129,11 +130,21 @@ defmodule Meerkat.SetupWorktreeHookTest do
     set_up(worktree)
     File.mkdir_p!(Path.join(worktree, "_build/dev/lib/file_system"))
     File.mkdir_p!(Path.join(worktree, "_build/test/lib/meerkat/priv"))
+    # A link already in the worktree, dangling until its dep is fetched.
+    File.mkdir_p!(Path.join(worktree, "_build/dev/lib/phoenix"))
+
+    File.ln_s!(
+      "../../../../deps/phoenix/priv",
+      Path.join(worktree, "_build/dev/lib/phoenix/priv")
+    )
 
     assert run_hook(ctx.dir, worktree) == {"", 0}
 
     assert File.read_link(Path.join(worktree, "_build/dev/lib/file_system/priv")) ==
              {:ok, "../../../../deps/file_system/priv"}
+
+    assert File.read_link(Path.join(worktree, "_build/dev/lib/phoenix/priv")) ==
+             {:ok, "../../../../deps/phoenix/priv"}
 
     assert File.dir?(Path.join(worktree, "_build/test/lib/meerkat/priv"))
     refute File.exists?(Path.join(worktree, "_build/test/lib/stream_data"))

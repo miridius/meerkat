@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 
@@ -10,9 +12,13 @@ test.describe("dev watcher", () => {
 		const meerkat = await startMeerkat({
 			env: { FILESYSTEM_FSMAC_EXECUTABLE_FILE: "/nonexistent/mac_listener" },
 		});
+		const logPath = join(meerkat.fixture.dir, ".git", "meerkat-precommit", "meerkat.log");
 		try {
 			await page.goto(meerkat.url);
 			await expect(page.locator(".file-section").first()).toBeVisible();
+			await expect
+				.poll(() => readFileSync(logPath, "utf8"))
+				.toContain("couldn't start file_system");
 		} finally {
 			await meerkat.kill();
 		}
