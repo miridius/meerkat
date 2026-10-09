@@ -74,10 +74,10 @@ defmodule Meerkat.MixProject do
       # executed), parallel coverage collection, parallel runs of
       # same-file mutants, per-process coverage export names,
       # staged-line scoping, `# muex:ignore` directives, a JSON
-      # report that survives invalid UTF-8 in a test's output, no
-      # function-call mutants of map literals, `%` structs or `::`
-      # type specs, and runs of mutants that change only a nested
-      # literal (4 vs 4.0).
+      # report that survives invalid UTF-8, no function-call mutants
+      # of map literals, `%` structs or `::` in interpolation and
+      # bitstring segments, and runs of mutants whose compiled code
+      # differs only as 4 vs 4.0, which were wrongly called equivalent.
       {:muex,
        github: "miridius/muex",
        ref: "a047ce8f4af615cda2ec6076774cb52d1e8b3784",
