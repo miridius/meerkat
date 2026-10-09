@@ -5,8 +5,12 @@
 # flock(2) taken with macOS lockf(1) on a file in meerkat-gate-lock in the
 # git common dir. The slot stays open on fd 9 until the shell exits, and the
 # kernel frees it then, however the shell exits. A child inherits fd 9 and
-# would hold the slot for as long as it outlives the gate, so the gate starts
-# each child with `9>&-`.
+# would hold the slot for as long as it outlives the gate, so the gate runs
+# its checks with `9>&-`; bash keeps its own copy of fd 9 meanwhile, so the
+# shell still holds the slot.
+#
+# Bash rather than TypeScript only until check.sh and mutate.sh move to
+# TypeScript: the lock must be held by the gate's own process.
 #
 # Waiting gates queue on a third lock, on fd 8, and take slots in turn: only
 # the one at the head of the queue tries the slots, twice a second. Each

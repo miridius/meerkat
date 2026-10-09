@@ -43,43 +43,47 @@ else
   tree=$(git write-tree)
 fi
 
-# At most two gates in all of this repo's worktrees run the checks at once.
-# Every command from here on starts with the slot's fd 9 closed, so none
-# that outlives this script holds the slot.
-source scripts/gate-lock.sh
-gate_lock
-
-holds() { bash scripts/checked-trees.sh holds "$tree" 9>&-; }
-holds && clean=1 || clean=0
-
-# Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
-# point every test's fixture repo at this checkout's index.
-# shellcheck disable=SC2046
-unset $(git rev-parse --local-env-vars 9>&-)
+holds() { bash scripts/checked-trees.sh holds "$tree"; }
 
 step() {
   echo
   echo "=== $label: $* ==="
-  "$@" 9>&-
+  "$@"
 }
 
-step mix deps.get
-step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
-step mix compile --warnings-as-errors
-step mix format --check-formatted
-step mix credo --strict
-step bunx biome lint --error-on-warnings
-step bash scripts/mix-test.sh
-(cd assets && step bun test) 9>&-
-step bun test tests/e2e/lib
-(cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build) 9>&-
-step bunx playwright install --only-shell chromium
-step bun run test:e2e
+run_checks() {
+  holds && clean=1 || clean=0
 
-# Checked again in case the worktree changed while the checks ran.
-if [[ "$clean" == 1 ]] && holds; then
-  bash scripts/checked-trees.sh mark "$tree" 9>&-
-fi
+  # Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
+  # point every test's fixture repo at this checkout's index.
+  # shellcheck disable=SC2046
+  unset $(git rev-parse --local-env-vars)
 
-echo
-echo "=== $label: all checks passed ==="
+  step mix deps.get
+  step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
+  step mix compile --warnings-as-errors
+  step mix format --check-formatted
+  step mix credo --strict
+  step bunx biome lint --error-on-warnings
+  step bash scripts/mix-test.sh
+  (cd assets && step bun test)
+  step bun test tests/e2e/lib
+  (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
+  step bunx playwright install --only-shell chromium
+  step bun run test:e2e
+
+  # Checked again in case the worktree changed while the checks ran.
+  if [[ "$clean" == 1 ]] && holds; then
+    bash scripts/checked-trees.sh mark "$tree"
+  fi
+
+  echo
+  echo "=== $label: all checks passed ==="
+}
+
+# At most two gates in all of this repo's worktrees run the checks at once.
+# The checks run with the slot's fd 9 closed, so no command that outlives
+# this script holds the slot; this shell keeps it until it exits.
+source scripts/gate-lock.sh
+gate_lock
+run_checks 9>&-
