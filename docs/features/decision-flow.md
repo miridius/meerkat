@@ -49,7 +49,35 @@ GitHub PR.
    Disabled while any comment form is open. Exit **0**. With no
    comments, stderr prints `The user approved your commit.
    Proceeding.` With comments, stderr prints the formatted feedback
-   (so the calling agent sees the approving feedback too).
+   (so the calling agent sees the approving feedback too). Approve also
+   marks every staged file approved for the branch, which feeds the
+   auto-approve fast path below. An Approve clicked after another tab
+   already decided the review is ignored and marks no file approved.
+
+## Questions block the next review
+
+Every question in Send Feedback, Approve with feedback, or timeout
+feedback is saved as a per-worktree obligation before the feedback can
+reach the agent. Restored questions receive the same ▶ ACTION count,
+answer walkthrough and re-review instructions as fresh questions.
+
+While any question has no matching nonblank answer, **every** next
+review in that worktree exits **1** before resolving its target, opening
+a browser or auto-approving. The agent sees the refusal, each unanswered
+question's location and text, the `meerkat --answers` walkthrough, and
+an instruction to re-run the refused command. No page opens for the
+reviewer. Reattaching a waiting review also checks this gate; its refusal
+ends only the new caller, preserving that review and its comments.
+Collecting an already completed review's held feedback still delivers
+that feedback. A partial answer set lists only the questions still owed.
+`--answers` itself is never blocked.
+
+Once all questions are answered, the next review opens with the existing
+Pending answers banner, including for an empty staged diff. Obligations
+survive BEAM restarts, reinstalls and new agent sessions, independently
+of the in-progress snapshot. Cancel wipes the current round and owes
+nothing. See [pending-answers.md](pending-answers.md) for matching,
+storage and lifecycle details.
 
 ## Auto-approve fast path
 
@@ -69,7 +97,8 @@ meerkat exits **0** before binding the server:
 - No staged files at all (e.g. `git commit --amend` for message only)
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 
-The UI never opens in these cases.
+The UI never opens in these cases. This fast path is unreachable while
+questions are unanswered, or while answers await the reviewer's reading.
 
 A BEAM respawned by the shepherd for the same review skips the fast
 path and resumes the live review with its Approved ticks and comments,
@@ -80,6 +109,17 @@ review, it writes a `served` marker file in the review's run dir;
 a BEAM that starts and finds this marker skips the fast path. The
 launcher starts each review's backend in a newly created run dir, so
 a new invocation still gets the fast path.
+
+A review whose BEAM ended without a decision and was not respawned
+(a crash in dev mode, a SIGKILL'd BEAM, a crash after the prod
+shepherd's retry) leaves its comments in the review's
+[in-progress snapshot](#persistence-across-decisions). A new
+invocation of the same review, with the same staged content, skips
+the fast path while that snapshot holds any comment, and opens the
+review with the comments restored, so a decision delivers them.
+A snapshot that cannot be read or parsed also skips the fast path;
+the review then starts without comments and prints a warning naming
+the snapshot.
 
 ## Review timeout
 
@@ -208,7 +248,9 @@ deleted.
 The decision broadcast switches all connected tabs to the done view,
 and tabs mounted later also open on done. The next invocation for the
 same `review_id` starts without comments, including a replacement
-after only the commit message has changed.
+after only the commit message has changed. Questions delivered to the
+agent remain owed in `pending-questions.json`, outside that snapshot;
+a fresh review cannot start until they have answers.
 
 ## Review log
 

@@ -159,12 +159,15 @@ defmodule Meerkat.Timeout do
 
   @doc """
   Returns the decision for a review that ran out of time, carrying whatever
-  comments were saved before it did. Never raises: a snapshot it cannot
-  read yields no comments instead.
+  comments were saved before it did. An unreadable snapshot yields no
+  comments. Failing to persist question obligations raises, so the review
+  fails closed (exit 2) rather than deliver unrecorded questions.
   """
   @spec decision(String.t(), String.t()) :: {:timeout, String.t()}
   def decision(repo_path, review_id) do
-    {:timeout, pending_feedback(repo_path, review_id)}
+    payload = pending_feedback(repo_path, review_id)
+    Meerkat.PendingAnswers.clear(repo_path)
+    {:timeout, payload}
   end
 
   @doc """
@@ -184,9 +187,17 @@ defmodule Meerkat.Timeout do
   end
 
   defp pending_feedback(repo_path, review_id) do
+    {payload, questions} = feedback_data(repo_path, review_id)
+    # Only reading/rendering malformed comments is best-effort. A failure to
+    # record the questions in deliverable feedback must abort the decision.
+    :ok = Meerkat.PendingQuestions.replace(repo_path, questions)
+    payload
+  end
+
+  defp feedback_data(repo_path, review_id) do
     case review_state(repo_path, review_id) do
-      %ReviewState{} = state -> Feedback.format(state, :timeout)
-      nil -> ""
+      %ReviewState{} = state -> {Feedback.format(state, :timeout), Feedback.questions(state)}
+      nil -> {"", []}
     end
   catch
     kind, reason ->
@@ -196,7 +207,7 @@ defmodule Meerkat.Timeout do
           "#{inspect(kind)} #{inspect(reason)}. Auto-approving without them."
       )
 
-      ""
+      {"", []}
   end
 
   # `ReviewServer` is started by the first LiveView mount, so a review

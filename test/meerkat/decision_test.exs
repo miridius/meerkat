@@ -3,7 +3,7 @@ defmodule Meerkat.DecisionTest do
   # main supervisor. Meerkat.Case clears it around each test.
   use Meerkat.Case, async: false
 
-  alias Meerkat.Decision
+  alias Meerkat.{Decision, Feedback, PendingAnswers, PendingQuestions, ReviewState}
 
   describe "submit/1 + await/0" do
     test "a second submit is refused and told which decision stands" do
@@ -34,8 +34,153 @@ defmodule Meerkat.DecisionTest do
     end
   end
 
+  describe "submit_review/3" do
+    setup do
+      repo = Meerkat.TestHelpers.make_git_repo("meerkat-review-obligations")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    end
+
+    for {tag, mode} <- [reject: :rejection, approve_with_feedback: :approval_with_feedback] do
+      test "#{tag} records questions before feedback is available, ignoring late decisions", %{
+        repo: repo
+      } do
+        review = %ReviewState{
+          global_comments: [%{finding_type: "question", body: "Why?", learn_from_this: false}]
+        }
+
+        assert {:ok, {unquote(tag), payload}} = Decision.submit_review(unquote(tag), review, repo)
+        assert payload == Feedback.format(review, unquote(mode))
+        assert payload =~ "meerkat --answers"
+
+        assert {:ok, [%{location: "global", question: "Why?"}]} =
+                 PendingQuestions.unanswered(repo)
+
+        assert {unquote(tag), ^payload} = Decision.await()
+
+        assert {:already_decided, {unquote(tag), ^payload}} =
+                 Decision.submit_review(:cancel, %ReviewState{}, repo)
+
+        assert {:ok, [%{question: "Why?"}]} = PendingQuestions.unanswered(repo)
+      end
+    end
+
+    test "accept side effects finish before the CLI wakes", %{repo: repo} do
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+
+      # on_accept runs inside the Decision server, which it blocks until told to finish.
+      on_accept = fn ->
+        send(parent, {:accepting, self()})
+        receive do: (:finish -> :ok)
+      end
+
+      spawn_link(fn ->
+        send(
+          parent,
+          {:submitted, Decision.submit_review(:approve, %ReviewState{}, repo, on_accept)}
+        )
+      end)
+
+      assert_receive {:accepting, server}
+      refute_receive {:awaited, _}, 50
+      send(server, :finish)
+      assert_receive {:submitted, {:ok, {:approve, ""}}}
+      assert_receive {:awaited, {:approve, ""}}
+    end
+
+    test "unrecorded questions are never delivered as a decision", %{repo: repo} do
+      File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
+      parent = self()
+      spawn(fn -> send(parent, {:awaited, catch_exit(Decision.await())}) end)
+      # Let the waiter reach the server before the submit crashes it.
+      refute_receive {:awaited, _}, 50
+
+      review = %ReviewState{
+        global_comments: [%{finding_type: :question, body: "Why?", learn_from_this: false}]
+      }
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {{%File.Error{action: "record owed questions"}, _}, _} =
+                 catch_exit(
+                   Decision.submit_review(:reject, review, repo, fn -> send(parent, :accepted) end)
+                 )
+      end)
+
+      assert_receive {:awaited, {{%File.Error{}, _}, _}}
+      refute_received :accepted
+    end
+
+    test "non-page decision tags cannot record a decision or erase owed questions", %{repo: repo} do
+      questions = [%{location: "global", question: "Still owed?"}]
+      :ok = PendingQuestions.replace(repo, questions)
+
+      for tag <- [:timeout, :unknown] do
+        assert_raise FunctionClauseError, fn ->
+          Decision.submit_review(tag, %ReviewState{}, repo)
+        end
+
+        assert Decision.current() == nil
+        assert {:ok, ^questions} = PendingQuestions.unanswered(repo)
+      end
+    end
+
+    for tag <- [:approve, :cancel] do
+      test "#{tag} wipes the previous round's obligation without owing the round's comments", %{
+        repo: repo
+      } do
+        :ok =
+          PendingQuestions.replace(repo, [%{location: "global", question: "Already answered?"}])
+
+        review = %ReviewState{
+          global_comments: [
+            %{finding_type: :question, body: "Not delivered?", learn_from_this: false}
+          ]
+        }
+
+        assert {:ok, {unquote(tag), ""}} = Decision.submit_review(unquote(tag), review, repo)
+        assert {:ok, []} = PendingQuestions.unanswered(repo)
+      end
+    end
+
+    test "an answered round's obligations are replaced before its answer banner is cleared", %{
+      repo: repo
+    } do
+      :ok = PendingQuestions.replace(repo, [%{location: "global", question: "Before?"}])
+
+      {:ok, 1} =
+        PendingAnswers.save(
+          repo,
+          ~s({"answers":[{"location":"global","question":"Before?","answer":"Yes."}]})
+        )
+
+      review = %ReviewState{
+        global_comments: [%{finding_type: :question, body: "After?", learn_from_this: false}]
+      }
+
+      assert {:ok, _} = Decision.submit_review(:reject, review, repo)
+      PendingAnswers.clear(repo)
+
+      assert {:ok, [%{location: "global", question: "After?"}]} =
+               PendingQuestions.unanswered(repo)
+    end
+  end
+
   describe "the review deadline" do
     setup do
+      repo = Meerkat.TestHelpers.make_git_repo("meerkat-decision-deadline")
+      previous_repo = Application.fetch_env(:meerkat, :repo_path)
+      Application.put_env(:meerkat, :repo_path, repo)
+
+      on_exit(fn ->
+        case previous_repo do
+          {:ok, value} -> Application.put_env(:meerkat, :repo_path, value)
+          :error -> Application.delete_env(:meerkat, :repo_path)
+        end
+
+        File.rm_rf!(repo)
+      end)
+
       Application.put_env(:meerkat, :deadline_check_ms, 5)
       previous_action = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
       System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "true")

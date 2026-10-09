@@ -23,7 +23,11 @@ defmodule Meerkat.CLI do
   or when every staged file is approved on the current branch by content or
   marked as linguist-generated. It applies to plain `meerkat` and
   `meerkat --commit-msg <PATH>`, unless answers to a previous review's
-  question comments are pending on disk, which forces a live review. Supplying
+  question comments are pending on disk, or an undecided review of the same
+  staged content left comments in its snapshot; either forces a live review.
+  Every review target first refuses unanswered questions from the last round,
+  with exit 1 and answer instructions, before opening any UI. `--answers`
+  bypasses this obligation gate. Supplying
   a ref/range positional argument or `--pr` takes precedence over
   `--commit-msg` and always opens the review UI, even for an empty diff.
   """
@@ -34,6 +38,8 @@ defmodule Meerkat.CLI do
     Feedback,
     Git,
     PendingAnswers,
+    PendingQuestions,
+    Persistence,
     PortInUseError,
     ReviewId,
     ReviewLog,
@@ -87,16 +93,7 @@ defmodule Meerkat.CLI do
     if opts.answers do
       save_answers(repo_path(), read_stdin())
     else
-      target = ReviewTarget.from_opts(opts)
-
-      case hold_temporary_index(target) do
-        :ok ->
-          review(target, opts)
-
-        {:error, message} ->
-          IO.puts(:stderr, "meerkat: #{message} — defaulting to REJECT (commit aborted).")
-          2
-      end
+      review_if_answered(opts)
     end
   rescue
     e ->
@@ -118,6 +115,34 @@ defmodule Meerkat.CLI do
       2
   after
     flush_logs()
+  end
+
+  defp review_if_answered(opts) do
+    case PendingQuestions.unanswered(repo_path()) do
+      {:ok, []} ->
+        target = ReviewTarget.from_opts(opts)
+
+        case hold_temporary_index(target) do
+          :ok ->
+            review(target, opts)
+
+          {:error, message} ->
+            IO.puts(:stderr, "meerkat: #{message} — defaulting to REJECT (commit aborted).")
+            2
+        end
+
+      {:ok, questions} ->
+        IO.write(:stderr, Feedback.unanswered(questions))
+        1
+
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted)."
+        )
+
+        2
+    end
   end
 
   # Take the copy before any staged-state read, including auto-approval:
@@ -219,7 +244,10 @@ defmodule Meerkat.CLI do
         Application.put_env(:meerkat, :no_open, opts.no_open)
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
-        open_browser_unless_disabled(opts.no_open, &Meerkat.Browser.open/1)
+        # No in-VM test gets here: the test VM's endpoint already runs
+        # without a server, so `review_url/0` raises in `announce_url/2`.
+        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
+        open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
         decision = await_decision_or_reject()
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
@@ -390,7 +418,7 @@ defmodule Meerkat.CLI do
 
   @spec auto_approve_decision(ReviewTarget.t(), String.t(), String.t() | nil) ::
           :live | {:auto, String.t()}
-  defp auto_approve_decision({:staged, _}, repo_path, serve_dir) do
+  defp auto_approve_decision({:staged, _} = target, repo_path, serve_dir) do
     # A BEAM respawned for a review its serve dir already served (a restart
     # onto a new version or after a code change, a crash retry) resumes it:
     # ticking a file Approved records it in the approval cache at once, so
@@ -410,7 +438,7 @@ defmodule Meerkat.CLI do
     if served?(serve_dir) or PendingAnswers.load(repo_path) != nil do
       :live
     else
-      auto_approve_staged(repo_path)
+      auto_approve_staged(repo_path, ReviewId.derive(repo_path, target))
     end
   end
 
@@ -420,10 +448,14 @@ defmodule Meerkat.CLI do
   # The staged-diff auto-approve fast path. Unreachable while pending
   # answers are present (see `auto_approve_decision/3`), so it can never
   # clobber the file out from under an unanswered review.
-  defp auto_approve_staged(repo_path) do
+  defp auto_approve_staged(repo_path, review_id) do
     case Git.staged_files(repo_path) do
       {:ok, []} ->
-        {:auto, "meerkat: no staged file changes — auto-approving.\n"}
+        unless_comments_held(
+          {:auto, "meerkat: no staged file changes — auto-approving.\n"},
+          repo_path,
+          review_id
+        )
 
       {:ok, files} ->
         cache = ApprovalCache.load_for(repo_path)
@@ -447,7 +479,9 @@ defmodule Meerkat.CLI do
             classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
           end)
 
-        decide_from_verdicts(verdicts, length(files))
+        verdicts
+        |> decide_from_verdicts(length(files))
+        |> unless_comments_held(repo_path, review_id)
 
       {:error, reason} ->
         IO.puts(
@@ -486,6 +520,26 @@ defmodule Meerkat.CLI do
       true ->
         :live
     end
+  end
+
+  # A review whose BEAM died undecided and was not respawned (a dev-mode
+  # crash, a SIGKILL) left its comments in the in-progress snapshot, and the
+  # rerun gets a fresh serve dir. Resume it so a decision delivers them.
+  # The signature comes from the file list the review itself loads, which
+  # leaves out whitespace-only changes, so only a snapshot it would restore
+  # keeps the rerun live. A load failure keeps it live too: the review
+  # reports it.
+  # muex:ignore equivalent: without this clause the next one also returns :live, after reading the snapshot
+  defp unless_comments_held(:live, _repo_path, _review_id), do: :live
+
+  defp unless_comments_held(auto, repo_path, review_id) do
+    signature = fn ->
+      with {:ok, files} <- Git.staged_file_diffs(repo_path) do
+        {:ok, Persistence.state_signature(%ReviewState{files: files})}
+      end
+    end
+
+    if Persistence.held_comments?(repo_path, review_id, signature), do: :live, else: auto
   end
 
   # `:approved` | `:generated` | `:neither`. `generated_map` is the
@@ -590,8 +644,8 @@ defmodule Meerkat.CLI do
   def secret_key_base_for_test, do: secret_key_base()
 
   @doc false
-  def open_browser_unless_disabled_for_test(no_open, open),
-    do: open_browser_unless_disabled(no_open, open)
+  def open_browser_unless_disabled_for_test(no_open, url, open),
+    do: open_browser_unless_disabled(no_open, url, open)
 
   @doc false
   def review_url_for_test, do: review_url()
@@ -855,9 +909,9 @@ defmodule Meerkat.CLI do
     Decision.await_delivery()
   end
 
-  defp open_browser_unless_disabled(true, _open), do: :ok
+  defp open_browser_unless_disabled(true, _url, _open), do: :ok
 
-  defp open_browser_unless_disabled(false, open) do
+  defp open_browser_unless_disabled(false, url, open) do
     # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
     # duplicate tab. The shepherd creates the file empty; we check
     # for non-empty contents on every call and only open + stamp it
@@ -868,7 +922,7 @@ defmodule Meerkat.CLI do
         :ok
 
       :first_open ->
-        do_open_browser(open)
+        do_open_browser(url, open)
     end
   end
 
@@ -912,9 +966,7 @@ defmodule Meerkat.CLI do
     end
   end
 
-  defp do_open_browser(open) do
-    url = review_url()
-
+  defp do_open_browser(url, open) do
     case open.(url) do
       :ok ->
         stamp_marker()
@@ -933,23 +985,19 @@ defmodule Meerkat.CLI do
   # Pull the actually-bound port from the running endpoint. Bandit
   # exposes it via Phoenix.Endpoint.server_info/1, which the
   # documented spec returns `{:ok, {ip, port}}` on. This is the only
-  # way to honour `--port 0` (OS-assigned).
+  # way to honour `--port 0` (OS-assigned). Raises when the endpoint
+  # reports no bound port, as when it was already running without a
+  # server: no other port serves this review, and the configured one
+  # may be 0. `run_live_review_safe/2` turns the raise into a REJECT
+  # before any URL is announced or opened.
   defp review_url do
     case MeerkatWeb.Endpoint.server_info(:http) do
       {:ok, {_ip, port}} ->
         "http://127.0.0.1:#{port}/"
 
-      # Older Phoenix shapes / unexpected returns: fall back to the
-      # configured value rather than crash. Logged so a regression
-      # surfaces.
       other ->
-        IO.puts(
-          :stderr,
-          "meerkat: warning — unable to read bound port from endpoint (#{inspect(other)})"
-        )
-
-        port = Application.get_env(:meerkat, MeerkatWeb.Endpoint)[:http][:port] || 0
-        "http://127.0.0.1:#{port}/"
+        raise "could not read the review server's bound port (#{inspect(other)}), " <>
+                "so meerkat opens no browser and serves no review"
     end
   end
 

@@ -22,7 +22,10 @@ defmodule MeerkatWeb.AttachController do
   in `o` frames, and the review keeps running. A caller attaching
   after a decision has been made, whether the outcome is held or a click
   has happened but the outcome has not yet been published, gets no banner
-  and opens no browser tab.
+  and opens no browser tab. Reattaching a waiting review also checks owed
+  questions from other completed rounds in this worktree. A refusal sends
+  its instructions as `o` frames followed by `d`, exiting only that caller
+  with 1 and leaving the existing review available after answers arrive.
 
   `POST /api/attach/delivered?run=<run>` reports that the caller printed
   the outcome.
@@ -32,7 +35,7 @@ defmodule MeerkatWeb.AttachController do
 
   import Plug.Conn
 
-  alias Meerkat.{Decision, Git, Persistence, ReviewState}
+  alias Meerkat.{Decision, Feedback, Git, PendingQuestions, Persistence, ReviewState}
 
   # The deadline runs only while a caller is attached. A dead caller is detached when a
   # heartbeat write fails. The write that kills curl and the server's first write after
@@ -47,6 +50,42 @@ defmodule MeerkatWeb.AttachController do
               "so it replaces this review — aborting."
 
   def attach(conn, %{"run" => run} = params) when is_binary(run) do
+    # A waiting review cannot bypass another round's question gate merely by
+    # being reattached. A finished review must still deliver its held
+    # feedback, so the decision is read after the obligations: a decision
+    # that records new questions between the two reads is still delivered.
+    case PendingQuestions.unanswered(Application.fetch_env!(:meerkat, :repo_path)) do
+      {:ok, []} -> attach_to_review(conn, run, params)
+      refusal -> refuse_unless_decided(conn, run, params, refusal)
+    end
+  end
+
+  def attach(conn, _params), do: send_resp(conn, 400, "bad request\n")
+
+  defp refuse_unless_decided(conn, run, params, refusal) do
+    case {Decision.current(), refusal} do
+      {nil, {:ok, questions}} ->
+        refuse_attachment(conn, Feedback.unanswered(questions))
+
+      {nil, {:error, reason}} ->
+        refuse_attachment(conn, "meerkat: couldn't read owed questions: #{reason}\n")
+
+      _decided ->
+        attach_to_review(conn, run, params)
+    end
+  end
+
+  defp refuse_attachment(conn, text) do
+    # The d frame exits only this caller, without acknowledging delivery,
+    # deleting the run dir or stopping the existing review backend.
+    send_resp(
+      conn,
+      200,
+      IO.iodata_to_binary([frames(text), "d meerkat: review refused — commit aborted.\n"])
+    )
+  end
+
+  defp attach_to_review(conn, run, params) do
     compared =
       if run == System.get_env("MEERKAT_RUN_ID"),
         do: :same,
@@ -70,8 +109,6 @@ defmodule MeerkatWeb.AttachController do
         send_resp(conn, 502, body)
     end
   end
-
-  def attach(conn, _params), do: send_resp(conn, 400, "bad request\n")
 
   def delivered(conn, %{"run" => run}) when is_binary(run) do
     case Decision.delivered(run) do
