@@ -73,11 +73,14 @@ defmodule Meerkat.MixProject do
       # test selection, crediting each test file with only the lines it
       # executed), parallel coverage collection, parallel runs of
       # same-file mutants, per-process coverage export names,
-      # staged-line scoping, `# muex:ignore` directives, and a JSON
-      # report that survives invalid UTF-8 in a test's output.
+      # staged-line scoping, `# muex:ignore` directives, a JSON
+      # report that survives invalid UTF-8 in a test's output, no
+      # function-call mutants of map literals, `%` structs or `::`
+      # type specs, and runs of mutants that change only a nested
+      # literal (4 vs 4.0).
       {:muex,
        github: "miridius/muex",
-       ref: "01a0780542c25bb55da9d333d962dc5e28417fcf",
+       ref: "a047ce8f4af615cda2ec6076774cb52d1e8b3784",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
