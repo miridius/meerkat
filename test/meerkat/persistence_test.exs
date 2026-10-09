@@ -21,6 +21,26 @@ defmodule Meerkat.PersistenceTest do
     {:ok, repo: repo, review_id: "abc1234567890def"}
   end
 
+  describe "held_comments?/3" do
+    setup %{repo: repo, review_id: id} do
+      comment = %{id: "c1", body: "keep me", finding_type: :issue, learn_from_this: false}
+      :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1", comments: [comment]})
+    end
+
+    test "a signature that cannot be computed counts as a match", %{repo: repo, review_id: id} do
+      assert Persistence.held_comments?(repo, id, fn -> {:error, "index changed"} end)
+    end
+
+    test "a snapshot without comment keys holds none", %{repo: repo, review_id: id} do
+      File.write!(Persistence.path_for(repo, id), ~s({"state_signature": "s1"}))
+      refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+    end
+
+    test "a different signature does not", %{repo: repo, review_id: id} do
+      refute Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
+    end
+  end
+
   describe "save/3 + load/3 round-trip" do
     test "comments survive", %{repo: repo, review_id: id} do
       comment = %{

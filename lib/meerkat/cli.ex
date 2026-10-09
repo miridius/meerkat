@@ -23,7 +23,8 @@ defmodule Meerkat.CLI do
   or when every staged file is approved on the current branch by content or
   marked as linguist-generated. It applies to plain `meerkat` and
   `meerkat --commit-msg <PATH>`, unless answers to a previous review's
-  question comments are pending on disk, which forces a live review.
+  question comments are pending on disk, or an undecided review of the same
+  staged content left comments in its snapshot; either forces a live review.
   Every review target first refuses unanswered questions from the last round,
   with exit 1 and answer instructions, before opening any UI. `--answers`
   bypasses this obligation gate. Supplying
@@ -38,6 +39,7 @@ defmodule Meerkat.CLI do
     Git,
     PendingAnswers,
     PendingQuestions,
+    Persistence,
     PortInUseError,
     ReviewId,
     ReviewLog,
@@ -416,7 +418,7 @@ defmodule Meerkat.CLI do
 
   @spec auto_approve_decision(ReviewTarget.t(), String.t(), String.t() | nil) ::
           :live | {:auto, String.t()}
-  defp auto_approve_decision({:staged, _}, repo_path, serve_dir) do
+  defp auto_approve_decision({:staged, _} = target, repo_path, serve_dir) do
     # A BEAM respawned for a review its serve dir already served (a restart
     # onto a new version or after a code change, a crash retry) resumes it:
     # ticking a file Approved records it in the approval cache at once, so
@@ -436,7 +438,7 @@ defmodule Meerkat.CLI do
     if served?(serve_dir) or PendingAnswers.load(repo_path) != nil do
       :live
     else
-      auto_approve_staged(repo_path)
+      auto_approve_staged(repo_path, ReviewId.derive(repo_path, target))
     end
   end
 
@@ -446,10 +448,14 @@ defmodule Meerkat.CLI do
   # The staged-diff auto-approve fast path. Unreachable while pending
   # answers are present (see `auto_approve_decision/3`), so it can never
   # clobber the file out from under an unanswered review.
-  defp auto_approve_staged(repo_path) do
+  defp auto_approve_staged(repo_path, review_id) do
     case Git.staged_files(repo_path) do
       {:ok, []} ->
-        {:auto, "meerkat: no staged file changes — auto-approving.\n"}
+        unless_comments_held(
+          {:auto, "meerkat: no staged file changes — auto-approving.\n"},
+          repo_path,
+          review_id
+        )
 
       {:ok, files} ->
         cache = ApprovalCache.load_for(repo_path)
@@ -473,7 +479,9 @@ defmodule Meerkat.CLI do
             classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
           end)
 
-        decide_from_verdicts(verdicts, length(files))
+        verdicts
+        |> decide_from_verdicts(length(files))
+        |> unless_comments_held(repo_path, review_id)
 
       {:error, reason} ->
         IO.puts(
@@ -512,6 +520,26 @@ defmodule Meerkat.CLI do
       true ->
         :live
     end
+  end
+
+  # A review whose BEAM died undecided and was not respawned (a dev-mode
+  # crash, a SIGKILL) left its comments in the in-progress snapshot, and the
+  # rerun gets a fresh serve dir. Resume it so a decision delivers them.
+  # The signature comes from the file list the review itself loads, which
+  # leaves out whitespace-only changes, so only a snapshot it would restore
+  # keeps the rerun live. A load failure keeps it live too: the review
+  # reports it.
+  # muex:ignore equivalent: without this clause the next one also returns :live, after reading the snapshot
+  defp unless_comments_held(:live, _repo_path, _review_id), do: :live
+
+  defp unless_comments_held(auto, repo_path, review_id) do
+    signature = fn ->
+      with {:ok, files} <- Git.staged_file_diffs(repo_path) do
+        {:ok, Persistence.state_signature(%ReviewState{files: files})}
+      end
+    end
+
+    if Persistence.held_comments?(repo_path, review_id, signature), do: :live, else: auto
   end
 
   # `:approved` | `:generated` | `:neither`. `generated_map` is the

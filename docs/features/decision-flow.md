@@ -110,6 +110,17 @@ a BEAM that starts and finds this marker skips the fast path. The
 launcher starts each review's backend in a newly created run dir, so
 a new invocation still gets the fast path.
 
+A review whose BEAM ended without a decision and was not respawned
+(a crash in dev mode, a SIGKILL'd BEAM, a crash after the prod
+shepherd's retry) leaves its comments in the review's
+[in-progress snapshot](#persistence-across-decisions). A new
+invocation of the same review, with the same staged content, skips
+the fast path while that snapshot holds any comment, and opens the
+review with the comments restored, so a decision delivers them.
+A snapshot that cannot be read or parsed also skips the fast path;
+the review then starts without comments and prints a warning naming
+the snapshot.
+
 ## Review timeout
 
 A review's deadline is 90 minutes by default. `MEERKAT_REVIEW_TIMEOUT`

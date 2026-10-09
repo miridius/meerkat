@@ -43,7 +43,7 @@ defmodule Meerkat.CLITest do
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
   #   exits 64 and names the option".
-  # - The staged-diff auto-approve path in `auto_approve_staged/1`
+  # - The staged-diff auto-approve path in `auto_approve_staged/2`
   #   (statement deletion among the Git shell-outs) — real-git I/O
   #   wiring; covered by the real-git `auto_approve_decision/3` tests
   #   below.
@@ -58,6 +58,8 @@ defmodule Meerkat.CLITest do
     Comment,
     Feedback,
     PendingAnswers,
+    Persistence,
+    ReviewId,
     ReviewLog,
     ReviewServer,
     ReviewState
@@ -1102,6 +1104,110 @@ defmodule Meerkat.CLITest do
     } do
       assert CLI.auto_approve_decision_for_test(dir, serve_dir) ==
                {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
+    end
+  end
+
+  describe "auto_approve_decision/3 — a review that ended without a decision (real git fixture)" do
+    # A BEAM nothing respawned (a dev-mode crash, a SIGKILL) leaves its
+    # comments in the in-progress snapshot, and the rerun starts in a fresh
+    # serve dir. Auto-approving would never deliver those comments.
+    @all_approved {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
+
+    setup do
+      dir = make_git_repo("meerkat-cli-crashed")
+      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
+      stage(dir, "a.rs", "fn a() {}\n")
+      oid = git(dir, ["rev-parse", ":a.rs"])
+      path = ApprovalCache.path_for(dir)
+      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    # Saves the snapshot the review of the currently staged content writes.
+    defp save_snapshot(dir, changes) do
+      # Without a remote, the PR lookup warns on stderr.
+      {{:ok, state}, _} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> ReviewState.from_target({:staged, nil}, dir) end)
+
+      :ok = Persistence.save(dir, ReviewId.derive(dir, {:staged, nil}), struct!(state, changes))
+      Persistence.path_for(dir, ReviewId.derive(dir, {:staged, nil}))
+    end
+
+    @comment %{id: "c1", finding_type: :issue, body: "keep me", learn_from_this: false}
+
+    for key <- [:comments, :file_comments, :global_comments, :commit_message_comments] do
+      test "a snapshot holding #{key} keeps the rerun live", %{dir: dir} do
+        save_snapshot(dir, [{unquote(key), [@comment]}])
+        assert CLI.auto_approve_decision_for_test(dir) == :live
+      end
+    end
+
+    # The review leaves whitespace-only changes out of its files and so out
+    # of its signature.
+    test "a snapshot holding comments keeps the rerun live beside an approved whitespace-only change",
+         %{dir: dir} do
+      stage(dir, "b.rs", "fn b() {}\n")
+      git(dir, ["commit", "-qm", "b"])
+      stage(dir, "b.rs", "fn b()  {}\n")
+      oid = git(dir, ["rev-parse", ":b.rs"])
+      path = ApprovalCache.path_for(dir)
+      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "b.rs", oid))
+      save_snapshot(dir, global_comments: [@comment])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "a snapshot holding no comment still auto-approves", %{dir: dir} do
+      save_snapshot(dir, approved_file_names: MapSet.new(["a.rs"]))
+      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
+    end
+
+    test "a snapshot of other staged content still auto-approves", %{dir: dir} do
+      stage(dir, "a.rs", "fn earlier() {}\n")
+      save_snapshot(dir, global_comments: [@comment])
+      stage(dir, "a.rs", "fn a() {}\n")
+      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
+    end
+
+    # The fast path runs before the review's modules load, so a snapshot
+    # key may name no existing atom yet.
+    test "a snapshot of other staged content holding a key that is no atom still auto-approves",
+         %{dir: dir} do
+      stage(dir, "a.rs", "fn earlier() {}\n")
+      path = save_snapshot(dir, global_comments: [@comment])
+      key = "no_atom_#{System.unique_integer([:positive])}"
+
+      json =
+        path
+        |> File.read!()
+        |> Jason.decode!()
+        |> put_in(["global_comments", Access.at(0), key], 1)
+
+      File.write!(path, Jason.encode!(json))
+      stage(dir, "a.rs", "fn a() {}\n")
+      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
+    end
+
+    test "a snapshot written before signatures existed keeps the rerun live", %{dir: dir} do
+      path = save_snapshot(dir, global_comments: [@comment])
+      legacy = path |> File.read!() |> Jason.decode!() |> Map.delete("state_signature")
+      File.write!(path, Jason.encode!(legacy))
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "an unparseable snapshot keeps the rerun live", %{dir: dir} do
+      path = save_snapshot(dir, [])
+      File.write!(path, "{not json")
+      assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "with nothing staged, a snapshot holding comments keeps the rerun live", %{dir: dir} do
+      git(dir, ["rm", "-q", "--cached", "a.rs"])
+      save_snapshot(dir, commit_message_comments: [@comment])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
   end
 
