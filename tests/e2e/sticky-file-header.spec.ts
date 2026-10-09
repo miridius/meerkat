@@ -12,14 +12,33 @@ const WRAPPED_WIDTHS = [1150, 900, 600];
 
 // A branch name and commit subject long enough that the toolbar wraps
 // at 1400px, and short enough that it still fits one row at 1500px.
+const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
+const SHORT_BRANCH = "fix/typo";
+
 function stickyFixture() {
 	const fixture = makeFixture({
 		commitMsg:
 			"Auto-approve a review nobody answers within 30 minutes\n\nBody paragraph.\n",
 		files: { "lib/tall.ex": TALL_FILE, "lib/second.ex": TALL_FILE },
 	});
-	fixture.git("branch", "-m", "feature/request-timing-instrumentation-with-slow-route-alerts");
+	fixture.git("branch", "-m", LONG_BRANCH);
 	return fixture;
+}
+
+function branchChip(page: Page) {
+	return page.evaluate(() => {
+		const value = document.querySelector(".branch-chip .chip-value") as HTMLElement;
+		return {
+			title: value.getAttribute("title"),
+			clipped: value.offsetWidth < value.scrollWidth,
+		};
+	});
+}
+
+function setBranchChipText(page: Page, name: string) {
+	return page.evaluate((text) => {
+		(document.querySelector(".branch-chip .chip-value") as HTMLElement).textContent = text;
+	}, name);
 }
 
 type Probe = {
@@ -69,11 +88,44 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	});
 	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
 
-	test(`the review spans the window, and narrowing it from ${ONE_ROW_WIDTH}px to ${WRAPPED_WIDTHS.join("px and ")}px re-pins the header below the wrapped toolbar`, async ({
+	test(`the header is pinned on the first paint, the review spans the window, a long branch name is clipped, and narrowing it from ${ONE_ROW_WIDTH}px to ${WRAPPED_WIDTHS.join("px and ")}px re-pins the header below the wrapped toolbar`, async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
 		try {
+			// First, before any hook mounts. Its own page: ./lib/test's `goto`
+			// waits for LiveView to join, which cannot happen with the bundle
+			// blocked.
+			const bare = await page.context().newPage();
+			try {
+				await bare.route("**/assets/app-*.js", (route) => route.abort());
+				await bare.setViewportSize({ width: 900, height: 800 });
+				await bare.goto(meerkat.url);
+				await expect(bare.locator(".diff-toolbar")).toBeVisible();
+
+				const published = await bare.evaluate(() => {
+					const toolbar = document.querySelector(".diff-toolbar") as HTMLElement;
+					return {
+						toolbarH: Math.round(toolbar.getBoundingClientRect().height),
+						published: document.documentElement.style.getPropertyValue("--toolbar-h").trim(),
+						hookMounted: !!window.liveSocket,
+					};
+				});
+
+				expect(published.hookMounted, "the bundle that carries the ToolbarHeight hook never loaded").toBe(
+					false,
+				);
+				expect(
+					published.toolbarH,
+					"the width under test is one where the CSS fallback would be wrong",
+				).toBeGreaterThan(ONE_ROW_H);
+				expect(published.published, "--toolbar-h already carries the toolbar's real height").toBe(
+					`${published.toolbarH}px`,
+				);
+			} finally {
+				await bare.close();
+			}
+
 			// The BEAM port once shipped a 1400px max-width cap that wasted
 			// roughly half a 1920px screen. Allow for the side padding on
 			// `main.review`; the old cap was ~73% of the viewport.
@@ -88,6 +140,23 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 			expect(main.clientWidth).toBeGreaterThan(main.viewportWidth * 0.95);
 
 			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
+
+			// The chip's text is the branch name, which the LiveView tests
+			// cover; only its fit is a browser question, so the short name is
+			// put in the same chip rather than a second review.
+			const chip = await branchChip(page);
+			expect(chip.clipped, "the chip renders less of the branch name than the name holds").toBe(true);
+			expect(
+				chip.title,
+				"the whole branch name is on the tooltip, so hovering recovers what the chip cut",
+			).toBe(LONG_BRANCH);
+			await setBranchChipText(page, SHORT_BRANCH);
+			expect(
+				(await branchChip(page)).clipped,
+				"the cap is wide enough to leave an ordinary branch name intact",
+			).toBe(false);
+			await setBranchChipText(page, LONG_BRANCH);
+
 			await scrollDeepIntoTheFirstFile(page);
 
 			const wide = await probe(page);
@@ -122,48 +191,6 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 				).toBe(true);
 			}
 		} finally {
-			await meerkat.kill();
-		}
-	});
-
-	test("the header is pinned correctly on the first paint, before any hook mounts", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
-		// Its own page: ./lib/test's `goto` waits for LiveView to join,
-		// which cannot happen with the bundle blocked.
-		const bare = await page.context().newPage();
-		try {
-			await bare.route("**/assets/app-*.js", (route) => route.abort());
-			await bare.setViewportSize({ width: 900, height: 800 });
-			await bare.goto(meerkat.url);
-			await expect(bare.locator(".diff-toolbar")).toBeVisible();
-
-			const published = await bare.evaluate(() => {
-				const toolbar = document.querySelector(".diff-toolbar") as HTMLElement;
-				return {
-					toolbarH: Math.round(toolbar.getBoundingClientRect().height),
-					published: document.documentElement.style
-						.getPropertyValue("--toolbar-h")
-						.trim(),
-					hookMounted: !!window.liveSocket,
-				};
-			});
-
-			expect(
-				published.hookMounted,
-				"the bundle that carries the ToolbarHeight hook never loaded",
-			).toBe(false);
-			expect(
-				published.toolbarH,
-				"the width under test is one where the CSS fallback would be wrong",
-			).toBeGreaterThan(ONE_ROW_H);
-			expect(
-				published.published,
-				"--toolbar-h already carries the toolbar's real height",
-			).toBe(`${published.toolbarH}px`);
-		} finally {
-			await bare.close();
 			await meerkat.kill();
 		}
 	});

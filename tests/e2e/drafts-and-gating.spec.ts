@@ -8,8 +8,9 @@ import { startMeerkat } from "./lib/runner";
 // drafts. Button gating on a dirty form and the Approve relabel are
 // covered by the LiveView tests.
 test.describe("comment drafts", () => {
-	test("typed text gates the decision, survives a reload, and is cleared by submitting", async ({
+	test("typed text gates the decision, survives a reload, is cleared by submitting, and a decision wipes the review's drafts", async ({
 		page,
+		context,
 	}) => {
 		const meerkat = await startMeerkat();
 		try {
@@ -47,17 +48,8 @@ test.describe("comment drafts", () => {
 			await expect(form, "a submitted form does not reopen on reload").toBeHidden();
 			await page.getByRole("button", { name: /^\+ Add another$/ }).click();
 			await expect(form.locator("textarea"), "submitting cleared the draft").toHaveValue("");
-		} finally {
-			await meerkat.kill();
-		}
-	});
 
-	test("a decision wipes the review's drafts", async ({ page, context }) => {
-		const meerkat = await startMeerkat();
-		try {
-			await page.goto(meerkat.url);
-			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
-			await page.locator(".comment-form textarea").fill("typed before the decision");
+			await form.locator("textarea").fill("typed before the decision");
 			const draftKeys = (p: typeof page) =>
 				p.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("meerkat:draft:")));
 			await expect.poll(() => draftKeys(page)).toHaveLength(1);

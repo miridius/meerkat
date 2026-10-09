@@ -41,9 +41,11 @@ export default defineConfig({
 		// LiveSvelte hydration. Cumulative sequential runs can hit
 		// ~10s on a busy machine; 20s leaves headroom.
 		actionTimeout: 20_000,
-		trace: "retain-on-failure",
+		// Recording a trace and a video costs every passing test, so record
+		// them on the retry a failure gets; its screenshot is kept either way.
+		trace: "on-first-retry",
 		screenshot: "only-on-failure",
-		video: "retain-on-failure",
+		video: "on-first-retry",
 	},
 	projects: [
 		{

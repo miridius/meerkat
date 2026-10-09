@@ -4,29 +4,28 @@ import { MEERKAT_BIN } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // The seam is the launcher's `--answers` branch, which runs the BEAM in the
-// foreground so the caller's stdin reaches it. Validation, storage and the
-// banner the next review shows are covered by ExUnit.
+// foreground so the caller's stdin reaches it. Which spellings of the flag
+// take that branch is covered by test/scripts/shepherd_test.exs; validation,
+// storage and the banner the next review shows by the other ExUnit tests.
 test.describe("meerkat --answers", () => {
-	for (const flag of ["--answers", "--answers=true"]) {
-		test(`${flag} stores the answers piped on stdin`, () => {
-			const fixture = makeFixture();
-			const input = JSON.stringify({
-				answers: [{ location: "global", question: "why?", answer: "because" }],
-			});
-
-			try {
-				const result = spawnSync(MEERKAT_BIN, [flag], {
-					cwd: fixture.dir,
-					input,
-					stdio: ["pipe", "ignore", "pipe"],
-					timeout: 60_000,
-					encoding: "utf8",
-				});
-				expect(result.status).toBe(0);
-				expect(result.stderr).toContain("meerkat: stored 1 answer.");
-			} finally {
-				fixture.cleanup();
-			}
+	test("--answers stores the answers piped on stdin", () => {
+		const fixture = makeFixture();
+		const input = JSON.stringify({
+			answers: [{ location: "global", question: "why?", answer: "because" }],
 		});
-	}
+
+		try {
+			const result = spawnSync(MEERKAT_BIN, ["--answers"], {
+				cwd: fixture.dir,
+				input,
+				stdio: ["pipe", "ignore", "pipe"],
+				timeout: 60_000,
+				encoding: "utf8",
+			});
+			expect(result.status).toBe(0);
+			expect(result.stderr).toContain("meerkat: stored 1 answer.");
+		} finally {
+			fixture.cleanup();
+		}
+	});
 });
