@@ -144,7 +144,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		// No Runner reaches the caller, so nothing else would stop a
 		// backend this call started, which can outlive it indefinitely.
 		try {
-			await stopBackends(runsDir);
+			await stopBackends(runsDir, true);
 		} catch (cleanup) {
 			throw new AggregateError(
 				[e, cleanup],
@@ -214,11 +214,18 @@ export async function reapOrphanedBackends(): Promise<void> {
 	}
 }
 
-async function stopBackends(runsDir: string): Promise<void> {
+async function stopBackends(runsDir: string, awaitPidFiles = false): Promise<void> {
 	if (!existsSync(runsDir)) return;
-	const pids = readdirSync(runsDir, { withFileTypes: true })
+	const pidFiles = readdirSync(runsDir, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
-		.map((entry) => join(runsDir, entry.name, "pid"))
+		.map((entry) => join(runsDir, entry.name, "pid"));
+	const pidDeadline = awaitPidFiles ? Date.now() + 5_000 : 0;
+	// A backend started just before meerkat was stopped may have created its
+	// run directory but not yet written its pid file; missed, it keeps running.
+	while (Date.now() < pidDeadline && !pidFiles.every((path) => existsSync(path))) {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	const pids = pidFiles
 		.filter((path) => existsSync(path))
 		.map((path) => ({ pid: Number(readFileSync(path, "utf8").trim()), written: statSync(path).mtimeMs }))
 		.filter(({ pid, written }) => startedBy(pid, written))

@@ -71,6 +71,16 @@ meerkat exits **0** before binding the server:
 
 The UI never opens in these cases.
 
+A BEAM respawned by the shepherd for the same review skips the fast
+path and resumes the live review with its Approved ticks and comments,
+even when every staged file is ticked Approved. This covers exit-75
+restarts onto a new version or after a code change, and the prod
+shepherd's single retry after crash exit 2. When the CLI announces the
+review, it writes a `served` marker file in the review's run dir;
+a BEAM that starts and finds this marker skips the fast path. The
+launcher starts each review's backend in a newly created run dir, so
+a new invocation still gets the fast path.
+
 ## Review timeout
 
 A review's deadline is 90 minutes by default. `MEERKAT_REVIEW_TIMEOUT`
@@ -108,6 +118,14 @@ only paths to exit 0 are an explicit Approve button click, the
 auto-approve fast path (no meaningful staged changes, so the UI never
 opens), a timeout with `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` enabled, and a
 stored `--answers` payload, which runs no review at all.
+
+Once `Meerkat.CLI.main/1` has started, a SIGTERM sent directly to
+the review BEAM also defaults to REJECT. The BEAM prints
+"meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted)."
+to stderr, flushes the log file, and halts with exit **143** at
+once, without waiting for HTTP connections to close. Neither
+`bin/meerkat-beam` nor `bin/meerkat-shepherd` restarts or retries
+it; both pass 143 to the caller.
 
 In dev mode (`MIX_ENV=dev`), the `bin/meerkat-beam` shepherd
 restarts the BEAM only for exit 75, preferring the port the exited

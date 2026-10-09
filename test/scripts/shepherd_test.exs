@@ -25,6 +25,10 @@ defmodule Meerkat.ShepherdTest do
     assert run_shepherd([1]) == %{code: 1, iterations: 1}
   end
 
+  test "propagates a SIGTERM halt (exit 143) straight through" do
+    assert run_shepherd([143]) == %{code: 143, iterations: 1}
+  end
+
   test "a 75 restart resets the crash budget" do
     assert run_shepherd([2, 75, 2, 0]) == %{code: 0, iterations: 4}
   end
@@ -502,9 +506,36 @@ defmodule Meerkat.ShepherdTest do
   # own session and would outlive the caller.
   defp kill_launcher(port, dir) do
     {:os_pid, pid} = Port.info(port, :os_pid)
-    detached = Path.wildcard(Path.join([dir, "runs", "*", "pid"]))
-    pids = [to_string(pid) | Enum.map(detached, &String.trim(File.read!(&1)))]
-    System.cmd("pkill", ["-9", "-P", Enum.join(pids, ",")])
-    System.cmd("kill", ["-9" | pids])
+    # Kill the caller first so it cannot start another detached shepherd.
+    caller = to_string(pid)
+    System.cmd("pkill", ["-9", "-P", caller])
+    System.cmd("kill", ["-9", caller])
+
+    # A shepherd may not have written its pid file yet. Missed, it outlives
+    # the test; once its stub directory is deleted, it runs the real `mix`
+    # and starts a BEAM that never exits.
+    detached =
+      for run <- Path.wildcard(Path.join([dir, "runs", "*"])),
+          backend = await_pid_file(run),
+          do: backend
+
+    if detached != [] do
+      System.cmd("pkill", ["-9", "-P", Enum.join(detached, ",")])
+      System.cmd("kill", ["-9" | detached])
+    end
+  end
+
+  defp await_pid_file(run, attempts \\ 100) do
+    case File.read(Path.join(run, "pid")) do
+      {:ok, pid} ->
+        String.trim(pid)
+
+      {:error, _} when attempts > 0 ->
+        Process.sleep(50)
+        await_pid_file(run, attempts - 1)
+
+      {:error, _} ->
+        nil
+    end
   end
 end

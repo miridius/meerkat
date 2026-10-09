@@ -79,6 +79,9 @@ defmodule Meerkat.CLI do
   def main(argv) do
     # Without a UTF-8 locale the BEAM opens stderr as latin1.
     :ok = :io.setopts(:standard_error, encoding: :unicode)
+    # Before any slow step: OTP's own SIGTERM handling calls
+    # `init:stop/0`, which exits 0, meaning approved.
+    :ok = Meerkat.SignalHandler.install()
     opts = parse_args(argv)
 
     if opts.answers do
@@ -130,7 +133,13 @@ defmodule Meerkat.CLI do
   defp hold_temporary_index(_target), do: :ok
 
   defp review(target, opts) do
-    case auto_approve_decision(target, repo_path()) do
+    # Only a served review distinguishes this read; resuming it serves the
+    # review, which ExUnit cannot do: tests run the endpoint with
+    # server: false.
+    # muex:ignore unreachable I/O seam: killed by restart.spec.ts
+    serve_dir = System.get_env("MEERKAT_SERVE_DIR")
+
+    case auto_approve_decision(target, repo_path(), serve_dir) do
       {:auto, message} ->
         IO.write(:stderr, message)
         finalise_auto_approve(repo_path())
@@ -141,14 +150,15 @@ defmodule Meerkat.CLI do
     end
   end
 
-  # filesync the log file handler before the launcher calls
-  # `System.halt/1` — halt tears the VM down without running handler
-  # terminate callbacks, so the `:logger_std_h` buffer (which holds the
+  # filesync the log file handler before the launcher or
+  # `Meerkat.SignalHandler` calls `System.halt/1` — halt tears the VM
+  # down without running handler terminate callbacks, so the `:logger_std_h` buffer (which holds the
   # endpoint banner + request logs) would otherwise be discarded
   # unwritten. Guarded: a no-op when the handler was never installed
   # (auto-approve fast path) and swallows any flush error, because this
   # runs at teardown and must never flip an already-decided exit code.
-  defp flush_logs do
+  @doc false
+  def flush_logs do
     case :logger.get_handler_config(:meerkat_file) do
       {:ok, _} -> :logger_std_h.filesync(:meerkat_file)
       _ -> :ok
@@ -378,8 +388,15 @@ defmodule Meerkat.CLI do
   # editing only the message). For range / single-ref / PR targets the
   # user asked for a *specific* diff — even if empty they get the UI.
 
-  @spec auto_approve_decision(ReviewTarget.t(), String.t()) :: :live | {:auto, String.t()}
-  defp auto_approve_decision({:staged, _}, repo_path) do
+  @spec auto_approve_decision(ReviewTarget.t(), String.t(), String.t() | nil) ::
+          :live | {:auto, String.t()}
+  defp auto_approve_decision({:staged, _}, repo_path, serve_dir) do
+    # A BEAM respawned for a review its serve dir already served (a restart
+    # onto a new version or after a code change, a crash retry) resumes it:
+    # ticking a file Approved records it in the approval cache at once, so
+    # with every file ticked the fast path would exit 0 with no Approve
+    # click and drop the comments.
+    #
     # A prior review's **question**-type comments are answered on disk
     # (pending-answers.json) but not yet shown to the reviewer. The
     # auto-approve fast path exists to skip the UI when there's nothing
@@ -390,17 +407,18 @@ defmodule Meerkat.CLI do
     # guard exists to prevent (common after the committing review
     # consumed the staged diff). So any pending answers force a live
     # review; the reviewer's terminal decision clears the file.
-    if PendingAnswers.load(repo_path) != nil do
+    if served?(serve_dir) or PendingAnswers.load(repo_path) != nil do
       :live
     else
       auto_approve_staged(repo_path)
     end
   end
 
-  defp auto_approve_decision(_target, _repo_path), do: :live
+  # muex:ignore equivalent: swapping ignored arguments changes nothing
+  defp auto_approve_decision(_target, _repo_path, _serve_dir), do: :live
 
   # The staged-diff auto-approve fast path. Unreachable while pending
-  # answers are present (see `auto_approve_decision/2`), so it can never
+  # answers are present (see `auto_approve_decision/3`), so it can never
   # clobber the file out from under an unanswered review.
   defp auto_approve_staged(repo_path) do
     case Git.staged_files(repo_path) do
@@ -443,7 +461,7 @@ defmodule Meerkat.CLI do
   end
 
   # Map per-file verdicts to the auto-approve decision. Split out of
-  # `auto_approve_decision/2` so the safety guard — never auto-approve
+  # `auto_approve_decision/3` so the safety guard — never auto-approve
   # when any file is `:neither` (still needs human review) — is
   # unit-testable without standing up a staged git fixture.
   defp decide_from_verdicts(verdicts, total) do
@@ -518,8 +536,11 @@ defmodule Meerkat.CLI do
     do: classify_for_auto_approve(entry, cache, branch, generated_map, oid_map)
 
   @doc false
-  def auto_approve_decision_for_test(repo_path),
-    do: auto_approve_decision({:staged, nil}, repo_path)
+  def auto_approve_decision_for_test(repo_path, serve_dir \\ nil),
+    do: auto_approve_decision({:staged, nil}, repo_path, serve_dir)
+
+  @doc false
+  def mark_served_for_test(serve_dir), do: mark_served(serve_dir)
 
   @doc false
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
@@ -582,12 +603,9 @@ defmodule Meerkat.CLI do
   @doc false
   def decision_atom_for_test(tag), do: decision_atom(tag)
 
-  @doc false
-  def flush_logs_for_test, do: flush_logs()
-
   # On a successful auto-approve, clear the pending-answers banner the
   # next live review would otherwise pin from a stale prior round. The
-  # pending-answers gate in `auto_approve_decision/2` makes this a
+  # pending-answers gate in `auto_approve_decision/3` makes this a
   # no-op today (staged auto-approve never runs while answers pend), but
   # keep it so any future auto-approve path can't silently inherit a
   # stale banner.
@@ -805,6 +823,11 @@ defmodule Meerkat.CLI do
     if serve_dir do
       Application.put_env(:meerkat, :review_banner, banner)
       {:ok, {_ip, port}} = MeerkatWeb.Endpoint.server_info(:http)
+
+      # Announcing reads the bound HTTP port; tests run the endpoint with
+      # server: false.
+      # muex:ignore unreachable I/O seam: killed by restart.spec.ts
+      :ok = mark_served(serve_dir)
       # The caller attaches on the port, and kills this BEAM by pid if its
       # shepherd dies before a decision.
       :ok = Meerkat.AtomicFile.write(Path.join(serve_dir, "port"), "#{port} #{System.pid()}\n")
@@ -812,6 +835,13 @@ defmodule Meerkat.CLI do
       IO.write(:stderr, banner)
     end
   end
+
+  # The launcher makes a fresh serve dir for each review, and every BEAM its
+  # shepherd respawns for that review shares it.
+  defp mark_served(serve_dir), do: File.touch(Path.join(serve_dir, "served"))
+
+  defp served?(nil), do: false
+  defp served?(serve_dir), do: File.exists?(Path.join(serve_dir, "served"))
 
   defp deliver({_code, text}, nil) do
     IO.write(:stderr, text)
