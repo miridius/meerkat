@@ -199,14 +199,24 @@ defmodule Meerkat.Feedback do
     listed = Enum.map_join(questions, "\n", &"  #{&1.location}\n    #{&1.question}\n")
 
     "meerkat: review refused because these questions are unanswered:\n\n" <>
-      listed <> question_directive(questions) <> "Then re-run the command that was refused.\n"
+      listed <> answer_walkthrough(questions) <> "Then re-run the command that was refused.\n"
   end
 
   # Directive prepended to feedback when at least one comment is
-  # :question. Tells the agent to answer with analysis (not code) and
-  # to hand the answers to `meerkat --answers` so meerkat can pin them
-  # on the next review.
+  # :question. Tells the agent to answer with analysis (not code), to
+  # hand the answers to `meerkat --answers`, and how to trigger the review
+  # that pins them.
   defp question_directive(questions) do
+    answer_walkthrough(questions) <>
+      """
+      Then trigger a new meerkat review so the reviewer sees your answers:
+        • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
+        • If there are no code changes to make, run `meerkat` (no args) from this repo. It reopens the review with your answers pinned above the diff, and blocks until the reviewer decides — even when the commit already consumed everything you staged, in which case the answers appear above an empty diff. Meerkat will not auto-approve while answers are pending, so it cannot silently discard them.
+
+      """
+  end
+
+  defp answer_walkthrough(questions) do
     template =
       Jason.encode!(
         %{answers: Enum.map(questions, &Map.put(&1, :answer, "<your answer, markdown OK>"))},
@@ -230,10 +240,6 @@ defmodule Meerkat.Feedback do
     meerkat --answers <<'JSON'
     #{template}
     JSON
-
-    Then trigger a new meerkat review so the reviewer sees your answers:
-      • If you also have code changes to make, apply them and re-run `git commit` — the pre-commit hook reopens meerkat, which pins your answers above the diff.
-      • If there are no code changes to make, run `meerkat` (no args) from this repo. It reopens the review with your answers pinned above the diff, and blocks until the reviewer decides — even when the commit already consumed everything you staged, in which case the answers appear above an empty diff. Meerkat will not auto-approve while answers are pending, so it cannot silently discard them.
 
     """
   end

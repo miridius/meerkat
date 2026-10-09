@@ -34,7 +34,7 @@ defmodule Meerkat.PendingQuestions do
   end
 
   @doc "Return only questions without a matching, nonblank pending answer."
-  @spec unanswered(String.t()) :: {:ok, [question()]} | {:error, term()}
+  @spec unanswered(String.t()) :: {:ok, [question()]} | {:error, String.t()}
   def unanswered(repo_path) do
     with {:ok, questions} <- load(repo_path) do
       answers =
@@ -54,8 +54,11 @@ defmodule Meerkat.PendingQuestions do
   @spec path_for(String.t()) :: String.t()
   def path_for(repo_path), do: Path.join(Git.meerkat_dir(repo_path), "pending-questions.json")
 
+  # An error is a sentence naming the file, for the agent to read.
   defp load(repo_path) do
-    with {:ok, content} <- File.read(path_for(repo_path)),
+    path = path_for(repo_path)
+
+    with {:ok, content} <- File.read(path),
          # muex:ignore equivalent: distinct literal map-pattern keys reorder no matches or bindings.
          {:ok, %{"version" => 1, "questions" => questions}} <- Jason.decode(content),
          true <- is_list(questions) and Enum.all?(questions, &valid_question?/1) do
@@ -66,7 +69,9 @@ defmodule Meerkat.PendingQuestions do
        end)}
     else
       {:error, :enoent} -> {:ok, []}
-      error -> {:error, error}
+      {:error, %Jason.DecodeError{}} -> {:error, "#{path} is not valid JSON"}
+      {:error, posix} -> {:error, "#{path}: #{:file.format_error(posix)}"}
+      _ -> {:error, "#{path} is not a version-1 owed-questions file"}
     end
   end
 

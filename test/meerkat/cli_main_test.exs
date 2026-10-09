@@ -104,7 +104,7 @@ defmodule Meerkat.CLIMainTest do
     {2, stderr} = run_main(["--no-open"])
 
     assert stderr ==
-             "meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted).\n"
+             "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n"
 
     refute stderr =~ "auto-approving"
     assert File.read!(path) == "broken JSON"

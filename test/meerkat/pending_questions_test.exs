@@ -101,23 +101,26 @@ defmodule Meerkat.PendingQuestionsTest do
     path = PendingQuestions.path_for(repo)
     File.mkdir_p!(Path.dirname(path))
 
-    for content <- [
-          "not JSON",
-          "[]",
-          ~s({"version":2,"questions":[]}),
-          ~s({"version":1,"questions":"not a list"}),
-          ~s({"version":1,"questions":[{}]}),
-          ~s({"version":1,"questions":[{"location":1,"question":"why?"}]}),
-          ~s({"version":1,"questions":[{"location":"global","question":1}]})
+    malformed = "#{path} is not a version-1 owed-questions file"
+
+    for {content, reason} <- [
+          {"not JSON", "#{path} is not valid JSON"},
+          {"[]", malformed},
+          {~s({"version":2,"questions":[]}), malformed},
+          {~s({"version":1,"questions":"not a list"}), malformed},
+          {~s({"version":1,"questions":[{}]}), malformed},
+          {~s({"version":1,"questions":[{"location":1,"question":"why?"}]}), malformed},
+          {~s({"version":1,"questions":[{"location":"global","question":1}]}), malformed}
         ] do
       File.write!(path, content)
-      assert {:error, _} = PendingQuestions.unanswered(repo)
+      assert {:error, ^reason} = PendingQuestions.unanswered(repo)
       assert File.read!(path) == content
     end
 
     File.rm!(path)
     File.mkdir!(path)
-    assert {:error, {:error, :eisdir}} = PendingQuestions.unanswered(repo)
+    reason = "#{path}: illegal operation on a directory"
+    assert {:error, ^reason} = PendingQuestions.unanswered(repo)
   end
 
   test "an explicitly empty obligation file is harmless, but failure to clear it is not", %{

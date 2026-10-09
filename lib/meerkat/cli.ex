@@ -136,7 +136,7 @@ defmodule Meerkat.CLI do
       {:error, reason} ->
         IO.puts(
           :stderr,
-          "meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted)."
+          "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted)."
         )
 
         2

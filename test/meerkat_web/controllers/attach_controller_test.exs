@@ -187,7 +187,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert refused.status == 200
 
     assert refused.resp_body ==
-             "o meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted).\n" <>
+             "o meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n" <>
                "d meerkat: review refused — commit aborted.\n"
 
     assert Decision.current() == nil

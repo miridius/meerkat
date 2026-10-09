@@ -689,13 +689,15 @@ defmodule MeerkatWeb.ReviewLive do
     # Mirror every staged file's current blob OID into the per-branch
     # approval cache so the next staged-mode hook run on this branch
     # auto-collapses approved files instead of forcing the reviewer to
-    # re-tick everything. Run BEFORE `Decision.submit/1` because the
-    # CLI's `await` returns immediately after that call and the BEAM
-    # exits ~750ms later — a slow bulk write could be cut short.
-    bulk_persist_approval_cache(repo_path, state)
-
+    # re-tick everything. Run as the decision is accepted, BEFORE the
+    # CLI's `await` returns (the BEAM exits ~750ms later, so a slow bulk
+    # write could be cut short), and never for a late tab's Approve.
     tag = if comments?(state), do: :approve_with_feedback, else: :approve
-    submitted = Decision.submit_review(tag, state, repo_path)
+
+    submitted =
+      Decision.submit_review(tag, state, repo_path, fn ->
+        bulk_persist_approval_cache(repo_path, state)
+      end)
 
     clear_pending_answers()
 

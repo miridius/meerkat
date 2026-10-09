@@ -85,13 +85,15 @@ defmodule Meerkat.Decision do
   @doc """
   Submit a review-page decision, durably recording exactly the questions in
   its feedback before waking the CLI. A later tab cannot replace obligations
-  belonging to the already accepted decision.
+  belonging to the already accepted decision. `on_accept` runs only when
+  this decision is accepted, before the CLI wakes, so a late tab's side
+  effects never land.
   """
-  @spec submit_review(tag(), Meerkat.ReviewState.t(), String.t()) ::
+  @spec submit_review(tag(), Meerkat.ReviewState.t(), String.t(), (-> term())) ::
           {:ok, decision()} | {:already_decided, decision()}
-  def submit_review(tag, state, repo_path)
+  def submit_review(tag, state, repo_path, on_accept \\ fn -> :ok end)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel] do
-    GenServer.call(__MODULE__, {:submit_review, tag, state, repo_path})
+    GenServer.call(__MODULE__, {:submit_review, tag, state, repo_path, on_accept})
   end
 
   @doc """
@@ -210,7 +212,11 @@ defmodule Meerkat.Decision do
     {:reply, {:ok, decision}, put_decision(state, decision)}
   end
 
-  def handle_call({:submit_review, tag, review, repo_path}, _from, %{decision: nil} = state) do
+  def handle_call(
+        {:submit_review, tag, review, repo_path, on_accept},
+        _from,
+        %{decision: nil} = state
+      ) do
     payload =
       case tag do
         :reject ->
@@ -224,12 +230,13 @@ defmodule Meerkat.Decision do
           ""
       end
 
+    on_accept.()
     decision = {tag, payload}
     {:reply, {:ok, decision}, put_decision(state, decision)}
   end
 
   def handle_call(
-        {:submit_review, _tag, _review, _repo_path},
+        {:submit_review, _tag, _review, _repo_path, _on_accept},
         _from,
         %{decision: existing} = state
       ) do

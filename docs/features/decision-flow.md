@@ -49,7 +49,10 @@ GitHub PR.
    Disabled while any comment form is open. Exit **0**. With no
    comments, stderr prints `The user approved your commit.
    Proceeding.` With comments, stderr prints the formatted feedback
-   (so the calling agent sees the approving feedback too).
+   (so the calling agent sees the approving feedback too). Approve also
+   marks every staged file approved for the branch, which feeds the
+   auto-approve fast path below. An Approve clicked after another tab
+   already decided the review is ignored and marks no file approved.
 
 ## Questions block the next review
 

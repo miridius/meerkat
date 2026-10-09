@@ -142,6 +142,9 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "re-run `git commit`"
       assert out =~ "run `meerkat` (no args)"
       assert out =~ ~s("question": "line?")
+      # The review trigger sits between the walkthrough and the comments.
+      assert out =~ "\nJSON\n\nThen trigger a new meerkat review"
+      assert out =~ "cannot silently discard them.\n\n\nLine-level comments:\n"
     end
   end
 
@@ -205,6 +208,8 @@ defmodule Meerkat.FeedbackTest do
            )
 
     assert String.ends_with?(out, "\nThen re-run the command that was refused.\n")
+    # The refused command is the only next step; no competing review trigger.
+    refute out =~ "trigger a new meerkat review"
   end
 
   test "the answer walkthrough resets existing answers to the exact nonblank placeholder" do

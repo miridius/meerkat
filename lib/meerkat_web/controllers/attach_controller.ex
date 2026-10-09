@@ -67,7 +67,7 @@ defmodule MeerkatWeb.AttachController do
       {:error, reason} ->
         refuse_attachment(
           conn,
-          "meerkat: couldn't read owed questions: #{inspect(reason)} — defaulting to REJECT (commit aborted).\n"
+          "meerkat: couldn't read owed questions: #{reason} — defaulting to REJECT (commit aborted).\n"
         )
     end
   end
