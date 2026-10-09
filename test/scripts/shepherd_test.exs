@@ -80,6 +80,49 @@ defmodule Meerkat.ShepherdTest do
            }
   end
 
+  for flag <- ["--answers", "--answers=true"] do
+    test "the dev launcher runs #{flag} once in the foreground with the caller's stdin" do
+      input = ~s({"answers":[{"location":"global","question":"q","answer":"a"}]}\n)
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      stubs = Path.join(dir, "stubs")
+      File.mkdir_p!(stubs)
+
+      # `mix compile` succeeds; each `mix run` records its args and stdin.
+      File.write!(Path.join(stubs, "mix"), ~S"""
+      #!/usr/bin/env bash
+      if [[ "$1" == compile ]]; then exit 0; fi
+      echo "$*" >> "$RUNS_FILE"
+      cat >> "$STDIN_FILE"
+      """)
+
+      File.chmod!(Path.join(stubs, "mix"), 0o755)
+      File.write!(Path.join(dir, "input"), input)
+
+      env = [
+        {"PATH", stubs <> ":" <> System.fetch_env!("PATH")},
+        {"RUNS_FILE", Path.join(dir, "runs-seen")},
+        {"STDIN_FILE", Path.join(dir, "stdin")},
+        {"INPUT_FILE", Path.join(dir, "input")}
+      ]
+
+      # A copy in a checkout of its own, so the stub compile stamps no
+      # real build.
+      launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
+      File.mkdir_p!(Path.dirname(launcher))
+      File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)
+      File.chmod!(launcher, 0o755)
+
+      assert run_launcher(launcher, [unquote(flag)], env, dir) == 0
+
+      assert [run] =
+               dir |> Path.join("runs-seen") |> File.read!() |> String.split("\n", trim: true)
+
+      assert run =~ ~r/\Arun --no-start --no-compile -e .* -- #{unquote(flag)}\z/
+      assert File.read!(Path.join(dir, "stdin")) == input
+    end
+  end
+
   # A caller that re-reads a stale `port` file reattaches to the exited
   # BEAM's port, which by then another process may hold.
   describe "between a BEAM's exit and its respawn" do
@@ -146,6 +189,47 @@ defmodule Meerkat.ShepherdTest do
       File.rm_rf!(runs)
 
       assert await_exit(port, dir) == 2
+    end
+
+    test "a caller whose backend dies exits 2, rejecting the commit, and stops the BEAM it left" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      rel = Path.join(dir, "rel")
+      File.mkdir_p!(Path.join(rel, "bin"))
+      File.ln_s!(rel, Path.join(dir, "current"))
+
+      # A BEAM that records its port, as a serving one does, on a port
+      # nothing listens on, and runs until killed.
+      File.write!(Path.join([rel, "bin", "meerkat"]), ~S"""
+      #!/usr/bin/env bash
+      echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+      while true; do sleep 1; done
+      """)
+
+      File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      backend = await_backend_pid(runs)
+      beam = await_beam_pid(runs)
+
+      on_exit(fn ->
+        System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true)
+        File.rm_rf!(dir)
+      end)
+
+      System.cmd("kill", ["-KILL", backend])
+
+      assert {2, output} = await_exit_output(port, dir)
+
+      assert output =~
+               "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."
+
+      assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
     end
 
     test "a caller that cannot create its run dir exits 2 instead of retrying" do
@@ -433,6 +517,36 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  # The BEAM pid from the port file the backend's BEAM records.
+  defp await_beam_pid(runs, attempts \\ 100) do
+    case Path.wildcard(Path.join([runs, "*", "port"])) do
+      [port_file | _] ->
+        port_file |> File.read!() |> String.split() |> List.last()
+
+      [] when attempts > 0 ->
+        Process.sleep(50)
+        await_beam_pid(runs, attempts - 1)
+
+      [] ->
+        flunk("no BEAM recorded its port in #{runs}")
+    end
+  end
+
+  # Whether process `pid` exits within a second.
+  defp await_gone(pid, attempts \\ 20) do
+    case System.cmd("ps", ["-p", pid], stderr_to_stdout: true) do
+      {_, 1} ->
+        true
+
+      _ when attempts > 0 ->
+        Process.sleep(50)
+        await_gone(pid, attempts - 1)
+
+      _ ->
+        false
+    end
+  end
+
   # Runs a launcher as a caller with `env`, which adds to or (with nil)
   # removes from the variables every run shares, and returns its exit code.
   defp run_launcher(launcher, args, env, dir) do
@@ -491,14 +605,17 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  defp await_exit(port, dir) do
+  defp await_exit(port, dir), do: port |> await_exit_output(dir) |> elem(0)
+
+  # The launcher's exit code and what it printed.
+  defp await_exit_output(port, dir, seen \\ "") do
     receive do
-      {^port, {:data, _}} -> await_exit(port, dir)
-      {^port, {:exit_status, code}} -> code
+      {^port, {:data, data}} -> await_exit_output(port, dir, seen <> data)
+      {^port, {:exit_status, code}} -> {code, seen}
     after
       @timeout_ms ->
         kill_launcher(port, dir)
-        flunk("meerkat-shepherd did not exit within #{@timeout_ms} ms")
+        flunk("meerkat-shepherd did not exit within #{@timeout_ms} ms:\n#{seen}")
     end
   end
 

@@ -63,6 +63,41 @@ defmodule Meerkat.GitHubTest do
       assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
     end
 
+    test "a commit staged mid-rebase is reviewed on the rebased branch and its PR, without a warning",
+         %{dir: dir, bin: bin} do
+      # Like gh, which cannot tell the current branch while HEAD is detached.
+      File.write!(Path.join(bin, "gh"), """
+      #!/bin/sh
+      if [ "$1 $2 $3" = "pr view feature/x" ]; then
+        echo '{"number": 7, "baseRefName": "main", "headRefName": "feature/x", "url": "u"}'
+        exit 0
+      fi
+      echo 'could not determine current branch: failed to run git: not on any branch' >&2
+      exit 1
+      """)
+
+      git(dir, [
+        "-c",
+        "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
+        "rebase",
+        "-q",
+        "-i",
+        "--root"
+      ])
+
+      Meerkat.TestHelpers.stage(dir, "a.txt", "staged mid-rebase\n")
+
+      stderr =
+        capture_io(:stderr, fn ->
+          assert {:ok, state} = Meerkat.ReviewState.from_target({:staged, nil}, dir)
+          assert %{number: 7} = state.pr
+          assert state.head_branch == "feature/x"
+          assert state.base_branch == "main"
+        end)
+
+      assert stderr == ""
+    end
+
     test "mid-rebase, a branch whose PR comes from a fork has no PR and no warning",
          %{dir: dir, bin: bin, calls: calls} do
       # A bare branch name matches only same-repo PRs, so gh answers

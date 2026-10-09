@@ -23,21 +23,16 @@ function portOf(url: string): number {
 }
 
 test.describe("the port a review is served on", () => {
-	test("without --port, a review binds its stable port", async ({ page }) => {
+	test("without --port, a review binds its stable port, or another port while another review holds it", async ({
+		page,
+	}) => {
 		const stable = await freePort();
-		const runner = await startMeerkat({ port: null, env: { MEERKAT_PORT: String(stable) } });
+		const env = { MEERKAT_PORT: String(stable) };
+		const holder = await startMeerkat({ port: null, env });
 		try {
-			expect(portOf(runner.url)).toBe(stable);
-			await page.goto(runner.url);
-		} finally {
-			await runner.kill();
-		}
-	});
+			expect(portOf(holder.url), "a free stable port is the one served on").toBe(stable);
 
-	test("a review whose stable port is taken is served on another port", async ({ page }) => {
-		const { port: stable, server } = await occupyPort();
-		try {
-			const runner = await startMeerkat({ port: null, env: { MEERKAT_PORT: String(stable) } });
+			const runner = await startMeerkat({ port: null, env });
 			try {
 				expect(portOf(runner.url)).not.toBe(stable);
 				await page.goto(runner.url);
@@ -49,7 +44,7 @@ test.describe("the port a review is served on", () => {
 				await runner.kill();
 			}
 		} finally {
-			server.close();
+			await holder.kill();
 		}
 	});
 
