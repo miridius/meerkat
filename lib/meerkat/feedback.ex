@@ -173,18 +173,15 @@ defmodule Meerkat.Feedback do
     end)
   end
 
-  # muex:ignore equivalent: distinct map-pattern keys can reorder without changing matches or bindings.
   defp question_location(state, %{file_index: idx, side: side, start_line: s, end_line: e}),
     do: "#{file_name_for(state, idx)}:#{line_range(s, e)} (#{side_str(side)})"
 
   defp question_location(state, %{file_index: idx}), do: "file: #{file_name_for(state, idx)}"
 
-  # muex:ignore equivalent: distinct literal map-pattern keys reorder no matches or bindings.
   defp question_location(_state, %{start_line: s, end_line: e}),
     do: "commit-message:#{line_range(s, e)}"
 
-  # muex:ignore equivalent: both arguments are unconstrained and unused; the result is always global.
-  defp question_location(_state, _comment), do: "global"
+  defp question_location(%ReviewState{}, _comment), do: "global"
 
   @doc "Persist obligations before the terminal feedback can reach the agent."
   @spec prepare(ReviewState.t(), :rejection | :approval_with_feedback, String.t()) :: String.t()

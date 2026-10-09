@@ -28,7 +28,6 @@ defmodule Meerkat.PendingQuestions do
   end
 
   def replace(repo_path, questions) do
-    # muex:ignore equivalent: distinct literal keys with constant/bound values have no order effects.
     payload = %{version: 1, questions: questions}
 
     case AtomicFile.write(path_for(repo_path), Jason.encode!(payload)) do
@@ -69,12 +68,10 @@ defmodule Meerkat.PendingQuestions do
     path = path_for(repo_path)
 
     with {:ok, content} <- File.read(path),
-         # muex:ignore equivalent: distinct literal map-pattern keys reorder no matches or bindings.
          {:ok, %{"version" => 1, "questions" => questions}} <- Jason.decode(content),
          true <- is_list(questions) and Enum.all?(questions, &valid_question?/1) do
       {:ok,
        Enum.map(questions, fn q ->
-         # muex:ignore equivalent: these distinct keys read pure map values; ordering changes no result.
          %{location: q["location"], question: q["question"]}
        end)}
     else
@@ -85,7 +82,6 @@ defmodule Meerkat.PendingQuestions do
     end
   end
 
-  # muex:ignore equivalent: distinct map-pattern keys can reorder without changing matches or bindings.
   defp valid_question?(%{"location" => location, "question" => question}),
     do: is_binary(location) and is_binary(question)
 
