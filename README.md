@@ -129,7 +129,7 @@ request changes / comment) from github.com.
 - **PlantUML inline render** for `.puml` files (when the `plantuml` CLI
   is on PATH).
 - **Suggestion-mode CodeMirror editor** with syntax highlighting per
-  file extension.
+  file extension and rulers at columns 80 and 110.
 - **File filter** — substring narrowing, hide-by-extension, "only this
   file" mode.
 

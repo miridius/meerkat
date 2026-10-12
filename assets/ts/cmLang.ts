@@ -39,6 +39,9 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	clojure: () => import("@nextjournal/lang-clojure").then((m) => m.clojure()),
 };
 
+/** Every language id with a CodeMirror pack. */
+export const SUPPORTED_LANGUAGES: readonly string[] = Object.keys(LANGUAGE_LOADERS);
+
 /** Resolved language packs keyed by language id. Populated by
  *  `preloadLanguages`; readable synchronously by the editor setup so
  *  the CodeMirror instance can drop the right LanguageSupport into
