@@ -246,8 +246,16 @@ defmodule Meerkat.ShepherdTest do
           {"INPUT_FILE", "/dev/null"}
         ])
 
-      backend = await_backend_pid(Path.join(dir, "runs"))
-      on_exit(fn -> System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true) end)
+      runs = Path.join(dir, "runs")
+      backend = await_backend_pid(runs)
+
+      # The shepherd's EXIT trap writes `exit` into its run dir after the
+      # TERM; deleting the dir before then races that write.
+      on_exit(fn ->
+        System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+        for run <- Path.wildcard(Path.join(runs, "*")), do: await_file(Path.join(run, "exit"))
+      end)
+
       {:os_pid, caller} = Port.info(port, :os_pid)
       System.cmd("kill", ["-#{unquote(signal)}", to_string(caller)])
 
@@ -756,7 +764,7 @@ defmodule Meerkat.ShepherdTest do
     # and starts a BEAM that never exits.
     detached =
       for run <- Path.wildcard(Path.join([dir, "runs", "*"])),
-          backend = await_pid_file(run),
+          backend = await_file(Path.join(run, "pid")),
           do: backend
 
     if detached != [] do
@@ -765,14 +773,15 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  defp await_pid_file(run, attempts \\ 100) do
-    case File.read(Path.join(run, "pid")) do
-      {:ok, pid} ->
-        String.trim(pid)
+  # The trimmed contents of `path` once it exists, or nil after 5 s.
+  defp await_file(path, attempts \\ 100) do
+    case File.read(path) do
+      {:ok, contents} ->
+        String.trim(contents)
 
       {:error, _} when attempts > 0 ->
         Process.sleep(50)
-        await_pid_file(run, attempts - 1)
+        await_file(path, attempts - 1)
 
       {:error, _} ->
         nil
