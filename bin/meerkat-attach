@@ -19,7 +19,7 @@ meerkat_attach() {
   shift
   set +e
 
-  local key runs legacy
+  local key runs
   # Keyed like the port, so a rerun of the same review finds its run dir.
   key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
   # Not $TMPDIR: macOS deletes its files once they are three days old,
@@ -28,11 +28,6 @@ meerkat_attach() {
   mkdir -p "$runs"
 
   _MA_DIR="$runs/$key"
-  # A review started before run dirs moved out of $TMPDIR lives on there.
-  legacy="${TMPDIR:-/tmp}/meerkat-runs/$key"
-  if [[ -z "${MEERKAT_RUNS_DIR:-}" && ! -d "$_MA_DIR" && -d "$legacy" ]]; then
-    _MA_DIR="$legacy"
-  fi
   _MA_RUN="$(uuidgen)"
   _MA_OWNED=0
   _MA_OFFSET=0
@@ -58,7 +53,6 @@ meerkat_attach() {
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
-      _MA_DIR="$runs/$key"
       if ! _ma_start_server "$self" "$@"; then
         # Another caller started one first.
         [[ -d "$_MA_DIR" ]] && continue

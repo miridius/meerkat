@@ -285,56 +285,6 @@ defmodule Meerkat.ShepherdTest do
     refute File.exists?(Path.join(dir, "tmp"))
   end
 
-  test "a review already waiting in the old $TMPDIR run dir is reattached there" do
-    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
-    on_exit(fn -> File.rm_rf!(dir) end)
-    File.write!(Path.join(dir, "i"), "0")
-
-    fake_release(dir, ~S"""
-    i=$(cat "$I_FILE"); echo $((i + 1)) > "$I_FILE"
-    """)
-
-    args = ["--commit-msg", "/tmp/msg", "--no-open"]
-    key = :crypto.hash(:sha256, "#{dir}:#{Enum.join(args, " ")}") |> Base.encode16(case: :lower)
-    legacy = Path.join([dir, "tmp", "meerkat-runs", binary_part(key, 0, 16)])
-    File.mkdir_p!(legacy)
-
-    # A backend an older launcher started there. It serves, and decides 5
-    # once the caller has tried to attach (the stub curl signals the FIFO).
-    fifo = Path.join(dir, "attach-ready")
-    assert {_, 0} = System.cmd("mkfifo", [fifo])
-    shepherd = Path.join(dir, "legacy-meerkat-shepherd")
-
-    File.write!(shepherd, ~S"""
-    #!/usr/bin/env bash
-    exec 3<> "$2"
-    echo "1 $$" > "$1/port"
-    read -r -t 10 _ <&3 || exit 1
-    rm -f "$1/port"
-    echo 5 > "$1/exit"
-    """)
-
-    File.chmod!(shepherd, 0o755)
-    backend = Port.open({:spawn_executable, shepherd}, args: [legacy, fifo])
-    {:os_pid, pid} = Port.info(backend, :os_pid)
-    File.write!(Path.join(legacy, "pid"), "#{pid}\n")
-    assert await_file(Path.join(legacy, "port")) =~ ~r/\A1 \d+\z/
-
-    env = [
-      {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
-      {"SHEPHERD_TEST_ATTACH_FIFO", fifo},
-      {"MEERKAT_RUNS_DIR", nil},
-      {"MEERKAT_PWD", dir},
-      {"XDG_STATE_HOME", Path.join(dir, "state")},
-      {"TMPDIR", Path.join(dir, "tmp")},
-      {"INPUT_FILE", "/dev/null"}
-    ]
-
-    assert run_launcher(@shepherd, args, env, dir) == 5
-    assert File.read!(Path.join(dir, "i")) == "0"
-    refute File.exists?(legacy)
-  end
-
   for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
     test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
