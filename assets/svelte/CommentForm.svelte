@@ -317,7 +317,7 @@
 
   <label class="learn-from-this">
     <input type="checkbox" bind:checked={learnFromThis} />
-    Please learn from this
+    Turn this into a lint rule
   </label>
 
   <div class="actions">

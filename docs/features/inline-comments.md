@@ -24,7 +24,7 @@ CommentForm. Forms opened earlier at the same line stay above it.
 Opening another form leaves existing forms and their typed text in
 place. After a split/unified or line-wrap toggle, open forms and
 posted comment rows are placed again in the new table, and each
-form keeps its mounted state: typed text, finding type and learn
+form keeps its mounted state: typed text, finding type and lint-rule
 flag. If an open form or posted inline comment is anchored on a context
 line the reviewer expanded, that line can render collapsed again
 after a reload or split/unified toggle. DiffViewer expands the whole
@@ -40,7 +40,10 @@ The form has:
   plus a CodeMirror code editor).
 - Five finding-type chips: Issue, Suggestion, Question, Follow-up,
   Revert. Clicking switches the active type.
-- A "Please learn from this" checkbox. **Off** by default.
+- A "Turn this into a lint rule" checkbox. **Off** by default. When
+  checked, the feedback tells the agent to add a lint rule that
+  catches what the comment flags. It names no linter: the agent's
+  repo decides how lint rules are added.
 - Submit + Cancel buttons.
 
 Keyboard shortcuts inside the form:
@@ -85,7 +88,7 @@ Each rendered comment shows:
 
 - Finding-type badge (colour-coded by type).
 - Line anchor label: `L<N>` or `L<A>–<B>` plus ` (old)`/` (new)`.
-- Learn checkbox (toggleable in place — flips
+- Lint-rule checkbox (toggleable in place — flips
   `learn_from_this` via a `comment.toggle_learn` push event
   without re-opening the form).
 - **Edit** button → reopens the form at the same anchor, prefilled
@@ -116,7 +119,7 @@ fields) is persisted in ReviewState's `open_forms` list, in opening
 order. After a BEAM restart or tab reload, the forms reopen at their
 anchors. An add form's localStorage draft restores its typed prose;
 an edit form reopens with the saved comment's body, not its unsaved
-edits. Add forms restore suggestion code, finding type and learn flag
+edits. Add forms restore suggestion code, finding type and lint-rule flag
 to their defaults; edit forms reopen with those values from the saved
 comment, but unsaved changes to them are lost.
 

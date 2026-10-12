@@ -414,14 +414,20 @@ defmodule Meerkat.FeedbackTest do
       refute out =~ "restore from HEAD"
     end
 
-    test "learn_from_this prints the please-learn-from-this directive" do
+    test "learn_from_this prints the lint-rule directive" do
       state = %ReviewState{
         global_comments: [comment(body: "fix", finding_type: :issue, learn_from_this: true)]
       }
 
       out = Feedback.format(state, :rejection)
-      assert out =~ "please-learn-from-this:"
-      assert out =~ "internalising"
+
+      assert out =~ """
+               > **issue:** fix
+               ↳ turn-this-into-a-lint-rule: the reviewer wants this comment
+                 enforced by a lint rule. Add one that catches this, the way this
+                 repo adds lint rules, so the check fails next time instead of
+                 the reviewer having to say it again.
+             """
     end
   end
 

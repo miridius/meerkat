@@ -483,7 +483,7 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
-  ## --- Toggle learn-from-this on a rendered comment ---
+  ## --- Toggle the lint-rule flag (learn_from_this) on a rendered comment ---
 
   def handle_event(
         "comment.toggle_learn",
@@ -1083,10 +1083,10 @@ defmodule MeerkatWeb.ReviewLive do
 
   ## --- Components ---
 
-  # Inline "learn?" toggle rendered next to each comment's Edit /
-  # Remove buttons. Lets reviewers flip the learn-from-this flag
-  # without re-opening the form. `learn` value is sent as "true" or
-  # "false" so the LV handler can coerce.
+  # Inline "turn this into a lint rule" toggle rendered next to each
+  # comment's Edit / Remove buttons. Lets reviewers flip the
+  # learn_from_this flag without re-opening the form. `learn` value is
+  # sent as "true" or "false" so the LV handler can coerce.
   attr :surface, :string, required: true
   attr :comment, :map, required: true
 
@@ -1094,7 +1094,7 @@ defmodule MeerkatWeb.ReviewLive do
     ~H"""
     <label
       class="learn-toggle"
-      title="Include this comment in the agent's learning corpus"
+      title="Ask the agent to add a lint rule that catches this"
     >
       <input
         type="checkbox"
@@ -1104,7 +1104,7 @@ defmodule MeerkatWeb.ReviewLive do
         phx-value-id={@comment.id}
         phx-value-learn={if @comment.learn_from_this, do: "false", else: "true"}
       />
-      <span>learn from this</span>
+      <span>turn this into a lint rule</span>
     </label>
     """
   end
@@ -2123,8 +2123,8 @@ defmodule MeerkatWeb.ReviewLive do
     body =
       if c.learn_from_this do
         labelled <>
-          "\n\n_please learn from this: save a memory, update a skill, or " <>
-          "tighten the review-agent prompt so this class of issue is caught next time._"
+          "\n\n_please turn this into a lint rule, the way this repo adds lint rules, " <>
+          "so this class of issue is caught next time._"
       else
         labelled
       end
@@ -2160,7 +2160,7 @@ defmodule MeerkatWeb.ReviewLive do
     labelled = label_for_github(gc.finding_type, gc.body)
 
     if gc.learn_from_this,
-      do: labelled <> "\n\n_please learn from this._",
+      do: labelled <> "\n\n_please turn this into a lint rule._",
       else: labelled
   end
 
@@ -2169,7 +2169,7 @@ defmodule MeerkatWeb.ReviewLive do
     labelled = label_for_github(fc.finding_type, fc.body)
 
     if fc.learn_from_this,
-      do: "**#{path}**:\n\n" <> labelled <> "\n\n_please learn from this._",
+      do: "**#{path}**:\n\n" <> labelled <> "\n\n_please turn this into a lint rule._",
       else: "**#{path}**:\n\n" <> labelled
   end
 
@@ -2183,7 +2183,8 @@ defmodule MeerkatWeb.ReviewLive do
 
     if cmc.learn_from_this,
       do:
-        "**commit message (line #{range})**:\n\n" <> labelled <> "\n\n_please learn from this._",
+        "**commit message (line #{range})**:\n\n" <>
+          labelled <> "\n\n_please turn this into a lint rule._",
       else: "**commit message (line #{range})**:\n\n" <> labelled
   end
 

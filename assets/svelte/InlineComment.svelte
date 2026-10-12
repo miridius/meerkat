@@ -57,13 +57,13 @@
         : comment.finding_type}
     </span>
     <span class="line-anchor">{lineLabel} ({comment.side === "old" ? "old" : "new"})</span>
-    <label class="learn-toggle" title="Include this comment in the agent's learning corpus">
+    <label class="learn-toggle" title="Ask the agent to add a lint rule that catches this">
       <input
         type="checkbox"
         checked={!!comment.learn_from_this}
         onchange={toggleLearn}
       />
-      <span>learn from this</span>
+      <span>turn this into a lint rule</span>
     </label>
     <div class="actions">
       <button type="button" class="action" onclick={edit}>Edit</button>

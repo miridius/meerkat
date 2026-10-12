@@ -15,7 +15,7 @@ fourth surface and the most common in practice.
 ## Shared affordances
 
 All three non-inline surfaces share the same `CommentForm.svelte`
-+ `Meerkat.Comment` shape + edit/remove/learn-toggle mechanics
++ `Meerkat.Comment` shape + edit/remove/lint-rule-toggle mechanics
 that inline comments use:
 
 - Five finding-type chips: Issue / Suggestion / Question /
@@ -28,7 +28,7 @@ that inline comments use:
   form's `form_key`.
 - Per-form `draftKey` persistence for add-form prose in localStorage;
   multiple forms on the same surface can be open.
-- Inline `learn` checkbox on rendered comments; toggleable in
+- Inline lint-rule checkbox on rendered comments; toggleable in
   place via `comment.toggle_learn` push event.
 - Edit reopens form prefilled; Remove drops the comment.
 - `learn_from_this` defaults OFF.

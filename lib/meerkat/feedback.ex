@@ -245,7 +245,7 @@ defmodule Meerkat.Feedback do
   # Section renderers. Per comment: file path + line range as the
   # primary key, side-arrow-prefixed source content quoted under it,
   # Conventional-Comments-style `**type:** body` line, then the
-  # learn-from-this directive if set. Surface order: line-level first
+  # lint-rule directive if set. Surface order: line-level first
   # (most-anchored), then file-level, then global, then commit-msg.
   # ---------------------------------------------------------------------
 
@@ -405,19 +405,19 @@ defmodule Meerkat.Feedback do
     end)
   end
 
-  # Per-comment "please learn from this" directive. Off → "". On →
-  # three-line block telling the agent which channel to use (memory /
-  # skill / review-agent prompt) so the next session inherits the
-  # learning. Indented by `pad` to align with the comment block above.
+  # Per-comment "turn this into a lint rule" directive. Off → "". On →
+  # a block telling the agent to add a lint rule for the comment. It
+  # names no linter: the agent's repo decides how lint rules are
+  # added. Indented by `pad` to align with the comment block above.
   defp learn_line(false, _pad), do: ""
   defp learn_line(nil, _pad), do: ""
 
   defp learn_line(true, pad) do
     """
-    #{pad}↳ please-learn-from-this: the reviewer flagged this comment as worth
-    #{pad}  internalising. Persist the lesson in whichever channel fits — a
-    #{pad}  memory file, a skill update, or a review-agent prompt tweak — so
-    #{pad}  future sessions land it without being told again.
+    #{pad}↳ turn-this-into-a-lint-rule: the reviewer wants this comment
+    #{pad}  enforced by a lint rule. Add one that catches this, the way this
+    #{pad}  repo adds lint rules, so the check fails next time instead of
+    #{pad}  the reviewer having to say it again.
     """
   end
 

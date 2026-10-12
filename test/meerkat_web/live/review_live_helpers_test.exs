@@ -383,8 +383,8 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
                line: 2,
                side: "RIGHT",
                body:
-                 "**suggestion:** swap it\n\n_please learn from this: save a memory, update a skill, or " <>
-                   "tighten the review-agent prompt so this class of issue is caught next time._"
+                 "**suggestion:** swap it\n\n_please turn this into a lint rule, the way this " <>
+                   "repo adds lint rules, so this class of issue is caught next time._"
              }
     end
 
@@ -671,24 +671,35 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
   end
 
-  describe "github_payload learn-from-this suffixes on folded sections" do
+  describe "github_payload lint-rule suffixes on folded sections" do
     @learn_state %ReviewState{
       files: [%{file_name: "a.ex"}],
       pr: %{number: 1},
       global_comments: [%{id: "g1", finding_type: :issue, body: "note", learn_from_this: true}],
       file_comments: [
         %{id: "f1", file_index: 0, finding_type: :issue, body: "file note", learn_from_this: true}
+      ],
+      commit_message_comments: [
+        %{
+          id: "c1",
+          start_line: 1,
+          end_line: 1,
+          finding_type: :issue,
+          body: "subject note",
+          learn_from_this: true
+        }
       ]
     }
 
-    test "global section appends the learn suffix" do
+    test "global, file and commit-message sections each end with the lint-rule suffix" do
       payload = ReviewLive.github_payload_for_test(@learn_state)
-      assert payload.body =~ "note\n\n_please learn from this._"
-    end
 
-    test "file section carries the path header and the learn suffix" do
-      payload = ReviewLive.github_payload_for_test(@learn_state)
-      assert payload.body =~ "**a.ex**:\n\n**issue:** file note\n\n_please learn from this._"
+      assert String.split(payload.body, "\n\n---\n\n") == [
+               "**issue:** note\n\n_please turn this into a lint rule._",
+               "**a.ex**:\n\n**issue:** file note\n\n_please turn this into a lint rule._",
+               "**commit message (line 1)**:\n\n**issue:** subject note\n\n" <>
+                 "_please turn this into a lint rule._"
+             ]
     end
   end
 
@@ -707,8 +718,8 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
   end
 
-  describe "github_payload non-learn comments stay bare" do
-    test "no learn suffix without learn_from_this" do
+  describe "github_payload comments without the lint-rule flag stay bare" do
+    test "no lint-rule suffix without learn_from_this" do
       state = %ReviewState{
         files: [%{file_name: "a.ex"}],
         pr: %{number: 1},
@@ -728,10 +739,10 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       }
 
       payload = ReviewLive.github_payload_for_test(state)
-      refute payload.body =~ "learn from this"
+      refute payload.body =~ "lint rule"
 
       [%{body: inline_body}] = payload.comments
-      refute inline_body =~ "learn from this"
+      refute inline_body =~ "lint rule"
     end
   end
 end

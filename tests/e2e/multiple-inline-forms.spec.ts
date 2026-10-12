@@ -7,8 +7,8 @@ import { startMeerkat } from "./lib/runner";
 
 // The browser seam of several open comment forms: DiffViewer.svelte
 // mounts each form as its own table row and must keep every mounted
-// form's draft, finding type and learn flag while others open, close and
-// post, and while the diff re-renders. Posted comments are injected as
+// form's draft, finding type and lint-rule flag while others open, close
+// and post, and while the diff re-renders. Posted comments are injected as
 // rows at their anchors, marking the anchor row, and torn down on Remove.
 // Which forms are open, the footer that lists them, and closing an edit
 // form when its comment is removed are covered by the LiveView and
@@ -63,7 +63,7 @@ test.describe("multiple open comment forms", () => {
 			await newLine(fileSection, 1).click();
 			const first = formAt(fileSection, 1);
 			await expect(first).toBeVisible();
-			await expect(first.locator("input[type=checkbox]"), "learn-from-this defaults off").not.toBeChecked();
+			await expect(first.locator("input[type=checkbox]"), "the lint-rule checkbox defaults off").not.toBeChecked();
 			await first.locator("textarea").fill("comment for line 1");
 
 			await dragLines(page, fileSection, 3, 5);
@@ -103,7 +103,7 @@ test.describe("multiple open comment forms", () => {
 			const learn = commentRowAt(fileSection, 1).locator(".inline-comment .learn-toggle input");
 			await expect(learn).not.toBeChecked();
 			await learn.check();
-			await expect(learn, "the rendered comment's learn toggle flips").toBeChecked();
+			await expect(learn, "the rendered comment's lint-rule toggle flips").toBeChecked();
 
 			// Meta+Enter on macOS / Ctrl+Enter elsewhere: both map to the
 			// form's handler because the JS check is (metaKey || ctrlKey).
@@ -177,7 +177,7 @@ test.describe("multiple open comment forms", () => {
 			const long = page.locator(".file-section").filter({ hasText: "src/long.txt" });
 
 			// A modified file renders split. One posted comment, one form with
-			// a non-default finding type and learn flag, and a plain draft.
+			// a non-default finding type and lint-rule flag, and a plain draft.
 			await splitNewLine(lib, 2).click();
 			await formAt(lib, 2).locator("textarea").fill("posted on two");
 			await formAt(lib, 2).getByRole("button", { name: /^Add Comment$/ }).click();
@@ -186,7 +186,7 @@ test.describe("multiple open comment forms", () => {
 			await splitNewLine(lib, 1).click();
 			const kept = formAt(lib, 1);
 			await kept.getByRole("button", { name: "Question", exact: true }).click();
-			await kept.getByRole("checkbox", { name: /learn from this/ }).check();
+			await kept.getByRole("checkbox", { name: /Turn this into a lint rule/ }).check();
 			await kept.locator("textarea").fill("kept question");
 
 			await splitNewLine(lib, 4).click();
@@ -210,7 +210,7 @@ test.describe("multiple open comment forms", () => {
 			const expectKept = async () => {
 				await expect(kept).toHaveCount(1);
 				await expect(kept.locator(".finding-chip.active")).toHaveText("Question");
-				await expect(kept.getByRole("checkbox", { name: /learn from this/ })).toBeChecked();
+				await expect(kept.getByRole("checkbox", { name: /Turn this into a lint rule/ })).toBeChecked();
 				await expect(kept.locator("textarea")).toHaveValue("kept question");
 				await expect(formAt(lib, 4).locator("textarea")).toHaveValue("second draft");
 				await expect(commentRowAt(lib, 2)).toContainText("posted on two");

@@ -1149,7 +1149,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute has_element?(view, "[id^='CommentForm-commit_msg']")
   end
 
-  test "learn-from-this starts off in the form and toggles on the rendered comment", %{
+  test "the lint-rule checkbox starts off in the form and toggles on the rendered comment", %{
     conn: conn
   } do
     repo = tmp_git_repo()
@@ -1160,6 +1160,12 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert %{"initialLearnFromThis" => false} = svelte_props(html, "CommentForm-global")
     submit_comment(view, "global", "learn me")
     refute has_element?(view, "#{learn}[checked]")
+
+    assert has_element?(
+             view,
+             ".global-comments .note .learn-toggle",
+             "turn this into a lint rule"
+           )
 
     view |> element(learn) |> render_click()
     assert [%{learn_from_this: true}] = ReviewServer.get_state(rid).global_comments
