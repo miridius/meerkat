@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { makeFixture, manifestRoot } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
-import { expect, test } from "./lib/test";
+import { afterNextFrame, expect, test } from "./lib/test";
 
 const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
 
@@ -180,6 +180,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 					})
 					.toBeGreaterThan(ONE_ROW_H);
 
+				await afterNextFrame(page);
 				const narrow = await probe(page);
 				expect(
 					narrow.headerTop,
