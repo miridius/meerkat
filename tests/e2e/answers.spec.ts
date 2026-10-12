@@ -8,7 +8,9 @@ import { expect, test } from "./lib/test";
 // The seam is the launcher's `--answers` branch, which runs the BEAM in the
 // foreground so the caller's stdin reaches it. The round-trip test also covers
 // the browser's question form, hook refusal through the attach launcher, and
-// answers reaching the browser. Pure validation/storage are covered by ExUnit.
+// answers reaching the browser. Which spellings of the flag take that branch is
+// covered by test/scripts/shepherd_test.exs; validation and storage by the
+// other ExUnit tests.
 test.describe("meerkat --answers", () => {
 	test("questions block a real git hook until answers sent through the launcher reach the next page", async ({ page }) => {
 		// Seven real CLI invocations span two browser reviews. Budget their combined
@@ -76,26 +78,4 @@ test.describe("meerkat --answers", () => {
 			fixture.cleanup();
 		}
 	});
-	for (const flag of ["--answers", "--answers=true"]) {
-		test(`${flag} stores the answers piped on stdin`, () => {
-			const fixture = makeFixture();
-			const input = JSON.stringify({
-				answers: [{ location: "global", question: "why?", answer: "because" }],
-			});
-
-			try {
-				const result = spawnSync(MEERKAT_BIN, [flag], {
-					cwd: fixture.dir,
-					input,
-					stdio: ["pipe", "ignore", "pipe"],
-					timeout: 60_000,
-					encoding: "utf8",
-				});
-				expect(result.status).toBe(0);
-				expect(result.stderr).toContain("meerkat: stored 1 answer.");
-			} finally {
-				fixture.cleanup();
-			}
-		});
-	}
 });
