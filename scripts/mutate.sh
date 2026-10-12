@@ -14,7 +14,10 @@
 #                                   changed vs the merge base with
 #                                   origin/main (override with
 #                                   BASE_BRANCH), uncommitted edits
-#                                   included (muex --since).
+#                                   included (muex --since), and fail
+#                                   as `staged` does. The pre-push
+#                                   hook runs this mode on a pushed
+#                                   tip the commit gate never passed.
 #   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
 #                                   staged for the next commit (muex
 #                                   --staged), and fail when any
@@ -24,10 +27,20 @@
 #   scripts/mutate.sh <path…>     — mutate every line of the named
 #                                   files.
 #
+# A pass of either gated mode records the contents it judged with
+# scripts/checked-trees.sh --mutated when they are known to be gated
+# throughout: see record_if_gated.
+#
 # Pass extra muex flags through after `--`:
 #   scripts/mutate.sh changed -- --concurrency 4
 
 set -euo pipefail
+
+# Stop at Ctrl-C, however muex exited: bash carries on after a child that
+# handled SIGINT itself, as the BEAM does, and the run could then judge, and
+# record, a report whose mutants never all ran. Dying by SIGINT, not exiting,
+# makes a calling bash stop too.
+trap 'trap - INT; kill -INT $$' INT
 
 cd "$(dirname "$0")/.."
 
@@ -91,6 +104,21 @@ line_scope() {
   scope_args=("$@" --no-filter --no-optimize)
 }
 
+# A tree whose every lib line since origin/main has passed this gate is
+# recorded, so the pre-push hook need not mutate it again. Which trees
+# qualify is decided before the run, in `tree` (the contents judged) and
+# `record`; the worktree must still hold exactly `tree` afterwards, since
+# muex tests the files on disk.
+tree=
+record=false
+holds() { bash scripts/checked-trees.sh holds "$tree"; }
+
+record_if_gated() {
+  if [[ "$record" == true ]] && holds; then
+    bash scripts/checked-trees.sh --mutated mark "$tree"
+  fi
+}
+
 mode=${1:-default}
 shift || true
 # `scripts/mutate.sh -- <muex flags>` is the default mode with flags.
@@ -112,12 +140,20 @@ case "$mode" in
       echo "scripts/mutate.sh: base ref '$base' not found; fetch origin first." >&2
       exit 2
     fi
+    index=$(git rev-parse --path-format=absolute --git-path index)
+    # A run against origin/main on exactly HEAD judges every lib line HEAD
+    # changed since main.
+    if [[ "$base" == origin/main ]] && tree=$(git rev-parse --verify --quiet 'HEAD^{tree}') && holds; then
+      record=true
+    fi
     if ! has_added_lines --merge-base "$base"; then
       echo "scripts/mutate.sh: no lib/**/*.ex lines changed vs $base — nothing to mutate."
+      record_if_gated
       exit 0
     fi
     collect_files lib '*.ex'
     line_scope --since "$base"
+    gate=true
     ;;
   staged)
     # During `git commit -a` or `git commit <paths>`, GIT_INDEX_FILE names
@@ -125,8 +161,18 @@ case "$mode" in
     # it (or the usual index) to an absolute path, which muex --staged
     # reads after the rest of git's hook environment is cleared below.
     index=$(git rev-parse --path-format=absolute --git-path index)
+    tree=$(git write-tree)
+    # The commit's other lib lines come from HEAD, so its contents are
+    # gated throughout only when HEAD's were, or HEAD is in origin/main. A root
+    # commit stages every line.
+    if holds && { ! git rev-parse --verify --quiet HEAD >/dev/null ||
+      bash scripts/checked-trees.sh --mutated has HEAD ||
+      git merge-base --is-ancestor HEAD origin/main 2>/dev/null; }; then
+      record=true
+    fi
     if ! has_added_lines --cached; then
       echo "scripts/mutate.sh: no lib/**/*.ex lines staged — nothing to mutate."
+      record_if_gated
       exit 0
     fi
     collect_files lib '*.ex'
@@ -211,7 +257,7 @@ run_mutate() {
   # _build/, until the next gate run replaces it. muex strips
   # GIT_INDEX_FILE from the test runs it starts.
   mkdir -p _build
-  report="$PWD/_build/mutate-staged.json"
+  report="$PWD/_build/mutate-$mode.json"
   # muex writes no report when there is nothing to mutate, as for staged
   # comments or lib/meerkat/application.ex alone, so an earlier run's
   # report must not be left for this run to judge.
@@ -220,7 +266,8 @@ run_mutate() {
     --format json --output "$report" "${extra_args[@]}"
 
   if [[ ! -f "$report" ]]; then
-    echo "scripts/mutate.sh: the staged lib/ lines produce no mutants."
+    echo "scripts/mutate.sh: the $mode lib/ lines produce no mutants."
+    record_if_gated
     exit 0
   fi
 
@@ -257,7 +304,7 @@ run_mutate() {
 
   if [[ -n "$failing" ]]; then
     echo
-    echo "scripts/mutate.sh: staged lib/ lines have untested behaviour:"
+    echo "scripts/mutate.sh: $mode lib/ lines have untested behaviour:"
     echo
     echo "$failing"
     echo
@@ -266,16 +313,19 @@ run_mutate() {
     exit 1
   fi
 
-  echo "scripts/mutate.sh: no mutant of the staged lib/ lines survived."
+  record_if_gated
+  echo "scripts/mutate.sh: no mutant of the $mode lib/ lines survived."
 }
 
 # Like scripts/check.sh, the gate holds a slot from scripts/gate-lock.sh
-# and runs in a subshell that closes the slot's fd 9 first.
+# and runs in a subshell that closes the slot's fd 9 first and ends at
+# Ctrl-C, after which this shell's own trap stops this script.
 if [[ "$gate" == true ]]; then
   source scripts/gate-lock.sh
   gate_lock
 fi
 (
   exec 9>&-
+  trap 'exit 130' INT
   run_mutate
 )

@@ -66,7 +66,8 @@ defmodule Meerkat.PreCommitHookTest do
     # `mix-test.sh` and catches a regression to plain `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix-test.sh\n")
 
-    File.write!(Path.join(work, ".gitignore"), "node_modules\n")
+    # As in the repo, the mutation gate's report under _build/ is ignored.
+    File.write!(Path.join(work, ".gitignore"), "node_modules\n_build\n")
     File.mkdir_p!(Path.join(work, "assets"))
     File.write!(Path.join(work, "assets/.keep"), "")
     File.write!(Path.join(work, "code.txt"), "base\n")
@@ -114,6 +115,10 @@ defmodule Meerkat.PreCommitHookTest do
       echo "$2" > '#{muex}/output'
       # Like real muex, write no report when there is nothing to mutate.
       [ "${STUB_REPORT:-}" = none ] || cp "${STUB_REPORT:-#{report}}" "$2"
+      if [ "${STUB_INTERRUPT:-}" = "mix muex" ]; then
+        trap 'exit 0' INT
+        kill -INT 0
+      fi
       exit "${STUB_MUEX_EXIT:-0}"
     fi
     cmd="$(basename "$0")${*:+ $*}"
@@ -503,6 +508,127 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
+  describe "the mutation record" do
+    test "a commit on a HEAD on origin/main records its contents once its lines pass", ctx do
+      track_main(ctx.work)
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+      assert {_, 0} = commit(ctx, ["-m", "change lib"])
+      assert mutated?(ctx, "HEAD")
+    end
+
+    # A rebase makes HEAD without the gate, so a later commit's lines alone
+    # leave HEAD's lines unmutated.
+    test "a commit on a HEAD the gate never recorded records nothing", ctx do
+      track_main(ctx.work)
+      stage(ctx.work, "lib/meerkat/two.ex", "two\nrebased\n")
+      no_hooks(ctx.work, ["commit", "-qm", "rebased"])
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+      assert {_, 0} = commit(ctx, ["-m", "change lib"])
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "a commit staging no lib lines on a recorded HEAD records its contents", ctx do
+      stage(ctx.work, "lib/meerkat/two.ex", "two\nrebased\n")
+      no_hooks(ctx.work, ["commit", "-qm", "rebased"])
+      mark_mutated(ctx, "HEAD")
+      stage(ctx.work, "code.txt", "staged\n")
+
+      assert {out, 0} = commit(ctx, ["-m", "change code"])
+      assert out =~ "nothing to mutate"
+      assert mutated?(ctx, "HEAD")
+    end
+
+    test "a commit beside an untracked file records nothing", ctx do
+      track_main(ctx.work)
+      File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+      assert {_, 0} = commit(ctx, ["-m", "change lib"])
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "a blocked commit records nothing", ctx do
+      track_main(ctx.work)
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+      report = write_report(ctx.base, "survived", [mutant("survived")])
+
+      assert {_, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
+      assert code != 0
+      refute mutated?(ctx, ":")
+    end
+  end
+
+  describe "mutate.sh changed" do
+    setup ctx do
+      track_main(ctx.work)
+      stage(ctx.work, "lib/meerkat/one.ex", "one\nrebased\n")
+      no_hooks(ctx.work, ["commit", "-qm", "a rebase skips the pre-commit hook"])
+      :ok
+    end
+
+    test "blocks on a surviving mutant and records nothing", ctx do
+      report = write_report(ctx.base, "survived", [mutant("survived")])
+
+      assert {out, code} = mutate_changed(ctx, [{"STUB_REPORT", report}])
+      assert code != 0
+      assert out =~ "changed lib/ lines have untested behaviour"
+      assert out =~ "lib/meerkat/one.ex:2  survived"
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "records HEAD once every line since origin/main passes", ctx do
+      assert {out, 0} = mutate_changed(ctx)
+      assert out =~ "no mutant of the changed lib/ lines survived"
+      assert ["--since", "origin/main"] in Enum.chunk_every(muex_args(ctx), 2, 1)
+      assert mutated?(ctx, "HEAD")
+    end
+
+    test "records nothing against another base", ctx do
+      assert {_, 0} = mutate_changed(ctx, [{"BASE_BRANCH", "main"}])
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "records nothing with uncommitted lib edits", ctx do
+      File.write!(Path.join(ctx.work, "lib/meerkat/two.ex"), "two\nedited\n")
+
+      assert {_, 0} = mutate_changed(ctx)
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "records HEAD when no lib line changed since origin/main", ctx do
+      git(ctx.work, ["update-ref", "refs/remotes/origin/main", "HEAD"])
+
+      assert {out, 0} = mutate_changed(ctx)
+      assert out =~ "nothing to mutate"
+      assert mutated?(ctx, "HEAD")
+    end
+
+    test "stops at an interrupt muex handled, records nothing, and stops its caller", ctx do
+      # In its own process group, so the stub's interrupt reaches only this job.
+      driver = """
+      set -m
+      { bash scripts/mutate.sh changed; echo "caller carried on after $1"; } &
+      wait $!
+      """
+
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+      env = [{"PATH", path}, {"STUB_INTERRUPT", "mix muex"} | hook_env()]
+
+      assert {out, code} =
+               System.cmd("bash", ["-c", driver, "driver", "mutate.sh"],
+                 cd: ctx.work,
+                 env: env,
+                 stderr_to_stdout: true
+               )
+
+      assert code != 0
+      refute out =~ "caller carried on after mutate.sh"
+      refute mutated?(ctx, "HEAD")
+    end
+  end
+
   test "a commit on main is refused before any check runs", ctx do
     no_hooks(ctx.work, ["switch", "-q", "main"])
     stage(ctx.work, "code.txt", "staged\n")
@@ -590,6 +716,40 @@ defmodule Meerkat.PreCommitHookTest do
       )
 
     code == 0
+  end
+
+  # `:` names the index's tree, as for checked?/2.
+  defp mutated?(ctx, rev) do
+    tree = if rev == ":", do: git(ctx.work, ["write-tree"]), else: rev
+
+    {_, code} =
+      System.cmd("bash", ["scripts/checked-trees.sh", "--mutated", "has", tree],
+        cd: ctx.work,
+        env: hook_env()
+      )
+
+    code == 0
+  end
+
+  defp mark_mutated(ctx, rev) do
+    {_, 0} =
+      System.cmd("bash", ["scripts/checked-trees.sh", "--mutated", "mark", rev],
+        cd: ctx.work,
+        env: hook_env()
+      )
+  end
+
+  # The fixture has no remote; origin/main stands at main's commit.
+  defp track_main(work), do: git(work, ["update-ref", "refs/remotes/origin/main", "main"])
+
+  defp mutate_changed(ctx, env \\ []) do
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    System.cmd("bash", ["scripts/mutate.sh", "changed"],
+      cd: ctx.work,
+      env: [{"PATH", path} | hook_env()] ++ env,
+      stderr_to_stdout: true
+    )
   end
 
   defp gates_run(ctx) do

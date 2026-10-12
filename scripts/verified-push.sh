@@ -1,23 +1,43 @@
 #!/usr/bin/env bash
 # Pre-push check: every commit pushed as a ref's new tip must have contents
-# that passed scripts/check.sh, as scripts/checked-trees.sh records them.
-# A rebase, merge or cherry-pick makes a commit without running the
-# pre-commit hook, so without this its contents would reach CI unchecked.
+# that passed scripts/check.sh and the mutation gate of scripts/mutate.sh, as
+# scripts/checked-trees.sh records them. A rebase, merge or cherry-pick makes
+# a commit without running the pre-commit hook, and git runs no hook that can
+# refuse a finished rebase, so without this its contents would reach CI
+# unchecked and its lib lines, conflict resolutions included, unmutated.
 #
 #   verified-push.sh <sha>...
 #
 # An unchecked tip that is HEAD, with nothing uncommitted or untracked, is
-# checked now with `check.sh --head`. An unchecked HEAD in a worktree holding
-# anything else is refused. Any other unchecked tip, such as a branch below
-# HEAD that `gh stack sync` rebased and pushes with it, is checked with
-# `check.sh --head` in a temporary worktree of that commit.
+# checked now. An unchecked HEAD in a worktree holding anything else is
+# refused. Any other unchecked tip, such as a branch below HEAD that
+# `gh stack sync` rebased and pushes with it, is checked in a temporary
+# worktree of that commit.
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# check_elsewhere <commit>: runs that commit's `check.sh --head` in a new
-# detached worktree, which builds everything from scratch, then removes it,
-# even when the check is interrupted.
+# Whether commit $1's contents passed both gates.
+gated() {
+  bash scripts/checked-trees.sh has "$1" && bash scripts/checked-trees.sh --mutated has "$1"
+}
+
+# run_gates <commit>: runs, on the checkout of that commit, each gate its
+# contents have not passed: `check.sh --head`, then `mutate.sh changed`
+# against origin/main, which mutates every lib line the commit changed since
+# main. A gate whose suite fails is not followed by mutation testing.
+run_gates() {
+  if ! bash scripts/checked-trees.sh has "$1"; then
+    bash scripts/check.sh --head || return 1
+  fi
+  if ! bash scripts/checked-trees.sh --mutated has "$1"; then
+    BASE_BRANCH=origin/main bash scripts/mutate.sh changed || return 1
+  fi
+}
+
+# check_elsewhere <commit>: runs that commit's gates in a new detached
+# worktree, which builds everything from scratch, then removes it, even when
+# a gate is interrupted.
 check_elsewhere() (
   tmp=$(mktemp -d) || exit 1
   # A second Ctrl-C does not cut the cleanup short.
@@ -31,7 +51,7 @@ check_elsewhere() (
   # the check's git commands at this checkout instead.
   # shellcheck disable=SC2046
   unset $(git rev-parse --local-env-vars)
-  bash scripts/check.sh --head
+  run_gates "$1"
 )
 
 # Stop at Ctrl-C, however the interrupted child exited: bash carries on after
@@ -51,31 +71,31 @@ for sha in "$@"; do
   fi
   [[ "$type" == commit ]] || continue
   commit=$object
-  bash scripts/checked-trees.sh has "$commit" && continue
+  gated "$commit" && continue
 
   short=$(git rev-parse --short "$commit")
   if [[ "$commit" != "$(git rev-parse HEAD)" ]]; then
-    echo "pre-push: $short has not passed scripts/check.sh; checking it now in a" >&2
+    echo "pre-push: $short has not passed the commit gate; checking it now in a" >&2
     echo "temporary worktree." >&2
     if ! check_elsewhere "$commit"; then
-      echo "pre-push: $short failed scripts/check.sh." >&2
+      echo "pre-push: $short failed the commit gate." >&2
       status=1
-    elif ! bash scripts/checked-trees.sh has "$commit"; then
-      echo "pre-push: $short passed scripts/check.sh but was not recorded." >&2
+    elif ! gated "$commit"; then
+      echo "pre-push: $short passed the commit gate but was not recorded." >&2
       status=1
     fi
   elif ! bash scripts/checked-trees.sh holds "$commit"; then
-    echo "pre-push: HEAD ($short) has not passed scripts/check.sh, and the worktree has" >&2
+    echo "pre-push: HEAD ($short) has not passed the commit gate, and the worktree has" >&2
     echo "uncommitted or untracked files, so it cannot be checked as committed." >&2
     echo "Commit or remove them, then push again." >&2
     status=1
   else
-    echo "pre-push: HEAD ($short) has not passed scripts/check.sh since it was made" >&2
+    echo "pre-push: HEAD ($short) has not passed the commit gate since it was made" >&2
     echo "(a rebase, merge or cherry-pick skips the pre-commit hook); checking it now." >&2
-    if ! bash scripts/check.sh --head; then
+    if ! run_gates "$commit"; then
       status=1
-    elif ! bash scripts/checked-trees.sh has "$commit"; then
-      # check.sh records nothing when the worktree changed while it ran.
+    elif ! gated "$commit"; then
+      # Neither gate records anything when the worktree changed while it ran.
       echo "pre-push: the worktree changed while HEAD ($short) was being checked." >&2
       echo "Push again once it holds exactly HEAD." >&2
       status=1
