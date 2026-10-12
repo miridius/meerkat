@@ -35,6 +35,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     old_content: "fn a() {}\n",
     new_content: "fn a2() {}\n",
     hunks: ["@@ -1,1 +1,1 @@\n-fn a() {}\n+fn a2() {}"],
+    additions: 1,
+    deletions: 1,
     read_errors: [],
     effective_oid: "",
     is_generated: false
@@ -47,6 +49,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     old_content: "# Title\n\nOld paragraph.\n",
     new_content: "# Title\n\nNew paragraph.\n",
     hunks: ["@@ -1,3 +1,3 @@\n # Title\n \n-Old paragraph.\n+New paragraph."],
+    additions: 1,
+    deletions: 1,
     read_errors: [],
     effective_oid: "",
     is_generated: false,
@@ -318,8 +322,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     {:ok, state} = ReviewState.from_target({:staged, msg_path}, repo)
     view = mount_unbound(conn, state)
 
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*NOTES\.md\s*$/)
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*src\/main\.rs\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*NOTES\.md\s*\+1\s*-0\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*src\/main\.rs\s*\+1\s*-0\s*$/)
 
     labels = [
       "Comment on commit message line 1",
@@ -350,7 +354,12 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     {:ok, state} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
     view = mount_unbound(conn, state)
 
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*added-by-feature\.rs\s*$/)
+    assert has_element?(
+             view,
+             "button.file-row",
+             ~r/^\s*▾\s*A\s*added-by-feature\.rs\s*\+1\s*-0\s*$/
+           )
+
     refute has_element?(view, "button.file-row", "base.txt")
 
     assert has_element?(
@@ -370,8 +379,32 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
     view = mount_unbound(conn, state)
 
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*second\.txt\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*second\.txt\s*\+1\s*-0\s*$/)
     refute has_element?(view, "button.file-row", "first.txt")
+  end
+
+  test "the toolbar sums every file's line counts and a binary file's header shows none", %{
+    conn: conn
+  } do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    stage(repo, "a.txt", "one\ntwo\nthree\n")
+    stage(repo, "logo.bin", <<0, 1, 2>>)
+    commit(repo, "base")
+    stage(repo, "a.txt", "one\nTWO\nthree\nfour\n")
+    stage(repo, "logo.bin", <<0, 1, 3>>)
+    stage(repo, "b.txt", "new\n")
+    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    # A file the filter hides still counts toward the toolbar total.
+    view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["txt"])})
+
+    assert has_element?(view, ".diff-toolbar .line-count-added", ~r/^\+3$/)
+    assert has_element?(view, ".diff-toolbar .line-count-removed", ~r/^-1$/)
+
+    view = mount_unbound(conn, state)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*a\.txt\s*\+2\s*-1\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*b\.txt\s*\+1\s*-0\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*logo\.bin\s*$/)
   end
 
   test "pending answers render as a banner with markdown questions and answers", %{conn: conn} do

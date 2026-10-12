@@ -16,6 +16,8 @@ defmodule MeerkatWeb.ReviewLiveFormPropsTest do
     old_content: "fn a() {}\nfn b() {}\n",
     new_content: "fn a2() {}\nfn b() {}\n",
     hunks: ["@@ -1,2 +1,2 @@\n-fn a() {}\n+fn a2() {}\n fn b() {}"],
+    additions: 1,
+    deletions: 1,
     read_errors: [],
     effective_oid: "",
     is_generated: false

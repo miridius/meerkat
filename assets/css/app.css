@@ -512,6 +512,18 @@ a.chip-link:hover .chip-value {
   text-overflow: ellipsis;
 }
 
+/* `+x -y` line counts in the toolbar and each file header. */
+.line-counts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.line-count-added { color: var(--success-strong); }
+.line-count-removed { color: var(--danger); }
+
 .toolbar-settings {
   position: relative;
 }

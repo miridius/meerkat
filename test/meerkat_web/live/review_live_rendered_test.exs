@@ -17,6 +17,8 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
     old_content: "# Title\n\nOld paragraph.\n",
     new_content: "# Title\n\nNew paragraph.\n",
     hunks: ["@@ -1,3 +1,3 @@\n # Title\n \n-Old paragraph.\n+New paragraph."],
+    additions: 1,
+    deletions: 1,
     read_errors: [],
     effective_oid: "",
     is_generated: false

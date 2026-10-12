@@ -48,7 +48,10 @@ defmodule Meerkat.Git do
           # concept (range / PR mode), where the guard skips entirely.
           effective_oid: String.t() | nil,
           moved_lines: [Meerkat.Moves.moved_block()],
-          is_generated: boolean()
+          is_generated: boolean(),
+          # Added and removed lines in `hunks`, the diff as shown.
+          additions: non_neg_integer(),
+          deletions: non_neg_integer()
         }
 
   @doc """
@@ -542,6 +545,7 @@ defmodule Meerkat.Git do
           |> Map.put(:read_errors, file.read_errors ++ global_read_errors)
         end)
         |> Enum.reject(&whitespace_only?/1)
+        |> Enum.map(&put_line_counts/1)
         |> Meerkat.Moves.detect()
 
       case run_git_unmerged(repo_path, ["ls-files", "--stage", "-z"]) do
@@ -821,6 +825,22 @@ defmodule Meerkat.Git do
   defp whitespace_only?(%{status: :modified, hunks: []}), do: true
   defp whitespace_only?(_), do: false
 
+  # Count the `+` and `-` lines in the shown hunks. `@@` headers, context
+  # lines and `\ No newline at end of file` start with neither sign.
+  defp put_line_counts(%{hunks: hunks} = file) do
+    {additions, deletions} =
+      hunks
+      |> Enum.flat_map(&String.split(&1, "\n"))
+      |> Enum.reduce({0, 0}, fn
+        "+" <> _, {a, d} -> {a + 1, d}
+        "-" <> _, {a, d} -> {a, d + 1}
+        _, acc -> acc
+      end)
+
+    # muex:ignore equivalent: no file map holds these keys yet, so merge order and put_new change nothing
+    Map.merge(file, %{additions: additions, deletions: deletions})
+  end
+
   @doc """
   Return range-diff entries with bodies. `mode` is `:two_dot` or
   `:three_dot` — same semantics as `range_files/4`.
@@ -835,6 +855,7 @@ defmodule Meerkat.Git do
       diffs =
         entries
         |> Enum.map(&materialise_range(repo_path, &1, effective_base, head, generated_map))
+        |> Enum.map(&put_line_counts/1)
         |> Meerkat.Moves.detect()
 
       {:ok, diffs}

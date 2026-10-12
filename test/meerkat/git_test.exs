@@ -363,6 +363,8 @@ defmodule Meerkat.GitTest do
         read_errors: [],
         effective_oid: effective_oids["added.lock"],
         moved_lines: [],
+        additions: 1,
+        deletions: 0,
         is_generated: true
       },
       %{
@@ -375,6 +377,8 @@ defmodule Meerkat.GitTest do
         read_errors: [],
         effective_oid: effective_oids["deleted.rs"],
         moved_lines: [],
+        additions: 0,
+        deletions: 1,
         is_generated: false
       },
       %{
@@ -387,6 +391,8 @@ defmodule Meerkat.GitTest do
         read_errors: [],
         effective_oid: effective_oids["modified.rs"],
         moved_lines: [],
+        additions: 1,
+        deletions: 1,
         is_generated: false
       },
       %{
@@ -399,6 +405,8 @@ defmodule Meerkat.GitTest do
         read_errors: [],
         effective_oid: effective_oids["new_name.rs"],
         moved_lines: [],
+        additions: 1,
+        deletions: 1,
         is_generated: false
       }
     ]
@@ -436,6 +444,19 @@ defmodule Meerkat.GitTest do
       }
 
       assert Git.staged_file_diffs(dir) == {:ok, one_of_each_diffs(effective_oids)}
+    end
+
+    test "line counts cover every shown hunk, but not hunk headers, no-newline markers or " <>
+           "whitespace-only edits",
+         %{dir: dir} do
+      File.write!(Path.join(dir, "f.sql"), "-- note\nb\nc\nd\ne\nf\ng\nh\ni\nj\nlast")
+      git(dir, ["add", "."])
+      git(dir, ["commit", "-qm", "seed"])
+      File.write!(Path.join(dir, "f.sql"), "++ note\nx\nb\nc  \nd\ne\nf\ng\nh\ni\nj\nlast!")
+      git(dir, ["add", "."])
+
+      assert {:ok, [%{hunks: [_, _ | _], additions: 3, deletions: 2}]} =
+               Git.staged_file_diffs(dir)
     end
 
     test "a modified file stays listed, with the error, when the batched staged diff fails",
@@ -481,6 +502,8 @@ defmodule Meerkat.GitTest do
                     ],
                     effective_oid: added_oid,
                     moved_lines: [],
+                    additions: 0,
+                    deletions: 0,
                     is_generated: false
                   },
                   %{
@@ -494,6 +517,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [diff_error, binary_error],
                     effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
                     moved_lines: [],
+                    additions: 0,
+                    deletions: 0,
                     is_generated: false
                   }
                 ]}
@@ -524,6 +549,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: git(dir, ["rev-parse", ":0:0:foo.txt"]),
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 1,
                     is_generated: false
                   },
                   %{
@@ -537,6 +564,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: git(dir, ["rev-parse", ":0:1:bar.txt"]),
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 1,
                     is_generated: false
                   }
                 ]}
@@ -567,6 +596,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: git(dir, ["rev-parse", "HEAD::(bogus)gone.rs"]),
                     moved_lines: [],
+                    additions: 0,
+                    deletions: 1,
                     is_generated: false
                   },
                   %{
@@ -580,6 +611,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: git(dir, ["rev-parse", "::(bogus)x.rs"]),
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 0,
                     is_generated: false
                   },
                   %{
@@ -593,6 +626,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: git(dir, ["rev-parse", ":plain.rs"]),
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 0,
                     is_generated: false
                   }
                 ]}
@@ -640,6 +675,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: nil,
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 1,
                     is_generated: false
                   },
                   %{
@@ -652,6 +689,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: nil,
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 1,
                     is_generated: false
                   },
                   %{
@@ -664,6 +703,8 @@ defmodule Meerkat.GitTest do
                     read_errors: [],
                     effective_oid: nil,
                     moved_lines: [],
+                    additions: 1,
+                    deletions: 1,
                     is_generated: false
                   }
                 ]}
@@ -704,6 +745,8 @@ defmodule Meerkat.GitTest do
                     ],
                     effective_oid: nil,
                     moved_lines: [],
+                    additions: 0,
+                    deletions: 0,
                     is_generated: false
                   }
                 ]}

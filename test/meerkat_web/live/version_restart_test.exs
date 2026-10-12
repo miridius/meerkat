@@ -14,6 +14,8 @@ defmodule MeerkatWeb.VersionRestartTest do
     old_content: "fn a() {}\n",
     new_content: "fn a2() {}\n",
     hunks: ["@@ -1,1 +1,1 @@\n-fn a() {}\n+fn a2() {}"],
+    additions: 1,
+    deletions: 1,
     read_errors: [],
     effective_oid: "",
     is_generated: false

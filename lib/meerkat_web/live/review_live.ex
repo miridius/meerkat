@@ -1419,6 +1419,11 @@ defmodule MeerkatWeb.ReviewLive do
             <%= if file.old_file_name do %>
               <span class="rename-from">(was {file.old_file_name})</span>
             <% end %>
+            <.line_counts
+              :if={not Map.get(file, :is_binary, false)}
+              additions={file.additions}
+              deletions={file.deletions}
+            />
           </button>
           <button
             type="button"
@@ -1815,6 +1820,11 @@ defmodule MeerkatWeb.ReviewLive do
         {toolbar_title(@state)}
       </div>
 
+      <.line_counts
+        additions={Enum.sum_by(@state.files, & &1.additions)}
+        deletions={Enum.sum_by(@state.files, & &1.deletions)}
+      />
+
       <span
         :if={@state.base_branch && @state.head_branch}
         class="chip branch-chip"
@@ -1919,6 +1929,22 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp toolbar_title(%ReviewState{head_branch: b}) when is_binary(b) and b != "", do: b
   defp toolbar_title(_), do: ""
+
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  attr :additions, :integer, required: true
+
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  attr :deletions, :integer, required: true
+
+  # `+x -y` in green and red, as GitHub shows them, without its squares.
+  defp line_counts(assigns) do
+    ~H"""
+    <span class="line-counts">
+      <span class="line-count-added">+{@additions}</span>
+      <span class="line-count-removed">-{@deletions}</span>
+    </span>
+    """
+  end
 
   attr :state, ReviewState, required: true
   attr :open_forms, :list, required: true
