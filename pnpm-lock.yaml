@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-8Aq+CkBFvrASKILzlCGk6ISrz/iGdhUnZaMj2BFITRg=
+
 importers:
 
   .:
@@ -1563,10 +1565,12 @@ snapshots:
   '@nextjournal/lang-clojure@1.0.0':
     dependencies:
       '@codemirror/language': 6.13.1
+      '@lezer/highlight': 1.2.5
       '@nextjournal/lezer-clojure': 1.0.0
 
   '@nextjournal/lezer-clojure@1.0.0':
     dependencies:
+      '@lezer/common': 1.5.3
       '@lezer/lr': 1.4.11
 
   '@oxc-project/types@0.153.0': {}
