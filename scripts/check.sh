@@ -7,7 +7,8 @@
 # of the commit being made.
 #
 # In pre-commit mode, a commit that changes only Markdown files, or nothing,
-# skips the checks; CI still runs them on the PR.
+# skips the checks; CI still runs them on the PR. Otherwise the checks wait
+# for a slot from scripts/gate-lock.sh.
 #
 # When the checks pass and the worktree held exactly the contents checked,
 # with no untracked file, both when they started and when they finished,
@@ -43,12 +44,6 @@ else
 fi
 
 holds() { bash scripts/checked-trees.sh holds "$tree"; }
-holds && clean=1 || clean=0
-
-# Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
-# point every test's fixture repo at this checkout's index.
-# shellcheck disable=SC2046
-unset $(git rev-parse --local-env-vars)
 
 step() {
   echo
@@ -56,23 +51,47 @@ step() {
   "$@"
 }
 
-step mix deps.get
-step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
-step mix compile --warnings-as-errors
-step mix format --check-formatted
-step mix credo --strict
-step bunx biome lint --error-on-warnings
-step bash scripts/mix-test.sh
-(cd assets && step bun test)
-step bun test tests/e2e/lib
-(cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
-step bunx playwright install --only-shell chromium
-step bun run test:e2e
+run_checks() {
+  holds && clean=1 || clean=0
 
-# Checked again in case the worktree changed while the checks ran.
-if [[ "$clean" == 1 ]] && holds; then
-  bash scripts/checked-trees.sh mark "$tree"
-fi
+  # Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
+  # point every test's fixture repo at this checkout's index.
+  # shellcheck disable=SC2046
+  unset $(git rev-parse --local-env-vars)
 
-echo
-echo "=== $label: all checks passed ==="
+  step mix deps.get
+  step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
+  step mix compile --warnings-as-errors
+  step mix format --check-formatted
+  step mix credo --strict
+  step bunx biome lint --error-on-warnings
+  step bash scripts/mix-test.sh
+  (cd assets && step bun test)
+  step bun test tests/e2e/lib
+  (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
+  step bunx playwright install --only-shell chromium
+  step bun run test:e2e
+
+  # Checked again in case the worktree changed while the checks ran.
+  if [[ "$clean" == 1 ]] && holds; then
+    bash scripts/checked-trees.sh mark "$tree"
+  fi
+
+  echo
+  echo "=== $label: all checks passed ==="
+}
+
+# At most two gates in all of this repo's worktrees run the checks at once.
+# This shell holds the slot until it exits. The checks run in a subshell
+# that closes the slot's fd first, so nothing they start can keep the slot
+# once this shell is gone; `run_checks 9>&-` would not do, as bash keeps a
+# copy of fd 9 that its subshells, and under bash 3.2 every child, inherit.
+# The subshell resets the INT trap, so it gets one that ends it at Ctrl-C,
+# after which this shell's own trap stops this script.
+source scripts/gate-lock.sh
+gate_lock
+(
+  exec 9>&-
+  trap 'exit 130' INT
+  run_checks
+)

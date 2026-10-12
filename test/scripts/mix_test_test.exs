@@ -17,6 +17,7 @@ defmodule Meerkat.MixTestScriptTest do
 
     stubs = Path.join(base, "stubs")
     log = Path.join(base, "log")
+    erl_opts = Path.join(base, "erl_opts")
     spans = Path.join(base, "spans")
     failing = Path.join(base, "failing")
     killed = Path.join(base, "killed")
@@ -39,6 +40,7 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(Path.join(stubs, "mix"), """
     #!/usr/bin/env bash
     echo "$MIX_ENV mix $*" >> '#{log}'
+    echo "$1: ${ELIXIR_ERL_OPTIONS-unset}" >> '#{erl_opts}'
     if [ "$1" = compile ]; then ! grep -qxF compile '#{failing}'; exit; fi
     if grep -qxF "$3" '#{killed}'; then kill -9 "$PPID"; exit 1; fi
     echo "start" >> '#{spans}'
@@ -57,6 +59,7 @@ defmodule Meerkat.MixTestScriptTest do
      base: base,
      stubs: stubs,
      log: log,
+     erl_opts: erl_opts,
      spans: spans,
      failing: failing,
      killed: killed,
@@ -71,6 +74,20 @@ defmodule Meerkat.MixTestScriptTest do
     [compile | tests] = runs(ctx)
     assert compile == "test mix compile"
     assert Enum.sort(tests) == Enum.sort(for f <- @files, do: "test mix test --no-compile #{f}")
+  end
+
+  test "test files run on four schedulers that do not busy-wait; the compile does not", ctx do
+    assert {_, 0} = run(ctx)
+
+    assert erl_opts(ctx) ==
+             ["compile: unset" | List.duplicate("test: +S 4 +sbwt none ", length(@files))]
+  end
+
+  test "ELIXIR_ERL_OPTIONS already set follows the test files' flags", ctx do
+    assert {_, 0} = run(ctx, [{"ELIXIR_ERL_OPTIONS", "+S 2"}])
+
+    assert erl_opts(ctx) ==
+             ["compile: +S 2" | List.duplicate("test: +S 4 +sbwt none +S 2", length(@files))]
   end
 
   test "a failing compile fails the run before any test file runs", ctx do
@@ -140,13 +157,16 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(Path.join(base, file), "")
   end
 
-  defp run(ctx) do
+  # This suite's own runner may have set ELIXIR_ERL_OPTIONS.
+  defp run(ctx, env \\ [{"ELIXIR_ERL_OPTIONS", nil}]) do
     System.cmd("bash", ["scripts/mix-test.sh"],
       cd: ctx.base,
-      env: [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")}],
+      env: [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")} | env],
       stderr_to_stdout: true
     )
   end
+
+  defp erl_opts(ctx), do: ctx.erl_opts |> File.read!() |> String.split("\n", trim: true)
 
   defp runs(ctx), do: ctx.log |> File.read!() |> String.split("\n", trim: true)
 
