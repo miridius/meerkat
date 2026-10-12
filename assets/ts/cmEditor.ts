@@ -55,7 +55,9 @@ const rosePineChrome = EditorView.theme(
 			// Rulers: a line at each of RULER_COLUMNS, measured in `ch` from
 			// the start of the text (`.cm-line` pads it 6px). They are the
 			// content's background, so they span its full height and scroll
-			// with the text.
+			// with the text. The right padding keeps a ruler at the end of the
+			// longest line clear of the editor's border when scrolled right.
+			paddingRight: "1ch",
 			backgroundImage: RULER_COLUMNS.map(
 				(col) =>
 					`linear-gradient(to right, transparent calc(6px + ${col}ch), ${RULER_COLOR} calc(6px + ${col}ch), ${RULER_COLOR} calc(6px + ${col}ch + 1px), transparent calc(6px + ${col}ch + 1px))`,
