@@ -52,7 +52,21 @@ defmodule Meerkat.GitBinaryTest do
 
     assert {:ok, [file]} = Git.staged_file_diffs(dir)
     assert_binary(file, :modified)
+    assert file.effective_oid == git(dir, ["rev-parse", ":BUILD.bazel"])
     assert Jason.encode!(file) =~ "is_binary"
+  end
+
+  test "a binary deletion whose HEAD blob lookup fails carries an empty OID", %{dir: dir} do
+    stage(dir, "gone.bin", <<0, 255>>)
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["rm", "-q", "gone.bin"])
+    intercept_git(dir, "ls-tree", "exit 1")
+
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      assert {:ok, [file]} = Git.staged_file_diffs(dir)
+      assert file.is_binary
+      assert file.effective_oid == ""
+    end)
   end
 
   test "binary additions in an unborn repository are represented explicitly", %{dir: dir} do
@@ -128,7 +142,7 @@ defmodule Meerkat.GitBinaryTest do
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
       assert {:ok, [file]} = Git.staged_file_diffs(dir)
       assert file.file_name == "BUILD.bazel"
-      assert Enum.join(file.read_errors) =~ "couldn't identify staged binary files"
+      assert Enum.join(file.read_errors) =~ "couldn't identify binary files"
       assert Enum.join(file.read_errors) =~ "exited 1"
     end)
   end
@@ -148,10 +162,10 @@ defmodule Meerkat.GitBinaryTest do
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         assert {:ok, [file]} = Git.staged_file_diffs(dir)
         assert file.file_name == "a.txt"
-        assert Enum.join(file.read_errors) =~ "couldn't parse staged binary file statistics"
+        assert Enum.join(file.read_errors) =~ "couldn't parse binary file statistics"
       end)
 
-    assert stderr =~ "couldn't parse staged binary file statistics"
+    assert stderr =~ "couldn't parse binary file statistics"
   end
 
   test "a stability re-check that fails reports the git error instead of crashing", %{dir: dir} do
@@ -204,6 +218,47 @@ defmodule Meerkat.GitBinaryTest do
     intercept_git(dir, "show", "echo unexpected-blob-read >&2; exit 1")
     assert {:ok, [file]} = Git.staged_file_diffs(dir)
     assert_binary(file, :added)
+  end
+
+  test "a range review marks binary files, renames included, without reading their blobs", %{
+    dir: dir
+  } do
+    stage(dir, "logo.png", <<0, 255, 1>>)
+    stage(dir, "moved.bin", <<0, 253, 3>>)
+    stage(dir, "text.txt", "old\n")
+    git(dir, ["commit", "-qm", "base"])
+    stage(dir, "logo.png", <<0, 254, 2>>)
+    git(dir, ["mv", "moved.bin", "renamed.bin"])
+    stage(dir, "new.bin", <<0, 252>>)
+    stage(dir, "text.txt", "new\n")
+    git(dir, ["commit", "-qm", "head"])
+    intercept_git(dir, "show", "echo unexpected-blob-read >&2; exit 1")
+
+    assert {:ok, [logo, new, renamed, text]} =
+             Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+
+    assert_binary(logo, :modified)
+    assert_binary(new, :added)
+    assert_binary(renamed, :renamed)
+    assert renamed.old_file_name == "moved.bin"
+    # The text file's reads hit the intercept, so a binary read would too.
+    refute text.is_binary
+    assert text.read_errors != []
+  end
+
+  test "a range review keeps every file listed with the reason when numstat fails", %{dir: dir} do
+    stage(dir, "text.txt", "old\n")
+    git(dir, ["commit", "-qm", "base"])
+    stage(dir, "text.txt", "new\n")
+    git(dir, ["commit", "-qm", "head"])
+    intercept_git(dir, "--numstat", "exit 1")
+
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      assert {:ok, [file]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+      refute file.is_binary
+      assert file.hunks != []
+      assert Enum.join(file.read_errors) =~ "couldn't identify binary files"
+    end)
   end
 
   test "successful numstat warnings do not corrupt structured output", %{dir: dir} do

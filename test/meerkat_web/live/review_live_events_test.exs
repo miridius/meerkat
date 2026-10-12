@@ -383,6 +383,22 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute has_element?(view, "button.file-row", "first.txt")
   end
 
+  test "a range review lists a non-UTF-8 binary file without line counts", %{conn: conn} do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    stage(repo, "logo.bin", <<0, 255, 1>>)
+    commit(repo, "base")
+    stage(repo, "logo.bin", <<0, 254, 2>>)
+    stage(repo, "a.txt", "a\n")
+    commit(repo, "head")
+
+    {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
+    view = mount_unbound(conn, state)
+
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*logo\.bin\s*$/)
+    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*a\.txt\s*\+1\s*-0\s*$/)
+  end
+
   test "the toolbar sums every file's line counts and a binary file's header shows none", %{
     conn: conn
   } do

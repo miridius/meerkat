@@ -350,8 +350,7 @@ defmodule Meerkat.GitTest do
     git(dir, ["add", "."])
   end
 
-  # Staged maps carry `is_binary`; range maps (no staging concept) omit it.
-  defp one_of_each_diffs(effective_oids, with_binary \\ true) do
+  defp one_of_each_diffs(effective_oids) do
     diffs = [
       %{
         status: :added,
@@ -411,11 +410,7 @@ defmodule Meerkat.GitTest do
       }
     ]
 
-    if with_binary do
-      Enum.map(diffs, &Map.put(&1, :is_binary, false))
-    else
-      diffs
-    end
+    Enum.map(diffs, &Map.put(&1, :is_binary, false))
   end
 
   describe "current_branch/1" do
@@ -480,7 +475,7 @@ defmodule Meerkat.GitTest do
           "per-file content may render empty"
 
       binary_error =
-        "couldn't identify staged binary files: git diff --cached --numstat -z -w -M " <>
+        "couldn't identify binary files: git diff --cached --numstat -z -w -M " <>
           "--no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}"
 
       assert result ==
@@ -644,7 +639,7 @@ defmodule Meerkat.GitTest do
       git(dir, ["commit", "-qm", "one of each"])
 
       assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
-               {:ok, one_of_each_diffs(%{}, false)}
+               {:ok, one_of_each_diffs(%{})}
     end
 
     test "file names git would read as pathspec magic carry their own hunks and no read errors",
@@ -674,6 +669,7 @@ defmodule Meerkat.GitTest do
                     hunks: ["@@ -1,4 +1,4 @@\n alpha\n beta\n gamma\n-delta\n+DELTA\n"],
                     read_errors: [],
                     effective_oid: nil,
+                    is_binary: false,
                     moved_lines: [],
                     additions: 1,
                     deletions: 1,
@@ -688,6 +684,7 @@ defmodule Meerkat.GitTest do
                     hunks: ["@@ -1,1 +1,1 @@\n-bogus one\n+bogus two\n"],
                     read_errors: [],
                     effective_oid: nil,
+                    is_binary: false,
                     moved_lines: [],
                     additions: 1,
                     deletions: 1,
@@ -702,6 +699,7 @@ defmodule Meerkat.GitTest do
                     hunks: ["@@ -1,1 +1,1 @@\n-colon one\n+colon two\n"],
                     read_errors: [],
                     effective_oid: nil,
+                    is_binary: false,
                     moved_lines: [],
                     additions: 1,
                     deletions: 1,
@@ -710,7 +708,7 @@ defmodule Meerkat.GitTest do
                 ]}
     end
 
-    test "a head blob git cannot read leaves the file's content empty and lists both errors",
+    test "a head blob git cannot read leaves the file's content empty and lists every error",
          %{dir: dir} do
       File.write!(Path.join(dir, "mod.rs"), "one\n")
       git(dir, ["add", "mod.rs"])
@@ -741,9 +739,12 @@ defmodule Meerkat.GitTest do
                         "fatal: bad object HEAD:mod.rs",
                       "couldn't compute diff (args: --literal-pathspecs diff -U3 HEAD~1..HEAD " <>
                         "-- mod.rs): git --literal-pathspecs diff -U3 HEAD~1..HEAD -- mod.rs " <>
+                        "exited 128: fatal: unable to read #{head_oid}",
+                      "couldn't identify binary files: git diff --numstat -z HEAD~1..HEAD " <>
                         "exited 128: fatal: unable to read #{head_oid}"
                     ],
                     effective_oid: nil,
+                    is_binary: false,
                     moved_lines: [],
                     additions: 0,
                     deletions: 0,
