@@ -10,19 +10,21 @@ defmodule Meerkat.CLITest do
   #   case-clause deletions — a live review boots the endpoint and
   #   `--answers` reads stdin, unrunnable under ExUnit. The auto clause
   #   and a live dispatch that stops at target resolution are covered by
-  #   cli_main_test.exs; the rest e2e by answers.spec.ts "--answers
-  #   stores the answers piped on stdin" (true branch) and
-  #   decision.spec.ts "Send Feedback reaches the caller as exit 1 with
-  #   the comments bracketed, saved to a file, and no server logs" (live
-  #   clause).
+  #   cli_main_test.exs; the rest e2e by answers.spec.ts "questions
+  #   block a real git hook until answers sent through the launcher
+  #   reach the next page" (true branch) and decision.spec.ts "feedback
+  #   typed in plain and Suggestion forms and sent by its shortcut
+  #   reaches the caller as exit 1 with the comments bracketed, saved to
+  #   a file, and no server logs" (live clause).
   # - `flush_logs/0`'s handler-absent `_ -> :ok` clause — equivalent:
   #   flush_logs' own `rescue _ -> :ok catch _, _ -> :ok` swallows the
   #   CaseClauseError the deletion raises, so no input distinguishes the
   #   mutant from the original.
   # - `run_live_review/2`'s case on `ReviewState.from_target` — the
   #   `{:ok, _}` clause boots the live review UI; covered e2e by
-  #   decision.spec.ts "Send Feedback reaches the caller as exit 1 with
-  #   the comments bracketed, saved to a file, and no server logs". The
+  #   decision.spec.ts "feedback typed in plain and Suggestion forms and
+  #   sent by its shortcut reaches the caller as exit 1 with the comments
+  #   bracketed, saved to a file, and no server logs". The
   #   `{:error, _}` clause is covered by cli_main_test.exs.
   # - `run_live_review/2`'s deadline setup (swap the put_env arguments,
   #   invert `is_nil(serve_dir)`) — equivalent under a launcher:
@@ -36,9 +38,9 @@ defmodule Meerkat.CLITest do
   # - `start_app!/2` (deleting the preferred-port clause) and
   #   `run_live_review_safe/2`'s `PortInUseError` rescue — they boot the
   #   endpoint, unrunnable under ExUnit. Covered e2e by port.spec.ts
-  #   "without --port, a review binds its stable port", "a review whose
-  #   stable port is taken is served on another port" and "an explicit
-  #   --port that is taken fails to start and names the port".
+  #   "without --port, a review binds its stable port, or another port
+  #   while another review holds it" and "an explicit --port that is
+  #   taken fails to start and names the port".
   # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
   #   System.halt/1, killing the ExUnit VM by design (see args_error
   #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
@@ -141,6 +143,7 @@ defmodule Meerkat.CLITest do
 
     test "--answers is a boolean flag" do
       assert %{answers: true} = CLI.parse_args(["--answers"])
+      assert %{answers: true} = CLI.parse_args(["--answers=true"])
 
       assert %{answers: true, no_open: true, port: 4321} =
                CLI.parse_args(["--answers", "--no-open", "--port", "4321"])
