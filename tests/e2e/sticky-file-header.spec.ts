@@ -10,10 +10,10 @@ const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
 const WRAPPED_WIDTHS = [1150, 900, 600];
 
+const SHORT_BRANCH = "fix/typo";
 // A branch name and commit subject long enough that the toolbar wraps
 // at 1400px, and short enough that it still fits one row at 1500px.
 const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
-const SHORT_BRANCH = "fix/typo";
 
 function stickyFixture() {
 	const fixture = makeFixture({

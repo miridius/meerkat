@@ -7,7 +7,7 @@ import { startMeerkat } from "./lib/runner";
 // covered by the LiveView tests; the Suggestion composer's CodeMirror
 // editor by decision.spec.ts.
 test.describe("commit-message comments", () => {
-	test("a gutter row highlights on hover and opens its form on a click, and a drag either way shades and spans every block it crosses in one form", async ({
+	test("a gutter row highlights on hover and opens its form on a click, a drag shades the blocks in its range, and a drag either way spans every block it crosses in one form", async ({
 		page,
 	}) => {
 		const fixture = makeFixture({ commitMsg: "Subject\n\nBody paragraph.\n\n- one\n- two\n" });

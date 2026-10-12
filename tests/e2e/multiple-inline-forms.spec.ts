@@ -10,9 +10,9 @@ import { startMeerkat } from "./lib/runner";
 // form's draft, finding type and learn flag while others open, close and
 // post, and while the diff re-renders. Posted comments are injected as
 // rows at their anchors, marking the anchor row, and torn down on Remove.
-// Which forms are open, the footer
-// that lists them, and closing an edit form when its comment is removed
-// are covered by the LiveView and ReviewServer tests.
+// Which forms are open, the footer that lists them, and closing an edit
+// form when its comment is removed are covered by the LiveView and
+// ReviewServer tests.
 
 // Unified mode renders one `data-line-new-num` span per new-side line.
 function newLine(fileSection: Locator, n: number): Locator {

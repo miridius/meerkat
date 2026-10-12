@@ -9,7 +9,7 @@ import { startMeerkat } from "./lib/runner";
 // test/meerkat/cli_test.exs; the view's handlers by the LiveView tests; the
 // shortcut's key test by assets/ts/sendFeedbackShortcut.test.ts.
 test.describe("decision flow", () => {
-	test("Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs", async ({
+	test("feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs", async ({
 		page,
 	}) => {
 		// The agent commonly head/tail's the feedback stream and sees only

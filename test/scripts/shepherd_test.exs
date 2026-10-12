@@ -290,17 +290,20 @@ defmodule Meerkat.ShepherdTest do
 
     test "a caller whose backend dies exits 2, rejecting the commit, and stops the BEAM it left" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
       runs = Path.join(dir, "runs")
       rel = Path.join(dir, "rel")
       File.mkdir_p!(Path.join(rel, "bin"))
       File.ln_s!(rel, Path.join(dir, "current"))
 
       # A BEAM that records its port, as a serving one does, on a port
-      # nothing listens on, and runs until killed.
+      # nothing listens on, and runs until killed or for a minute. It
+      # loops rather than exec'ing sleep: the caller kills only a process
+      # whose command line names meerkat.
       File.write!(Path.join([rel, "bin", "meerkat"]), ~S"""
       #!/usr/bin/env bash
       echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
-      while true; do sleep 1; done
+      for _ in {1..60}; do sleep 1; done
       """)
 
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
@@ -314,10 +317,7 @@ defmodule Meerkat.ShepherdTest do
       backend = await_backend_pid(runs)
       beam = await_beam_pid(runs)
 
-      on_exit(fn ->
-        System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true)
-        File.rm_rf!(dir)
-      end)
+      on_exit(fn -> System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true) end)
 
       System.cmd("kill", ["-KILL", backend])
 

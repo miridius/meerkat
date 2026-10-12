@@ -212,13 +212,13 @@ test.describe("a review outlives the process that invoked it", () => {
 
 	// The countdown's display for a given time left is covered by
 	// assets/ts/countdown.test.ts; here the Countdown hook ticks in the
-	// browser from the deadline the server renders.
+	// browser from the deadline the server renders, before the SIGTERM.
 	test("a SIGTERM to the BEAM ends the review at once and the caller exits 143", async ({ page }) => {
 		const fixture = makeFixture();
 		const first = await startMeerkat({
 			fixture,
 			keepFixture: true,
-			env: { MEERKAT_REVIEW_TIMEOUT: "45" },
+			env: { MEERKAT_REVIEW_TIMEOUT: "59" },
 		});
 		try {
 			await page.goto(first.url);
@@ -228,8 +228,8 @@ test.describe("a review outlives the process that invoked it", () => {
 				"the footer shows the time left before the review times out",
 			).toHaveText(/^\d{2}:\d{2} left$/);
 			const start = secondsLeft(await countdown.textContent());
-			expect(start, "a 45 second limit starts the clock just under 45 seconds").toBeGreaterThan(30);
-			expect(start, "the clock never starts above the limit").toBeLessThanOrEqual(45);
+			expect(start, "a 59 second limit starts the clock just under 59 seconds").toBeGreaterThan(44);
+			expect(start, "the clock never starts above the limit").toBeLessThanOrEqual(59);
 			await expect
 				.poll(async () => secondsLeft(await countdown.textContent()), {
 					message: "the clock runs down rather than up or nowhere",
@@ -308,7 +308,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			expect(alive(heldBackend), "the review holding the decision has been replaced").toBe(false);
 			await page.goto(second.url);
 			await expect(page.locator("body")).toContainText("A different subject");
-			await expect(page.locator(".global-comments .note")).toHaveCount(0);
+			await expect(page.locator(".global-comments .note"), "the held comments do not carry over").toHaveCount(0);
 
 			const replacedBackend = backendPid(second);
 			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten while the second caller waits\n");
@@ -324,7 +324,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.getByRole("button", { name: /^Approve$/ }).click();
 			const { code, stderr } = await third.awaitExit();
 			expect(code, "the rerun collects the decision on the new review").toBe(0);
-			expect(stderr, "the replacement review has no comments").toContain(
+			expect(stderr, "the new review's approval reaches its caller").toContain(
 				"The user approved your commit. Proceeding.",
 			);
 		} finally {
