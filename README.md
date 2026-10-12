@@ -108,9 +108,11 @@ request changes / comment) from github.com.
   (yellow), **question** (green), **thought** (muted).
 - Markdown in comment bodies. Backticks, code fences, bullets, links all
   render in place (MDEx + html_sanitize_ex on the server).
-- **"Turn this into a lint rule"** checkbox on every comment. Tells the
-  calling agent to add a lint rule that catches what the comment flags,
-  rather than just making a one-off fix.
+- **"Correct your instructions/skills"** and **"Turn this into a lint
+  rule"** checkboxes on every comment. They tell the calling agent to
+  fix a behavioural issue in its instructions or skills, or to add a
+  lint rule that catches a lintable code issue, rather than just
+  making a one-off fix.
 - **Approve with feedback**. The Approve button accepts comments — label
   flips to "Approve with feedback" when any are pending.
 - **Review countdown** in the decision footer, showing the time left

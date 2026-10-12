@@ -10,7 +10,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # --- Documented surviving mutants (review-and-merge step 5) ---
   #
   # Equivalent (no input distinguishes mutant from original):
-  # * `attr` declarations in function components `learn_toggle`,
+  # * `attr` declarations in function components `flag_toggles`, `flag_toggle`,
   #   `flash_error_banner`, `pending_answers_banner`, `version_chip`,
   #   `commit_message_section`,
   #   `global_comments_section`,
@@ -165,7 +165,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "form_key" => form_key,
       "body" => body,
       "finding_type" => finding_type,
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
   end
 
@@ -506,7 +507,13 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: nil}],
       global_comments: [
-        %{id: "g1", body: "just a follow-up", finding_type: :follow_up, learn_from_this: false}
+        %{
+          id: "g1",
+          body: "just a follow-up",
+          finding_type: :follow_up,
+          correct_instructions: false,
+          lint_rule: false
+        }
       ]
     }
 
@@ -726,7 +733,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "form_key" => "inline:0:new:1-1",
       "body" => "first",
       "finding_type" => "issue",
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
 
     state = ReviewServer.get_state(rid)
@@ -789,7 +797,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "form_key" => "commit_msg:3-4",
       "body" => "second range",
       "finding_type" => "issue",
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
 
     state = ReviewServer.get_state(rid)
@@ -847,7 +856,14 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "an edit form's footer link says it is editing", %{conn: conn} do
-    comment = %{id: "g1", body: "b", finding_type: :issue, learn_from_this: false}
+    comment = %{
+      id: "g1",
+      body: "b",
+      finding_type: :issue,
+      correct_instructions: false,
+      lint_rule: false
+    }
+
     view = mount_unbound(conn, %ReviewState{files: [@plain_file], global_comments: [comment]})
 
     render_click(view, "comment_form.edit", %{"surface" => "global", "id" => "g1"})
@@ -978,7 +994,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "form_key" => "global",
       "body" => "x",
       "finding_type" => "issue",
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
 
     assert_reply(view, %{status: "error", message: "This comment form is no longer open" <> _})
@@ -989,7 +1006,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "form_key" => "global",
       "body" => "x",
       "finding_type" => "issue",
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
 
     refute render(view) =~ "CommentForm-global"
@@ -998,7 +1016,14 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "comment.remove delegates to the ReviewServer in bound mode", %{conn: conn} do
     repo = tmp_git_repo()
 
-    comment = %{id: "f1", body: "b", finding_type: :issue, learn_from_this: false, file_index: 0}
+    comment = %{
+      id: "f1",
+      body: "b",
+      finding_type: :issue,
+      correct_instructions: false,
+      lint_rule: false,
+      file_index: 0
+    }
 
     {view, rid} =
       mount_bound(conn, %ReviewState{files: [@plain_file], file_comments: [comment]}, repo)
@@ -1149,31 +1174,78 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute has_element?(view, "[id^='CommentForm-commit_msg']")
   end
 
-  test "the lint-rule checkbox starts off in the form and toggles on the rendered comment", %{
-    conn: conn
-  } do
+  test "both agent-instruction checkboxes start off in the form and toggle independently on the rendered comment",
+       %{conn: conn} do
     repo = tmp_git_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
-    learn = ".global-comments .note .learn-toggle input"
+    toggle = ".global-comments .note .flag-toggle"
+    instructions = "#{toggle}[data-flag=correct_instructions] input"
+    lint = "#{toggle}[data-flag=lint_rule] input"
 
     html = view |> element("button.add-global-btn") |> render_click()
-    assert %{"initialLearnFromThis" => false} = svelte_props(html, "CommentForm-global")
-    submit_comment(view, "global", "learn me")
-    refute has_element?(view, "#{learn}[checked]")
+
+    assert %{"initialCorrectInstructions" => false, "initialLintRule" => false} =
+             svelte_props(html, "CommentForm-global")
+
+    submit_comment(view, "global", "flag me")
+    refute has_element?(view, "#{toggle} input[checked]")
 
     assert has_element?(
              view,
-             ".global-comments .note .learn-toggle",
-             "turn this into a lint rule"
+             "#{toggle}[data-flag=correct_instructions]",
+             "correct your instructions/skills"
            )
 
-    view |> element(learn) |> render_click()
-    assert [%{learn_from_this: true}] = ReviewServer.get_state(rid).global_comments
-    assert has_element?(view, "#{learn}[checked]")
+    assert has_element?(view, "#{toggle}[data-flag=lint_rule]", "turn this into a lint rule")
 
-    view |> element(learn) |> render_click()
-    assert [%{learn_from_this: false}] = ReviewServer.get_state(rid).global_comments
-    refute has_element?(view, "#{learn}[checked]")
+    view |> element(instructions) |> render_click()
+
+    assert [%{correct_instructions: true, lint_rule: false}] =
+             ReviewServer.get_state(rid).global_comments
+
+    assert has_element?(view, "#{instructions}[checked]")
+    refute has_element?(view, "#{lint}[checked]")
+
+    view |> element(lint) |> render_click()
+
+    assert [%{correct_instructions: true, lint_rule: true}] =
+             ReviewServer.get_state(rid).global_comments
+
+    view |> element(instructions) |> render_click()
+
+    assert [%{correct_instructions: false, lint_rule: true}] =
+             ReviewServer.get_state(rid).global_comments
+
+    refute has_element?(view, "#{instructions}[checked]")
+    assert has_element?(view, "#{lint}[checked]")
+  end
+
+  test "a submitted form stores both flags, and editing the comment reopens with them", %{
+    conn: conn
+  } do
+    repo = tmp_git_repo()
+
+    for {instructions?, lint_rule?} <- [{true, false}, {false, true}] do
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+      view |> element("button.add-global-btn") |> render_click()
+
+      render_hook(view, "comment.submit", %{
+        "form_key" => "global",
+        "body" => "flagged",
+        "finding_type" => "issue",
+        "correct_instructions" => instructions?,
+        "lint_rule" => lint_rule?
+      })
+
+      assert [%{id: id, correct_instructions: ^instructions?, lint_rule: ^lint_rule?}] =
+               ReviewServer.get_state(rid).global_comments
+
+      html = view |> element(".global-comments .note button", "Edit") |> render_click()
+
+      assert %{"initialCorrectInstructions" => ^instructions?, "initialLintRule" => ^lint_rule?} =
+               svelte_props(html, form_id("global:edit:#{id}"))
+    end
   end
 
   test "a comment added or removed in one tab updates another tab of the same review", %{
@@ -1196,7 +1268,15 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view =
       mount_unbound(conn, %ReviewState{
         files: [@plain_file],
-        global_comments: [%{id: "g1", body: body, finding_type: :issue, learn_from_this: false}]
+        global_comments: [
+          %{
+            id: "g1",
+            body: body,
+            finding_type: :issue,
+            correct_instructions: false,
+            lint_rule: false
+          }
+        ]
       })
 
     card = view |> element(".global-comments .note") |> render()

@@ -63,7 +63,9 @@ test.describe("multiple open comment forms", () => {
 			await newLine(fileSection, 1).click();
 			const first = formAt(fileSection, 1);
 			await expect(first).toBeVisible();
-			await expect(first.locator("input[type=checkbox]"), "the lint-rule checkbox defaults off").not.toBeChecked();
+			for (const name of [/Correct your instructions\/skills/, /Turn this into a lint rule/]) {
+				await expect(first.getByRole("checkbox", { name }), "each agent-instruction checkbox defaults off").not.toBeChecked();
+			}
 			await first.locator("textarea").fill("comment for line 1");
 
 			await dragLines(page, fileSection, 3, 5);
@@ -100,10 +102,10 @@ test.describe("multiple open comment forms", () => {
 				.locator('tr.diff-line:has(td.diff-line-num span[data-line-new-num="1"])')
 				.first();
 			await expect(anchorRow).toHaveClass(/has-inline-comment/);
-			const learn = commentRowAt(fileSection, 1).locator(".inline-comment .learn-toggle input");
-			await expect(learn).not.toBeChecked();
-			await learn.check();
-			await expect(learn, "the rendered comment's lint-rule toggle flips").toBeChecked();
+			const lintRule = commentRowAt(fileSection, 1).locator(".inline-comment .flag-toggle[data-flag=lint_rule] input");
+			await expect(lintRule).not.toBeChecked();
+			await lintRule.check();
+			await expect(lintRule, "the rendered comment's lint-rule toggle flips").toBeChecked();
 
 			// Meta+Enter on macOS / Ctrl+Enter elsewhere: both map to the
 			// form's handler because the JS check is (metaKey || ctrlKey).
@@ -232,7 +234,7 @@ test.describe("multiple open comment forms", () => {
 
 			await kept.getByRole("button", { name: /^Add Comment$/ }).click();
 			await expect(commentRowAt(lib, 1)).toContainText("question L1 (new)");
-			await expect(commentRowAt(lib, 1).getByRole("checkbox")).toBeChecked();
+			await expect(commentRowAt(lib, 1).getByRole("checkbox", { name: /turn this into a lint rule/ })).toBeChecked();
 			await expect(commentRowAt(lib, 1)).toContainText("kept question");
 
 			// A reload restores each open form's text and every posted comment.

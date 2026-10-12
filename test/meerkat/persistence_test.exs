@@ -23,7 +23,14 @@ defmodule Meerkat.PersistenceTest do
 
   describe "held_comments?/3" do
     setup %{repo: repo, review_id: id} do
-      comment = %{id: "c1", body: "keep me", finding_type: :issue, learn_from_this: false}
+      comment = %{
+        id: "c1",
+        body: "keep me",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false
+      }
+
       :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1", comments: [comment]})
     end
 
@@ -51,7 +58,8 @@ defmodule Meerkat.PersistenceTest do
         side: :new,
         body: "tighten this",
         finding_type: :issue,
-        learn_from_this: true,
+        correct_instructions: true,
+        lint_rule: false,
         created_at: "2026-05-10T00:00:00Z"
       }
 
@@ -68,6 +76,8 @@ defmodule Meerkat.PersistenceTest do
       assert reloaded.body == "tighten this"
       assert reloaded.finding_type == "issue"
       assert reloaded.side == "new"
+      assert reloaded.correct_instructions == true
+      assert reloaded.lint_rule == false
     end
 
     test "MapSet ↔ JSON array round-trip", %{repo: repo, review_id: id} do
@@ -152,7 +162,8 @@ defmodule Meerkat.PersistenceTest do
         edit_id: "abc-123",
         initial_body: "previous body",
         initial_finding_type: "suggestion",
-        initial_learn_from_this: true
+        initial_correct_instructions: false,
+        initial_lint_rule: true
       }
 
       :ok = Persistence.save(repo, id, %ReviewState{open_forms: [form]})
@@ -164,7 +175,8 @@ defmodule Meerkat.PersistenceTest do
       assert loaded_form.edit_id == "abc-123"
       assert loaded_form.initial_body == "previous body"
       assert loaded_form.initial_finding_type == "suggestion"
-      assert loaded_form.initial_learn_from_this == true
+      assert loaded_form.initial_correct_instructions == false
+      assert loaded_form.initial_lint_rule == true
     end
 
     test "a snapshot holding one legacy open_form loads it as the only open form",
@@ -338,7 +350,8 @@ defmodule Meerkat.PersistenceTest do
               id: "c1",
               body: "legacy",
               finding_type: "issue",
-              learn_from_this: false,
+              correct_instructions: false,
+              lint_rule: false,
               created_at: "2026-01-01T00:00:00Z"
             }
           ]
@@ -390,7 +403,8 @@ defmodule Meerkat.PersistenceTest do
           side: :new,
           body: body,
           finding_type: :thought,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         }
       end
@@ -453,7 +467,8 @@ defmodule Meerkat.PersistenceTest do
       id: Comment.new_id(),
       body: "test",
       finding_type: :issue,
-      learn_from_this: false,
+      correct_instructions: false,
+      lint_rule: false,
       created_at: Comment.now()
     })
   end

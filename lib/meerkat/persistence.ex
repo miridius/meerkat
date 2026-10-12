@@ -300,7 +300,8 @@ defmodule Meerkat.Persistence do
       "edit_id" => Map.get(form, :edit_id),
       "initial_body" => Map.get(form, :initial_body),
       "initial_finding_type" => Map.get(form, :initial_finding_type),
-      "initial_learn_from_this" => Map.get(form, :initial_learn_from_this)
+      "initial_correct_instructions" => Map.get(form, :initial_correct_instructions),
+      "initial_lint_rule" => Map.get(form, :initial_lint_rule)
     }
   end
 
@@ -379,7 +380,8 @@ defmodule Meerkat.Persistence do
       {:edit_id, "edit_id"},
       {:initial_body, "initial_body"},
       {:initial_finding_type, "initial_finding_type"},
-      {:initial_learn_from_this, "initial_learn_from_this"}
+      {:initial_correct_instructions, "initial_correct_instructions"},
+      {:initial_lint_rule, "initial_lint_rule"}
     ]
     |> Enum.reduce(base, fn {atom, str}, acc ->
       case Map.get(form, str) || Map.get(form, atom) do

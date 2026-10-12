@@ -343,7 +343,13 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       files: [%{file_name: "src/widget.rs"}, %{file_name: "lib/other.ex"}],
       pr: %{number: 7, title: "t", url: "u"},
       global_comments: [
-        %{finding_type: :issue, body: "global note", learn_from_this: false, id: "g1"}
+        %{
+          finding_type: :issue,
+          body: "global note",
+          correct_instructions: false,
+          lint_rule: false,
+          id: "g1"
+        }
       ],
       comments: [
         %{
@@ -354,7 +360,8 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
           end_line: 2,
           finding_type: :suggestion,
           body: "swap it",
-          learn_from_this: true
+          correct_instructions: true,
+          lint_rule: true
         },
         %{
           id: "i2",
@@ -364,7 +371,8 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
           end_line: 5,
           finding_type: "",
           body: "multi-line",
-          learn_from_this: false
+          correct_instructions: false,
+          lint_rule: false
         }
       ]
     }
@@ -375,16 +383,14 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert length(payload.comments) == 2
     end
 
-    test "single-line inline comment uses line + side" do
+    test "single-line inline comment uses line + side, without agent-instruction text" do
       [first, _] = ReviewLive.github_payload_for_test(@pr_state).comments
 
       assert first == %{
                path: "src/widget.rs",
                line: 2,
                side: "RIGHT",
-               body:
-                 "**suggestion:** swap it\n\n_please turn this into a lint rule, the way this " <>
-                   "repo adds lint rules, so this class of issue is caught next time._"
+               body: "**suggestion:** swap it"
              }
     end
 
@@ -671,34 +677,49 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
   end
 
-  describe "github_payload lint-rule suffixes on folded sections" do
-    @learn_state %ReviewState{
+  describe "github_payload folded sections" do
+    @flagged_state %ReviewState{
       files: [%{file_name: "a.ex"}],
       pr: %{number: 1},
-      global_comments: [%{id: "g1", finding_type: :issue, body: "note", learn_from_this: true}],
+      global_comments: [
+        %{
+          id: "g1",
+          finding_type: :issue,
+          body: "note",
+          correct_instructions: true,
+          lint_rule: true
+        }
+      ],
       file_comments: [
-        %{id: "f1", file_index: 0, finding_type: :issue, body: "file note", learn_from_this: true}
+        %{
+          id: "f1",
+          file_index: 0,
+          finding_type: :issue,
+          body: "file note",
+          correct_instructions: true,
+          lint_rule: true
+        }
       ],
       commit_message_comments: [
         %{
           id: "c1",
           start_line: 1,
-          end_line: 1,
+          end_line: 2,
           finding_type: :issue,
           body: "subject note",
-          learn_from_this: true
+          correct_instructions: true,
+          lint_rule: true
         }
       ]
     }
 
-    test "global, file and commit-message sections each end with the lint-rule suffix" do
-      payload = ReviewLive.github_payload_for_test(@learn_state)
+    test "carry no agent-instruction text, whatever the flags" do
+      payload = ReviewLive.github_payload_for_test(@flagged_state)
 
       assert String.split(payload.body, "\n\n---\n\n") == [
-               "**issue:** note\n\n_please turn this into a lint rule._",
-               "**a.ex**:\n\n**issue:** file note\n\n_please turn this into a lint rule._",
-               "**commit message (line 1)**:\n\n**issue:** subject note\n\n" <>
-                 "_please turn this into a lint rule._"
+               "**issue:** note",
+               "**a.ex**:\n\n**issue:** file note",
+               "**commit message (line 1-2)**:\n\n**issue:** subject note"
              ]
     end
   end
@@ -715,34 +736,6 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
 
       absent = %ReviewState{files: [%{file_name: "other.ex", effective_oid: "abc"}]}
       assert ReviewLive.missing_effective_oid_for_test(absent, "a.ex")
-    end
-  end
-
-  describe "github_payload comments without the lint-rule flag stay bare" do
-    test "no lint-rule suffix without learn_from_this" do
-      state = %ReviewState{
-        files: [%{file_name: "a.ex"}],
-        pr: %{number: 1},
-        global_comments: [%{id: "g1", finding_type: :issue, body: "note", learn_from_this: false}],
-        comments: [
-          %{
-            id: "i1",
-            file_index: 0,
-            side: "new",
-            start_line: 1,
-            end_line: 1,
-            finding_type: :issue,
-            body: "inline note",
-            learn_from_this: false
-          }
-        ]
-      }
-
-      payload = ReviewLive.github_payload_for_test(state)
-      refute payload.body =~ "lint rule"
-
-      [%{body: inline_body}] = payload.comments
-      refute inline_body =~ "lint rule"
     end
   end
 end

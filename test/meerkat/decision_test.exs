@@ -46,7 +46,14 @@ defmodule Meerkat.DecisionTest do
         repo: repo
       } do
         review = %ReviewState{
-          global_comments: [%{finding_type: "question", body: "Why?", learn_from_this: false}]
+          global_comments: [
+            %{
+              finding_type: "question",
+              body: "Why?",
+              correct_instructions: false,
+              lint_rule: false
+            }
+          ]
         }
 
         assert {:ok, {unquote(tag), payload}} = Decision.submit_review(unquote(tag), review, repo)
@@ -97,7 +104,9 @@ defmodule Meerkat.DecisionTest do
       refute_receive {:awaited, _}, 50
 
       review = %ReviewState{
-        global_comments: [%{finding_type: :question, body: "Why?", learn_from_this: false}]
+        global_comments: [
+          %{finding_type: :question, body: "Why?", correct_instructions: false, lint_rule: false}
+        ]
       }
 
       ExUnit.CaptureLog.capture_log(fn ->
@@ -134,7 +143,12 @@ defmodule Meerkat.DecisionTest do
 
         review = %ReviewState{
           global_comments: [
-            %{finding_type: :question, body: "Not delivered?", learn_from_this: false}
+            %{
+              finding_type: :question,
+              body: "Not delivered?",
+              correct_instructions: false,
+              lint_rule: false
+            }
           ]
         }
 
@@ -155,7 +169,14 @@ defmodule Meerkat.DecisionTest do
         )
 
       review = %ReviewState{
-        global_comments: [%{finding_type: :question, body: "After?", learn_from_this: false}]
+        global_comments: [
+          %{
+            finding_type: :question,
+            body: "After?",
+            correct_instructions: false,
+            lint_rule: false
+          }
+        ]
       }
 
       assert {:ok, _} = Decision.submit_review(:reject, review, repo)

@@ -109,19 +109,21 @@ defmodule Meerkat.ReviewServer do
   end
 
   @doc """
-  Flip the `learn_from_this` flag on the comment identified by
-  `(surface, id)`. No-op if the id isn't found on that surface.
+  Set an agent-instruction flag (`:correct_instructions` or
+  `:lint_rule`) on the comment identified by `(surface, id)`. No-op
+  if the id isn't found on that surface.
   """
-  @spec set_learn_from_this(
+  @spec set_flag(
           review_id,
           :inline | :file | :global | :commit_msg,
           String.t(),
+          :correct_instructions | :lint_rule,
           boolean()
         ) :: ReviewState.t()
-  def set_learn_from_this(review_id, surface, id, learn?)
+  def set_flag(review_id, surface, id, flag, value)
       when surface in [:inline, :file, :global, :commit_msg] and is_binary(id) and
-             is_boolean(learn?) do
-    GenServer.call(via(review_id), {:set_learn_from_this, surface, id, learn?})
+             flag in [:correct_instructions, :lint_rule] and is_boolean(value) do
+    GenServer.call(via(review_id), {:set_flag, surface, id, flag, value})
   end
 
   @doc "Mark/unmark a file as reviewed (file_name granularity)."
@@ -257,11 +259,11 @@ defmodule Meerkat.ReviewServer do
     end)
   end
 
-  def handle_call({:set_learn_from_this, surface, id, learn?}, _from, ctx) do
+  def handle_call({:set_flag, surface, id, flag, value}, _from, ctx) do
     key = surface_key(surface)
 
     update(ctx, fn state ->
-      Map.update!(state, key, &set_learn_from_this(&1, id, learn?))
+      Map.update!(state, key, &set_flag(&1, id, flag, value))
     end)
   end
 
@@ -317,9 +319,9 @@ defmodule Meerkat.ReviewServer do
 
   defp reject_comment(comments, id), do: Enum.reject(comments, fn c -> c.id == id end)
 
-  defp set_learn_from_this(comments, id, learn?) do
+  defp set_flag(comments, id, flag, value) do
     Enum.map(comments, fn c ->
-      if c.id == id, do: Map.put(c, :learn_from_this, learn?), else: c
+      if c.id == id, do: Map.put(c, flag, value), else: c
     end)
   end
 

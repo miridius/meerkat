@@ -16,8 +16,24 @@
     body_html?: string;
     finding_type: FindingType | string;
     created_at: string;
-    learn_from_this?: boolean | null;
+    correct_instructions?: boolean | null;
+    lint_rule?: boolean | null;
   };
+
+  type Flag = "correct_instructions" | "lint_rule";
+
+  const flags: { flag: Flag; title: string; label: string }[] = [
+    {
+      flag: "correct_instructions",
+      title: "Ask the agent to correct the instructions or skills behind this",
+      label: "correct your instructions/skills",
+    },
+    {
+      flag: "lint_rule",
+      title: "Ask the agent to add a lint rule that catches this",
+      label: "turn this into a lint rule",
+    },
+  ];
 
   type LiveBridge = {
     pushEvent: (event: string, payload: unknown, cb?: (reply: unknown) => void) => void;
@@ -39,12 +55,13 @@
     live.pushEvent("comment.remove", { surface: "inline", id: comment.id });
   }
 
-  function toggleLearn(e: Event) {
+  function toggleFlag(flag: Flag, e: Event) {
     const target = e.currentTarget as HTMLInputElement;
-    live.pushEvent("comment.toggle_learn", {
+    live.pushEvent("comment.toggle_flag", {
       surface: "inline",
       id: comment.id,
-      learn: target.checked ? "true" : "false",
+      flag,
+      value: target.checked ? "true" : "false",
     });
   }
 </script>
@@ -57,14 +74,16 @@
         : comment.finding_type}
     </span>
     <span class="line-anchor">{lineLabel} ({comment.side === "old" ? "old" : "new"})</span>
-    <label class="learn-toggle" title="Ask the agent to add a lint rule that catches this">
-      <input
-        type="checkbox"
-        checked={!!comment.learn_from_this}
-        onchange={toggleLearn}
-      />
-      <span>turn this into a lint rule</span>
-    </label>
+    {#each flags as { flag, title, label } (flag)}
+      <label class="flag-toggle" data-flag={flag} {title}>
+        <input
+          type="checkbox"
+          checked={!!comment[flag]}
+          onchange={(e) => toggleFlag(flag, e)}
+        />
+        <span>{label}</span>
+      </label>
+    {/each}
     <div class="actions">
       <button type="button" class="action" onclick={edit}>Edit</button>
       <button type="button" class="action" onclick={remove}>Remove</button>
@@ -96,7 +115,7 @@
     align-items: baseline;
     margin-bottom: 0.25rem;
   }
-  .learn-toggle {
+  .flag-toggle {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
@@ -105,7 +124,7 @@
     cursor: pointer;
     user-select: none;
   }
-  .learn-toggle input[type="checkbox"] {
+  .flag-toggle input[type="checkbox"] {
     margin: 0;
   }
   .actions {
