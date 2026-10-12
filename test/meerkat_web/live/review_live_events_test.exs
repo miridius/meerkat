@@ -411,16 +411,49 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     stage(repo, "logo.bin", <<0, 1, 3>>)
     stage(repo, "b.txt", "new\n")
     {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
-    # A file the filter hides still counts toward the toolbar total.
-    view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["txt"])})
-
-    assert has_element?(view, ".diff-toolbar .line-count-added", ~r/^\+3$/)
-    assert has_element?(view, ".diff-toolbar .line-count-removed", ~r/^-1$/)
 
     view = mount_unbound(conn, state)
+    assert has_element?(view, ".toolbar-line-counts", ~r/^\s*\+3\s*-1\s*$/)
     assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*a\.txt\s*\+2\s*-1\s*$/)
     assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*b\.txt\s*\+1\s*-0\s*$/)
     assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*logo\.bin\s*$/)
+  end
+
+  test "the toolbar shows the counts of the expanded files the filter shows, of the whole diff's",
+       %{conn: conn} do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    stage(repo, "a.txt", "one\ntwo\n")
+    stage(repo, "c.md", "x\n")
+    commit(repo, "base")
+    stage(repo, "a.txt", "one\nTWO\nthree\n")
+    stage(repo, "b.txt", "new\n")
+    stage(repo, "c.md", "")
+    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+
+    view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["md"])})
+
+    assert has_element?(
+             view,
+             ".toolbar-line-counts",
+             ~r/^\s*showing\s*\+3\s*-1\s*of\s*\+3\s*-2\s*$/
+           )
+
+    view |> element("button.file-row", "b.txt") |> render_click()
+
+    assert has_element?(
+             view,
+             ".toolbar-line-counts",
+             ~r/^\s*showing\s*\+2\s*-1\s*of\s*\+3\s*-2\s*$/
+           )
+
+    view = mount_unbound(conn, %{state | approved_file_names: MapSet.new(["a.txt"])})
+
+    assert has_element?(
+             view,
+             ".toolbar-line-counts",
+             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\+3\s*-2\s*$/
+           )
   end
 
   test "pending answers render as a banner with markdown questions and answers", %{conn: conn} do

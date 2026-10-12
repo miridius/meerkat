@@ -35,10 +35,10 @@ When the UI does open, the reviewer sees, top-to-bottom:
 
 1. **Diff toolbar** — sticky at the top. Files panel toggle, PR
    pill (links to GitHub when `state.pr` is populated), the title
-   (PR title / commit subject / branch), the diff's line counts
-   (see [Line counts](#line-counts)), `base ← head` branch chip
-   with the repo path on its tooltip, connection pill, Split /
-   Unified, Wrap, `⚙` settings popover (font size + tab size).
+   (PR title / commit subject / branch), `base ← head` branch chip
+   with the repo path on its tooltip, then on the right the diff's
+   line counts (see [Line counts](#line-counts)), connection pill,
+   Split / Unified, Wrap, `⚙` settings popover (font size + tab size).
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup
@@ -62,7 +62,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
    gutter clicks.
 7. **Review body** — file-filter sidebar on the left, file-list
    diffs on the right (see [file-filter.md](file-filter.md)).
-   Each file header shows that file's line counts after its name.
+   Each file header shows that file's line counts on the right, just
+   left of its buttons.
    In every review mode, a binary file shows a notice in place of its
    diff, and meerkat never reads its content.
    In Split view, buttons that reveal hidden context lines around
@@ -80,8 +81,12 @@ Like GitHub, the toolbar and each file header show `+x -y`: the
 number of added lines in green and removed lines in red, without
 GitHub's diffstat squares. Counts are taken from the diff meerkat
 shows, so in staged reviews a line whose only change is whitespace
-is not counted. The toolbar's counts cover every file in the diff,
-including files the file filter hides. A binary file shows no counts.
+is not counted. A binary file shows no counts.
+
+When every file is shown expanded, the toolbar shows one total for
+the whole diff, `+120 -30`. When the file filter hides a file or a
+file is collapsed, it shows the total of the expanded files the
+filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`.
 
 ## What state lives where
 

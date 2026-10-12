@@ -1019,6 +1019,9 @@ defmodule MeerkatWeb.ReviewLive do
         repo_path={@repo_path}
         open_forms={@open_forms}
         version={@version}
+        expanded_files={
+          expanded_files(@state, @visible_indices, @expanded_approved, @collapsed_unapproved)
+        }
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
       <.pending_answers_banner :if={@pending_answers} pending_answers={@pending_answers} />
@@ -1791,6 +1794,9 @@ defmodule MeerkatWeb.ReviewLive do
   attr :open_forms, :list, required: true
   attr :version, :map, required: true
 
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and the one call site passes it
+  attr :expanded_files, :list, required: true
+
   defp diff_toolbar(assigns) do
     ~H"""
     <div class="diff-toolbar" id="diff-toolbar" phx-hook="ToolbarHeight">
@@ -1820,11 +1826,6 @@ defmodule MeerkatWeb.ReviewLive do
         {toolbar_title(@state)}
       </div>
 
-      <.line_counts
-        additions={Enum.sum_by(@state.files, & &1.additions)}
-        deletions={Enum.sum_by(@state.files, & &1.deletions)}
-      />
-
       <span
         :if={@state.base_branch && @state.head_branch}
         class="chip branch-chip"
@@ -1844,6 +1845,20 @@ defmodule MeerkatWeb.ReviewLive do
       </span>
 
       <.version_chip version={@version} />
+
+      <span class="toolbar-line-counts">
+        <%= if length(@expanded_files) < length(@state.files) do %>
+          showing
+          <.line_counts
+            additions={Enum.sum_by(@expanded_files, & &1.additions)}
+            deletions={Enum.sum_by(@expanded_files, & &1.deletions)}
+          /> of
+        <% end %>
+        <.line_counts
+          additions={Enum.sum_by(@state.files, & &1.additions)}
+          deletions={Enum.sum_by(@state.files, & &1.deletions)}
+        />
+      </span>
 
       <.connection_indicator />
 
@@ -2379,6 +2394,23 @@ defmodule MeerkatWeb.ReviewLive do
       "." -> ""
       dir -> "#{dir}/"
     end
+  end
+
+  # The files the main list shows with their diff open: the filter
+  # shows them and they are not collapsed.
+  defp expanded_files(state, visible_indices, expanded_approved, collapsed_unapproved) do
+    state.files
+    |> Enum.with_index()
+    |> Enum.filter(fn {file, idx} ->
+      MapSet.member?(visible_indices, idx) and
+        not file_section_collapsed?(
+          state,
+          expanded_approved,
+          collapsed_unapproved,
+          file.file_name
+        )
+    end)
+    |> Enum.map(fn {file, _idx} -> file end)
   end
 
   # Approved files collapse by default; the reviewer can override
