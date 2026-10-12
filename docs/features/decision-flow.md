@@ -110,6 +110,10 @@ a BEAM that starts and finds this marker skips the fast path. The
 launcher starts each review's backend in a newly created run dir, so
 a new invocation still gets the fast path.
 
+Before each BEAM it starts, the shepherd rewrites the run dir's
+`token` and `pid` files if either is missing, so a caller can always
+reattach to a review it keeps alive, however long it waits.
+
 A review whose BEAM ended without a decision and was not respawned
 (a crash in dev mode, a SIGKILL'd BEAM, a crash after the prod
 shepherd's retry) leaves its comments in the review's

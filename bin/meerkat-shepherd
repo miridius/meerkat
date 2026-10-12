@@ -53,11 +53,12 @@ for arg in "$@"; do
   fi
 done
 
+# shellcheck source=bin/meerkat-attach
+source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
+
 # Run as the caller, which re-runs this script detached, with
 # MEERKAT_SERVE_DIR set, to serve the review.
 if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
-  # shellcheck source=bin/meerkat-attach
-  source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
   meerkat_attach "$0" "$@"
 fi
 
@@ -85,8 +86,10 @@ fi
 
 # Browser-open marker: the BEAM opens the review URL only on the first
 # iteration that finds the marker empty, so a respawn doesn't spawn a
-# duplicate tab (the existing tab just reconnects).
-OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
+# duplicate tab (the existing tab just reconnects). It lives in the run
+# dir, which, unlike $TMPDIR, keeps it however long the review waits.
+OPEN_MARKER="$MEERKAT_SERVE_DIR/opened"
+: >"$OPEN_MARKER"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # The caller is not this shepherd's parent, so it reads the exit code
 # from the serve dir.
@@ -111,6 +114,7 @@ trap on_signal TERM INT HUP
 crashed=0
 while true; do
   resolve_release
+  meerkat_restore_run_files
 
   "$RELEASE_DIR/bin/meerkat" \
     eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &

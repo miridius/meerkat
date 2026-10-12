@@ -30,7 +30,10 @@ export MEERKAT_PWD="$ORIG_PWD"
 # the main checkout after its sources are checked out, so it can look
 # newer than sources it was not compiled from; a stamp naming the
 # checkout whose launcher last compiled the build makes the first launch in any
-# other checkout run `mix compile`, which decides what is stale. On
+# other checkout run `mix compile --force`: plain `mix compile` would keep
+# modules whose sources match, and those still carry the other checkout's
+# paths (`Meerkat.DevWatcher` would watch its `lib/`). Otherwise
+# `mix compile` decides what is stale. On
 # compile error, return non-zero WITHOUT aborting the shepherd (set -e
 # is locally disabled around the call so a syntax error in the user's
 # edits keeps the loop alive — we wait for the next source change and
@@ -38,9 +41,14 @@ export MEERKAT_PWD="$ORIG_PWD"
 precompile_if_stale() {
   local lock="_build/${MIX_ENV}/lib/meerkat/.mix/compile.elixir"
   local stamp="_build/${MIX_ENV}/.meerkat-root"
-  if [[ ! -f "$lock" ]] || [[ "$(cat "$stamp" 2>/dev/null)" != "$ROOT" ]] || \
+  local force=""
+  if [[ -f "$lock" && "$(cat "$stamp" 2>/dev/null)" != "$ROOT" ]]; then
+    force="--force"
+  fi
+  if [[ ! -f "$lock" || -n "$force" ]] || \
      [[ -n "$(find lib config mix.exs mix.lock -newer "$lock" -print -quit 2>/dev/null)" ]]; then
-    mix compile --no-warnings-as-errors >&2 || return $?
+    # shellcheck disable=SC2086
+    mix compile --no-warnings-as-errors $force >&2 || return $?
     printf '%s\n' "$ROOT" >"$stamp"
   fi
   return 0
@@ -114,11 +122,12 @@ for arg in "$@"; do
   fi
 done
 
+# shellcheck source=bin/meerkat-attach
+source "$SCRIPT_DIR/meerkat-attach"
+
 # Run as the caller, which re-runs this script detached, with
 # MEERKAT_SERVE_DIR set, to serve the review.
 if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
-  # shellcheck source=bin/meerkat-attach
-  source "$SCRIPT_DIR/meerkat-attach"
   # The re-run takes the user's repo from its working directory.
   cd "$ORIG_PWD"
   meerkat_attach "$SCRIPT_DIR/meerkat-beam" "$@"
@@ -156,17 +165,19 @@ fi
 # put_env dynamic config BEFORE the endpoint binds.
 RESTART_EXIT_CODE=75
 
-# Browser-open marker: a temp file the BEAM creates the FIRST time
-# it successfully calls `open` on the review URL. Subsequent
+# Browser-open marker: a file in the run dir the BEAM stamps the FIRST
+# time it successfully calls `open` on the review URL. Subsequent
 # shepherd iterations (BEAM exit 75 = DevWatcher restart) see the
 # marker and skip the open, so the user's existing tab keeps its
 # reconnect instead of getting a duplicate. `open URL` on macOS
 # doesn't reliably focus an existing tab when the tab is in another
 # Chrome workspace / profile — relying on OS dedupe spammed tabs
 # across restarts. We track our own state.
-OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
-# `mktemp` creates an empty file. The BEAM treats "empty" as
-# "browser not yet opened"; after a successful open it writes "1".
+# Not $TMPDIR, which macOS empties of files three days old. The BEAM
+# treats "empty" as "browser not yet opened"; after a successful open
+# it writes "1".
+OPEN_MARKER="$MEERKAT_SERVE_DIR/opened"
+: >"$OPEN_MARKER"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # The caller is not this shepherd's parent, so it reads the exit code
 # from the serve dir.
@@ -221,6 +232,8 @@ while true; do
     wait_for_source_change
     continue
   fi
+
+  meerkat_restore_run_files
 
   set +e
   mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" &

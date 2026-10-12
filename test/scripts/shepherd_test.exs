@@ -229,6 +229,112 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  # macOS deletes files in $TMPDIR more than three days old, and the
+  # shepherd writes `token` and `pid` only once. A caller reattaching after
+  # a restart then could not authenticate, took the backend for dead,
+  # killed its BEAM and rejected the commit.
+  test "a review whose token and pid files are deleted gets them back when its BEAM restarts" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.write!(Path.join(dir, "i"), "0")
+
+    # The first BEAM deletes both files and asks for a restart; the second
+    # approves only if both are back as they were.
+    fake_release(dir, ~S"""
+    i=$(cat "$I_FILE"); echo $((i + 1)) > "$I_FILE"
+    if [[ "$i" == 0 ]]; then
+      cp "$MEERKAT_SERVE_DIR/token" "$TOKEN_SEEN"
+      rm "$MEERKAT_SERVE_DIR/token" "$MEERKAT_SERVE_DIR/pid"
+      exit 75
+    fi
+    cmp -s "$TOKEN_SEEN" "$MEERKAT_SERVE_DIR/token" || exit 1
+    [[ "$(cat "$MEERKAT_SERVE_DIR/pid")" == "$PPID" ]] || exit 1
+    exit 0
+    """)
+
+    env = [
+      {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+      {"TOKEN_SEEN", Path.join(dir, "token-seen")},
+      {"INPUT_FILE", "/dev/null"}
+    ]
+
+    assert run_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], env, dir) == 0
+  end
+
+  test "a review keeps its run dir and browser-open marker out of $TMPDIR" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    fake_release(dir, ~S"""
+    echo "$MEERKAT_SERVE_DIR $MEERKAT_OPEN_MARKER" > "$SEEN_FILE"
+    """)
+
+    env = [
+      {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+      {"MEERKAT_RUNS_DIR", nil},
+      {"XDG_STATE_HOME", Path.join(dir, "state")},
+      {"TMPDIR", Path.join(dir, "tmp")},
+      {"SEEN_FILE", Path.join(dir, "seen")},
+      {"INPUT_FILE", "/dev/null"}
+    ]
+
+    assert run_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], env, dir) == 0
+    [serve_dir, marker] = dir |> Path.join("seen") |> File.read!() |> String.split()
+    assert Path.dirname(serve_dir) == Path.join([dir, "state", "meerkat", "runs"])
+    assert marker == Path.join(serve_dir, "opened")
+    refute File.exists?(Path.join(dir, "tmp"))
+  end
+
+  test "a review already waiting in the old $TMPDIR run dir is reattached there" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.write!(Path.join(dir, "i"), "0")
+
+    fake_release(dir, ~S"""
+    i=$(cat "$I_FILE"); echo $((i + 1)) > "$I_FILE"
+    """)
+
+    args = ["--commit-msg", "/tmp/msg", "--no-open"]
+    key = :crypto.hash(:sha256, "#{dir}:#{Enum.join(args, " ")}") |> Base.encode16(case: :lower)
+    legacy = Path.join([dir, "tmp", "meerkat-runs", binary_part(key, 0, 16)])
+    File.mkdir_p!(legacy)
+
+    # A backend an older launcher started there. It serves, and decides 5
+    # once the caller has tried to attach (the stub curl signals the FIFO).
+    fifo = Path.join(dir, "attach-ready")
+    assert {_, 0} = System.cmd("mkfifo", [fifo])
+    shepherd = Path.join(dir, "legacy-meerkat-shepherd")
+
+    File.write!(shepherd, ~S"""
+    #!/usr/bin/env bash
+    exec 3<> "$2"
+    echo "1 $$" > "$1/port"
+    read -r -t 10 _ <&3 || exit 1
+    rm -f "$1/port"
+    echo 5 > "$1/exit"
+    """)
+
+    File.chmod!(shepherd, 0o755)
+    backend = Port.open({:spawn_executable, shepherd}, args: [legacy, fifo])
+    {:os_pid, pid} = Port.info(backend, :os_pid)
+    File.write!(Path.join(legacy, "pid"), "#{pid}\n")
+    assert await_file(Path.join(legacy, "port")) =~ ~r/\A1 \d+\z/
+
+    env = [
+      {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+      {"SHEPHERD_TEST_ATTACH_FIFO", fifo},
+      {"MEERKAT_RUNS_DIR", nil},
+      {"MEERKAT_PWD", dir},
+      {"XDG_STATE_HOME", Path.join(dir, "state")},
+      {"TMPDIR", Path.join(dir, "tmp")},
+      {"INPUT_FILE", "/dev/null"}
+    ]
+
+    assert run_launcher(@shepherd, args, env, dir) == 5
+    assert File.read!(Path.join(dir, "i")) == "0"
+    refute File.exists?(legacy)
+  end
+
   for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
     test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
@@ -279,17 +385,26 @@ defmodule Meerkat.ShepherdTest do
       File.mkdir_p!(Path.join(rel, "bin"))
       File.ln_s!(rel, Path.join(dir, "current"))
       # A BEAM that never binds, so the caller keeps polling its run dir.
-      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+      # It says when it starts: until then the shepherd writes to the run
+      # dir, which would race deleting it.
+      File.write!(
+        Path.join([rel, "bin", "meerkat"]),
+        "#!/usr/bin/env bash\ntouch \"$BEAM_STARTED\"\nexec sleep 60\n"
+      )
+
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+      started = Path.join(dir, "beam-started")
 
       port =
         open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
           {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"BEAM_STARTED", started},
           {"INPUT_FILE", "/dev/null"}
         ])
 
       backend = await_backend_pid(runs)
       on_exit(fn -> System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true) end)
+      assert await_file(started) == ""
 
       File.rm_rf!(runs)
 
@@ -372,10 +487,15 @@ defmodule Meerkat.ShepherdTest do
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
     end
 
-    test "a successful compile stamps the build with its checkout" do
+    # Modules whose sources match keep the other checkout's paths unless
+    # forced, so its DevWatcher would watch the other checkout's lib/.
+    test "a build compiled in another checkout is recompiled in full, then stamped with its checkout" do
       {port, dir} = open_dev_shepherd(built: "/elsewhere", exit_codes: [0])
 
       assert await_exit(port, dir) == 0
+
+      assert File.read!(Path.join(dir, "compiles")) ==
+               "compile --no-warnings-as-errors --force\n"
 
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) ==
                Path.join(dir, "root") <> "\n"
@@ -574,13 +694,22 @@ defmodule Meerkat.ShepherdTest do
 
     launcher = Path.join([dir, "root", "bin", "meerkat-beam"])
     File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), launcher)
+
+    File.cp!(
+      Path.join(File.cwd!(), "bin/meerkat-attach"),
+      Path.join([dir, "root", "bin", "meerkat-attach"])
+    )
+
     File.chmod!(launcher, 0o755)
     File.write!(Path.join(dir, "seq"), Enum.join(Keyword.get(opts, :exit_codes, []), " "))
     File.write!(Path.join(dir, "i"), "0")
 
     File.write!(Path.join(stubs, "mix"), """
     #!/usr/bin/env bash
-    if [[ "$1" == compile ]]; then exit #{Keyword.get(opts, :compile_code, 0)}; fi
+    if [[ "$1" == compile ]]; then
+      echo "$*" >> "$COMPILES_FILE"
+      exit #{Keyword.get(opts, :compile_code, 0)}
+    fi
     i=$(cat "$I_FILE"); codes=($(cat "$SEQ_FILE"))
     echo $((i + 1)) > "$I_FILE"
     exit "${codes[$i]:-0}"
@@ -601,12 +730,22 @@ defmodule Meerkat.ShepherdTest do
           {"MEERKAT_SERVE_DIR", Path.join(dir, "serve")},
           {"MEERKAT_SERVE_TOKEN", "t"},
           {"SEQ_FILE", Path.join(dir, "seq")},
+          {"COMPILES_FILE", Path.join(dir, "compiles")},
           {"INPUT_FILE", "/dev/null"}
         ],
         cd: Path.join(dir, "review")
       )
 
     {port, dir}
+  end
+
+  # Points `dir`'s `current` at a release whose BEAM runs `body`.
+  defp fake_release(dir, body) do
+    beam = Path.join([dir, "rel", "bin", "meerkat"])
+    File.mkdir_p!(Path.dirname(beam))
+    File.ln_s!(Path.join(dir, "rel"), Path.join(dir, "current"))
+    File.write!(beam, "#!/usr/bin/env bash\n" <> body)
+    File.chmod!(beam, 0o755)
   end
 
   # The detached shepherd's pid, once the caller has started it.

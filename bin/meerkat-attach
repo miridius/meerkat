@@ -9,8 +9,9 @@
 #
 # A backend's run dir holds `pid` (its shepherd), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
-# (once a BEAM has announced the review), `index` (a held temporary
-# index, if any) and, once it has exited, `exit`. The attach stream's
+# (once a BEAM has announced the review), `opened` (the browser-open
+# marker), `index` (a held temporary index, if any) and, once it has
+# exited, `exit`. The attach stream's
 # frames are documented in `MeerkatWeb.AttachController`.
 
 meerkat_attach() {
@@ -18,13 +19,20 @@ meerkat_attach() {
   shift
   set +e
 
-  local key runs
+  local key runs legacy
   # Keyed like the port, so a rerun of the same review finds its run dir.
   key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
-  runs="${MEERKAT_RUNS_DIR:-${TMPDIR:-/tmp}/meerkat-runs}"
+  # Not $TMPDIR: macOS deletes its files once they are three days old,
+  # and a review can wait longer than that.
+  runs="${MEERKAT_RUNS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meerkat/runs}"
   mkdir -p "$runs"
 
   _MA_DIR="$runs/$key"
+  # A review started before run dirs moved out of $TMPDIR lives on there.
+  legacy="${TMPDIR:-/tmp}/meerkat-runs/$key"
+  if [[ -z "${MEERKAT_RUNS_DIR:-}" && ! -d "$_MA_DIR" && -d "$legacy" ]]; then
+    _MA_DIR="$legacy"
+  fi
   _MA_RUN="$(uuidgen)"
   _MA_OWNED=0
   _MA_OFFSET=0
@@ -50,6 +58,7 @@ meerkat_attach() {
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
+      _MA_DIR="$runs/$key"
       if ! _ma_start_server "$self" "$@"; then
         # Another caller started one first.
         [[ -d "$_MA_DIR" ]] && continue
@@ -77,6 +86,19 @@ meerkat_attach() {
       sleep 0.2
     fi
   done
+}
+
+# A shepherd calls this before each BEAM it starts. It rewrites a missing
+# `token` or `pid`, so losing one cannot leave callers unable to reattach,
+# or taking a live backend for dead.
+meerkat_restore_run_files() {
+  local dir="$MEERKAT_SERVE_DIR"
+  if [[ ! -f "$dir/token" ]]; then
+    { printf '%s\n' "$MEERKAT_SERVE_TOKEN" >"$dir/token.tmp" && mv -f "$dir/token.tmp" "$dir/token"; } 2>/dev/null || true
+  fi
+  if [[ ! -f "$dir/pid" ]]; then
+    { echo "$$" >"$dir/pid.tmp" && mv -f "$dir/pid.tmp" "$dir/pid"; } 2>/dev/null || true
+  fi
 }
 
 # Record every process above the caller, from its parent up to pid 1, so

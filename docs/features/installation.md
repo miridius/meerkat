@@ -89,5 +89,10 @@ No marker file; the launcher script content IS the mode. Cat
   the stable review port. Intended for tests/debugging; invalid
   values are reported by the CLI as an invalid preferred port.
 - `MEERKAT_RUNS_DIR` — where review backends keep their run dirs
-  (default `$TMPDIR/meerkat-runs`). The e2e runner gives each test
-  its own.
+  (default `${XDG_STATE_HOME:-~/.local/state}/meerkat/runs`). The e2e
+  runner gives each test its own. The default is outside `$TMPDIR`
+  because macOS deletes files there that are more than three days
+  old, which would strand a review left waiting that long. With the
+  default, a caller that finds no run dir for its review there uses
+  one in the old `$TMPDIR/meerkat-runs`, so a review already waiting
+  when this changed keeps going.
