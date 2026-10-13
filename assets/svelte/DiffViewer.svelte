@@ -1169,6 +1169,8 @@
   :global(.diff-content tr.diff-line > td.drag-selecting-side) {
     /* biome-ignore lint/complexity/noImportantStyles: the diff library sets each cell's background-color inline, which only `!important` can override; without it the add/del shading masks the drag indicator. */
     background-color: rgba(31, 111, 235, 0.32) !important;
+    /* A moved line's tint gives way, as the rulers don't. */
+    --meerkat-moved-tint: transparent;
     box-shadow: inset 0 0 0 9999px rgba(31, 111, 235, 0.18);
   }
   /* Visual indicator that a line is covered by an inline comment.
