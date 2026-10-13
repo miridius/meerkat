@@ -1,6 +1,6 @@
 // Refuses each path given to `scripts/mutate.sh <path…>` that is not an
-// existing lib/**/*.ex file. muex finds nothing to mutate in such a path,
-// writes no report, and the run would pass with no mutant judged.
+// existing lib/**/*.ex file, named relative to the repo root. muex skips
+// such a path without a word, so the run would pass without judging it.
 import { statSync } from "node:fs";
 
 const bad = process.argv.slice(2).filter((path) => {

@@ -22,7 +22,8 @@
 #                                   --staged). The lefthook pre-commit
 #                                   hook runs this mode.
 #   scripts/mutate.sh <path…>     — mutate every line of the named
-#                                   files.
+#                                   lib/**/*.ex files, refusing any
+#                                   other path.
 #
 # Every mode fails when any mutant survives or no test reaches it.
 #

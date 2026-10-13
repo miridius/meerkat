@@ -531,6 +531,24 @@ defmodule Meerkat.PreCommitHookTest do
     refute File.exists?(Path.join(ctx.muex, "args"))
   end
 
+  test "`mutate.sh <path>` mutates lib/**/*.ex files the path check accepts", ctx do
+    File.rm!(Path.join(ctx.stubs, "bun"))
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {_, 0} =
+             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/two.ex"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
+
+    assert ["--files", "lib/meerkat/one.ex,lib/meerkat/two.ex"] in Enum.chunk_every(
+             muex_args(ctx),
+             2,
+             1
+           )
+  end
+
   describe "while two other gates run" do
     setup ctx do
       {:ok, first: hold_gate_slot(ctx.work), second: hold_gate_slot(ctx.work)}
