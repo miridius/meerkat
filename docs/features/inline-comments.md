@@ -100,7 +100,8 @@ Each rendered comment shows:
   flips `correct_instructions` or `lint_rule` via a
   `comment.toggle_flag` push event without re-opening the form).
 - **Edit** button → reopens the form at the same anchor, prefilled
-  with the comment's body and finding-type. Submitting an edited
+  with the comment's body, finding-type and both agent-instruction
+  flags. Submitting an edited
   form removes the old comment and adds a new one.
 - **Remove** button → drops the comment from the file's comment
   list; the row removes itself when it has no remaining children.

@@ -66,6 +66,7 @@ test.describe("multiple open comment forms", () => {
 			for (const name of [/Correct your instructions\/skills/, /Turn this into a lint rule/]) {
 				await expect(first.getByRole("checkbox", { name }), "each agent-instruction checkbox defaults off").not.toBeChecked();
 			}
+			await first.getByRole("checkbox", { name: /Correct your instructions\/skills/ }).check();
 			await first.locator("textarea").fill("comment for line 1");
 
 			await dragLines(page, fileSection, 3, 5);
@@ -102,6 +103,10 @@ test.describe("multiple open comment forms", () => {
 				.locator('tr.diff-line:has(td.diff-line-num span[data-line-new-num="1"])')
 				.first();
 			await expect(anchorRow).toHaveClass(/has-inline-comment/);
+			const instructions = commentRowAt(fileSection, 1).locator(
+				".inline-comment .flag-toggle[data-flag=correct_instructions] input",
+			);
+			await expect(instructions, "the form's instructions box posts with the comment").toBeChecked();
 			const lintRule = commentRowAt(fileSection, 1).locator(".inline-comment .flag-toggle[data-flag=lint_rule] input");
 			await expect(lintRule).not.toBeChecked();
 			await lintRule.check();
