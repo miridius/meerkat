@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 # Land PRs one at a time, like a merge queue: scripts/merge-queue.sh <PR>[@<sha>]...
 #
-# With @<sha>, the PR is landed only at that reviewed commit, or at GitHub's
-# own merge of main into it. Without one, the head first read is pinned.
+# With @<sha>, the PR is landed only at that reviewed commit, or at this
+# script's own rebase of it. Without one, the head first read is pinned.
 #
-# main requires green checks on a branch up to date with main, and signed
-# commits. For each PR in order: merge main into a behind branch on GitHub
-# (`gh pr update-branch`; GitHub signs that merge commit, while `--rebase`
-# would leave the rewritten commits unsigned), wait for every check on the
-# head, squash-merge with the head pinned only if none failed (GitHub signs
-# the squash commit), and delete the remote branch. Merges go through GitHub's
-# asynchronous merge API, which GitHub requires for PRs in a stack. Prints one
-# line per landed PR. At the first PR it cannot land, it prints the reason
-# (with gh's output when there is any), then `not attempted:` and the remaining
-# arguments, and exits 1. Each wait for GitHub
-# gives up after MERGE_QUEUE_TIMEOUT seconds.
+# main requires green checks on a branch up to date with main. For each PR in
+# order: rebase a behind branch onto its base locally and push it (see
+# rebase_onto_base), wait for every check on the head, squash-merge with the
+# head pinned only if none failed, and delete the remote branch. Merges go
+# through GitHub's asynchronous merge API, which GitHub requires for PRs in a
+# stack. Prints one line per landed PR. At the first PR it cannot land, it
+# prints the reason (with gh's or git's output when there is any), then
+# `not attempted:` and the remaining arguments, and exits 1. Each wait for
+# GitHub gives up after MERGE_QUEUE_TIMEOUT seconds.
 set -uo pipefail
 
 poll=${MERGE_QUEUE_POLL:-15}
@@ -33,32 +31,58 @@ wait_for() {
   sleep "$poll"
 }
 
+# The temporary worktree rebase_onto_base works in, removed however the
+# script ends.
+tmp=""
+cleanup() {
+  [ -n "$tmp" ] || return 0
+  [ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree" >/dev/null 2>&1
+  rm -rf "$tmp"
+  tmp=""
+}
+trap cleanup EXIT
+
+# Rebase $branch, pinned at $head, onto origin/$base in a temporary worktree
+# and push it with a lease on $head, then set $rebased to the new head. The
+# push runs the pre-push hook, so the rebased commits pass the same gates as
+# any other push, mutation testing included. Merge commits are refused there,
+# and the rebase drops any the branch had. GitHub's update-branch would
+# bring main in on GitHub, where no local gate runs.
+rebase_onto_base() {
+  local out
+  out=$(git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" \
+    "+refs/heads/$branch:refs/remotes/origin/$branch" 2>&1) || fail "could not be fetched" "$out"
+  tmp=$(mktemp -d) || fail "could not make a temporary worktree"
+  # No hooks: post-checkout would run lefthook, which the new worktree lacks.
+  out=$(git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$head" 2>&1) ||
+    fail "could not be checked out at $head" "$out"
+  if ! out=$(git -C "$tmp/tree" rebase "origin/$base" 2>&1); then
+    git -C "$tmp/tree" rebase --abort >/dev/null 2>&1
+    fail "conflicts with $base" "$out"
+  fi
+  rebased=$(git -C "$tmp/tree" rev-parse HEAD)
+  # The gates print thousands of lines; their end says what failed.
+  out=$(git -C "$tmp/tree" push --force-with-lease="refs/heads/$branch:$head" origin \
+    "HEAD:refs/heads/$branch" 2>&1) || fail "rebase onto $base could not be pushed" "$(tail -n 40 <<<"$out")"
+  cleanup
+}
+
 land() {
-  local state head merge_state checks branch out expected=$reviewed updated_from="" note=""
+  local state head merge_state checks branch base out expected=$reviewed updated_from="" note="" rebased
   local deadline=$((SECONDS + timeout))
   while :; do
     out=$(gh pr view "$pr" \
-      --json state,headRefOid,headRefName,mergeStateStatus,statusCheckRollup \
-      -q '[.state, .headRefOid, .headRefName, .mergeStateStatus,
+      --json state,headRefOid,headRefName,baseRefName,mergeStateStatus,statusCheckRollup \
+      -q '[.state, .headRefOid, .headRefName, .baseRefName, .mergeStateStatus,
            (.statusCheckRollup | length)] | @tsv' 2>&1) || fail "could not be read" "$out"
-    IFS=$'\t' read -r state head branch merge_state checks <<<"$out"
+    IFS=$'\t' read -r state head branch base merge_state checks <<<"$out"
     [ -n "${head:-}" ] || fail "could not be read" "$out"
     [ "$state" = OPEN ] || fail "is $state"
 
-    if [ -n "$updated_from" ]; then
-      if [ "$head" = "$updated_from" ]; then
-        wait_for "the update with main"
-        continue
-      fi
-      # Accept a new head only as GitHub's signed merge of main into the pinned one.
-      out=$(gh api "repos/{owner}/{repo}/commits/$head" --jq '.commit.verification.verified,
-        .commit.verification.reason, .committer.login, .parents[].sha' 2>&1) ||
-        fail "update commit $head could not be read" "$out"
-      [ "$(sed -n 1p <<<"$out")" = true ] || fail "update commit $head is not verified" "$out"
-      [ "$(sed -n 3p <<<"$out")" = web-flow ] && grep -qxF "$updated_from" <<<"$out" ||
-        fail "head $head is not GitHub's update of $updated_from" "$out"
-      expected=$head
-      updated_from=""
+    # GitHub can report the head from before the rebase was pushed for a while.
+    if [ -n "$updated_from" ] && [ "$head" = "$updated_from" ]; then
+      wait_for "GitHub to see the rebased head"
+      continue
     fi
     [ -n "$expected" ] || expected=$head
     [ "$head" = "$expected" ] || fail "head moved from $expected to $head"
@@ -72,10 +96,11 @@ land() {
         fail "conflicts with main" "$(gh pr view "$pr" --json url,headRefName,mergeable,mergeStateStatus)"
         ;;
       BEHIND)
-        out=$(gh pr update-branch "$pr" 2>&1) || fail "update with main refused" "$out"
+        rebase_onto_base
         updated_from=$head
+        expected=$rebased
         deadline=$((SECONDS + timeout))
-        note=" (updated with main)"
+        note=" (rebased onto $base)"
         continue
         ;;
     esac
