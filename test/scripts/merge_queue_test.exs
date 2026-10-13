@@ -71,6 +71,20 @@ defmodule Meerkat.MergeQueueTest do
     """)
 
     File.chmod!(gh, 0o755)
+
+    # The worktree setup before a push, logged with where it ran.
+    for tool <- ~w(mix pnpm) do
+      stub = Path.join([dir, "bin", tool])
+
+      File.write!(stub, """
+      #!/usr/bin/env bash
+      echo "#{tool} $* in $(git rev-parse HEAD)" >> '#{dir}/log'
+      exit "$(cat '#{dir}/setup-status' 2>/dev/null || echo 0)"
+      """)
+
+      File.chmod!(stub, 0o755)
+    end
+
     {:ok, dir: dir}
   end
 
@@ -254,7 +268,12 @@ defmodule Meerkat.MergeQueueTest do
     rebased = origin_head(dir, "claude/feature")
     assert origin_head(dir, "#{rebased}~1") == origin_head(dir, "main")
     assert git(Path.join(dir, "origin.git"), ["show", "#{rebased}:code.txt"]) == "feature"
-    assert calls(dir, "pre-push") == ["pre-push #{rebased}"]
+    # The worktree is set up, as check.sh sets one up, before the push.
+    assert Enum.filter(log(dir), &(&1 =~ ~r/^(mix|pnpm|pre-push) /)) == [
+             "mix deps.get in #{rebased}",
+             "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline in #{rebased}",
+             "pre-push #{rebased}"
+           ]
 
     # Only once the new head has checks registered are they watched.
     assert calls(dir, "pr view 2") |> length() == 6
@@ -292,6 +311,17 @@ defmodule Meerkat.MergeQueueTest do
     assert origin_head(dir, "claude/feature") == feature
     assert length(worktrees(work)) == 1
     assert merges(dir) == []
+  end
+
+  test "a worktree that cannot be set up stops the queue before any push", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    File.write!(Path.join(dir, "setup-status"), "1")
+
+    assert {"#1 could not be set up to push\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert calls(dir, "pre-push") == []
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
   end
 
   test "a head other than the rebased one stops the queue unmerged", %{dir: dir} do

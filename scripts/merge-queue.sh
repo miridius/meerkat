@@ -53,14 +53,22 @@ rebase_onto_base() {
   out=$(git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" \
     "+refs/heads/$branch:refs/remotes/origin/$branch" 2>&1) || fail "could not be fetched" "$out"
   tmp=$(mktemp -d) || fail "could not make a temporary worktree"
-  # No hooks: post-checkout would run lefthook, which the new worktree lacks.
-  out=$(git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$head" 2>&1) ||
+  # Checked out by reset rather than by worktree add, which would run the
+  # post-checkout hook in a worktree without the lefthook it calls.
+  if ! out=$(git worktree add -q --no-checkout --detach "$tmp/tree" "$head" 2>&1 &&
+    git -C "$tmp/tree" reset -q --hard 2>&1); then
     fail "could not be checked out at $head" "$out"
+  fi
   if ! out=$(git -C "$tmp/tree" rebase "origin/$base" 2>&1); then
     git -C "$tmp/tree" rebase --abort >/dev/null 2>&1
     fail "conflicts with $base" "$out"
   fi
   rebased=$(git -C "$tmp/tree" rev-parse HEAD)
+  # The pre-push hook runs the worktree's own lefthook, and its dependency
+  # check reads deps/, so the worktree is set up as check.sh sets one up.
+  out=$(cd "$tmp/tree" && mix deps.get 2>&1 &&
+    pnpm install --frozen-lockfile --ignore-scripts --prefer-offline 2>&1) ||
+    fail "could not be set up to push" "$(tail -n 40 <<<"$out")"
   # The gates print thousands of lines; their end says what failed.
   out=$(git -C "$tmp/tree" push --force-with-lease="refs/heads/$branch:$head" origin \
     "HEAD:refs/heads/$branch" 2>&1) || fail "rebase onto $base could not be pushed" "$(tail -n 40 <<<"$out")"
