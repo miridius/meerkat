@@ -17,7 +17,7 @@
 #                                   included (muex --since), and fail
 #                                   as `staged` does. The pre-push
 #                                   hook runs this mode on a pushed
-#                                   tip the commit gate never passed.
+#                                   tip with no mutation record.
 #   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
 #                                   staged for the next commit (muex
 #                                   --staged), and fail when any
@@ -213,6 +213,8 @@ while [[ $# -gt 0 ]]; do
     *)  extra_args+=("$1"); shift ;;
   esac
 done
+# A flag such as --max-mutations can narrow the run, so it records nothing.
+[[ ${#extra_args[@]} -eq 0 ]] || record=false
 
 # Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks; left set,
 # they would point Mix's checkout of git dependencies, and every test's
@@ -281,7 +283,7 @@ run_mutate() {
     exit 2
   fi
 
-  # A survivor is a staged line whose behaviour the tests do not pin
+  # A survivor is a judged line whose behaviour the tests do not pin
   # down. A no-coverage mutant is the same gap, found without running:
   # no ExUnit test executes its line.
   # muex's patch holds the whole enclosing expression, which for a deleted
@@ -308,7 +310,7 @@ run_mutate() {
     echo
     echo "$failing"
     echo
-    echo "Add or tighten a test that fails for each mutant above, in this commit."
+    echo "Add or tighten a test that fails for each mutant above, in this $([[ $mode == staged ]] && echo commit || echo branch)."
     echo "See CLAUDE.md \"Mutation testing\" for the documented exceptions."
     exit 1
   fi

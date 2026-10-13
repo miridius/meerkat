@@ -115,6 +115,7 @@ defmodule Meerkat.PreCommitHookTest do
       echo "$2" > '#{muex}/output'
       # Like real muex, write no report when there is nothing to mutate.
       [ "${STUB_REPORT:-}" = none ] || cp "${STUB_REPORT:-#{report}}" "$2"
+      [ -z "${STUB_MUEX_EDIT:-}" ] || echo "edited mid-run" >> lib/meerkat/two.ex
       if [ "${STUB_INTERRUPT:-}" = "mix muex" ]; then
         trap 'exit 0' INT
         kill -INT 0
@@ -590,6 +591,17 @@ defmodule Meerkat.PreCommitHookTest do
       refute mutated?(ctx, "HEAD")
     end
 
+    test "records nothing when given muex flags, which can narrow the run", ctx do
+      assert {_, 0} = mutate_changed(ctx, [], ["--", "--max-mutations", "1"])
+      assert "--max-mutations" in muex_args(ctx)
+      refute mutated?(ctx, "HEAD")
+    end
+
+    test "records nothing when the worktree changes while muex runs", ctx do
+      assert {_, 0} = mutate_changed(ctx, [{"STUB_MUEX_EDIT", "1"}])
+      refute mutated?(ctx, "HEAD")
+    end
+
     test "records nothing with uncommitted lib edits", ctx do
       File.write!(Path.join(ctx.work, "lib/meerkat/two.ex"), "two\nedited\n")
 
@@ -742,10 +754,10 @@ defmodule Meerkat.PreCommitHookTest do
   # The fixture has no remote; origin/main stands at main's commit.
   defp track_main(work), do: git(work, ["update-ref", "refs/remotes/origin/main", "main"])
 
-  defp mutate_changed(ctx, env \\ []) do
+  defp mutate_changed(ctx, env \\ [], args \\ []) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
-    System.cmd("bash", ["scripts/mutate.sh", "changed"],
+    System.cmd("bash", ["scripts/mutate.sh", "changed" | args],
       cd: ctx.work,
       env: [{"PATH", path} | hook_env()] ++ env,
       stderr_to_stdout: true

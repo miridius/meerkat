@@ -299,6 +299,32 @@ defmodule Meerkat.MergeQueueTest do
     assert merges(dir) == []
   end
 
+  test "a rebase that fails without a conflict stops the queue saying so", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    git(work, ["config", "commit.gpgsign", "true"])
+    git(work, ["config", "gpg.program", "false"])
+
+    assert {"#1 could not be rebased onto main\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
+  end
+
+  test "the rebase runs no checkout or commit hook", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    File.write!(Path.join(dir, "push-status"), "1")
+
+    for hook <- ~w(post-checkout post-commit post-rewrite) do
+      path = Path.join([work, ".git", "hooks", hook])
+      File.write!(path, "#!/usr/bin/env bash\necho #{hook} >> '#{dir}/log'\n")
+      File.chmod!(path, 0o755)
+    end
+
+    assert {"#1 rebase onto main could not be pushed\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert Enum.filter(log(dir), &(&1 =~ ~r/^post-/)) == []
+  end
+
   test "a rebase the pre-push gates refuse stops the queue with their output", %{dir: dir} do
     {work, feature} = behind_branch(dir)
     pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])

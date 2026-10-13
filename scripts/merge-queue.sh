@@ -42,8 +42,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Rebase $branch, pinned at $head, onto origin/$base in a temporary worktree
-# and push it with a lease on $head, then set $rebased to the new head. The
+# Rebase $branch, pinned at $head, onto origin/$base in a temporary worktree,
+# set $rebased to the rebased head, and push it with a lease on $head. The
 # push runs the pre-push hook, so the rebased commits pass the same gates as
 # any other push, mutation testing included. Merge commits are refused there,
 # and the rebase drops any the branch had. GitHub's update-branch would
@@ -53,14 +53,16 @@ rebase_onto_base() {
   out=$(git fetch -q origin "+refs/heads/$base:refs/remotes/origin/$base" \
     "+refs/heads/$branch:refs/remotes/origin/$branch" 2>&1) || fail "could not be fetched" "$out"
   tmp=$(mktemp -d) || fail "could not make a temporary worktree"
-  # Checked out by reset rather than by worktree add, which would run the
-  # post-checkout hook in a worktree without the lefthook it calls.
-  if ! out=$(git worktree add -q --no-checkout --detach "$tmp/tree" "$head" 2>&1 &&
-    git -C "$tmp/tree" reset -q --hard 2>&1); then
+  # Hooks are off until the push: the worktree lacks the lefthook that the
+  # checkout and commit hooks call.
+  if ! out=$(git -c core.hooksPath=/dev/null worktree add -q --detach "$tmp/tree" "$head" 2>&1); then
     fail "could not be checked out at $head" "$out"
   fi
-  if ! out=$(git -C "$tmp/tree" rebase "origin/$base" 2>&1); then
+  if ! out=$(git -C "$tmp/tree" -c core.hooksPath=/dev/null rebase "origin/$base" 2>&1); then
+    local conflicts
+    conflicts=$(git -C "$tmp/tree" diff --name-only --diff-filter=U)
     git -C "$tmp/tree" rebase --abort >/dev/null 2>&1
+    [ -n "$conflicts" ] || fail "could not be rebased onto $base" "$out"
     fail "conflicts with $base" "$out"
   fi
   rebased=$(git -C "$tmp/tree" rev-parse HEAD)

@@ -29,7 +29,7 @@ gated() {
 # run_gates <commit>: runs, on the checkout of that commit, each gate its
 # contents have not passed: `check.sh --head`, then `mutate.sh changed`
 # against origin/main, which mutates every lib line the commit changed since
-# main. A gate whose suite fails is not followed by mutation testing.
+# main. If check.sh fails, mutate.sh is not run.
 run_gates() {
   if ! bash scripts/checked-trees.sh has "$1"; then
     bash scripts/check.sh --head || return 1
@@ -112,7 +112,7 @@ for commit in "${commits[@]}"; do
     status=1
   else
     echo "pre-push: HEAD ($short) has not passed the commit gate since it was made" >&2
-    echo "(a rebase or cherry-pick skips the pre-commit hook); checking it now." >&2
+    echo "(a rebase or cherry-pick, for one, skips the pre-commit hook); checking it now." >&2
     if ! run_gates "$commit"; then
       status=1
     elif ! gated "$commit"; then
