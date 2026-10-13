@@ -1500,6 +1500,8 @@
   :global(.moved-badge) {
     float: right;
     margin-left: 1ch;
+    /* Copied code leaves it out. */
+    user-select: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     /* Shorter than the line, so it never makes its row taller than the
        other side's at any font size. */

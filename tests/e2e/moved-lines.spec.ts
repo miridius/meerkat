@@ -87,7 +87,7 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 	}
 });
 
-test("a moved block's link covers none of its code and jumps to the counterpart", async ({ page }) => {
+test("a moved block's link covers none of its code, stays out of copied code and jumps to the counterpart", async ({ page }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
 	try {
 		// Narrow and short: the first moved line wraps, and the counterpart
@@ -121,6 +121,21 @@ test("a moved block's link covers none of its code and jumps to the counterpart"
 		await expect(counterpart).not.toBeInViewport();
 		await link.click();
 		await expect(counterpart).toBeInViewport();
+
+		// Code copied across the link's line leaves the link's text out.
+		const codeOn = (line: number) =>
+			file.locator(`tr.diff-line:has(td.diff-line-old-num span[data-line-num='${line}']) td.diff-line-old-content`);
+		await codeOn(5).scrollIntoViewIfNeeded();
+		const from = await codeOn(5).boundingBox();
+		const to = await codeOn(7).boundingBox();
+		if (!from || !to) throw new Error("code cells have no box");
+		await page.mouse.move(from.x + 40, from.y + from.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(to.x + to.width - 20, to.y + to.height / 2, { steps: 5 });
+		await page.mouse.up();
+		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+		expect(copied).toContain("helper2(input");
+		expect(copied).not.toContain("util.ts:56-58");
 	} finally {
 		await meerkat.kill();
 	}
