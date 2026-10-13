@@ -1945,10 +1945,10 @@ defmodule MeerkatWeb.ReviewLive do
   defp toolbar_title(%ReviewState{head_branch: b}) when is_binary(b) and b != "", do: b
   defp toolbar_title(_), do: ""
 
-  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and every call site passes it
   attr :additions, :integer, required: true
 
-  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and every call site passes it
   attr :deletions, :integer, required: true
 
   # `+x -y` in green and red, as GitHub shows them, without its squares.
