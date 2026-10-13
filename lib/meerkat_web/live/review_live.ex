@@ -496,13 +496,14 @@ defmodule MeerkatWeb.ReviewLive do
 
   def handle_event(
         "comment.toggle_flag",
-        %{"surface" => surface, "id" => id, "flag" => flag, "value" => value},
+        %{"surface" => surface, "id" => id, "flag" => flag, "checked" => checked},
         socket
       ) do
     rid = socket.assigns.review_id
 
     if rid != "unbound" do
-      _ = ReviewServer.set_flag(rid, surface_atom(surface), id, flag_atom(flag), value == "true")
+      _ =
+        ReviewServer.set_flag(rid, surface_atom(surface), id, flag_atom(flag), checked == "true")
     end
 
     {:noreply, socket}
@@ -1094,8 +1095,9 @@ defmodule MeerkatWeb.ReviewLive do
   # Inline "correct your instructions/skills" and "turn this into a
   # lint rule" toggles rendered next to each comment's Edit / Remove
   # buttons. Let reviewers flip either flag without re-opening the
-  # form. `value` is sent as "true" or "false" so the LV handler can
-  # coerce.
+  # form. `checked` carries the flag's new value, "true" or "false". It
+  # can't be named `value`: LiveView's click payload replaces `value`
+  # with the checkbox's own, and drops it once the box is unticked.
   attr :surface, :string, required: true
   attr :comment, :map, required: true
 
@@ -1121,7 +1123,7 @@ defmodule MeerkatWeb.ReviewLive do
         phx-value-surface={@surface}
         phx-value-id={@comment.id}
         phx-value-flag={flag}
-        phx-value-value={if Map.fetch!(@comment, flag), do: "false", else: "true"}
+        phx-value-checked={if Map.fetch!(@comment, flag), do: "false", else: "true"}
       />
       <span>{label}</span>
     </label>

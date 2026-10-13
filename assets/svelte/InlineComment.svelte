@@ -61,7 +61,7 @@
       surface: "inline",
       id: comment.id,
       flag,
-      value: target.checked ? "true" : "false",
+      checked: target.checked ? "true" : "false",
     });
   }
 </script>
