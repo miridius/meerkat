@@ -3,7 +3,7 @@
 // LiveView channel to join (the root view gets `phx-connected`) before
 // returning. A phx-click sent before the join is silently dropped.
 
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 
 type Fixtures = Record<string, never>;
 
@@ -42,5 +42,17 @@ export const test = base.extend<Fixtures>({
 		await use(page);
 	},
 });
+
+// Resolves once the browser has rendered a frame, so that state a
+// ResizeObserver or requestAnimationFrame callback sets is in place.
+// Forcing layout from a probe runs neither, and on a loaded machine the
+// next frame can come long after an action. The second frame starts
+// only once the first, observers included, has finished.
+export function afterNextFrame(page: Page) {
+	return page.evaluate(
+		() =>
+			new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+	);
+}
 
 export { expect };

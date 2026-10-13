@@ -2,7 +2,8 @@ defmodule Meerkat.Comment do
   @moduledoc """
   Shapes + finding-type validation for the four comment kinds the
   review UI supports. All four share an `id`, `body`, `finding_type`,
-  `learn_from_this`, and `created_at`; per-kind fields layer on top.
+  `correct_instructions`, `lint_rule`, and `created_at`; per-kind
+  fields layer on top.
 
   `finding_type` is one of `:issue | :suggestion | :question |
   :follow_up | :revert` — Conventional Comments-flavoured. `revert`
@@ -26,7 +27,8 @@ defmodule Meerkat.Comment do
           side: side,
           body: String.t(),
           finding_type: finding_type,
-          learn_from_this: boolean(),
+          correct_instructions: boolean(),
+          lint_rule: boolean(),
           created_at: String.t()
         }
 
@@ -36,7 +38,8 @@ defmodule Meerkat.Comment do
           file_index: non_neg_integer(),
           body: String.t(),
           finding_type: finding_type,
-          learn_from_this: boolean(),
+          correct_instructions: boolean(),
+          lint_rule: boolean(),
           created_at: String.t()
         }
 
@@ -45,7 +48,8 @@ defmodule Meerkat.Comment do
           id: id,
           body: String.t(),
           finding_type: finding_type,
-          learn_from_this: boolean(),
+          correct_instructions: boolean(),
+          lint_rule: boolean(),
           created_at: String.t()
         }
 
@@ -56,7 +60,8 @@ defmodule Meerkat.Comment do
           end_line: pos_integer(),
           body: String.t(),
           finding_type: finding_type,
-          learn_from_this: boolean(),
+          correct_instructions: boolean(),
+          lint_rule: boolean(),
           created_at: String.t()
         }
 

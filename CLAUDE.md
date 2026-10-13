@@ -149,6 +149,8 @@ When behaviour changes, choose the lowest layer that exercises it:
   cannot reach, 1-3 tests per seam: browser Svelte/JS to LiveView,
   CLI to BEAM exit/stdout, and process lifecycle.
 - Keep owned/local behaviour real; mock only boundaries we don't own.
+- In e2e, read state an observer or `requestAnimationFrame` sets only
+  through a retrying assertion or after `afterNextFrame`: CI renders late.
 
 ## Mutation testing
 

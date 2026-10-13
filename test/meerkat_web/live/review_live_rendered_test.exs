@@ -71,7 +71,8 @@ defmodule MeerkatWeb.ReviewLiveRenderedTest do
         side: "new",
         body: "a line comment",
         finding_type: :issue,
-        learn_from_this: false,
+        correct_instructions: false,
+        lint_rule: false,
         created_at: Meerkat.Comment.now()
       }
     end

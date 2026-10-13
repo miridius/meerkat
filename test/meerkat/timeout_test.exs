@@ -92,7 +92,8 @@ defmodule Meerkat.TimeoutTest do
           side: :new,
           body: body,
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: "2026-05-10T00:00:00Z"
         }
       ]
@@ -403,7 +404,13 @@ defmodule Meerkat.TimeoutTest do
     } do
       state = %ReviewState{
         global_comments: [
-          %{id: "q1", finding_type: :question, body: "Timeout question?", learn_from_this: false}
+          %{
+            id: "q1",
+            finding_type: :question,
+            body: "Timeout question?",
+            correct_instructions: false,
+            lint_rule: false
+          }
         ]
       }
 
@@ -434,7 +441,13 @@ defmodule Meerkat.TimeoutTest do
 
       state = %ReviewState{
         global_comments: [
-          %{id: "q", finding_type: :question, body: "Why again?", learn_from_this: false}
+          %{
+            id: "q",
+            finding_type: :question,
+            body: "Why again?",
+            correct_instructions: false,
+            lint_rule: false
+          }
         ]
       }
 
@@ -451,7 +464,13 @@ defmodule Meerkat.TimeoutTest do
     } do
       state = %ReviewState{
         global_comments: [
-          %{id: "q1", finding_type: :question, body: "Live question?", learn_from_this: false}
+          %{
+            id: "q1",
+            finding_type: :question,
+            body: "Live question?",
+            correct_instructions: false,
+            lint_rule: false
+          }
         ]
       }
 

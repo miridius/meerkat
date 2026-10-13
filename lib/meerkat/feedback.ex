@@ -245,7 +245,7 @@ defmodule Meerkat.Feedback do
   # Section renderers. Per comment: file path + line range as the
   # primary key, side-arrow-prefixed source content quoted under it,
   # Conventional-Comments-style `**type:** body` line, then the
-  # learn-from-this directive if set. Surface order: line-level first
+  # agent-instruction directives if set. Surface order: line-level first
   # (most-anchored), then file-level, then global, then commit-msg.
   # ---------------------------------------------------------------------
 
@@ -260,10 +260,10 @@ defmodule Meerkat.Feedback do
         quoted = quote_content(extract_lines(state, c), arrow)
         labelled = label_body(c.finding_type, c.body)
         body = indent_body(labelled, "      ")
-        learn = learn_line(c.learn_from_this, "    ")
+        flags = flag_lines(c, "    ")
         reminder = q_reminder(c)
 
-        "\n  #{path}:#{range} (#{side_str(c.side)})\n#{quoted}\n    > #{body}#{reminder}\n#{learn}"
+        "\n  #{path}:#{range} (#{side_str(c.side)})\n#{quoted}\n    > #{body}#{reminder}\n#{flags}"
       end)
 
     "\nLine-level comments:\n#{body}"
@@ -277,10 +277,10 @@ defmodule Meerkat.Feedback do
         path = file_name_for(state, fc.file_index)
         labelled = label_body(fc.finding_type, fc.body)
         body = indent_body(labelled, "      ")
-        learn = learn_line(fc.learn_from_this, "    ")
+        flags = flag_lines(fc, "    ")
         reminder = q_reminder(fc)
 
-        "\n  #{path}\n    > #{body}#{reminder}\n#{learn}"
+        "\n  #{path}\n    > #{body}#{reminder}\n#{flags}"
       end)
 
     "\nFile-level comments:\n#{body}"
@@ -293,10 +293,10 @@ defmodule Meerkat.Feedback do
       Enum.map_join(state.global_comments, "", fn gc ->
         labelled = label_body(gc.finding_type, gc.body)
         body = indent_body(labelled, "    ")
-        learn = learn_line(gc.learn_from_this, "  ")
+        flags = flag_lines(gc, "  ")
         reminder = q_reminder(gc)
 
-        "  > #{body}#{reminder}\n#{learn}"
+        "  > #{body}#{reminder}\n#{flags}"
       end)
 
     "\nGlobal comments:\n#{body}"
@@ -311,17 +311,17 @@ defmodule Meerkat.Feedback do
         quoted = quote_content(extract_commit_msg_lines(state, cmc), "|")
         labelled = label_body(cmc.finding_type, cmc.body)
         body = indent_body(labelled, "      ")
-        learn = learn_line(cmc.learn_from_this, "    ")
+        flags = flag_lines(cmc, "    ")
         reminder = q_reminder(cmc)
 
-        "\n  commit-message:#{range}\n#{quoted}\n    > #{body}#{reminder}\n#{learn}"
+        "\n  commit-message:#{range}\n#{quoted}\n    > #{body}#{reminder}\n#{flags}"
       end)
 
     "\nCommit message comments:\n#{body}"
   end
 
   # ---------------------------------------------------------------------
-  # Helpers — labelling, content quoting, learn line.
+  # Helpers — labelling, content quoting, flag lines.
   # ---------------------------------------------------------------------
 
   defp file_name_for(state, idx) do
@@ -405,21 +405,32 @@ defmodule Meerkat.Feedback do
     end)
   end
 
-  # Per-comment "please learn from this" directive. Off → "". On →
-  # three-line block telling the agent which channel to use (memory /
-  # skill / review-agent prompt) so the next session inherits the
-  # learning. Indented by `pad` to align with the comment block above.
-  defp learn_line(false, _pad), do: ""
-  defp learn_line(nil, _pad), do: ""
+  # Per-comment agent-instruction directives, one block per ticked
+  # flag: "correct your instructions/skills" for a behavioural issue,
+  # "turn this into a lint rule" for a lintable code issue. The lint
+  # line names no linter or location: the agent's own instructions
+  # decide where the rule goes. Indented by `pad` to align with the comment block above.
+  defp flag_lines(comment, pad) do
+    instructions_line(comment.correct_instructions, pad) <>
+      lint_rule_line(comment.lint_rule, pad)
+  end
 
-  defp learn_line(true, pad) do
+  defp instructions_line(true, pad) do
+    # muex:ignore equivalent: the <<>> swap mutant prints as this same heredoc
     """
-    #{pad}↳ please-learn-from-this: the reviewer flagged this comment as worth
-    #{pad}  internalising. Persist the lesson in whichever channel fits — a
-    #{pad}  memory file, a skill update, or a review-agent prompt tweak — so
-    #{pad}  future sessions land it without being told again.
+    #{pad}↳ correct-your-instructions: the reviewer flagged a behavioural
+    #{pad}  issue. Correct the instructions or skills that led to it so
+    #{pad}  future sessions get it right.
     """
   end
+
+  defp instructions_line(false, _pad), do: ""
+
+  defp lint_rule_line(true, pad) do
+    "#{pad}↳ turn-this-into-a-lint-rule: add a lint rule that catches this.\n"
+  end
+
+  defp lint_rule_line(false, _pad), do: ""
 
   # One-line reminder appended to every :question comment so a skim-
   # reader can't mistake it for an action item. Matches the /question

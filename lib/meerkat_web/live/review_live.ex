@@ -11,8 +11,8 @@ defmodule MeerkatWeb.ReviewLive do
   its form by key. Comment data lives in the ReviewServer. Submissions
   delegate to `ReviewServer.add_*` / `remove_comment` so the
   GenServer stays the single writer. The `LiveSvelte` socket bridge
-  round-trips the form's body / finding_type / learn_from_this from
-  CommentForm.svelte.
+  round-trips the form's body / finding_type / correct_instructions /
+  lint_rule from CommentForm.svelte.
   """
 
   use MeerkatWeb, :live_view
@@ -403,7 +403,8 @@ defmodule MeerkatWeb.ReviewLive do
            # for ones loaded from on-disk persistence (Jason decodes atom
            # values as strings). to_string/1 handles both.
            initial_finding_type: to_string(comment.finding_type),
-           initial_learn_from_this: comment.learn_from_this,
+           initial_correct_instructions: comment.correct_instructions,
+           initial_lint_rule: comment.lint_rule,
            anchor: anchor_for(surface_atom(surface), comment)
          })}
     end
@@ -440,7 +441,15 @@ defmodule MeerkatWeb.ReviewLive do
   # doesn't clear its draft as if the comment had posted.
   def handle_event("comment.submit", payload, socket) do
     %{open_forms: forms, review_id: rid} = socket.assigns
-    %{"body" => body, "finding_type" => ft, "learn_from_this" => learn?} = payload
+
+    %{
+      "body" => body,
+      "finding_type" => ft,
+      "correct_instructions" => instructions?,
+      "lint_rule" => lint_rule?
+    } = payload
+
+    flags = %{correct_instructions: instructions?, lint_rule: lint_rule?}
     key = payload["form_key"]
     form = OpenForms.find(forms, key)
 
@@ -462,11 +471,11 @@ defmodule MeerkatWeb.ReviewLive do
       Map.get(form, :edit_id) ->
         # Edit = remove old + add new (no `edit_comment` server call).
         _ = ReviewServer.remove_comment(rid, form.surface, form.edit_id)
-        commit_add(rid, form, body, finding, learn?)
+        commit_add(rid, form, body, finding, flags)
         {:noreply, close_form(socket, key)}
 
       true ->
-        commit_add(rid, form, body, finding, learn?)
+        commit_add(rid, form, body, finding, flags)
         {:noreply, close_form(socket, key)}
     end
   end
@@ -483,18 +492,18 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
-  ## --- Toggle learn-from-this on a rendered comment ---
+  ## --- Toggle an agent-instruction flag on a rendered comment ---
 
   def handle_event(
-        "comment.toggle_learn",
-        %{"surface" => surface, "id" => id, "learn" => learn},
+        "comment.toggle_flag",
+        %{"surface" => surface, "id" => id, "flag" => flag, "checked" => checked},
         socket
       ) do
     rid = socket.assigns.review_id
 
     if rid != "unbound" do
-      learn? = learn in [true, "true", "on"]
-      _ = ReviewServer.set_learn_from_this(rid, surface_atom(surface), id, learn?)
+      _ =
+        ReviewServer.set_flag(rid, surface_atom(surface), id, flag_atom(flag), checked == "true")
     end
 
     {:noreply, socket}
@@ -1083,28 +1092,40 @@ defmodule MeerkatWeb.ReviewLive do
 
   ## --- Components ---
 
-  # Inline "learn?" toggle rendered next to each comment's Edit /
-  # Remove buttons. Lets reviewers flip the learn-from-this flag
-  # without re-opening the form. `learn` value is sent as "true" or
-  # "false" so the LV handler can coerce.
+  # Inline "correct your instructions/skills" and "turn this into a
+  # lint rule" toggles rendered next to each comment's Edit / Remove
+  # buttons. Let reviewers flip either flag without re-opening the
+  # form. `checked` carries the flag's new value, "true" or "false". It
+  # can't be named `value`: LiveView's click payload replaces `value`
+  # with the checkbox's own, and drops it once the box is unticked.
   attr :surface, :string, required: true
   attr :comment, :map, required: true
 
-  defp learn_toggle(assigns) do
+  defp flag_toggles(assigns) do
     ~H"""
     <label
-      class="learn-toggle"
-      title="Include this comment in the agent's learning corpus"
+      :for={
+        {flag, title, label} <- [
+          {:correct_instructions, "Ask the agent to correct the instructions or skills behind this",
+           "correct your instructions/skills"},
+          {:lint_rule, "Ask the agent to add a lint rule that catches this",
+           "turn this into a lint rule"}
+        ]
+      }
+      class="flag-toggle"
+      data-flag={flag}
+      title={title}
     >
       <input
         type="checkbox"
-        checked={!!@comment.learn_from_this}
-        phx-click="comment.toggle_learn"
+        checked={Map.fetch!(@comment, flag)}
+        phx-click="comment.toggle_flag"
         phx-value-surface={@surface}
         phx-value-id={@comment.id}
-        phx-value-learn={if @comment.learn_from_this, do: "false", else: "true"}
+        phx-value-flag={flag}
+        phx-value-checked={if Map.fetch!(@comment, flag), do: "false", else: "true"}
       />
-      <span>learn from this</span>
+      <span>{label}</span>
     </label>
     """
   end
@@ -1233,7 +1254,7 @@ defmodule MeerkatWeb.ReviewLive do
           <header>
             <span class="finding-badge">{finding_label(comment.finding_type)}</span>
             <span class="line-anchor">L{comment.start_line}–{comment.end_line}</span>
-            <.learn_toggle surface="commit_msg" comment={comment} />
+            <.flag_toggles surface="commit_msg" comment={comment} />
             <button
               type="button"
               phx-click="comment_form.edit"
@@ -1292,7 +1313,7 @@ defmodule MeerkatWeb.ReviewLive do
         <li :for={comment <- @rendered_comments} class={"note note-#{comment.finding_type}"}>
           <header>
             <span class="finding-badge">{finding_label(comment.finding_type)}</span>
-            <.learn_toggle surface="global" comment={comment} />
+            <.flag_toggles surface="global" comment={comment} />
             <button
               type="button"
               phx-click="comment_form.edit"
@@ -1513,7 +1534,7 @@ defmodule MeerkatWeb.ReviewLive do
           >
             <header>
               <span class="finding-badge">{finding_label(comment.finding_type)}</span>
-              <.learn_toggle surface="file" comment={comment} />
+              <.flag_toggles surface="file" comment={comment} />
               <button
                 type="button"
                 phx-click="comment_form.edit"
@@ -2118,16 +2139,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp github_inline_comment(state, c) do
     path = github_path_for(state, c.file_index)
     side = if to_string(c.side) == "old", do: "LEFT", else: "RIGHT"
-    labelled = label_for_github(c.finding_type, c.body)
-
-    body =
-      if c.learn_from_this do
-        labelled <>
-          "\n\n_please learn from this: save a memory, update a skill, or " <>
-          "tighten the review-agent prompt so this class of issue is caught next time._"
-      else
-        labelled
-      end
+    body = label_for_github(c.finding_type, c.body)
 
     if c.start_line == c.end_line do
       %{path: path, line: c.end_line, side: side, body: body}
@@ -2156,21 +2168,11 @@ defmodule MeerkatWeb.ReviewLive do
     Enum.join(sections, "\n\n---\n\n")
   end
 
-  defp global_section(gc) do
-    labelled = label_for_github(gc.finding_type, gc.body)
-
-    if gc.learn_from_this,
-      do: labelled <> "\n\n_please learn from this._",
-      else: labelled
-  end
+  defp global_section(gc), do: label_for_github(gc.finding_type, gc.body)
 
   defp file_section_md(state, fc) do
     path = github_path_for(state, fc.file_index)
-    labelled = label_for_github(fc.finding_type, fc.body)
-
-    if fc.learn_from_this,
-      do: "**#{path}**:\n\n" <> labelled <> "\n\n_please learn from this._",
-      else: "**#{path}**:\n\n" <> labelled
+    "**#{path}**:\n\n" <> label_for_github(fc.finding_type, fc.body)
   end
 
   defp commit_msg_section_md(cmc) do
@@ -2179,12 +2181,7 @@ defmodule MeerkatWeb.ReviewLive do
         do: "#{cmc.start_line}",
         else: "#{cmc.start_line}-#{cmc.end_line}"
 
-    labelled = label_for_github(cmc.finding_type, cmc.body)
-
-    if cmc.learn_from_this,
-      do:
-        "**commit message (line #{range})**:\n\n" <> labelled <> "\n\n_please learn from this._",
-      else: "**commit message (line #{range})**:\n\n" <> labelled
+    "**commit message (line #{range})**:\n\n" <> label_for_github(cmc.finding_type, cmc.body)
   end
 
   # Conventional-Comments markdown label. Empty body + revert renders
@@ -2528,6 +2525,9 @@ defmodule MeerkatWeb.ReviewLive do
   defp surface_atom("inline"), do: :inline
   defp surface_atom(s) when s in [:global, :file, :commit_msg, :inline], do: s
 
+  defp flag_atom("correct_instructions"), do: :correct_instructions
+  defp flag_atom("lint_rule"), do: :lint_rule
+
   # Whitelist coerce: the client only ever sends one of these five.
   # Any other string crashes the handler, which is the right thing —
   # client-side tampering should not yield a writable atom.
@@ -2740,20 +2740,23 @@ defmodule MeerkatWeb.ReviewLive do
       formKey: OpenForms.key(form),
       initialBody: Map.get(form, :initial_body, ""),
       initialFindingType: Map.get(form, :initial_finding_type, "issue"),
-      initialLearnFromThis: Map.get(form, :initial_learn_from_this, false)
+      initialCorrectInstructions: Map.get(form, :initial_correct_instructions, false),
+      initialLintRule: Map.get(form, :initial_lint_rule, false)
     }
     |> Map.merge(overrides)
   end
 
   # Build + post a new comment on the form's surface in one call.
-  # Common fields (id/body/finding_type/learn_from_this/created_at)
-  # are shared; surface-specific anchor fields come from anchor_extras/2.
-  defp commit_add(review_id, %{surface: surface, anchor: anchor}, body, finding, learn?) do
+  # Common fields (id/body/finding_type/correct_instructions/lint_rule/
+  # created_at) are shared; surface-specific anchor fields come from
+  # anchor_extras/2.
+  defp commit_add(review_id, %{surface: surface, anchor: anchor}, body, finding, flags) do
     base = %{
       id: Comment.new_id(),
       body: body,
       finding_type: finding,
-      learn_from_this: learn?,
+      correct_instructions: flags.correct_instructions,
+      lint_rule: flags.lint_rule,
       created_at: Comment.now()
     }
 

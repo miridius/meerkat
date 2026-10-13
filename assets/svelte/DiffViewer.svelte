@@ -123,7 +123,8 @@
     body: string;
     finding_type: FindingType | string;
     created_at: string;
-    learn_from_this?: boolean | null;
+    correct_instructions?: boolean | null;
+    lint_rule?: boolean | null;
   };
 
   type LiveBridge = {

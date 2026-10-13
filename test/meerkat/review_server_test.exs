@@ -72,7 +72,8 @@ defmodule Meerkat.ReviewServerTest do
         id: Comment.new_id(),
         body: "global!",
         finding_type: :issue,
-        learn_from_this: true,
+        correct_instructions: true,
+        lint_rule: false,
         created_at: Comment.now()
       }
 
@@ -94,7 +95,8 @@ defmodule Meerkat.ReviewServerTest do
           id: cid,
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
@@ -138,7 +140,7 @@ defmodule Meerkat.ReviewServerTest do
   end
 
   describe "argument guards" do
-    test "reject a negative file index, a non-binary comment id and a non-boolean learn flag",
+    test "reject a negative file index, a non-binary comment id and an unknown or non-boolean flag",
          %{review_id: id} do
       assert_raise FunctionClauseError, fn -> ReviewServer.get_file_at(id, -1) end
       # Read back at runtime so the compiler's type check doesn't flag them.
@@ -150,7 +152,13 @@ defmodule Meerkat.ReviewServerTest do
       end
 
       assert_raise FunctionClauseError, fn ->
-        ReviewServer.set_learn_from_this(id, :global, "c1", non_boolean)
+        ReviewServer.set_flag(id, :global, "c1", :lint_rule, non_boolean)
+      end
+
+      unknown_flag = Process.get(:unknown_flag, :finding_type)
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.set_flag(id, :global, "c1", unknown_flag, true)
       end
     end
   end
@@ -217,7 +225,8 @@ defmodule Meerkat.ReviewServerTest do
           side: :new,
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
@@ -227,7 +236,8 @@ defmodule Meerkat.ReviewServerTest do
           file_index: 0,
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
@@ -236,7 +246,8 @@ defmodule Meerkat.ReviewServerTest do
           id: Comment.new_id(),
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
@@ -247,7 +258,8 @@ defmodule Meerkat.ReviewServerTest do
           end_line: 1,
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
@@ -298,32 +310,50 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
-  describe "set_learn_from_this/4" do
-    test "flips learn_from_this on the matching comment id", %{repo: repo, review_id: id} do
+  describe "set_flag/5" do
+    test "sets each flag on the matching comment only, leaving the other flag alone", %{
+      repo: repo,
+      review_id: id
+    } do
       {:ok, _} =
         ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
 
-      cid = Comment.new_id()
+      [cid, other] =
+        for body <- ["needs work", "other"] do
+          comment = %{
+            id: Comment.new_id(),
+            body: body,
+            finding_type: :issue,
+            correct_instructions: false,
+            lint_rule: false,
+            created_at: Comment.now()
+          }
 
-      _ =
-        ReviewServer.add_comment(id, :global, %{
-          id: cid,
-          body: "needs work",
-          finding_type: :issue,
-          learn_from_this: false,
-          created_at: Comment.now()
-        })
+          _ = ReviewServer.add_comment(id, :global, comment)
+          comment.id
+        end
 
-      _ = ReviewServer.set_learn_from_this(id, :global, cid, true)
-      state = ReviewServer.get_state(id)
-      assert [%{id: ^cid, learn_from_this: true}] = state.global_comments
+      _ = ReviewServer.set_flag(id, :global, cid, :correct_instructions, true)
+
+      assert [
+               %{id: ^cid, correct_instructions: true, lint_rule: false},
+               %{id: ^other, correct_instructions: false, lint_rule: false}
+             ] = ReviewServer.get_state(id).global_comments
+
+      _ = ReviewServer.set_flag(id, :global, cid, :lint_rule, true)
+      _ = ReviewServer.set_flag(id, :global, cid, :correct_instructions, false)
+
+      assert [
+               %{id: ^cid, correct_instructions: false, lint_rule: true},
+               %{id: ^other, correct_instructions: false, lint_rule: false}
+             ] = ReviewServer.get_state(id).global_comments
     end
 
     test "is a no-op for an unknown id", %{repo: repo, review_id: id} do
       {:ok, _} =
         ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
 
-      _ = ReviewServer.set_learn_from_this(id, :global, "nonexistent-id", true)
+      _ = ReviewServer.set_flag(id, :global, "nonexistent-id", :lint_rule, true)
       assert ReviewServer.get_state(id).global_comments == []
     end
 
@@ -342,12 +372,13 @@ defmodule Meerkat.ReviewServerTest do
           side: :new,
           body: "x",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
 
-      _ = ReviewServer.set_learn_from_this(id, :inline, inline_id, true)
-      assert [%{learn_from_this: true}] = ReviewServer.get_state(id).comments
+      _ = ReviewServer.set_flag(id, :inline, inline_id, :lint_rule, true)
+      assert [%{lint_rule: true}] = ReviewServer.get_state(id).comments
     end
   end
 
@@ -386,7 +417,7 @@ defmodule Meerkat.ReviewServerTest do
     test "remove_comment/3 closes the forms editing that comment, and only those",
          %{repo: repo, review_id: id} do
       comment = fn cid ->
-        %{id: cid, body: cid, finding_type: :issue, learn_from_this: false}
+        %{id: cid, body: cid, finding_type: :issue, correct_instructions: false, lint_rule: false}
       end
 
       {:ok, _} =

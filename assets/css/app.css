@@ -683,7 +683,7 @@ a.chip-link:hover .chip-value {
   font-family: ui-monospace, monospace;
 }
 
-.note header .learn-toggle {
+.note header .flag-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -694,17 +694,21 @@ a.chip-link:hover .chip-value {
   user-select: none;
   margin-left: auto;
 }
+/* Only the first toggle pushes right; the second sits beside it. */
+.note header .flag-toggle + .flag-toggle {
+  margin-left: 10px;
+}
 .note header button {
   margin-left: 4px;
   font-size: 0.8rem;
   padding: 2px 8px;
 }
-.note header .learn-toggle + button {
+.note header .flag-toggle + button {
   margin-left: 4px;
 }
-/* First button only — the learn-toggle absorbs the margin-left:auto
+/* First button only — the first flag-toggle absorbs the margin-left:auto
    when present so Edit/Remove cluster on the right. */
-.note header .learn-toggle ~ button:first-of-type {
+.note header .flag-toggle ~ button:first-of-type {
   margin-left: 4px;
 }
 
@@ -1080,7 +1084,7 @@ a.chip-link:hover .chip-value {
   margin: 0;
 }
 
-.note header .learn-toggle input[type="checkbox"] {
+.note header .flag-toggle input[type="checkbox"] {
   /* Tiny baseline shift on Chrome — `vertical-align: middle` and a
      flush margin keeps the checkbox visually centred with the label
      text instead of sitting one pixel high. */

@@ -161,7 +161,14 @@ defmodule MeerkatWeb.AttachControllerTest do
     repo: repo
   } do
     review = %ReviewState{
-      global_comments: [%{finding_type: :question, body: "Why this?", learn_from_this: false}]
+      global_comments: [
+        %{
+          finding_type: :question,
+          body: "Why this?",
+          correct_instructions: false,
+          lint_rule: false
+        }
+      ]
     }
 
     {:ok, {:reject, feedback}} = Decision.submit_review(:reject, review, repo)

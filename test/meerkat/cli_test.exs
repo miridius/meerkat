@@ -935,7 +935,8 @@ defmodule Meerkat.CLITest do
           id: Comment.new_id(),
           body: body,
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         })
       end
@@ -1140,7 +1141,13 @@ defmodule Meerkat.CLITest do
       Persistence.path_for(dir, ReviewId.derive(dir, {:staged, nil}))
     end
 
-    @comment %{id: "c1", finding_type: :issue, body: "keep me", learn_from_this: false}
+    @comment %{
+      id: "c1",
+      finding_type: :issue,
+      body: "keep me",
+      correct_instructions: false,
+      lint_rule: false
+    }
 
     for key <- [:comments, :file_comments, :global_comments, :commit_message_comments] do
       test "a snapshot holding #{key} keeps the rerun live", %{dir: dir} do

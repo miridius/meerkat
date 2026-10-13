@@ -80,8 +80,9 @@ For each QA run:
    - Suggestion mode prefills the code editor with the file slice
      covered by the anchor range; submit produces a markdown code
      block in the rendered comment.
-   - Inline learn-from-this checkbox toggles via push event; state
-     reflects in the rendered comment.
+   - Inline "correct your instructions/skills" and "turn this into a
+     lint rule" checkboxes toggle via push event; state reflects in
+     the rendered comment.
    - Multiple comments per file (different anchor ranges) coexist.
    - Decision buttons: Cancel → exit 1 with `Review cancelled —
      commit aborted, no feedback to act on.`, Send Feedback → exit 1

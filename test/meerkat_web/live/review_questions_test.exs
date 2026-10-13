@@ -115,7 +115,8 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
       "form_key" => form_key,
       "body" => body,
       "finding_type" => "question",
-      "learn_from_this" => false
+      "correct_instructions" => false,
+      "lint_rule" => false
     })
   end
 end

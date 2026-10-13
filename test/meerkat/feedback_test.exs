@@ -10,7 +10,8 @@ defmodule Meerkat.FeedbackTest do
           id: Comment.new_id(),
           body: "needs work",
           finding_type: :issue,
-          learn_from_this: false,
+          correct_instructions: false,
+          lint_rule: false,
           created_at: Comment.now()
         }
       ]
@@ -341,7 +342,8 @@ defmodule Meerkat.FeedbackTest do
             end_line: 1,
             body: "rewrite subject",
             finding_type: :suggestion,
-            learn_from_this: false,
+            correct_instructions: false,
+            lint_rule: false,
             created_at: Comment.now()
           }
         ]
@@ -414,14 +416,72 @@ defmodule Meerkat.FeedbackTest do
       refute out =~ "restore from HEAD"
     end
 
-    test "learn_from_this prints the please-learn-from-this directive" do
+    test "correct_instructions prints the correct-your-instructions directive" do
       state = %ReviewState{
-        global_comments: [comment(body: "fix", finding_type: :issue, learn_from_this: true)]
+        global_comments: [comment(body: "fix", correct_instructions: true)]
       }
 
       out = Feedback.format(state, :rejection)
-      assert out =~ "please-learn-from-this:"
-      assert out =~ "internalising"
+
+      assert out =~ """
+               > **issue:** fix
+               ↳ correct-your-instructions: the reviewer flagged a behavioural
+                 issue. Correct the instructions or skills that led to it so
+                 future sessions get it right.
+             """
+
+      refute out =~ "turn-this-into-a-lint-rule"
+    end
+
+    test "lint_rule prints the lint-rule directive" do
+      state = %ReviewState{
+        global_comments: [comment(body: "fix", lint_rule: true)]
+      }
+
+      out = Feedback.format(state, :rejection)
+
+      assert out =~ """
+               > **issue:** fix
+               ↳ turn-this-into-a-lint-rule: add a lint rule that catches this.
+             """
+
+      refute out =~ "correct-your-instructions"
+    end
+
+    test "both flags print both directives, indented under the comment on every surface" do
+      both = [correct_instructions: true, lint_rule: true]
+
+      state = %ReviewState{
+        files: [%{file_name: "a.ex", new_content: "a"}],
+        commit_message: "subject",
+        comments: [inline_comment(both)],
+        file_comments: [comment([file_index: 0] ++ both)],
+        global_comments: [comment(both)],
+        commit_message_comments: [comment([start_line: 1, end_line: 1] ++ both)]
+      }
+
+      out = Feedback.format(state, :rejection)
+
+      directives = fn pad ->
+        """
+        #{pad}↳ correct-your-instructions: the reviewer flagged a behavioural
+        #{pad}  issue. Correct the instructions or skills that led to it so
+        #{pad}  future sessions get it right.
+        #{pad}↳ turn-this-into-a-lint-rule: add a lint rule that catches this.
+        """
+      end
+
+      [_framing, sections] = String.split(out, "\n\n\n", parts: 2)
+
+      assert sections ==
+               "Line-level comments:\n\n  a.ex:1 (new)\n    + a\n    > **issue:** x\n" <>
+                 directives.("    ") <>
+                 "\nFile-level comments:\n\n  a.ex\n    > **issue:** x\n" <>
+                 directives.("    ") <>
+                 "\nGlobal comments:\n  > **issue:** x\n" <>
+                 directives.("  ") <>
+                 "\nCommit message comments:\n\n  commit-message:1\n    | subject\n" <>
+                 "    > **issue:** x\n" <> directives.("    ") <> "\n"
     end
   end
 
@@ -455,7 +515,8 @@ defmodule Meerkat.FeedbackTest do
       id: Comment.new_id(),
       body: "x",
       finding_type: :issue,
-      learn_from_this: false,
+      correct_instructions: false,
+      lint_rule: false,
       created_at: Comment.now()
     })
   end
@@ -469,7 +530,8 @@ defmodule Meerkat.FeedbackTest do
       side: :new,
       body: "x",
       finding_type: :issue,
-      learn_from_this: false,
+      correct_instructions: false,
+      lint_rule: false,
       created_at: Comment.now()
     })
   end

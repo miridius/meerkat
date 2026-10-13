@@ -11,7 +11,7 @@ reload causes the LV's WebSocket to reconnect.
 `Meerkat.ReviewServer` (one GenServer per `review_id`) owns the
 canonical `%ReviewState{}`. Every mutation flows through it via
 `add_*_comment`, `remove_comment`, `set_approved`,
-`set_extension_hidden`, `set_show_generated`, `set_learn_from_this`,
+`set_extension_hidden`, `set_show_generated`, `set_flag`,
 `open_form`, and `close_form`. LiveViews never write state directly.
 
 After every mutation, `ReviewServer.update/2`:

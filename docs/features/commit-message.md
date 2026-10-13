@@ -68,7 +68,7 @@ in a rendered comment.
 
 Comments attached to a commit-message block live on
 `state.commit_message_comments` and rendered under the gutter.
-Same edit/remove/learn-toggle affordances as other comment
+Same edit/remove/flag-toggle affordances as other comment
 surfaces. Form's anchor carries `{start_line, end_line}` (no
 side, no file_index).
 

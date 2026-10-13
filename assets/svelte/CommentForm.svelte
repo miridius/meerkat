@@ -25,7 +25,8 @@
     extraPayload = {},
     initialBody = "",
     initialFindingType = "issue",
-    initialLearnFromThis = false,
+    initialCorrectInstructions = false,
+    initialLintRule = false,
     initialCode = "",
     fileName = "",
     draftKey,
@@ -38,7 +39,8 @@
     extraPayload?: Record<string, unknown>;
     initialBody?: string;
     initialFindingType?: FindingType;
-    initialLearnFromThis?: boolean;
+    initialCorrectInstructions?: boolean;
+    initialLintRule?: boolean;
     initialCode?: string;
     fileName?: string;
     draftKey?: string;
@@ -123,7 +125,8 @@
   // ignore this.
   let code = $state(editSplit ? editSplit.code : initialCode || "");
   let findingType = $state<FindingType>(initialFindingType);
-  let learnFromThis = $state(initialLearnFromThis);
+  let correctInstructions = $state(initialCorrectInstructions);
+  let lintRule = $state(initialLintRule);
   let submitInFlight = $state(false);
   let submitError = $state<string | null>(null);
 
@@ -211,7 +214,8 @@
         form_key: formKey,
         body: composedBody(),
         finding_type: findingType,
-        learn_from_this: learnFromThis,
+        correct_instructions: correctInstructions,
+        lint_rule: lintRule,
       },
       (reply: unknown) => {
         submitInFlight = false;
@@ -315,10 +319,16 @@
     {/each}
   </div>
 
-  <label class="learn-from-this">
-    <input type="checkbox" bind:checked={learnFromThis} />
-    Please learn from this
-  </label>
+  <div class="flags">
+    <label>
+      <input type="checkbox" bind:checked={correctInstructions} />
+      Correct your instructions/skills
+    </label>
+    <label>
+      <input type="checkbox" bind:checked={lintRule} />
+      Turn this into a lint rule
+    </label>
+  </div>
 
   <div class="actions">
     <button
@@ -398,12 +408,16 @@
     color: white;
     border-color: #1f6feb;
   }
-  .learn-from-this {
+  .flags {
+    display: flex;
+    gap: 1rem;
+    margin: 0.5rem 0;
+  }
+  .flags label {
     display: flex;
     gap: 0.4rem;
     align-items: center;
     font-size: 0.8rem;
-    margin: 0.5rem 0;
     color: #8b949e;
   }
   .actions {
