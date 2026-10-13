@@ -840,6 +840,8 @@ a.chip-link:hover .chip-value {
 }
 .ruler-columns[aria-invalid="true"] {
   border-color: var(--danger);
+  /* The focus ring would otherwise hide it while typing. */
+  outline-color: var(--danger);
 }
 
 /* `.tip` paragraph removed — was decorative noise. The drag-select
