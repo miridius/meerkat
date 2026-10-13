@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Pre-push check: every commit pushed as a ref's new tip must have contents
 # that passed scripts/check.sh and the mutation gate of scripts/mutate.sh, as
-# scripts/checked-trees.sh records them. A rebase, merge or cherry-pick makes
-# a commit without running the pre-commit hook, and git runs no hook that can
+# scripts/checked-trees.sh records them. A rebase or cherry-pick makes a
+# commit without running the pre-commit hook, and git runs no hook that can
 # refuse a finished rebase, so without this its contents would reach CI
 # unchecked and its lib lines, conflict resolutions included, unmutated.
+#
+# Merge commits are refused before any gate runs: branches take in main by
+# rebasing. A push is refused when it brings a commit with more than one
+# parent that no remote-tracking ref holds.
 #
 #   verified-push.sh <sha>...
 #
@@ -60,6 +64,7 @@ check_elsewhere() (
 trap 'trap - INT; kill -INT $$' INT
 
 status=0
+commits=()
 for sha in "$@"; do
   # A tag can point at something other than a commit; only commits are built.
   # Anything git cannot read is refused rather than skipped.
@@ -69,8 +74,24 @@ for sha in "$@"; do
     status=1
     continue
   fi
-  [[ "$type" == commit ]] || continue
-  commit=$object
+  [[ "$type" == commit ]] && commits+=("$object")
+done
+[[ ${#commits[@]} -gt 0 ]] || exit "$status"
+
+# A stale remote-tracking ref can only make this refuse more: a merge the
+# remote already holds is let through once `git fetch` has brought it.
+if ! merges=$(git rev-list --min-parents=2 "${commits[@]}" --not --remotes); then
+  echo "pre-push: cannot list the commits being pushed." >&2
+  exit 1
+fi
+if [[ -n "$merges" ]]; then
+  echo "pre-push: merge commits are refused; rebase onto main instead:" >&2
+  # shellcheck disable=SC2086
+  git log --no-walk --format='  %h %s' $merges >&2
+  exit 1
+fi
+
+for commit in "${commits[@]}"; do
   gated "$commit" && continue
 
   short=$(git rev-parse --short "$commit")
@@ -91,7 +112,7 @@ for sha in "$@"; do
     status=1
   else
     echo "pre-push: HEAD ($short) has not passed the commit gate since it was made" >&2
-    echo "(a rebase, merge or cherry-pick skips the pre-commit hook); checking it now." >&2
+    echo "(a rebase or cherry-pick skips the pre-commit hook); checking it now." >&2
     if ! run_gates "$commit"; then
       status=1
     elif ! gated "$commit"; then

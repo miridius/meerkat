@@ -108,6 +108,28 @@ defmodule Meerkat.VerifiedPushTest do
     assert {_, 0} = checked(ctx.work, "HEAD")
   end
 
+  test "a merge commit below a checked tip is refused before any gate runs", ctx do
+    merge = merge_commit(ctx.work)
+    commit(ctx.work, "code.txt", "after the merge\n", "after the merge")
+    mark(ctx.work, "HEAD")
+    other = other_tip(ctx.work)
+
+    assert {out, code} = verified_push(ctx, [other, "HEAD"])
+    assert code != 0
+    assert out =~ "merge commits are refused; rebase onto main instead"
+    assert out =~ git(ctx.work, ["rev-parse", "--short", merge])
+    assert checks_run(ctx) == []
+  end
+
+  test "a merge commit a remote-tracking ref holds is not refused", ctx do
+    merge = merge_commit(ctx.work)
+    git(ctx.work, ["update-ref", "refs/remotes/origin/feature", merge])
+    commit(ctx.work, "code.txt", "after the merge\n", "after the merge")
+
+    assert {_, 0} = verified_push(ctx, ["HEAD"])
+    assert checks_run(ctx) == both_gates(git(ctx.work, ["rev-parse", "HEAD"]))
+  end
+
   test "an unchecked HEAD with a surviving mutant blocks the push", ctx do
     commit(ctx.work, "code.txt", "rebased\n", "rebased")
 
@@ -301,6 +323,16 @@ defmodule Meerkat.VerifiedPushTest do
   defp commit(work, name, content, message) do
     stage(work, name, content)
     git(work, ["commit", "-qm", message])
+  end
+
+  # Merges a side branch into HEAD and returns the merge commit.
+  defp merge_commit(work) do
+    git(work, ["switch", "-q", "-c", "side"])
+    commit(work, "side.txt", "side\n", "side")
+    git(work, ["switch", "-q", "main"])
+    commit(work, "code.txt", "main\n", "main")
+    git(work, ["merge", "-q", "--no-edit", "side"])
+    git(work, ["rev-parse", "HEAD"])
   end
 
   # An unchecked commit that is not HEAD. verified-push.sh treats every such

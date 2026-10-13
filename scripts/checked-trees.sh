@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Records which commit contents have passed scripts/check.sh, or with
 # --mutated the mutation gate of scripts/mutate.sh, so the pre-push hook can
-# tell whether a commit it is about to push was ever checked. A rebase, merge
+# tell whether a commit it is about to push was ever checked. A rebase
 # or cherry-pick makes commits without running the pre-commit hook.
 #
 #   checked-trees.sh [--mutated] mark <tree-ish>  record that its contents
