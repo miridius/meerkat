@@ -95,6 +95,8 @@ When `finding_type === "suggestion"`:
   under the text, visible on the caret's line too, and dimmer while
   the editor is unfocused. Only a focused editor marks the caret's
   line.
+- The editor has IDE-style hotkeys; see
+  [Editor hotkeys](#editor-hotkeys).
 - On submit, the body is composed as
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it
@@ -110,6 +112,50 @@ When `finding_type === "suggestion"`:
   `PATH`, when a repair would change lines outside the suggestion,
   or when cljfmt joins a suggestion line onto a line around it. A
   file-level comment's suggestion is formatted on its own.
+
+### Editor hotkeys
+
+The keys follow Cursive's macOS keymap. On Windows and Linux, ⌘
+becomes Ctrl and ⌃⌘ becomes Ctrl+Alt.
+
+**Every language with a syntax grammar** (every language in
+`assets/ts/cmLang.ts`):
+
+| Key | Does |
+|---|---|
+| ⌥↑ / ⌥↓ | Expand / shrink the selection to the enclosing node |
+| ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, key) past its previous / next sibling |
+| ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
+
+In a file with no grammar, ⌥⇧↑/↓ still move lines and the other two
+pairs do nothing.
+
+**Clojure only:**
+
+| Key | Does |
+|---|---|
+| ⇧⌘K / ⇧⌘J | Slurp / barf forward |
+| ⌃⌘J / ⌃⌘K | Slurp / barf backward |
+| ⌘' | Raise the form at the caret, replacing its parent |
+| ⌥S | Splice: remove the enclosing brackets (also works where ⌥S types ß) |
+
+Outside Clojure, ⇧⌘K keeps CodeMirror's delete line.
+
+**Structural typing in Clojure:**
+
+- Typing an opening bracket inserts its closer.
+- Backspace or Delete on one bracket of a matched pair is blocked: the
+  caret steps over it. Backspace inside an empty pair deletes both.
+- The seeded lines can leave brackets unmatched. An unmatched opening
+  bracket can be deleted; Backspace steps over an unmatched closing
+  bracket, as over a matched one.
+- Deleting a selection is never blocked.
+- Edited lines re-indent.
+
+**Keys cheat sheet:** a "Keys" link in the editor's corner opens the
+list of keys for this file's language, written in ⌘/⌥/⇧ symbols on
+macOS and Ctrl/Alt/Shift names elsewhere. Clicking outside it or
+pressing Escape closes it and leaves the form open.
 
 ## Rendered comment
 
