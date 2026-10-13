@@ -115,8 +115,16 @@ When `finding_type === "suggestion"`:
 
 ### Editor hotkeys
 
-The keys follow Cursive's macOS keymap. On Windows and Linux, ⌘
-becomes Ctrl and ⌃⌘ becomes Ctrl+Alt.
+The keys follow Cursive's macOS keymap, except ⌃J. On Windows and
+Linux, ⌘ becomes Ctrl and ⌃⌘ becomes Ctrl+Alt. ⌃J becomes Alt+J there,
+since Chrome takes Ctrl+J for Downloads.
+
+**Every language**, including files with no grammar:
+
+| Key | Does |
+|---|---|
+| ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
+| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Each line break and the next line's leading indentation become one space; in Clojure, no space follows an opener or precedes a closer |
 
 **Every language with a syntax grammar** (every language in
 `assets/ts/cmLang.ts`):
@@ -125,10 +133,6 @@ becomes Ctrl and ⌃⌘ becomes Ctrl+Alt.
 |---|---|
 | ⌥↑ / ⌥↓ | Expand / shrink the selection to the enclosing node |
 | ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, key) past its previous / next sibling |
-| ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
-
-In a file with no grammar, ⌥⇧↑/↓ still move lines and the other two
-pairs do nothing.
 
 **Clojure only:**
 
@@ -152,8 +156,9 @@ Outside Clojure, ⇧⌘K keeps CodeMirror's delete line.
 - Edited lines re-indent.
 
 **Keys cheat sheet:** a "Keys" link in the editor's corner opens the
-list of keys for this file's language, written in ⌘/⌥/⇧ symbols on
-macOS and Ctrl/Alt/Shift names elsewhere. Clicking outside it or
+list of keys for this file's language, ⌃J join lines included,
+written in ⌘/⌃/⌥/⇧ symbols on macOS and Ctrl/Alt/Shift names
+elsewhere. Clicking outside it or
 pressing Escape closes it and leaves the form open.
 
 ## Rendered comment
