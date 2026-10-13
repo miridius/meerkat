@@ -83,9 +83,10 @@ When the UI does open, the reviewer sees, top-to-bottom:
    left of its buttons.
    In every review mode, a binary file shows a notice in place of its
    diff, and meerkat never reads its content.
-   Each hunk shows the lines and line ranges `git diff` gives it,
-   except that meerkat splits a hunk where a run removes and adds
-   different numbers of lines, to pair them for intra-line
+   Each hunk shows the lines `git diff` gives it, and its header,
+   shown when lines are hidden above it, gives git's line ranges.
+   The exception is a hunk meerkat splits where a run removes and
+   adds different numbers of lines, to pair them for intra-line
    highlighting.
    In Split view, buttons that reveal hidden context lines around
    and between hunks appear only in the right-hand (new-side)
