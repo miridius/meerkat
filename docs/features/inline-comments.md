@@ -167,10 +167,9 @@ Outside Clojure, ⇧⌘K keeps CodeMirror's delete line.
 
 - Typing an opening bracket inserts its closer.
 - Backspace or Delete on one bracket of a matched pair is blocked: the
-  caret steps over it. Backspace inside an empty pair deletes both.
-- The seeded lines can leave brackets unmatched. An unmatched opening
-  bracket can be deleted; Backspace steps over an unmatched closing
-  bracket, as over a matched one.
+  caret steps over it. Inside an empty pair, either deletes both.
+- Backspace or Delete deletes an unmatched bracket, opener or closer,
+  such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.
 - Edited lines re-indent.
 
