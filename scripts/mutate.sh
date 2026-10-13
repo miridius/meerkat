@@ -2,8 +2,8 @@
 # Mutation testing for meerkat.
 #
 # Runs `mix muex` against the meerkat Elixir code. muex rewrites
-# operators / literals one at a time and re-runs the test suite
-# against each rewrite. A rewrite the suite still passes against
+# operators / literals one at a time and re-runs the tests that
+# cover each rewrite. A rewrite those tests still pass against
 # is an uncovered behaviour — fix the test or the code.
 #
 # Modes:
@@ -14,18 +14,17 @@
 #                                   changed vs the merge base with
 #                                   origin/main (override with
 #                                   BASE_BRANCH), uncommitted edits
-#                                   included (muex --since), and fail
-#                                   as `staged` does. The pre-push
-#                                   hook runs this mode on a pushed
-#                                   tip with no mutation record.
+#                                   included (muex --since). The
+#                                   pre-push hook runs this mode on a
+#                                   pushed tip with no mutation record.
 #   scripts/mutate.sh staged      — mutate only the lib/**/*.ex lines
 #                                   staged for the next commit (muex
-#                                   --staged), and fail when any
-#                                   mutant survives or no test reaches
-#                                   it. The lefthook pre-commit hook
-#                                   runs this mode.
+#                                   --staged). The lefthook pre-commit
+#                                   hook runs this mode.
 #   scripts/mutate.sh <path…>     — mutate every line of the named
 #                                   files.
+#
+# Every mode fails when any mutant survives or no test reaches it.
 #
 # A pass of either gated mode records the contents it judged with
 # scripts/checked-trees.sh --mutated when they are known to be gated
@@ -96,12 +95,9 @@ has_added_lines() {
   awk '/^\+/ && !/^\+\+\+ / { found = 1 } END { exit !found }' <<<"$diff"
 }
 
-# Scopes muex to the lines its diff flags ($@) select. Every such line
-# counts, so --no-filter keeps muex from skipping a file it rates too
-# simple to be worth mutating, and --no-optimize from dropping the
-# mutants of a function it rates too simple.
+# Scopes muex to the lines its diff flags ($@) select.
 line_scope() {
-  scope_args=("$@" --no-filter --no-optimize)
+  scope_args=("$@")
 }
 
 # A tree whose every lib line since origin/main has passed this gate is
@@ -129,6 +125,8 @@ fi
 
 files=()
 scope_args=()
+muex_env=()
+label=selected
 gate=false
 case "$mode" in
   default)
@@ -153,6 +151,8 @@ case "$mode" in
     fi
     collect_files lib '*.ex'
     line_scope --since "$base"
+    muex_env=(GIT_INDEX_FILE="$index")
+    label=changed
     gate=true
     ;;
   staged)
@@ -177,6 +177,8 @@ case "$mode" in
     fi
     collect_files lib '*.ex'
     line_scope --staged
+    muex_env=(GIT_INDEX_FILE="$index")
+    label=staged
     gate=true
     ;;
   *)
@@ -213,6 +215,17 @@ while [[ $# -gt 0 ]]; do
     *)  extra_args+=("$1"); shift ;;
   esac
 done
+# The run is judged from the JSON report asked for below; muex keeps the
+# last of a repeated flag, so a later one would move or replace the
+# report, or exit before it is judged.
+for arg in "${extra_args[@]}"; do
+  case "$arg" in
+    --format | --format=* | --output | --output=* | --fail-at | --fail-at=*)
+      echo "scripts/mutate.sh: $arg is set by this script; drop it." >&2
+      exit 2
+      ;;
+  esac
+done
 # A flag such as --max-mutations can narrow the run, so it records nothing.
 [[ ${#extra_args[@]} -eq 0 ]] || record=false
 
@@ -246,29 +259,29 @@ run_mutate() {
   # --concurrency after `--` overrides this.
   jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
   ((jobs >= 1)) || jobs=1
-  muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs" "${scope_args[@]}")
+  # Every selected line counts, so --no-filter keeps muex from skipping a
+  # file it rates too simple to be worth mutating, and --no-optimize from
+  # dropping the mutants of a function it rates too simple.
+  muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs"
+    --no-filter --no-optimize "${scope_args[@]}")
 
-  if [[ "$gate" != true ]]; then
-    "${muex[@]}" "${extra_args[@]}"
-    exit
-  fi
-
-  # The gate judges the run from muex's JSON report rather than its score:
-  # a commit whose staged lines yield no mutants has nothing to score, and
-  # must pass. muex prints the report's path, so the report is kept, in
-  # _build/, until the next gate run replaces it. muex strips
-  # GIT_INDEX_FILE from the test runs it starts.
+  # Every mode judges the run from muex's JSON report rather than its
+  # score: muex's default --fail-at passes a run with survivors, its score
+  # ignores no-coverage mutants, and lines that yield no mutants have
+  # nothing to score, and must pass. muex prints the report's path, so the
+  # report is kept, in _build/, until the next run replaces it. muex
+  # strips GIT_INDEX_FILE from the test runs it starts.
   mkdir -p _build
-  report="$PWD/_build/mutate-$mode.json"
+  report="$PWD/_build/mutate-$label.json"
   # muex writes no report when there is nothing to mutate, as for staged
   # comments or lib/meerkat/application.ex alone, so an earlier run's
   # report must not be left for this run to judge.
   rm -f "$report"
-  GIT_INDEX_FILE="$index" "${muex[@]}" --fail-at 0 \
+  env "${muex_env[@]}" "${muex[@]}" --fail-at 0 \
     --format json --output "$report" "${extra_args[@]}"
 
   if [[ ! -f "$report" ]]; then
-    echo "scripts/mutate.sh: the $mode lib/ lines produce no mutants."
+    echo "scripts/mutate.sh: the $label lib/ lines produce no mutants."
     record_if_gated
     exit 0
   fi
@@ -306,7 +319,7 @@ run_mutate() {
 
   if [[ -n "$failing" ]]; then
     echo
-    echo "scripts/mutate.sh: $mode lib/ lines have untested behaviour:"
+    echo "scripts/mutate.sh: $label lib/ lines have untested behaviour:"
     echo
     echo "$failing"
     echo
@@ -316,7 +329,7 @@ run_mutate() {
   fi
 
   record_if_gated
-  echo "scripts/mutate.sh: no mutant of the $mode lib/ lines survived."
+  echo "scripts/mutate.sh: no mutant of the $label lib/ lines survived."
 }
 
 # Like scripts/check.sh, the gate holds a slot from scripts/gate-lock.sh

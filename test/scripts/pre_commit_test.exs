@@ -471,6 +471,63 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-optimize" in args
   end
 
+  # muex's own exit status passes survivors under its default --fail-at
+  # and ignores no-coverage mutants, so every mode judges the report.
+  for status <- ~w(survived no_coverage) do
+    test "`mutate.sh <path>` fails on a #{status} mutant and lists it", ctx do
+      report = write_report(ctx.base, unquote(status), [mutant(unquote(status))])
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+      assert {out, 1} =
+               System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
+                 cd: ctx.work,
+                 env: [{"PATH", path}, {"STUB_REPORT", report}],
+                 stderr_to_stdout: true
+               )
+
+      assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
+      pairs = Enum.chunk_every(muex_args(ctx), 2, 1)
+      assert ["--fail-at", "0"] in pairs
+      assert ["--format", "json"] in pairs
+    end
+  end
+
+  # muex's file filter and optimizer would drop a small file's or
+  # function's mutants, and a run with none passes.
+  test "`mutate.sh <path>` keeps every mutant of the file", ctx do
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {_, 0} =
+             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
+
+    args = muex_args(ctx)
+    assert "--no-filter" in args
+    assert "--no-optimize" in args
+  end
+
+  # muex keeps the last of a repeated flag, so these would override the gate's.
+  for flag <- ~w(--format=html --output --fail-at) do
+    test "`mutate.sh` refuses #{flag} after `--`", ctx do
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+      assert {out, 2} =
+               System.cmd(
+                 "bash",
+                 ["scripts/mutate.sh", "lib/meerkat/one.ex", "--", unquote(flag)],
+                 cd: ctx.work,
+                 env: [{"PATH", path}],
+                 stderr_to_stdout: true
+               )
+
+      assert out =~ "#{unquote(flag)} is set by this script"
+      refute File.exists?(Path.join(ctx.muex, "args"))
+    end
+  end
+
   describe "while two other gates run" do
     setup ctx do
       {:ok, first: hold_gate_slot(ctx.work), second: hold_gate_slot(ctx.work)}
