@@ -408,8 +408,8 @@ defmodule Meerkat.Feedback do
   # Per-comment agent-instruction directives, one block per ticked
   # flag: "correct your instructions/skills" for a behavioural issue,
   # "turn this into a lint rule" for a lintable code issue. The lint
-  # block names no linter: the agent's repo decides how lint rules are
-  # added. Indented by `pad` to align with the comment block above.
+  # line names no linter or location: the agent's own instructions
+  # decide where the rule goes. Indented by `pad` to align with the comment block above.
   defp flag_lines(comment, pad) do
     instructions_line(comment.correct_instructions, pad) <>
       lint_rule_line(comment.lint_rule, pad)
@@ -419,20 +419,15 @@ defmodule Meerkat.Feedback do
     # muex:ignore equivalent: the <<>> swap mutant prints as this same heredoc
     """
     #{pad}↳ correct-your-instructions: the reviewer flagged a behavioural
-    #{pad}  issue. Correct the instructions or skills that led to it, so
-    #{pad}  future sessions get it right without being told again.
+    #{pad}  issue. Correct the instructions or skills that led to it so
+    #{pad}  future sessions get it right.
     """
   end
 
   defp instructions_line(false, _pad), do: ""
 
   defp lint_rule_line(true, pad) do
-    """
-    #{pad}↳ turn-this-into-a-lint-rule: the reviewer wants this comment
-    #{pad}  enforced by a lint rule. Add one that catches this, the way this
-    #{pad}  repo adds lint rules, so the check fails next time instead of
-    #{pad}  the reviewer having to say it again.
-    """
+    "#{pad}↳ turn-this-into-a-lint-rule: add a lint rule that catches this.\n"
   end
 
   defp lint_rule_line(false, _pad), do: ""

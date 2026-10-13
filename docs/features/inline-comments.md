@@ -47,8 +47,8 @@ The form has:
     or skills that led to it.
   - "Turn this into a lint rule", for a lintable code issue. When
     checked, the feedback tells the agent to add a lint rule that
-    catches it. It names no linter: the agent's repo decides how lint
-    rules are added.
+    catches it. It names no linter or location, leaving where the rule
+    goes to the agent's own instructions.
 
   Only the agent's feedback carries these; comments posted to GitHub
   with `--pr` do not.

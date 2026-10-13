@@ -426,8 +426,8 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ """
                > **issue:** fix
                ↳ correct-your-instructions: the reviewer flagged a behavioural
-                 issue. Correct the instructions or skills that led to it, so
-                 future sessions get it right without being told again.
+                 issue. Correct the instructions or skills that led to it so
+                 future sessions get it right.
              """
 
       refute out =~ "turn-this-into-a-lint-rule"
@@ -442,10 +442,7 @@ defmodule Meerkat.FeedbackTest do
 
       assert out =~ """
                > **issue:** fix
-               ↳ turn-this-into-a-lint-rule: the reviewer wants this comment
-                 enforced by a lint rule. Add one that catches this, the way this
-                 repo adds lint rules, so the check fails next time instead of
-                 the reviewer having to say it again.
+               ↳ turn-this-into-a-lint-rule: add a lint rule that catches this.
              """
 
       refute out =~ "correct-your-instructions"
@@ -468,12 +465,9 @@ defmodule Meerkat.FeedbackTest do
       directives = fn pad ->
         """
         #{pad}↳ correct-your-instructions: the reviewer flagged a behavioural
-        #{pad}  issue. Correct the instructions or skills that led to it, so
-        #{pad}  future sessions get it right without being told again.
-        #{pad}↳ turn-this-into-a-lint-rule: the reviewer wants this comment
-        #{pad}  enforced by a lint rule. Add one that catches this, the way this
-        #{pad}  repo adds lint rules, so the check fails next time instead of
-        #{pad}  the reviewer having to say it again.
+        #{pad}  issue. Correct the instructions or skills that led to it so
+        #{pad}  future sessions get it right.
+        #{pad}↳ turn-this-into-a-lint-rule: add a lint rule that catches this.
         """
       end
 
