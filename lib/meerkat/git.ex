@@ -748,13 +748,7 @@ defmodule Meerkat.Git do
         end
 
       name ->
-        hunks =
-          block
-          |> String.split(~r/^(?=@@ )/m, trim: true)
-          |> Enum.filter(&String.starts_with?(&1, "@@"))
-          |> Meerkat.Intraline.split()
-
-        {:ok, name, hunks}
+        {:ok, name, split_hunks(block)}
     end
   end
 
@@ -1327,11 +1321,13 @@ defmodule Meerkat.Git do
   # Read a file at a specific revision. Returns `{content, errors}`:
   # on git failure, `content = ""` AND a human-readable error is
   # appended so the UI can surface "couldn't read X — diff may be
-  # inaccurate" rather than silently showing an empty file.
+  # inaccurate" rather than silently showing an empty file. Git treats
+  # text that is not valid UTF-8 (e.g. Latin-1) as text; its invalid
+  # bytes become U+FFFD so the review can JSON-encode it.
   defp read_file_at(repo_path, ref, path) do
     case run_git(repo_path, ["show", "#{ref}:#{path}"]) do
       {:ok, content} ->
-        {content, []}
+        {String.replace_invalid(content), []}
 
       {:error, reason} ->
         msg = "couldn't read #{path} at #{ref}: #{reason}"
@@ -1343,10 +1339,11 @@ defmodule Meerkat.Git do
   # Read the staged (index) version of a file. `:0:path` selects the
   # index; identical to `git diff --cached`'s "after" side. The stage is
   # explicit so a path like `0:foo` is not taken for a stage number.
+  # Invalid UTF-8 is replaced as in `read_file_at/3`.
   defp read_index(repo_path, path) do
     case run_git(repo_path, ["show", ":0:#{path}"]) do
       {:ok, content} ->
-        {content, []}
+        {String.replace_invalid(content), []}
 
       {:error, reason} ->
         msg = "couldn't read staged content for #{path}: #{reason}"
@@ -1365,24 +1362,27 @@ defmodule Meerkat.Git do
         {[], []}
 
       {:ok, output} ->
-        # Drop the leading `diff --git`, `index`, `---`, `+++` lines.
-        # Keep everything from the first `@@` onwards, then split into
-        # one string per `@@` block and pass through `Intraline.split`
-        # so unequal-count add/del runs are pair-aligned for intra-line
-        # highlighting.
-        hunks =
-          output
-          |> String.split(~r/^(?=@@ )/m, trim: true)
-          |> Enum.filter(&String.starts_with?(&1, "@@"))
-          |> Meerkat.Intraline.split()
-
-        {hunks, []}
+        {split_hunks(output), []}
 
       {:error, reason} ->
         msg = "couldn't compute diff (args: #{Enum.join(diff_args, " ")}): #{reason}"
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {[], [msg]}
     end
+  end
+
+  # Drop a file's diff header (`diff --git`, `index`, `---`, `+++`).
+  # Keep everything from the first `@@` onwards, then split into one
+  # string per `@@` block and pass through `Intraline.split` so
+  # unequal-count add/del runs are pair-aligned for intra-line
+  # highlighting. Bytes that are not valid UTF-8 become U+FFFD, as in
+  # file contents; the header, which holds the path, is already gone.
+  defp split_hunks(diff) do
+    diff
+    |> String.split(~r/^(?=@@ )/m)
+    |> Enum.filter(&String.starts_with?(&1, "@@"))
+    |> Enum.map(&String.replace_invalid/1)
+    |> Meerkat.Intraline.split()
   end
 
   @doc false

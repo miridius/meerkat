@@ -135,6 +135,27 @@ defmodule Meerkat.GitBinaryTest do
     refute stderr =~ "couldn't parse staged-diff block"
   end
 
+  test "text that is not valid UTF-8 shows with invalid bytes replaced", %{dir: dir} do
+    stage(dir, "latin.txt", "caf\xe9\nsame\n")
+    git(dir, ["commit", "-qm", "base"])
+    stage(dir, "latin.txt", "caf\xe9s\nsame\n")
+    git(dir, ["commit", "-qm", "plural"])
+    stage(dir, "latin.txt", "th\xe9\nsame\n")
+
+    assert {:ok, [staged]} = Git.staged_file_diffs(dir)
+    assert {:ok, [range]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+
+    for {file, old, new} <- [{staged, "cafés", "thé"}, {range, "café", "cafés"}] do
+      refute Map.get(file, :is_binary)
+      replaced = &String.replace(&1, "é", "�")
+      assert file.old_content == replaced.("#{old}\nsame\n")
+      assert file.new_content == replaced.("#{new}\nsame\n")
+      assert Enum.join(file.hunks) =~ replaced.("+#{new}\n")
+      assert file.read_errors == []
+      assert :json.encode(file)
+    end
+  end
+
   test "numstat failure keeps every file listed with the reason", %{dir: dir} do
     stage(dir, "BUILD.bazel", <<0, 255>>)
     intercept_git(dir, "--numstat", "echo numstat-failed >&2; exit 1")

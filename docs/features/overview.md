@@ -66,6 +66,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
    left of its buttons.
    In every review mode, a binary file shows a notice in place of its
    diff, and meerkat never reads its content.
+   A text file that is not valid UTF-8, such as Latin-1, shows as
+   text, with its invalid bytes shown as `�`.
    In Split view, buttons that reveal hidden context lines around
    and between hunks appear only in the right-hand (new-side)
    gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
