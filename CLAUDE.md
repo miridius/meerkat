@@ -55,6 +55,10 @@ remove commits a merged PR still references). Before committing:
   as `scripts/gate-lock.sh`, stays bash with it.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
+- **No browser from tests.** Tests and agent-run checks pass
+  `--no-open`. A run that needs a browser (Playwright, `meerkat-qa`)
+  opens the printed URL itself.
+- **No product owner.** Meerkat work gets no product owner.
 
 ## Workflow
 
@@ -105,8 +109,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after pair
-   can help. Crop each screenshot to the changed element. Put each in
-   its own table row so they read on a phone.
+   can help. Crop each screenshot to the component enclosing the
+   change, and screenshots meant for comparison to one shared width.
+   Put each in its own table row so they read on a phone.
 
 ## Quality gates
 
