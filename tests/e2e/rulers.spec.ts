@@ -12,12 +12,19 @@ import { afterNextFrame, expect, test } from "./lib/test";
 
 const LONG = `${"x".repeat(130)}\n`;
 
-// A modified file, so the diff can show Split view.
+const BLOCK = "moved one\nmoved two\nmoved three\n";
+const STAYS = "stays one\nstays two\nstays three\nstays four\nstays five\n";
+
+// A modified file, so the diff can show Split view, and a file whose
+// block moves, so its lines get the moved-line tint.
 function wideFixture() {
-	const fixture = makeFixture({ files: { "wide.txt": `short\n${LONG}` } });
+	const fixture = makeFixture({
+		files: { "wide.txt": `short\n${LONG}`, "moved.txt": `${BLOCK}${STAYS}` },
+	});
 	fixture.git("commit", "-q", "-m", "base");
 	writeFileSync(join(fixture.dir, "wide.txt"), `shorter\n${LONG}${LONG}`);
-	fixture.git("add", "wide.txt");
+	writeFileSync(join(fixture.dir, "moved.txt"), `${STAYS}${BLOCK}`);
+	fixture.git("add", "wide.txt", "moved.txt");
 	return fixture;
 }
 
@@ -72,6 +79,13 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
 		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
 
+		// A moved line's tint keeps its rulers.
+		const movedCell = page.locator(".file-section").filter({ hasText: "moved.txt" }).locator("td.moved-line").first();
+		await expect(movedCell).toBeVisible();
+		await expect
+			.poll(() => movedCell.evaluate((td) => getComputedStyle(td).backgroundImage.split("linear-gradient").length - 1))
+			.toBe(3);
+
 		// Split view's halves are equally wide, so at every width each
 		// draws the same rulers; 10px steps cross each ruler's threshold.
 		for (let width = 1300; width <= 2000; width += 10) {
@@ -92,11 +106,14 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		// Around the width where 110 starts to fit, it is never drawn in
 		// the cell's right padding.
-		for (let width = 1005; width <= 1030; width += 1) {
+		let crossed = false;
+		for (let width = 1005; width <= 1050; width += 1) {
 			await page.setViewportSize({ width, height: 800 });
 			await afterNextFrame(page);
 			expect(await rulersPastText(unifiedCell), `at ${width}px`).toEqual([]);
+			crossed ||= (await rulersOn(unifiedCell)).includes("110");
 		}
+		expect(crossed, "the sweep reaches the width where 110 fits").toBe(true);
 		await page.setViewportSize({ width: 1000, height: 800 });
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
@@ -122,6 +139,16 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["40"]);
 		await openSettings(page);
 		await expect(page.getByLabel("Ruler columns")).toHaveValue("40, 120");
+
+		// Rows being drag-selected keep their rulers.
+		await page.locator(".toolbar-settings > summary").click();
+		await file.locator('td.diff-line-num span[data-line-new-num="2"]').hover();
+		await page.mouse.down();
+		await file.locator('td.diff-line-num span[data-line-new-num="3"]').hover();
+		const dragged = file.locator("tr.diff-line.drag-selecting > td.diff-line-content").first();
+		await expect(dragged).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
+		await expect(dragged).toHaveCSS("background-image", /linear-gradient/);
+		await page.mouse.up();
 	} finally {
 		await meerkat.kill();
 	}

@@ -8,8 +8,8 @@ import type { LanguageSupport } from "@codemirror/language";
  *
  *  Factories are async so Vite can split each language pack into its
  *  own chunk — we only pay the download cost for languages actually
- *  used in a given review. See `preloadLanguages` for the batched
- *  preload path that warms these up at review-load time. */
+ *  used in a given review. See `preloadLanguages`; the editor calls it
+ *  on mount and adds the pack when it arrives. */
 const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	javascript: () => import("@codemirror/lang-javascript").then((m) => m.javascript()),
 	typescript: () =>

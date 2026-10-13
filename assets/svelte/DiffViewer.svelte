@@ -417,7 +417,7 @@
     for (const [variable, selector] of RULER_SIDES) {
       const td = diffContainer.querySelector<HTMLTableCellElement>(selector);
       const view = td?.closest("table")?.parentElement;
-      if (!td || !view) {
+      if (!td || !view || ruler_columns.length === 0) {
         diffContainer.style.removeProperty(variable);
         continue;
       }
@@ -1168,7 +1168,7 @@
   :global(.diff-content tr.diff-line.drag-selecting > td),
   :global(.diff-content tr.diff-line > td.drag-selecting-side) {
     /* biome-ignore lint/complexity/noImportantStyles: the diff library sets each cell's background-color inline, which only `!important` can override; without it the add/del shading masks the drag indicator. */
-    background: rgba(31, 111, 235, 0.32) !important;
+    background-color: rgba(31, 111, 235, 0.32) !important;
     box-shadow: inset 0 0 0 9999px rgba(31, 111, 235, 0.18);
   }
   /* Visual indicator that a line is covered by an inline comment.
@@ -1237,38 +1237,32 @@
     margin: 4px 0;
     padding-left: 20px;
   }
-  /* Moved-line highlighting — 4 colors cycled by pair id. */
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-0),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-0),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-0) {
-    background-image: linear-gradient(
-      rgba(96, 165, 250, 0.18),
-      rgba(96, 165, 250, 0.18)
-    );
+  /* Moved-line highlighting — 4 colors cycled by pair id. A split
+     view's content cell draws its rulers over the tint. */
+  :global(.diff-content .moved-line.moved-pair-0) {
+    --meerkat-moved-tint: rgba(96, 165, 250, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-1),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-1),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-1) {
-    background-image: linear-gradient(
-      rgba(192, 132, 252, 0.18),
-      rgba(192, 132, 252, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-1) {
+    --meerkat-moved-tint: rgba(192, 132, 252, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-2),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-2),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-2) {
-    background-image: linear-gradient(
-      rgba(52, 211, 153, 0.18),
-      rgba(52, 211, 153, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-2) {
+    --meerkat-moved-tint: rgba(52, 211, 153, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-3),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-3),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-3) {
-    background-image: linear-gradient(
-      rgba(251, 191, 36, 0.18),
-      rgba(251, 191, 36, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-3) {
+    --meerkat-moved-tint: rgba(251, 191, 36, 0.18);
+  }
+  :global(.diff-content tr.diff-line.moved-line) {
+    background-image: linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
+  }
+  :global(.diff-content td.diff-line-old-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-old, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
+  }
+  :global(.diff-content td.diff-line-new-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-new, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
   :global(.diff-content tr.diff-line.moved-flash) {
     animation: moved-flash-anim 1.6s ease-out;

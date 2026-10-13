@@ -85,8 +85,8 @@ const rosePineChrome = EditorView.theme(
 		// lose among the code.
 		".cm-cursor, .cm-dropCursor": { borderLeft: `2px solid ${c.gold}`, marginLeft: "-1px" },
 		// CodeMirror paints `.cm-selectionBackground` in a layer BEHIND
-		// the text, so every background over it (active line, matches)
-		// is translucent below. The selection stays visible, dimmer,
+		// the text, so the backgrounds over it (active line, selection
+		// and bracket matches) are translucent below. The selection stays visible, dimmer,
 		// while the editor is unfocused.
 		".cm-selectionBackground": {
 			backgroundColor: `${alpha(p.iris, 0.25)} !important`,
