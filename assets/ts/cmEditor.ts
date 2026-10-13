@@ -1,10 +1,11 @@
 import { indentWithTab } from "@codemirror/commands";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState, type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
+import { contextIndentation, detectIndentUnit, type FileContext } from "./cmIndent.js";
 import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
 import { rulerBackground } from "./rulers.js";
 
@@ -192,6 +193,9 @@ export interface CmEditorOptions {
 	language: string;
 	/** Columns to draw a ruler after; `setCmRulers` changes them later. */
 	rulerColumns: number[];
+	/** The file's text around `doc`, when it is lines of a file: new lines
+	 *  indent as they would in the whole file. */
+	context?: FileContext;
 	/** Fires on every doc change with the new full text. */
 	onChange: (value: string) => void;
 	/** Fires on Ctrl/Cmd+Enter. Used as the form's submit shortcut. */
@@ -200,12 +204,21 @@ export interface CmEditorOptions {
 	onCancel?: () => void;
 }
 
+/** The indent unit the file, or without one the editor's text, is
+ *  written in; CodeMirror's two spaces when it shows none. */
+function indentUnitOf(options: CmEditorOptions): Extension {
+	const { before = "", after = "" } = options.context ?? {};
+	const unit = detectIndentUnit(before + options.doc + after);
+	return unit ? indentUnit.of(unit) : [];
+}
+
 /** Mount a CodeMirror 6 editor into `parent` with this repo's standard
  *  extension set — `basicSetup` (history, line numbers, syntax highlight,
  *  bracket matching + auto-close, indent-on-input, search, autocomplete,
  *  multi-cursor, active line highlight, selection-match highlight) plus
  *  Tab-indents-selection, Rose Pine Moon theming, rulers, and the
  *  language's pack. Lines don't wrap, so the rulers sit at true columns.
+ *  New lines indent as they would in the file, in its indent unit.
  *
  *  Returns the EditorView; destroy it with `.destroy()` on unmount. */
 export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): EditorView {
@@ -213,6 +226,8 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 	const extensions: Extension[] = [
 		basicSetup,
 		language.of(getLoadedLanguage(options.language) ?? []),
+		options.context ? contextIndentation(options.context, language) : [],
+		indentUnitOf(options),
 		rosePineChrome,
 		rulers.of(rulersTheme(options.rulerColumns)),
 		syntaxHighlighting(rosePineHighlight),
