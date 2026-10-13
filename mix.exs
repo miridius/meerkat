@@ -84,11 +84,13 @@ defmodule Meerkat.MixProject do
       # staged-line scoping, `# muex:ignore` directives, a JSON
       # report that survives invalid UTF-8, no function-call mutants
       # of map literals, `%` structs or `::` in interpolation and
-      # bitstring segments, and runs of mutants whose compiled code
-      # differs only as 4 vs 4.0, which were wrongly called equivalent.
+      # bitstring segments, runs of mutants whose compiled code
+      # differs only as 4 vs 4.0, which were wrongly called equivalent,
+      # `--staged` refusing a file with an unstaged deletion, and git
+      # diffs that ignore textconv drivers and diff prefix config.
       {:muex,
-       github: "miridius/muex",
-       ref: "a047ce8f4af615cda2ec6076774cb52d1e8b3784",
+       github: "agent-for-miridius/muex",
+       ref: "e6a0cbc0cb23b49f39ffedce4a50ad9c48b7a2c6",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
