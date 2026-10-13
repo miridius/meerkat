@@ -52,9 +52,9 @@ function temporaryIndex(dir: string, name: string): string {
 }
 
 function secondsLeft(text: string | null): number {
-	const match = /^(\d{2}):(\d{2}) left$/.exec(text ?? "");
-	if (!match) throw new Error(`countdown text is not mm:ss left: ${text}`);
-	return Number(match[1]) * 60 + Number(match[2]);
+	const match = /^(\d+):(\d{2}):(\d{2}) left$/.exec(text ?? "");
+	if (!match) throw new Error(`countdown text is not h:mm:ss left: ${text}`);
+	return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
 
 // The process lifecycle seam: the launcher's caller, the detached backend
@@ -226,7 +226,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await expect(
 				countdown,
 				"the footer shows the time left before the review times out",
-			).toHaveText(/^\d{2}:\d{2} left$/);
+			).toHaveText(/^\d+:\d{2}:\d{2} left$/);
 			const start = secondsLeft(await countdown.textContent());
 			expect(start, "a 59 second limit starts the clock just under 59 seconds").toBeGreaterThan(44);
 			expect(start, "the clock never starts above the limit").toBeLessThanOrEqual(59);
