@@ -18,7 +18,8 @@ defmodule Meerkat.Intraline do
        longer side. These still render plain — there is no paired
        counterpart to diff against.
 
-  Context and already-matched runs pass through unchanged.
+  Context, already-matched runs and runs with only deletions or only
+  additions pass through unchanged.
   """
 
   @doc """
@@ -125,7 +126,8 @@ defmodule Meerkat.Intraline do
     run_old_start = state.old_cur
     run_new_start = state.new_cur
 
-    if length(dels) == length(adds) do
+    # A one-sided run has nothing to pair, so it stays in its hunk.
+    if dels == [] or adds == [] or length(dels) == length(adds) do
       merged_rev =
         Enum.reverse(Enum.map(adds, &{:add, &1})) ++
           Enum.reverse(Enum.map(dels, &{:del, &1}))

@@ -58,6 +58,14 @@ defmodule Meerkat.IntralineTest do
     for tok <- ["+z1", "+z2", "+z3"], do: assert(orphan =~ tok)
   end
 
+  # With nothing to pair, a split would only cut the hunk in two and
+  # show a header that disagrees with git's.
+  test "one-sided runs pass through unsplit" do
+    added = "@@ -2,3 +2,4 @@\n bravo\n charlie\n delta\n+echo\n"
+    removed = "@@ -1,3 +1,2 @@\n a\n-b\n c\n"
+    assert Intraline.split([added, removed]) == [added, removed]
+  end
+
   test "multiple mismatched runs in one hunk" do
     hunk = "@@ -1,6 +1,4 @@\n-a\n-b\n+x\n ctx\n-c\n-d\n+y\n"
     out = Intraline.split([hunk])
