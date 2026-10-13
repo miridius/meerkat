@@ -51,9 +51,18 @@ const hooks = {
       } catch (_e) {
         /* corrupt data — fall back to server defaults */
       }
-      this.handleEvent("settings:save", (settings) => {
+      // Each save carries only the settings that changed, merged into
+      // what is stored, so another tab's change to a different setting
+      // isn't overwritten.
+      this.handleEvent("settings:save", (changed) => {
         try {
-          localStorage.setItem(KEY, JSON.stringify(settings));
+          let stored = {};
+          try {
+            stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") ?? {};
+          } catch (_e) {
+            /* corrupt data — replace it */
+          }
+          localStorage.setItem(KEY, JSON.stringify({ ...stored, ...changed }));
         } catch (_e) {
           /* storage full / disabled — stays in-memory for this tab */
         }

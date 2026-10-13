@@ -82,10 +82,12 @@ When `finding_type === "suggestion"`:
   pack loads on first use, and the open editor is highlighted once
   it arrives.
 - Lines don't wrap; the editor scrolls sideways only when a line is
-  wider than it. Vertical rulers are always drawn after columns 80
-  and 110, so a line past either length shows; a ruler beyond the
-  editor's width shows once a line reaches it and the editor is
-  scrolled there.
+  wider than it. Vertical rulers are drawn after the columns set in
+  the toolbar's `⚙` popover (80 and 110 by default; see
+  [overview.md](overview.md)), so a line past one shows. Unlike the
+  diff's, a ruler beyond the editor's width shows once a line
+  reaches it and the editor is scrolled there. Changing the setting
+  updates open editors.
 - The caret is a 2px gold bar. The selection is a purple tint drawn
   under the text, visible on the caret's line too, and dimmer while
   the editor is unfocused. Only a focused editor marks the caret's

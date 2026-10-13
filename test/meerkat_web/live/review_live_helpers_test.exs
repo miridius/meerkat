@@ -64,7 +64,14 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
 
     test "settings.load validators keep defaults on junk" do
-      defaults = %{diff_mode: "split", wrap_lines: true, font_size_px: 13, tab_size: 2}
+      defaults = %{
+        diff_mode: "split",
+        wrap_lines: true,
+        font_size_px: 13,
+        tab_size: 2,
+        rulers: true,
+        ruler_columns: [80, 110]
+      }
 
       assert ReviewLive.valid_settings_for_test(%{}, defaults) == defaults
 
@@ -73,20 +80,50 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
                  "diff_mode" => "unified",
                  "wrap_lines" => false,
                  "font_size_px" => 20,
-                 "tab_size" => 4
+                 "tab_size" => 4,
+                 "rulers" => false,
+                 "ruler_columns" => [120, 1, 999, 120]
                },
                defaults
-             ) == %{diff_mode: "unified", wrap_lines: false, font_size_px: 20, tab_size: 4}
+             ) == %{
+               diff_mode: "unified",
+               wrap_lines: false,
+               font_size_px: 20,
+               tab_size: 4,
+               rulers: false,
+               ruler_columns: [1, 120, 999]
+             }
+
+      assert ReviewLive.valid_settings_for_test(%{"ruler_columns" => []}, defaults).ruler_columns ==
+               []
+
+      for junk <- [[0], [1000], [80, "110"], [80.5], "80, 110", nil] do
+        assert ReviewLive.valid_settings_for_test(%{"ruler_columns" => junk}, defaults) ==
+                 defaults
+      end
 
       assert ReviewLive.valid_settings_for_test(
                %{
                  "diff_mode" => " sideways",
                  "wrap_lines" => "yes",
                  "font_size_px" => "big",
-                 "tab_size" => 7
+                 "tab_size" => 7,
+                 "rulers" => "no"
                },
                defaults
              ) == defaults
+    end
+
+    test "the rulers field takes whole columns from 1 to 999, split by commas or spaces" do
+      assert ReviewLive.parse_ruler_columns_for_test("80, 110") == {:ok, [80, 110]}
+      assert ReviewLive.parse_ruler_columns_for_test(" 110 80,,80 ") == {:ok, [80, 110]}
+      assert ReviewLive.parse_ruler_columns_for_test("1,999") == {:ok, [1, 999]}
+      assert ReviewLive.parse_ruler_columns_for_test("") == {:ok, []}
+      assert ReviewLive.parse_ruler_columns_for_test(" , ") == {:ok, []}
+
+      for junk <- ["0", "1000", "-80", "80x", "8.5", "80;110", "eighty"] do
+        assert ReviewLive.parse_ruler_columns_for_test(junk) == :error, junk
+      end
     end
   end
 

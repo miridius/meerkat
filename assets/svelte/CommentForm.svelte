@@ -6,8 +6,8 @@
   // `prose\n\n\`\`\`<lang>\n<code>\n\`\`\`` so GitHub renders the
   // suggestion as a fenced code block.
 
-  import { onDestroy } from "svelte";
-  import { createCmEditor } from "../ts/cmEditor";
+  import { onDestroy, untrack } from "svelte";
+  import { createCmEditor, setCmRulers } from "../ts/cmEditor";
   import { languageFor } from "../ts/languageFor";
   import type { EditorView } from "@codemirror/view";
 
@@ -30,6 +30,7 @@
     fileName = "",
     draftKey,
     formKey,
+    rulerColumns,
     live,
   }: {
     submitLabel?: string;
@@ -46,6 +47,8 @@
     // Names this form to the server, so submit and cancel act on it
     // and not on another open form.
     formKey: string;
+    // Columns the suggestion editor draws rulers after (the ⚙ setting).
+    rulerColumns: number[];
     live: LiveBridge;
   } = $props();
 
@@ -163,10 +166,19 @@
     cmView = createCmEditor(codeHost, {
       doc: code,
       language,
+      rulerColumns: untrack(() => rulerColumns),
       onChange: (v) => (code = v),
       onSubmit: () => submit(),
       onCancel: () => cancel(),
     });
+  });
+
+  // A change to the ruler setting redraws an open editor's rulers.
+  // LiveSvelte patches the list in place, so read every element to
+  // rerun on a change.
+  $effect(() => {
+    const columns = $state.snapshot(rulerColumns);
+    if (cmView) setCmRulers(cmView, columns);
   });
 
   onDestroy(() => {

@@ -218,13 +218,86 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view = mount_unbound(conn)
 
     assert render_click(view, "toolbar.set_tab_size", %{"n" => "8"}) =~ "8"
+    assert_push_event(view, "settings:save", saved)
+    assert saved == %{tab_size: 8}
     assert render_click(view, "toolbar.set_tab_size", %{"n" => "3"}) =~ "8"
+  end
+
+  test "the ⚙ rulers setting reaches the diff and every comment form, and is saved",
+       %{conn: conn} do
+    state = %ReviewState{
+      files: [@plain_file],
+      commit_message: "subject",
+      commit_message_blocks: [%{start_line: 1, end_line: 1, text: "subject"}]
+    }
+
+    view = mount_unbound(conn, state)
+    render_click(view, "comment_form.show_global", %{})
+    render_click(view, "comment_form.show_file", %{"file_index" => "0"})
+
+    html =
+      render_hook(view, "comment_form.show_commit_msg", %{"start_line" => "1", "end_line" => "1"})
+
+    ids = [
+      "DiffViewer-0",
+      "CommentForm-global",
+      "CommentForm-file-0",
+      "CommentForm-commit_msg-1-1"
+    ]
+
+    rulers = fn html -> Map.new(ids, &{&1, svelte_props(html, &1) |> rulers_prop()}) end
+
+    # Later renders carry only changed props, so only the form this
+    # render mounted shows its initial columns.
+    assert rulers_prop(svelte_props(html, "CommentForm-commit_msg-1-1")) == [80, 110]
+    assert has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
+    assert has_element?(view, "input[name=columns][value='80, 110'][aria-invalid=false]")
+
+    # Commas and spaces separate columns; the list is sorted and deduped.
+    html = view |> element("#ruler-columns-form") |> render_change(%{"columns" => "120 72,72"})
+    assert rulers.(html) == Map.new(ids, &{&1, [72, 120]})
+    assert has_element?(view, "input[name=columns][value='72, 120']")
+    # Each save carries only the changed setting, so it can't overwrite
+    # another tab's change to a different one.
+    assert_push_event(view, "settings:save", saved)
+    assert saved == %{ruler_columns: [72, 120]}
+
+    # Unchecking hides them without forgetting the columns.
+    html = view |> element(".toolbar-settings input[type=checkbox]") |> render_click()
+    assert rulers.(html) == Map.new(ids, &{&1, []})
+    assert has_element?(view, "input[name=columns][value='72, 120']")
+    assert_push_event(view, "settings:save", saved)
+    assert saved == %{rulers: false}
+
+    # Junk stays in the field, marked, through other changes, and the
+    # last list stays in force.
+    view |> element("#ruler-columns-form") |> render_change(%{"columns" => "80, wide"})
+    html = view |> element(".toolbar-settings input[type=checkbox]") |> render_click()
+    assert rulers.(html) == Map.new(ids, &{&1, [72, 120]})
+    assert has_element?(view, "input[name=columns][value='80, wide'][aria-invalid=true]")
+
+    # A blank field means no rulers, and clears the mark.
+    html = view |> element("#ruler-columns-form") |> render_submit(%{"columns" => " "})
+    assert rulers.(html) == Map.new(ids, &{&1, []})
+    assert has_element?(view, "input[name=columns][aria-invalid=false]")
+  end
+
+  # DiffViewer names it `ruler_columns`, CommentForm `rulerColumns`.
+  defp rulers_prop(props), do: props["ruler_columns"] || props["rulerColumns"]
+
+  test "settings.load restores the rulers setting", %{conn: conn} do
+    view = mount_unbound(conn)
+    render_hook(view, "settings.load", %{"rulers" => false, "ruler_columns" => [100]})
+    refute has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
+    assert has_element?(view, "input[name=columns][value='100']")
   end
 
   test "set_diff_mode flips the active segment", %{conn: conn} do
     view = mount_unbound(conn)
     html = render_click(view, "set_diff_mode", %{"mode" => "unified"})
     assert html =~ "active"
+    assert_push_event(view, "settings:save", saved)
+    assert saved == %{diff_mode: "unified"}
   end
 
   test "the Wrap toggle starts checked and unchecks on click", %{conn: conn} do
@@ -233,6 +306,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     view |> element(".wrap-toggle input") |> render_click()
     refute has_element?(view, ".wrap-toggle input[checked]")
+    assert_push_event(view, "settings:save", saved)
+    assert saved == %{wrap_lines: false}
   end
 
   test "the version chip shows a dev label with no changelog, or a release's commit and PR links",

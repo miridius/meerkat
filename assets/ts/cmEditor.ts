@@ -6,6 +6,7 @@ import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
 import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
+import { rulerBackground } from "./rulers.js";
 
 /** Rose Pine Moon — a dark-medium variant that reads well inside the
  *  app's existing dark chrome. Colors come from `@rose-pine/palette`
@@ -34,10 +35,33 @@ function alpha(color: { rgb: number[] }, opacity: number): string {
 	return `rgba(${color.rgb.join(", ")}, ${opacity})`;
 }
 
-/** Columns the suggestion editor draws a ruler after, so a line running
- *  past either length shows. */
-const RULER_COLUMNS = [80, 110];
 const RULER_COLOR = alpha(p.highlightHigh, 0.9);
+
+/** Rulers after `columns`, measured from the start of the text
+ *  (`.cm-line` pads it 6px). They are the content's background, so they
+ *  span its full height and scroll with the text. */
+function rulersTheme(columns: number[]): Extension {
+	// Each `EditorView.theme` call adds a stylesheet rule, so build one
+	// per column list rather than one per redraw.
+	const key = columns.join(",");
+	let theme = rulersThemes.get(key);
+	if (!theme) {
+		theme = EditorView.theme({
+			".cm-content": { backgroundImage: rulerBackground(columns, "6px", RULER_COLOR) },
+		});
+		rulersThemes.set(key, theme);
+	}
+	return theme;
+}
+const rulersThemes = new Map<string, Extension>();
+
+/** Holds each editor's rulers, so a settings change redraws them. */
+const rulers = new Compartment();
+
+/** Redraw an open editor's rulers after `columns`. */
+export function setCmRulers(view: EditorView, columns: number[]): void {
+	view.dispatch({ effects: rulers.reconfigure(rulersTheme(columns)) });
+}
 
 /** Chrome theme — all the non-syntax UI: background, gutters, cursor,
  *  selection, active-line, bracket-match, search, autocompletion panels.
@@ -52,16 +76,9 @@ const rosePineChrome = EditorView.theme(
 		".cm-content": {
 			caretColor: c.text,
 			fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-			// Rulers: a line at each of RULER_COLUMNS, measured in `ch` from
-			// the start of the text (`.cm-line` pads it 6px). They are the
-			// content's background, so they span its full height and scroll
-			// with the text. The right padding keeps a ruler at the end of the
-			// longest line clear of the editor's border when scrolled right.
+			// Keeps a ruler at the end of the longest line clear of the
+			// editor's border when scrolled right.
 			paddingRight: "1ch",
-			backgroundImage: RULER_COLUMNS.map(
-				(col) =>
-					`linear-gradient(to right, transparent calc(6px + ${col}ch), ${RULER_COLOR} calc(6px + ${col}ch), ${RULER_COLOR} calc(6px + ${col}ch + 1px), transparent calc(6px + ${col}ch + 1px))`,
-			).join(", "),
 		},
 		"&.cm-focused": { outline: "none" },
 		// A 2px gold caret: the 1px default in a pastel tone was easy to
@@ -173,6 +190,8 @@ export interface CmEditorOptions {
 	 *  it has loaded; until then, or without one, the editor renders as
 	 *  plain text + bracket matching. */
 	language: string;
+	/** Columns to draw a ruler after; `setCmRulers` changes them later. */
+	rulerColumns: number[];
 	/** Fires on every doc change with the new full text. */
 	onChange: (value: string) => void;
 	/** Fires on Ctrl/Cmd+Enter. Used as the form's submit shortcut. */
@@ -195,6 +214,7 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 		basicSetup,
 		language.of(getLoadedLanguage(options.language) ?? []),
 		rosePineChrome,
+		rulers.of(rulersTheme(options.rulerColumns)),
 		syntaxHighlighting(rosePineHighlight),
 		// Tab indents the selection, Shift+Tab dedents — overrides the
 		// default "move focus" behaviour for Tab inside the editor.
