@@ -2,9 +2,9 @@
 
 When the reviewer ticks the `Approved` checkbox on a file, the
 diff body collapses behind the file header. The header stays
-visible (status badge, file name, rename-from chip, Approved
-checkbox) so the file remains discoverable in the list, but the
-diff content + inline comments + file form get hidden.
+visible (status badge, file name, rename-from chip, line counts,
+Approved checkbox) so the file remains discoverable in the list,
+but the diff content + inline comments + file form get hidden.
 
 ## Toggle override
 

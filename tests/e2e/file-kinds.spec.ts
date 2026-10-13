@@ -57,7 +57,7 @@ test("a binary file, a deleted diagram and a long file each render as their kind
 			await expect(binary.getByRole("link", { name: "Open full file", exact: true })).toHaveCount(0);
 
 			// A deleted diagram previews its old side only.
-			await expect(page.getByRole("button", { name: /^▾ D flow\.puml$/ })).toBeVisible();
+			await expect(page.getByRole("button", { name: /^▾ D flow\.puml \+0 -3$/ })).toBeVisible();
 			const preview = page.getByRole("region", { name: "PlantUML preview" });
 			await expect(preview.getByText("Old", { exact: true })).toBeVisible();
 			await expect(preview.getByText("New", { exact: true })).toHaveCount(0);
@@ -71,7 +71,7 @@ test("a binary file, a deleted diagram and a long file each render as their kind
 			// `--diff-view-dark:#…` / `--diff-view-light:#…` colour variables
 			// in their style attribute, the lowlight fallback emits `hljs-*`
 			// classes. Either counts; zero of both is the bug.
-			await expect(page.getByRole("button", { name: /^▾ A src\/big\.clj$/ })).toBeVisible();
+			await expect(page.getByRole("button", { name: /^▾ A src\/big\.clj \+2499 -0$/ })).toBeVisible();
 			const tokens = section("src/big.clj").locator(
 				[
 					'.diff-line-syntax-raw span[style*="--diff-view-"]',

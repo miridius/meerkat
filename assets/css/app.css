@@ -189,11 +189,6 @@ button.active {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--chip-bg);
-  /* Conn pill follows the branch chip in DOM order but anchors
-     to the right side of the toolbar — `margin-left: auto`
-     claims all leftover space so everything after it (Post to
-     GitHub / Split / Wrap / settings) sits to its right. */
-  margin-left: auto;
 }
 .conn-indicator .conn-dot {
   width: 8px;
@@ -510,6 +505,34 @@ a.chip-link:hover .chip-value {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* `+x -y` line counts in the toolbar and each file header. */
+.line-counts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.line-count-added { color: var(--success-strong); }
+.line-count-removed { color: var(--danger); }
+/* Right-aligned, as GitHub shows them: `margin-left: auto` claims the
+   leftover space, so the counts and everything after them (connection
+   pill / Split / Wrap / settings) sit at the right of the toolbar or
+   the file header. */
+.toolbar-line-counts,
+.file-row .line-counts {
+  margin-left: auto;
+}
+.toolbar-line-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .toolbar-settings {

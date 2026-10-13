@@ -32,7 +32,7 @@ defmodule Meerkat.Git do
   what looks like an empty diff that's really a swallowed git error.
   """
   @type file_diff :: %{
-          optional(:is_binary) => boolean(),
+          is_binary: boolean(),
           status: status,
           file_name: String.t(),
           old_file_name: String.t() | nil,
@@ -48,7 +48,10 @@ defmodule Meerkat.Git do
           # concept (range / PR mode), where the guard skips entirely.
           effective_oid: String.t() | nil,
           moved_lines: [Meerkat.Moves.moved_block()],
-          is_generated: boolean()
+          is_generated: boolean(),
+          # Added and removed lines in `hunks`, the diff as shown.
+          additions: non_neg_integer(),
+          deletions: non_neg_integer()
         }
 
   @doc """
@@ -527,7 +530,19 @@ defmodule Meerkat.Git do
       # would let a reviewer approve what looks like an empty diff.
       {hunks_map, batched_hunks_error} = staged_hunks_or_error(repo_path)
       {oid_map, batched_oids_error} = effective_oids_or_error(repo_path, entries)
-      {binary_paths, binary_paths_error} = staged_binary_paths_or_error(repo_path)
+      # Disable textconv/external diff here and in the hunks: they must
+      # match index bytes.
+      {binary_paths, binary_paths_error} =
+        binary_paths_or_error(repo_path, [
+          "diff",
+          "--cached",
+          "--numstat",
+          "-z",
+          "-w",
+          "-M",
+          "--no-textconv",
+          "--no-ext-diff"
+        ])
 
       global_read_errors = batched_hunks_error ++ batched_oids_error ++ binary_paths_error
 
@@ -542,6 +557,7 @@ defmodule Meerkat.Git do
           |> Map.put(:read_errors, file.read_errors ++ global_read_errors)
         end)
         |> Enum.reject(&whitespace_only?/1)
+        |> Enum.map(&put_line_counts/1)
         |> Meerkat.Moves.detect()
 
       case run_git_unmerged(repo_path, ["ls-files", "--stage", "-z"]) do
@@ -570,8 +586,8 @@ defmodule Meerkat.Git do
   # Without the numstat answer a binary change can't be flagged, but
   # the review still lists every file with the reason — aborting the
   # load would hide the whole diff behind one failed probe.
-  defp staged_binary_paths_or_error(repo_path) do
-    case staged_binary_paths(repo_path) do
+  defp binary_paths_or_error(repo_path, numstat_args) do
+    case binary_paths(repo_path, numstat_args) do
       {:ok, paths} ->
         {paths, []}
 
@@ -583,24 +599,16 @@ defmodule Meerkat.Git do
 
   # Numstat's NUL-delimited paths identify binary changes without trying
   # to split the ambiguous `Binary files a/<old> and b/<new> differ` line.
-  # Unlike the patch, it also describes binary-only renames. Disable
-  # textconv/external diff in both commands: hunks must match index bytes.
-  defp staged_binary_paths(repo_path) do
-    case run_git_unmerged(repo_path, [
-           "diff",
-           "--cached",
-           "--numstat",
-           "-z",
-           "-w",
-           "-M",
-           "--no-textconv",
-           "--no-ext-diff"
-         ]) do
+  # Unlike the patch, it also describes binary-only renames.
+  # `numstat_args` is a `git diff --numstat -z` invocation matching the
+  # one that produces the review's hunks.
+  defp binary_paths(repo_path, numstat_args) do
+    case run_git_unmerged(repo_path, numstat_args) do
       {:ok, output} ->
         parse_binary_paths(String.split(output, <<0>>, trim: false), MapSet.new())
 
       {:error, reason} ->
-        {:error, "couldn't identify staged binary files: #{reason}"}
+        {:error, "couldn't identify binary files: #{reason}"}
     end
   end
 
@@ -614,19 +622,19 @@ defmodule Meerkat.Git do
             parse_binary_paths(tail, put_binary_path(paths, name, added, deleted))
 
           _ ->
-            {:error, "couldn't parse staged binary file statistics"}
+            {:error, "couldn't parse binary file statistics"}
         end
 
       [added, deleted, name] ->
         parse_binary_paths(rest, put_binary_path(paths, name, added, deleted))
 
       _ ->
-        {:error, "couldn't parse staged binary file statistics"}
+        {:error, "couldn't parse binary file statistics"}
     end
   end
 
   defp parse_binary_paths([], _paths),
-    do: {:error, "couldn't parse staged binary file statistics"}
+    do: {:error, "couldn't parse binary file statistics"}
 
   defp put_binary_path(paths, name, "-", "-"), do: MapSet.put(paths, name)
   defp put_binary_path(paths, _name, _added, _deleted), do: paths
@@ -821,6 +829,22 @@ defmodule Meerkat.Git do
   defp whitespace_only?(%{status: :modified, hunks: []}), do: true
   defp whitespace_only?(_), do: false
 
+  # Count the `+` and `-` lines in the shown hunks. `@@` headers, context
+  # lines and `\ No newline at end of file` start with neither sign.
+  defp put_line_counts(%{hunks: hunks} = file) do
+    {additions, deletions} =
+      hunks
+      |> Enum.flat_map(&String.split(&1, "\n"))
+      |> Enum.reduce({0, 0}, fn
+        "+" <> _, {a, d} -> {a + 1, d}
+        "-" <> _, {a, d} -> {a, d + 1}
+        _, acc -> acc
+      end)
+
+    # muex:ignore equivalent: no file map holds these keys yet, so merge order and put_new change nothing
+    Map.merge(file, %{additions: additions, deletions: deletions})
+  end
+
   @doc """
   Return range-diff entries with bodies. `mode` is `:two_dot` or
   `:three_dot` — same semantics as `range_files/4`.
@@ -832,9 +856,18 @@ defmodule Meerkat.Git do
       effective_base = effective_base_ref(repo_path, base, head, mode)
       generated_map = linguist_generated_many(repo_path, Enum.map(entries, & &1.file_name))
 
+      {binary_paths, binary_paths_error} =
+        binary_paths_or_error(repo_path, ["diff", "--numstat", "-z", "#{effective_base}..#{head}"])
+
       diffs =
         entries
-        |> Enum.map(&materialise_range(repo_path, &1, effective_base, head, generated_map))
+        |> Enum.map(fn entry ->
+          # muex:ignore equivalent: a name-status entry never holds :is_binary, so put_new changes nothing
+          entry = Map.put(entry, :is_binary, MapSet.member?(binary_paths, entry.file_name))
+          file = materialise_range(repo_path, entry, effective_base, head, generated_map)
+          Map.put(file, :read_errors, file.read_errors ++ binary_paths_error)
+        end)
+        |> Enum.map(&put_line_counts/1)
         |> Meerkat.Moves.detect()
 
       {:ok, diffs}
@@ -1082,10 +1115,11 @@ defmodule Meerkat.Git do
 
   # Binary blobs may be large or invalid UTF-8. Never load them into the
   # text representation merely to discard them before JSON encoding.
-  defp materialise_staged(_repo_path, %{is_binary: true} = entry, generated_map, _hunks, oid_map) do
+  defp binary_file(entry, generated_map, effective_oid) do
     {is_gen, errors} = lookup_generated(generated_map, entry.file_name)
 
     %{
+      is_binary: true,
       status: entry.status,
       file_name: entry.file_name,
       old_file_name: entry.old_file_name,
@@ -1093,9 +1127,13 @@ defmodule Meerkat.Git do
       new_content: "",
       hunks: [],
       read_errors: errors,
-      effective_oid: Map.get(oid_map, entry.file_name, ""),
+      effective_oid: effective_oid,
       is_generated: is_gen
     }
+  end
+
+  defp materialise_staged(_repo_path, %{is_binary: true} = entry, generated_map, _hunks, oid_map) do
+    binary_file(entry, generated_map, Map.get(oid_map, entry.file_name, ""))
   end
 
   defp materialise_staged(
@@ -1196,6 +1234,10 @@ defmodule Meerkat.Git do
     }
   end
 
+  defp materialise_range(_repo_path, %{is_binary: true} = entry, _base, _head, generated_map) do
+    binary_file(entry, generated_map, nil)
+  end
+
   defp materialise_range(repo_path, entry, base_ref, head_ref, generated_map) do
     name = entry.file_name
     old_name = entry.old_file_name || name
@@ -1228,6 +1270,7 @@ defmodule Meerkat.Git do
     {is_gen, errs_gen} = lookup_generated(generated_map, name)
 
     %{
+      is_binary: false,
       status: entry.status,
       file_name: name,
       old_file_name: entry.old_file_name,
