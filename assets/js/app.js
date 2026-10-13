@@ -34,7 +34,8 @@ const hooks = {
       }, 500);
     },
   },
-  // Persists toolbar prefs (split/unified, wrap, font size, tab size)
+  // Persists toolbar prefs (split/unified, wrap, font size, tab size,
+  // rulers)
   // in localStorage and rehydrates them on mount so they survive a
   // reload. The server keeps an in-memory copy; on mount we push our
   // values up, and the LV pushes any subsequent change back via

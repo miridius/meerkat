@@ -263,7 +263,10 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 	if (!getLoadedLanguage(options.language)) {
 		void preloadLanguages([options.language]).then(() => {
 			const support = getLoadedLanguage(options.language);
-			if (support && view.dom.isConnected) {
+			// Not gated on the DOM being attached: an inline form's row is
+			// detached while the diff re-renders, and a destroyed view
+			// ignores the update.
+			if (support) {
 				view.dispatch({ effects: language.reconfigure(support) });
 			}
 		});

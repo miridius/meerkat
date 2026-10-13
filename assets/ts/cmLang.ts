@@ -96,8 +96,8 @@ export async function preloadLanguages(ids: readonly string[]): Promise<void> {
 /** Return the already-preloaded language pack for `id`, or `undefined`
  *  if it isn't loaded (either unsupported or still pending). The
  *  editor uses this at mount time — it doesn't block the form on a
- *  preload that's still in flight; it just opens without syntax
- *  highlighting and the next open will have it. */
+ *  preload that's still in flight; it opens without syntax
+ *  highlighting and adds the pack when it arrives. */
 export function getLoadedLanguage(id: string): LanguageSupport | undefined {
 	return loaded.get(id);
 }

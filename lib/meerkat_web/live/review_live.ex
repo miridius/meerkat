@@ -1985,7 +1985,7 @@ defmodule MeerkatWeb.ReviewLive do
                 placeholder="none"
                 aria-label="Ruler columns"
                 aria-invalid={to_string(@ruler_input_invalid)}
-                title="Columns to draw rulers after, separated by commas"
+                title="Columns to draw rulers after: whole numbers from 1 to 999, separated by commas or spaces"
                 phx-debounce="300"
               />
             </form>

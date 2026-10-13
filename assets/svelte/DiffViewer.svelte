@@ -405,7 +405,7 @@
   // drawing the rulers whose column fits in the visible width of that
   // side's code column; the rest are not drawn. Redrawn when the
   // setting, the table (view mode, wrap, font size) or the width changes.
-  const RULER_COLOR = "rgba(139, 148, 158, 0.35)";
+  const RULER_COLOR = "color-mix(in srgb, var(--muted) 35%, transparent)";
   const RULER_SIDES = [
     ["--meerkat-rulers-old", "td.diff-line-old-content"],
     ["--meerkat-rulers-new", "td.diff-line-new-content"],
@@ -427,7 +427,10 @@
       // change with the scroll.
       const cell = td.getBoundingClientRect();
       const viewRight = view.getBoundingClientRect().left + view.clientLeft + view.clientWidth;
-      const visible = Math.min(cell.width, viewRight - (cell.left + view.scrollLeft));
+      // Text stops at the cell's right padding, so a ruler there marks
+      // a column no line reaches.
+      const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
+      const visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
       // The code starts 2em into the cell, after the +/- marker.
       const offset = probeWidth(td, "2em");
       const ch = probeWidth(td, "100ch") / 100;

@@ -34,6 +34,23 @@ async function rulersOn(cell: Locator): Promise<string[]> {
 	});
 }
 
+// The rulers a code cell draws in its right padding, past where its
+// text wraps.
+async function rulersPastText(cell: Locator): Promise<number[]> {
+	const columns = (await rulersOn(cell)).map(Number);
+	return cell.evaluate((td, columns) => {
+		const probe = document.createElement("span");
+		probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
+		td.append(probe);
+		const ch = probe.getBoundingClientRect().width / 100;
+		probe.style.width = "2em";
+		const offset = probe.getBoundingClientRect().width;
+		probe.remove();
+		const textRight = td.getBoundingClientRect().width - Number.parseFloat(getComputedStyle(td).paddingRight);
+		return columns.filter((n) => offset + n * ch > textRight);
+	}, columns);
+}
+
 async function openSettings(page: Page) {
 	const summary = page.locator(".toolbar-settings > summary");
 	if ((await page.locator(".toolbar-settings[open]").count()) === 0) await summary.click();
@@ -72,6 +89,16 @@ test("diff rulers show only where the visible code column fits them and follow t
 		// or off; with wrap off the long lines widen the cell past the view.
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		const unifiedCell = file.locator("td.diff-line-content").first();
+		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
+		// Around the width where 110 starts to fit, it is never drawn in
+		// the cell's right padding.
+		for (let width = 1005; width <= 1030; width += 1) {
+			await page.setViewportSize({ width, height: 800 });
+			await afterNextFrame(page);
+			expect(await rulersPastText(unifiedCell), `at ${width}px`).toEqual([]);
+		}
+		await page.setViewportSize({ width: 1000, height: 800 });
+		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		await page.getByLabel("Wrap").click();
 		await expect(page.getByLabel("Wrap")).not.toBeChecked();
@@ -127,7 +154,8 @@ test("two tabs changing different settings keep both", async ({ page, context })
 });
 
 test("an open suggestion editor redraws its rulers when the setting changes", async ({ page }) => {
-	const meerkat = await startMeerkat({ fixture: wideFixture() });	try {
+	const meerkat = await startMeerkat({ fixture: wideFixture() });
+	try {
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
 		await file.locator('td.diff-line-new-num:has(span[data-line-num="2"])').click();
