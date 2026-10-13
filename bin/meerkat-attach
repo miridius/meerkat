@@ -6,11 +6,13 @@
 # left running, relays its stderr, and exits with its decision. The
 # backend sits outside the caller's process tree, so killing the caller
 # leaves the review running for the next invocation to reattach to.
+# `meerkat_restore_run_files`, at the end, is the shepherd's.
 #
 # A backend's run dir holds `pid` (its shepherd), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
-# (once a BEAM has announced the review), `index` (a held temporary
-# index, if any) and, once it has exited, `exit`. The attach stream's
+# (once a BEAM has announced the review), `opened` (the browser-open
+# marker), `index` (a held temporary index, if any) and, once it has
+# exited, `exit`. The attach stream's
 # frames are documented in `MeerkatWeb.AttachController`.
 
 meerkat_attach() {
@@ -21,7 +23,9 @@ meerkat_attach() {
   local key runs
   # Keyed like the port, so a rerun of the same review finds its run dir.
   key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
-  runs="${MEERKAT_RUNS_DIR:-${TMPDIR:-/tmp}/meerkat-runs}"
+  # Not $TMPDIR: macOS deletes its files once they are three days old,
+  # and a review can wait longer than that.
+  runs="${MEERKAT_RUNS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meerkat/runs}"
   mkdir -p "$runs"
 
   _MA_DIR="$runs/$key"
@@ -314,4 +318,17 @@ _ma_attach() {
       sleep 0.2
       ;;
   esac
+}
+
+# The serve half: a shepherd calls this before each BEAM it starts. It
+# rewrites a missing `token` or `pid`, so losing one cannot leave callers
+# unable to reattach, or taking a live backend for dead.
+meerkat_restore_run_files() {
+  local dir="$MEERKAT_SERVE_DIR"
+  if [[ ! -f "$dir/token" ]]; then
+    { printf '%s\n' "$MEERKAT_SERVE_TOKEN" >"$dir/token.tmp" && mv -f "$dir/token.tmp" "$dir/token"; } 2>/dev/null || true
+  fi
+  if [[ ! -f "$dir/pid" ]]; then
+    { echo "$$" >"$dir/pid.tmp" && mv -f "$dir/pid.tmp" "$dir/pid"; } 2>/dev/null || true
+  fi
 }

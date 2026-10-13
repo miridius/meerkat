@@ -114,11 +114,12 @@ for arg in "$@"; do
   fi
 done
 
+# shellcheck source=bin/meerkat-attach
+source "$SCRIPT_DIR/meerkat-attach"
+
 # Run as the caller, which re-runs this script detached, with
 # MEERKAT_SERVE_DIR set, to serve the review.
 if [[ -z "${MEERKAT_SERVE_DIR:-}" ]]; then
-  # shellcheck source=bin/meerkat-attach
-  source "$SCRIPT_DIR/meerkat-attach"
   # The re-run takes the user's repo from its working directory.
   cd "$ORIG_PWD"
   meerkat_attach "$SCRIPT_DIR/meerkat-beam" "$@"
@@ -156,17 +157,19 @@ fi
 # put_env dynamic config BEFORE the endpoint binds.
 RESTART_EXIT_CODE=75
 
-# Browser-open marker: a temp file the BEAM creates the FIRST time
-# it successfully calls `open` on the review URL. Subsequent
+# Browser-open marker: a file in the run dir the BEAM stamps the FIRST
+# time it successfully calls `open` on the review URL. Subsequent
 # shepherd iterations (BEAM exit 75 = DevWatcher restart) see the
 # marker and skip the open, so the user's existing tab keeps its
 # reconnect instead of getting a duplicate. `open URL` on macOS
 # doesn't reliably focus an existing tab when the tab is in another
 # Chrome workspace / profile — relying on OS dedupe spammed tabs
 # across restarts. We track our own state.
-OPEN_MARKER="$(mktemp -t meerkat-opened.XXXXXX)"
-# `mktemp` creates an empty file. The BEAM treats "empty" as
-# "browser not yet opened"; after a successful open it writes "1".
+# Not $TMPDIR, which macOS empties of files three days old. The BEAM
+# treats "empty" as "browser not yet opened"; after a successful open
+# it writes "1".
+OPEN_MARKER="$MEERKAT_SERVE_DIR/opened"
+: >"$OPEN_MARKER"
 export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # The caller is not this shepherd's parent, so it reads the exit code
 # from the serve dir.
@@ -221,6 +224,8 @@ while true; do
     wait_for_source_change
     continue
   fi
+
+  meerkat_restore_run_files
 
   set +e
   mix run --no-start --no-compile -e "$CLI_EVAL" -- "$@" &
