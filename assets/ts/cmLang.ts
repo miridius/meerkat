@@ -8,8 +8,8 @@ import type { LanguageSupport } from "@codemirror/language";
  *
  *  Factories are async so Vite can split each language pack into its
  *  own chunk — we only pay the download cost for languages actually
- *  used in a given review. See `preloadLanguages` for the batched
- *  preload path that warms these up at review-load time. */
+ *  used in a given review. See `preloadLanguages`; the editor calls it
+ *  on mount and adds the pack when it arrives. */
 const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	javascript: () => import("@codemirror/lang-javascript").then((m) => m.javascript()),
 	typescript: () =>
@@ -38,6 +38,9 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	vue: () => import("@codemirror/lang-vue").then((m) => m.vue()),
 	clojure: () => import("@nextjournal/lang-clojure").then((m) => m.clojure()),
 };
+
+/** Every language id with a CodeMirror pack. */
+export const SUPPORTED_LANGUAGES: readonly string[] = Object.keys(LANGUAGE_LOADERS);
 
 /** Resolved language packs keyed by language id. Populated by
  *  `preloadLanguages`; readable synchronously by the editor setup so
@@ -93,8 +96,8 @@ export async function preloadLanguages(ids: readonly string[]): Promise<void> {
 /** Return the already-preloaded language pack for `id`, or `undefined`
  *  if it isn't loaded (either unsupported or still pending). The
  *  editor uses this at mount time — it doesn't block the form on a
- *  preload that's still in flight; it just opens without syntax
- *  highlighting and the next open will have it. */
+ *  preload that's still in flight; it opens without syntax
+ *  highlighting and adds the pack when it arrives. */
 export function getLoadedLanguage(id: string): LanguageSupport | undefined {
 	return loaded.get(id);
 }

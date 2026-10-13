@@ -77,6 +77,12 @@ defmodule MeerkatWeb.ReviewLive do
        wrap_lines: true,
        font_size_px: 13,
        tab_size: 2,
+       rulers: true,
+       ruler_columns: [80, 110],
+       # The rulers field's text, and whether it isn't a column list;
+       # while it isn't, the last valid list stays in force.
+       ruler_input: "80, 110",
+       ruler_input_invalid: false,
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
@@ -184,13 +190,11 @@ defmodule MeerkatWeb.ReviewLive do
     )
   end
 
-  defp push_settings(socket) do
-    push_event(socket, "settings:save", %{
-      diff_mode: socket.assigns.diff_mode,
-      wrap_lines: socket.assigns.wrap_lines,
-      font_size_px: socket.assigns.font_size_px,
-      tab_size: socket.assigns.tab_size
-    })
+  # Sets one toolbar setting and has the Settings hook save it. Only the
+  # changed key is sent, so the hook doesn't overwrite another tab's
+  # change to a different setting.
+  defp put_setting(socket, key, value) do
+    socket |> assign(key, value) |> push_event("settings:save", %{key => value})
   end
 
   # Push `drafts:wipe` for the browser's `phx:drafts:wipe` window listener
@@ -208,19 +212,17 @@ defmodule MeerkatWeb.ReviewLive do
   @impl true
   def handle_event("set_diff_mode", %{"mode" => mode}, socket)
       when mode in ["split", "unified"] do
-    socket = assign(socket, diff_mode: mode)
-    {:noreply, push_settings(socket)}
+    {:noreply, put_setting(socket, :diff_mode, mode)}
   end
 
   def handle_event("toolbar.toggle_wrap", _, socket) do
-    socket = assign(socket, wrap_lines: not socket.assigns.wrap_lines)
-    {:noreply, push_settings(socket)}
+    {:noreply, put_setting(socket, :wrap_lines, not socket.assigns.wrap_lines)}
   end
 
   def handle_event("toolbar.set_font_size", %{"px" => px}, socket) do
     case parse_int(px) do
       {:ok, n} ->
-        {:noreply, push_settings(assign(socket, font_size_px: clamp_font_size(n)))}
+        {:noreply, put_setting(socket, :font_size_px, clamp_font_size(n))}
 
       :error ->
         log_ignored_event("toolbar.set_font_size", "px", px)
@@ -232,7 +234,7 @@ defmodule MeerkatWeb.ReviewLive do
     case parse_int(by) do
       {:ok, n} ->
         px = clamp_font_size(socket.assigns.font_size_px + n)
-        {:noreply, push_settings(assign(socket, font_size_px: px))}
+        {:noreply, put_setting(socket, :font_size_px, px)}
 
       :error ->
         log_ignored_event("toolbar.bump_font_size", "by", by)
@@ -243,11 +245,25 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.set_tab_size", %{"n" => n}, socket) do
     case parse_int(n) do
       {:ok, v} ->
-        {:noreply, push_settings(assign(socket, tab_size: clamp_tab_size(v)))}
+        {:noreply, put_setting(socket, :tab_size, clamp_tab_size(v))}
 
       :error ->
         log_ignored_event("toolbar.set_tab_size", "n", n)
         {:noreply, socket}
+    end
+  end
+
+  def handle_event("toolbar.toggle_rulers", _, socket) do
+    {:noreply, put_setting(socket, :rulers, not socket.assigns.rulers)}
+  end
+
+  def handle_event("toolbar.set_ruler_columns", %{"columns" => text}, socket) do
+    case parse_ruler_columns(text) do
+      {:ok, columns} ->
+        {:noreply, socket |> show_ruler_columns(columns) |> put_setting(:ruler_columns, columns)}
+
+      :error ->
+        {:noreply, assign(socket, ruler_input: text, ruler_input_invalid: true)}
     end
   end
 
@@ -256,13 +272,8 @@ defmodule MeerkatWeb.ReviewLive do
   # once with whatever validated values it found; missing keys keep
   # the server defaults.
   def handle_event("settings.load", payload, socket) when is_map(payload) do
-    {:noreply,
-     assign(socket,
-       diff_mode: valid_diff_mode(payload["diff_mode"], socket.assigns.diff_mode),
-       wrap_lines: valid_bool(payload["wrap_lines"], socket.assigns.wrap_lines),
-       font_size_px: valid_font_size(payload["font_size_px"], socket.assigns.font_size_px),
-       tab_size: valid_tab_size(payload["tab_size"], socket.assigns.tab_size)
-     )}
+    settings = valid_settings(payload, socket.assigns)
+    {:noreply, socket |> assign(settings) |> show_ruler_columns(settings.ruler_columns)}
   end
 
   ## --- File approval ---
@@ -1007,6 +1018,7 @@ defmodule MeerkatWeb.ReviewLive do
         :commit_message_comments_rendered,
         Enum.map(assigns.state.commit_message_comments, &with_body_html/1)
       )
+      |> assign(:shown_rulers, shown_rulers(assigns))
 
     ~H"""
     <main class="review" id="meerkat-root" phx-hook="Settings">
@@ -1015,6 +1027,9 @@ defmodule MeerkatWeb.ReviewLive do
         wrap_lines={@wrap_lines}
         font_size_px={@font_size_px}
         tab_size={@tab_size}
+        rulers={@rulers}
+        ruler_input={@ruler_input}
+        ruler_input_invalid={@ruler_input_invalid}
         state={@state}
         repo_path={@repo_path}
         open_forms={@open_forms}
@@ -1032,6 +1047,7 @@ defmodule MeerkatWeb.ReviewLive do
         open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
+        ruler_columns={@shown_rulers}
       />
       <.global_comments_section
         state={@state}
@@ -1039,6 +1055,7 @@ defmodule MeerkatWeb.ReviewLive do
         open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
+        ruler_columns={@shown_rulers}
       />
       <p :if={@state.files != []} class="hint" phx-hook="HintDismiss" id="meerkat-hint">
         Tip: click a line number to comment on that line — click and drag for a range. {if @state.commit_message !=
@@ -1071,6 +1088,7 @@ defmodule MeerkatWeb.ReviewLive do
           wrap_lines={@wrap_lines}
           font_size_px={@font_size_px}
           tab_size={@tab_size}
+          ruler_columns={@shown_rulers}
           open_forms={@open_forms}
           visible_indices={@visible_indices}
           expanded_approved={@expanded_approved}
@@ -1224,6 +1242,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :open_forms, :list, required: true
   attr :socket, :any, required: true
   attr :review_id, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ruler_columns, :list, required: true
 
   defp commit_message_section(assigns) do
     ~H"""
@@ -1291,7 +1311,10 @@ defmodule MeerkatWeb.ReviewLive do
         <.svelte
           id={form_dom_id(form)}
           name="CommentForm"
-          props={commit_msg_form_props(form, @review_id, @state.commit_message)}
+          props={
+            commit_msg_form_props(form, @review_id, @state.commit_message)
+            |> Map.put(:rulerColumns, @ruler_columns)
+          }
           socket={@socket}
         />
       </div>
@@ -1304,6 +1327,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :open_forms, :list, required: true
   attr :socket, :any, required: true
   attr :review_id, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ruler_columns, :list, required: true
 
   defp global_comments_section(assigns) do
     ~H"""
@@ -1352,7 +1377,7 @@ defmodule MeerkatWeb.ReviewLive do
         :key={OpenForms.key(form)}
         id={form_dom_id(form)}
         name="CommentForm"
-        props={global_form_props(form, @review_id)}
+        props={Map.put(global_form_props(form, @review_id), :rulerColumns, @ruler_columns)}
         socket={@socket}
       />
     </section>
@@ -1383,6 +1408,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :file_comments_by_file, :any, required: true
   attr :plantuml_available, :boolean, required: true
   attr :review_id, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ruler_columns, :list, required: true
 
   defp file_list(assigns) do
     ~H"""
@@ -1506,6 +1533,7 @@ defmodule MeerkatWeb.ReviewLive do
               wrap_lines: @wrap_lines,
               font_size_px: @font_size_px,
               tab_size: @tab_size,
+              ruler_columns: @ruler_columns,
               comments: Map.get(@inline_comments_by_file, idx, []),
               inline_forms: inline_forms_for_diff(@open_forms, idx, @state, @review_id),
               plantuml_available: @plantuml_available
@@ -1594,7 +1622,9 @@ defmodule MeerkatWeb.ReviewLive do
           :key={OpenForms.key(form)}
           id={form_dom_id(form)}
           name="CommentForm"
-          props={file_form_props(form, idx, @state, @review_id)}
+          props={
+            Map.put(file_form_props(form, idx, @state, @review_id), :rulerColumns, @ruler_columns)
+          }
           socket={@socket}
         />
       </article>
@@ -1789,6 +1819,12 @@ defmodule MeerkatWeb.ReviewLive do
   attr :wrap_lines, :boolean, required: true
   attr :font_size_px, :integer, required: true
   attr :tab_size, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :rulers, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ruler_input, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ruler_input_invalid, :boolean, required: true
   attr :state, ReviewState, required: true
   attr :repo_path, :string, required: true
   attr :open_forms, :list, required: true
@@ -1890,7 +1926,12 @@ defmodule MeerkatWeb.ReviewLive do
         <span>Wrap</span>
       </label>
 
-      <details class="toolbar-group toolbar-settings">
+      <%!-- The browser sets `open`; without ignoring it, the re-render
+        a setting change causes would close the popover. --%>
+      <details
+        class="toolbar-group toolbar-settings"
+        phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])}
+      >
         <summary title="Display settings">⚙</summary>
         <div class="toolbar-settings-popover">
           <div class="toolbar-group">
@@ -1925,6 +1966,29 @@ defmodule MeerkatWeb.ReviewLive do
             >
               {n}
             </button>
+          </div>
+
+          <div class="toolbar-group">
+            <label class="toolbar-label rulers-toggle">
+              <input type="checkbox" phx-click="toolbar.toggle_rulers" checked={@rulers} /> Rulers
+            </label>
+            <form
+              id="ruler-columns-form"
+              phx-change="toolbar.set_ruler_columns"
+              phx-submit="toolbar.set_ruler_columns"
+            >
+              <input
+                type="text"
+                name="columns"
+                class="ruler-columns"
+                value={@ruler_input}
+                placeholder="none"
+                aria-label="Ruler columns"
+                aria-invalid={to_string(@ruler_input_invalid)}
+                title="Columns to draw rulers after: whole numbers from 1 to 999, separated by commas or spaces"
+                phx-debounce="300"
+              />
+            </form>
           </div>
         </div>
       </details>
@@ -2299,13 +2363,10 @@ defmodule MeerkatWeb.ReviewLive do
   def clamp_tab_size_for_test(n), do: clamp_tab_size(n)
 
   @doc false
-  def valid_settings_for_test(payload, assigns),
-    do: %{
-      diff_mode: valid_diff_mode(payload["diff_mode"], assigns.diff_mode),
-      wrap_lines: valid_bool(payload["wrap_lines"], assigns.wrap_lines),
-      font_size_px: valid_font_size(payload["font_size_px"], assigns.font_size_px),
-      tab_size: valid_tab_size(payload["tab_size"], assigns.tab_size)
-    }
+  def valid_settings_for_test(payload, assigns), do: valid_settings(payload, assigns)
+
+  @doc false
+  def parse_ruler_columns_for_test(text), do: parse_ruler_columns(text)
 
   @doc false
   def finding_atom_for_test(ft), do: finding_atom!(ft)
@@ -2635,6 +2696,18 @@ defmodule MeerkatWeb.ReviewLive do
     )
   end
 
+  # The toolbar settings in a `settings.load` payload; a missing or
+  # invalid one keeps its value in `assigns`.
+  defp valid_settings(payload, assigns),
+    do: %{
+      diff_mode: valid_diff_mode(payload["diff_mode"], assigns.diff_mode),
+      wrap_lines: valid_bool(payload["wrap_lines"], assigns.wrap_lines),
+      font_size_px: valid_font_size(payload["font_size_px"], assigns.font_size_px),
+      tab_size: valid_tab_size(payload["tab_size"], assigns.tab_size),
+      rulers: valid_bool(payload["rulers"], assigns.rulers),
+      ruler_columns: valid_ruler_columns(payload["ruler_columns"], assigns.ruler_columns)
+    }
+
   defp valid_diff_mode(m, _default) when m in ["split", "unified"], do: m
   defp valid_diff_mode(_, default), do: default
 
@@ -2653,6 +2726,38 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp clamp_tab_size(n) when n in [2, 4, 8], do: n
   defp clamp_tab_size(_), do: 2
+
+  defp valid_ruler_columns(columns, default) when is_list(columns) do
+    if Enum.all?(columns, &ruler_column?/1),
+      do: columns |> Enum.uniq() |> Enum.sort(),
+      else: default
+  end
+
+  defp valid_ruler_columns(_, default), do: default
+
+  # muex:ignore equivalent: `n in 999..1` holds for the same integers
+  defp ruler_column?(n), do: is_integer(n) and n in 1..999
+
+  # The rulers field: whole columns separated by commas and/or spaces.
+  # Blank means no rulers. Any other token makes the whole list invalid.
+  defp parse_ruler_columns(text) do
+    parsed = text |> String.split([",", " "], trim: true) |> Enum.map(&parse_int/1)
+
+    if Enum.all?(parsed, &match?({:ok, _}, &1)),
+      do: parsed |> Enum.map(fn {:ok, n} -> n end) |> valid_ruler_columns(:error) |> ok_columns(),
+      else: :error
+  end
+
+  defp ok_columns(:error), do: :error
+  defp ok_columns(columns), do: {:ok, columns}
+
+  # Puts `columns`, tidied, in the rulers field.
+  defp show_ruler_columns(socket, columns),
+    do: assign(socket, ruler_input: Enum.join(columns, ", "), ruler_input_invalid: false)
+
+  # The columns the diff and the suggestion editor draw rulers after.
+  defp shown_rulers(%{rulers: true, ruler_columns: columns}), do: columns
+  defp shown_rulers(_), do: []
 
   defp anchor_for(:file, %{file_index: idx}), do: %{file_index: idx}
 

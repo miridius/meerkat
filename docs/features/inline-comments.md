@@ -78,7 +78,20 @@ When `finding_type === "suggestion"`:
 - The editor's syntax-highlighting language is derived from the
   file's name in the frontend (`languageFor` in
   `assets/ts/languageFor.ts`, backed by GitHub Linguist's dataset
-  and validated against shiki's bundled languages).
+  and validated against shiki's bundled languages). The language
+  pack loads on first use, and the open editor is highlighted once
+  it arrives.
+- Lines don't wrap; the editor scrolls sideways only when a line is
+  wider than it. Vertical rulers are drawn after the columns set in
+  the toolbar's `⚙` popover (80 and 110 by default; see
+  [overview.md](overview.md)), so a line past one shows. Unlike the
+  diff's, a ruler beyond the editor's width shows once a line
+  reaches it and the editor is scrolled there. Changing the setting
+  updates open editors.
+- The caret is a 2px gold bar. The selection is a purple tint drawn
+  under the text, visible on the caret's line too, and dimmer while
+  the editor is unfocused. Only a focused editor marks the caret's
+  line.
 - On submit, the body is composed as
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it

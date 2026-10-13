@@ -130,6 +130,8 @@ request changes / comment) from github.com.
   is on PATH).
 - **Suggestion-mode CodeMirror editor** with syntax highlighting per
   file extension.
+- **Column rulers** in the diff and the suggestion editor, at 80 and
+  110 by default; set or hide them in the toolbar's `⚙` popover.
 - **File filter** — substring narrowing, hide-by-extension, "only this
   file" mode.
 

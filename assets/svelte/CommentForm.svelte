@@ -6,9 +6,8 @@
   // `prose\n\n\`\`\`<lang>\n<code>\n\`\`\`` so GitHub renders the
   // suggestion as a fenced code block.
 
-  import { onDestroy } from "svelte";
-  import { createCmEditor } from "../ts/cmEditor";
-  import { preloadLanguages } from "../ts/cmLang";
+  import { onDestroy, untrack } from "svelte";
+  import { createCmEditor, setCmRulers } from "../ts/cmEditor";
   import { languageFor } from "../ts/languageFor";
   import type { EditorView } from "@codemirror/view";
 
@@ -31,6 +30,7 @@
     fileName = "",
     draftKey,
     formKey,
+    rulerColumns,
     live,
   }: {
     submitLabel?: string;
@@ -47,6 +47,8 @@
     // Names this form to the server, so submit and cancel act on it
     // and not on another open form.
     formKey: string;
+    // Columns the suggestion editor draws rulers after (the ⚙ setting).
+    rulerColumns: number[];
     live: LiveBridge;
   } = $props();
 
@@ -149,16 +151,6 @@
   let codeHost: HTMLDivElement | null = $state(null);
   let cmView: EditorView | null = null;
 
-  // Preload language packs we know about so the CodeMirror mount
-  // gets syntax highlighting for the file the comment anchors on.
-  // Fire-and-forget — the editor renders without it if the load is
-  // still in flight.
-  $effect(() => {
-    if (findingType === "suggestion") {
-      void preloadLanguages([language]);
-    }
-  });
-
   // Mount / tear down the CodeMirror editor when entering / leaving
   // suggestion mode. The editor is destroyed and re-created on each
   // re-entry; the form is short-lived enough that the cost is
@@ -174,10 +166,19 @@
     cmView = createCmEditor(codeHost, {
       doc: code,
       language,
+      rulerColumns: untrack(() => rulerColumns),
       onChange: (v) => (code = v),
       onSubmit: () => submit(),
       onCancel: () => cancel(),
     });
+  });
+
+  // A change to the ruler setting redraws an open editor's rulers.
+  // LiveSvelte patches the list in place, so read every element to
+  // rerun on a change.
+  $effect(() => {
+    const columns = $state.snapshot(rulerColumns);
+    if (cmView) setCmRulers(cmView, columns);
   });
 
   onDestroy(() => {
@@ -374,11 +375,18 @@
     margin-bottom: 0.5rem;
   }
   .code-host {
-    min-height: 6lh;
     border: 1px solid #30363d;
     border-radius: 4px;
     overflow: hidden;
     user-select: text;
+  }
+  /* At least six lines tall. Set on the content and gutters, as
+     CodeMirror's styling guide does, so the gutter, rulers and click
+     target reach the bottom rather than ending at the last line. The
+     8px is the content's vertical padding. */
+  .code-host :global(.cm-content),
+  .code-host :global(.cm-gutter) {
+    min-height: calc(6lh + 8px);
   }
   /* CodeMirror's contenteditable surface inherits user-select from
      the page; force-enable selection so users can copy code out of

@@ -34,7 +34,8 @@ const hooks = {
       }, 500);
     },
   },
-  // Persists toolbar prefs (split/unified, wrap, font size, tab size)
+  // Persists toolbar prefs (split/unified, wrap, font size, tab size,
+  // rulers)
   // in localStorage and rehydrates them on mount so they survive a
   // reload. The server keeps an in-memory copy; on mount we push our
   // values up, and the LV pushes any subsequent change back via
@@ -51,9 +52,18 @@ const hooks = {
       } catch (_e) {
         /* corrupt data — fall back to server defaults */
       }
-      this.handleEvent("settings:save", (settings) => {
+      // Each save carries only the settings that changed, merged into
+      // what is stored, so another tab's change to a different setting
+      // isn't overwritten.
+      this.handleEvent("settings:save", (changed) => {
         try {
-          localStorage.setItem(KEY, JSON.stringify(settings));
+          let stored = {};
+          try {
+            stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") ?? {};
+          } catch (_e) {
+            /* corrupt data — replace it */
+          }
+          localStorage.setItem(KEY, JSON.stringify({ ...stored, ...changed }));
         } catch (_e) {
           /* storage full / disabled — stays in-memory for this tab */
         }

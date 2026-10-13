@@ -1,12 +1,12 @@
 import { indentWithTab } from "@codemirror/commands";
-import type { LanguageSupport } from "@codemirror/language";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { EditorState, type Extension, Prec } from "@codemirror/state";
+import { Compartment, EditorState, type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
-import { getLoadedLanguage } from "./cmLang.js";
+import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
+import { rulerBackground } from "./rulers.js";
 
 /** Rose Pine Moon — a dark-medium variant that reads well inside the
  *  app's existing dark chrome. Colors come from `@rose-pine/palette`
@@ -30,6 +30,39 @@ const c = {
 	highlightHigh: `#${p.highlightHigh.hex}`,
 };
 
+/** A palette color at the given opacity. */
+function alpha(color: { rgb: number[] }, opacity: number): string {
+	return `rgba(${color.rgb.join(", ")}, ${opacity})`;
+}
+
+const RULER_COLOR = alpha(p.highlightHigh, 0.9);
+
+/** Rulers after `columns`, measured from the start of the text
+ *  (`.cm-line` pads it 6px). They are the content's background, so they
+ *  span its full height and scroll with the text. */
+function rulersTheme(columns: number[]): Extension {
+	// Each `EditorView.theme` call adds a stylesheet rule, so build one
+	// per column list rather than one per redraw.
+	const key = columns.join(",");
+	let theme = rulersThemes.get(key);
+	if (!theme) {
+		theme = EditorView.theme({
+			".cm-content": { backgroundImage: rulerBackground(columns, "6px", RULER_COLOR) },
+		});
+		rulersThemes.set(key, theme);
+	}
+	return theme;
+}
+const rulersThemes = new Map<string, Extension>();
+
+/** Holds each editor's rulers, so a settings change redraws them. */
+const rulers = new Compartment();
+
+/** Redraw an open editor's rulers after `columns`. */
+export function setCmRulers(view: EditorView, columns: number[]): void {
+	view.dispatch({ effects: rulers.reconfigure(rulersTheme(columns)) });
+}
+
 /** Chrome theme — all the non-syntax UI: background, gutters, cursor,
  *  selection, active-line, bracket-match, search, autocompletion panels.
  *  Paired with `rosePineHighlight` below which handles syntax tokens. */
@@ -43,36 +76,49 @@ const rosePineChrome = EditorView.theme(
 		".cm-content": {
 			caretColor: c.text,
 			fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+			// Keeps a ruler at the end of the longest line clear of the
+			// editor's border when scrolled right.
+			paddingRight: "1ch",
 		},
 		"&.cm-focused": { outline: "none" },
-		".cm-cursor, .cm-dropCursor": { borderLeftColor: c.rose },
-		// CodeMirror paints `.cm-selectionBackground` BEHIND the
-		// content layer. Rose-pine's `highlightMed` (#44415a) over
-		// `base` (#232136) is too low-contrast to read as a
-		// selection at all — use a translucent iris tint instead so
-		// the highlight actually shows.
-		"&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-			backgroundColor: "rgba(196, 167, 231, 0.35) !important",
+		// A 2px gold caret: the 1px default in a pastel tone was easy to
+		// lose among the code.
+		".cm-cursor, .cm-dropCursor": { borderLeft: `2px solid ${c.gold}`, marginLeft: "-1px" },
+		// CodeMirror paints `.cm-selectionBackground` in a layer BEHIND
+		// the text, so the backgrounds over it (active line, selection
+		// and bracket matches) are translucent below. The selection
+		// stays visible, dimmer, while the editor is unfocused.
+		".cm-selectionBackground": {
+			backgroundColor: `${alpha(p.iris, 0.25)} !important`,
+		},
+		"&.cm-focused .cm-selectionBackground": {
+			backgroundColor: `${alpha(p.iris, 0.4)} !important`,
 		},
 		".cm-content ::selection": {
-			backgroundColor: "rgba(196, 167, 231, 0.35)",
+			backgroundColor: alpha(p.iris, 0.4),
 		},
-		".cm-activeLine": { backgroundColor: c.highlightLow },
-		".cm-activeLineGutter": { backgroundColor: c.highlightLow, color: c.text },
+		// Only a focused editor marks the caret's line, so an unfocused
+		// one doesn't look as if it holds the caret.
+		".cm-activeLine": { backgroundColor: "transparent" },
+		"&.cm-focused .cm-activeLine": { backgroundColor: alpha(p.text, 0.05) },
+		".cm-activeLineGutter": { backgroundColor: "transparent" },
+		"&.cm-focused .cm-activeLineGutter": { backgroundColor: c.highlightLow, color: c.text },
 		".cm-gutters": {
 			backgroundColor: c.base,
 			color: c.muted,
 			borderRight: `1px solid ${c.overlay}`,
 		},
+		// Bracket marks are fills, not outlines: a box beside the caret
+		// read as a second caret.
 		".cm-matchingBracket, &.cm-focused .cm-matchingBracket": {
-			color: c.gold,
-			outline: `1px solid ${c.gold}`,
+			color: c.foam,
+			backgroundColor: alpha(p.foam, 0.25),
 		},
-		".cm-nonmatchingBracket": {
+		".cm-nonmatchingBracket, &.cm-focused .cm-nonmatchingBracket": {
 			color: c.love,
-			outline: `1px solid ${c.love}`,
+			backgroundColor: alpha(p.love, 0.25),
 		},
-		".cm-selectionMatch": { backgroundColor: c.highlightMed },
+		".cm-selectionMatch": { backgroundColor: alpha(p.foam, 0.15) },
 		".cm-searchMatch": {
 			backgroundColor: c.highlightMed,
 			outline: `1px solid ${c.gold}`,
@@ -139,11 +185,13 @@ const rosePineHighlight = HighlightStyle.define([
 export interface CmEditorOptions {
 	/** Initial contents of the editor. */
 	doc: string;
-	/** Language id (Shiki-style, e.g. "rust", "clojure"). When the
-	 *  matching CodeMirror language pack has been preloaded via
-	 *  `preloadLanguages`, its LanguageSupport slots into the editor;
-	 *  otherwise the editor renders as plain text + bracket matching. */
+	/** Language id (Shiki-style, e.g. "rust", "clojure"). The matching
+	 *  CodeMirror language pack, if there is one, joins the editor once
+	 *  it has loaded; until then, or without one, the editor renders as
+	 *  plain text + bracket matching. */
 	language: string;
+	/** Columns to draw a ruler after; `setCmRulers` changes them later. */
+	rulerColumns: number[];
 	/** Fires on every doc change with the new full text. */
 	onChange: (value: string) => void;
 	/** Fires on Ctrl/Cmd+Enter. Used as the form's submit shortcut. */
@@ -156,17 +204,17 @@ export interface CmEditorOptions {
  *  extension set — `basicSetup` (history, line numbers, syntax highlight,
  *  bracket matching + auto-close, indent-on-input, search, autocomplete,
  *  multi-cursor, active line highlight, selection-match highlight) plus
- *  line wrapping, Tab-indents-selection, Rose Pine Moon theming, and the
- *  provided language pack if one is loaded.
+ *  Tab-indents-selection, Rose Pine Moon theming, rulers, and the
+ *  language's pack. Lines don't wrap, so the rulers sit at true columns.
  *
  *  Returns the EditorView; destroy it with `.destroy()` on unmount. */
 export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): EditorView {
-	const langSupport: LanguageSupport | undefined = getLoadedLanguage(options.language);
-
+	const language = new Compartment();
 	const extensions: Extension[] = [
 		basicSetup,
-		EditorView.lineWrapping,
+		language.of(getLoadedLanguage(options.language) ?? []),
 		rosePineChrome,
+		rulers.of(rulersTheme(options.rulerColumns)),
 		syntaxHighlighting(rosePineHighlight),
 		// Tab indents the selection, Shift+Tab dedents — overrides the
 		// default "move focus" behaviour for Tab inside the editor.
@@ -206,11 +254,22 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 		}),
 	];
 
-	if (langSupport) extensions.push(langSupport);
-
 	const view = new EditorView({
 		state: EditorState.create({ doc: options.doc, extensions }),
 		parent,
 	});
+	// A pack still loading joins the editor when it arrives, so the
+	// first editor opened for a language is highlighted too.
+	if (!getLoadedLanguage(options.language)) {
+		void preloadLanguages([options.language]).then(() => {
+			const support = getLoadedLanguage(options.language);
+			// Not gated on the DOM being attached: an inline form's row is
+			// detached while the diff re-renders, and a destroyed view
+			// ignores the update.
+			if (support) {
+				view.dispatch({ effects: language.reconfigure(support) });
+			}
+		});
+	}
 	return view;
 }

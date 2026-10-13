@@ -58,6 +58,9 @@ test.describe("decision flow", () => {
 			await expect(form.locator("textarea.prose"), "the prose textarea sits above the editor").toBeVisible();
 			await form.locator(".code-host .cm-content").click();
 			await page.keyboard.type("fn renamed() {}");
+			// The Rust pack loads after the editor opens; once it joins,
+			// the keyword gets a highlighted span of its own.
+			await expect(form.locator(".code-host .cm-line span", { hasText: /^fn$/ })).toHaveCount(1);
 			await page.keyboard.press(`${mod}+Shift+Enter`);
 			await expect(form.locator(".code-host .cm-line")).toHaveCount(1);
 			await form.locator("textarea.prose").fill("second finding here");

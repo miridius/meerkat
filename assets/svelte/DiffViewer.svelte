@@ -83,6 +83,7 @@
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import { languageFor } from "../ts/languageFor";
+  import { fittingColumns, rulerBackground } from "../ts/rulers";
 
   // Renders ONE file's diff body via `@git-diff-view`, the read-only
   // inline comment list, and the pointer-drag selection logic that
@@ -149,6 +150,7 @@
     wrap_lines = false,
     font_size_px = 13,
     tab_size = 2,
+    ruler_columns = [],
     comments = [],
     inline_forms = [],
     plantuml_available = false,
@@ -160,6 +162,7 @@
     wrap_lines?: boolean;
     font_size_px?: number;
     tab_size?: number;
+    ruler_columns?: number[];
     comments?: InlineCommentT[];
     inline_forms?: InlineFormDescriptor[];
     plantuml_available?: boolean;
@@ -391,10 +394,78 @@
         applyCommentMarkers();
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
+        drawRulers();
       });
     });
     obs.observe(diffContainer, { childList: true, subtree: true });
     return () => obs.disconnect();
+  });
+
+  // Rulers: each side's code cells get, as a CSS variable, a background
+  // drawing the rulers whose column fits in the visible width of that
+  // side's code column; the rest are not drawn. Redrawn when the
+  // setting, the table (view mode, wrap, font size) or the width changes.
+  const RULER_COLOR = "color-mix(in srgb, var(--muted) 35%, transparent)";
+  const RULER_SIDES = [
+    ["--meerkat-rulers-old", "td.diff-line-old-content"],
+    ["--meerkat-rulers-new", "td.diff-line-new-content"],
+    ["--meerkat-rulers-unified", "td.diff-line-content"],
+  ] as const;
+
+  function drawRulers() {
+    if (!diffContainer) return;
+    for (const [variable, selector] of RULER_SIDES) {
+      const td = diffContainer.querySelector<HTMLTableCellElement>(selector);
+      const view = td?.closest("table")?.parentElement;
+      if (!td || !view || ruler_columns.length === 0) {
+        diffContainer.style.removeProperty(variable);
+        continue;
+      }
+      // With wrap off the cell is as wide as the longest line, so the
+      // visible part ends at the edge of the side's scroll view.
+      // Measured as if scrolled to the start, so the answer doesn't
+      // change with the scroll.
+      const cell = td.getBoundingClientRect();
+      const viewRight = view.getBoundingClientRect().left + view.clientLeft + view.clientWidth;
+      // Text stops at the cell's right padding, so a ruler there marks
+      // a column no line reaches.
+      const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
+      const visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
+      // The code starts 2em into the cell, after the +/- marker.
+      const offset = probeWidth(td, "2em");
+      const ch = probeWidth(td, "100ch") / 100;
+      const columns = fittingColumns(ruler_columns, visible, offset, ch);
+      diffContainer.style.setProperty(variable, rulerBackground(columns, "2em", RULER_COLOR));
+    }
+  }
+
+  // The width, in px, of a CSS length in `cell`'s font.
+  function probeWidth(cell: HTMLElement, length: string): number {
+    const probe = document.createElement("span");
+    probe.style.cssText = `position: absolute; visibility: hidden; width: ${length}`;
+    cell.append(probe);
+    const width = probe.getBoundingClientRect().width;
+    probe.remove();
+    return width;
+  }
+
+  $effect(() => {
+    if (!diffContainer || !diffInstance) return;
+    void $state.snapshot(ruler_columns);
+    void diffViewMode;
+    void wrap_lines;
+    void font_size_px;
+    let handle2 = 0;
+    const handle = requestAnimationFrame(() => {
+      handle2 = requestAnimationFrame(drawRulers);
+    });
+    const resize = new ResizeObserver(() => drawRulers());
+    resize.observe(diffContainer);
+    return () => {
+      cancelAnimationFrame(handle);
+      cancelAnimationFrame(handle2);
+      resize.disconnect();
+    };
   });
 
   // Inject one inline-comment FORM per open form on this file, each
@@ -472,7 +543,14 @@
         const tr = buildRow();
         const component = mount(CommentForm, {
           target: formCell(tr),
-          props: { ...desc.props, live },
+          // A getter, so the open form follows ruler setting changes.
+          props: {
+            ...desc.props,
+            live,
+            get rulerColumns() {
+              return ruler_columns;
+            },
+          },
         });
         m = { component, row: tr };
         mountedInlineForms.set(desc.key, m);
@@ -1031,6 +1109,16 @@
        handled by the page body */
     overflow-x: auto;
   }
+  /* Rulers, set per side by `drawRulers`. */
+  :global(.diff-content td.diff-line-old-content) {
+    background-image: var(--meerkat-rulers-old, none);
+  }
+  :global(.diff-content td.diff-line-new-content) {
+    background-image: var(--meerkat-rulers-new, none);
+  }
+  :global(.diff-content td.diff-line-content) {
+    background-image: var(--meerkat-rulers-unified, none);
+  }
   /* Line-number gutter cells: drag-select-only zone. Disabling user
      selection here prevents the drag from looking like a text
      highlight while still leaving the code content fully selectable
@@ -1080,7 +1168,9 @@
   :global(.diff-content tr.diff-line.drag-selecting > td),
   :global(.diff-content tr.diff-line > td.drag-selecting-side) {
     /* biome-ignore lint/complexity/noImportantStyles: the diff library sets each cell's background-color inline, which only `!important` can override; without it the add/del shading masks the drag indicator. */
-    background: rgba(31, 111, 235, 0.32) !important;
+    background-color: rgba(31, 111, 235, 0.32) !important;
+    /* A moved line's tint gives way, as the rulers don't. */
+    --meerkat-moved-tint: transparent;
     box-shadow: inset 0 0 0 9999px rgba(31, 111, 235, 0.18);
   }
   /* Visual indicator that a line is covered by an inline comment.
@@ -1149,38 +1239,32 @@
     margin: 4px 0;
     padding-left: 20px;
   }
-  /* Moved-line highlighting — 4 colors cycled by pair id. */
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-0),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-0),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-0) {
-    background-image: linear-gradient(
-      rgba(96, 165, 250, 0.18),
-      rgba(96, 165, 250, 0.18)
-    );
+  /* Moved-line highlighting — 4 colors cycled by pair id. A split
+     view's content cell draws its rulers over the tint. */
+  :global(.diff-content .moved-line.moved-pair-0) {
+    --meerkat-moved-tint: rgba(96, 165, 250, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-1),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-1),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-1) {
-    background-image: linear-gradient(
-      rgba(192, 132, 252, 0.18),
-      rgba(192, 132, 252, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-1) {
+    --meerkat-moved-tint: rgba(192, 132, 252, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-2),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-2),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-2) {
-    background-image: linear-gradient(
-      rgba(52, 211, 153, 0.18),
-      rgba(52, 211, 153, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-2) {
+    --meerkat-moved-tint: rgba(52, 211, 153, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line.moved-pair-3),
-  :global(.diff-content td.diff-line-old-content.moved-line.moved-pair-3),
-  :global(.diff-content td.diff-line-new-content.moved-line.moved-pair-3) {
-    background-image: linear-gradient(
-      rgba(251, 191, 36, 0.18),
-      rgba(251, 191, 36, 0.18)
-    );
+  :global(.diff-content .moved-line.moved-pair-3) {
+    --meerkat-moved-tint: rgba(251, 191, 36, 0.18);
+  }
+  :global(.diff-content tr.diff-line.moved-line) {
+    background-image: linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
+  }
+  :global(.diff-content td.diff-line-old-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-old, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
+  }
+  :global(.diff-content td.diff-line-new-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-new, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
   :global(.diff-content tr.diff-line.moved-flash) {
     animation: moved-flash-anim 1.6s ease-out;

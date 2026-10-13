@@ -8,3 +8,14 @@ packages:
 # less than 24h ago — compromised releases are usually yanked well
 # within that window.
 minimumReleaseAge: 1440
+
+# The Clojure packs import these without declaring them, so they
+# resolved only when pnpm happened to hoist a copy; an install over an
+# older node_modules can leave none and break the asset build.
+packageExtensions:
+  "@nextjournal/lang-clojure":
+    dependencies:
+      "@lezer/highlight": "^1.0.0"
+  "@nextjournal/lezer-clojure":
+    dependencies:
+      "@lezer/common": "^1.0.0"
