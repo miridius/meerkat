@@ -103,7 +103,7 @@ land() {
         continue
         ;;
       DIRTY)
-        fail "conflicts with main" "$(gh pr view "$pr" --json url,headRefName,mergeable,mergeStateStatus)"
+        fail "conflicts with $base" "$(gh pr view "$pr" --json url,headRefName,mergeable,mergeStateStatus)"
         ;;
       BEHIND)
         rebase_onto_base

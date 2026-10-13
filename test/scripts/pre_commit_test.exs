@@ -657,6 +657,7 @@ defmodule Meerkat.PreCommitHookTest do
     assert {_, 0} = commit(ctx, ["-m", "root"])
     assert gates_run(ctx) == @gates ++ @mutation
     assert git(ctx.work, ["rev-list", "--count", "HEAD"]) == "1"
+    assert mutated?(ctx, "HEAD")
   end
 
   test "a commit on a detached HEAD runs the checks", ctx do

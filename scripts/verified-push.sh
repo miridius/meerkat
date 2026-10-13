@@ -112,7 +112,7 @@ for commit in "${commits[@]}"; do
     status=1
   else
     echo "pre-push: HEAD ($short) has not passed the commit gate since it was made" >&2
-    echo "(a rebase or cherry-pick, for one, skips the pre-commit hook); checking it now." >&2
+    echo "(a rebase or cherry-pick skips the pre-commit hook); checking it now." >&2
     if ! run_gates "$commit"; then
       status=1
     elif ! gated "$commit"; then
