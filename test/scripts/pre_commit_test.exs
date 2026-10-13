@@ -55,7 +55,8 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
-    for script <- ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh) do
+    for script <-
+          ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh mutate-paths.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -469,6 +470,83 @@ defmodule Meerkat.PreCommitHookTest do
     assert ["--since", "main"] in Enum.chunk_every(args, 2, 1)
     assert "--no-filter" in args
     assert "--no-optimize" in args
+  end
+
+  # muex's own exit status passes survivors under its default --fail-at
+  # and ignores no-coverage mutants, so every mode judges the report.
+  for status <- ~w(survived no_coverage) do
+    test "`mutate.sh <path>` fails on a #{status} mutant and lists it", ctx do
+      report = write_report(ctx.base, unquote(status), [mutant(unquote(status))])
+      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+      assert {out, 1} =
+               System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
+                 cd: ctx.work,
+                 env: [{"PATH", path}, {"STUB_REPORT", report}],
+                 stderr_to_stdout: true
+               )
+
+      assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
+      pairs = Enum.chunk_every(muex_args(ctx), 2, 1)
+      assert ["--fail-at", "0"] in pairs
+      assert ["--format", "json"] in pairs
+    end
+  end
+
+  # muex's file filter and optimizer would drop a small file's or
+  # function's mutants, and a run with none passes.
+  test "`mutate.sh <path>` keeps every mutant of the file", ctx do
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {_, 0} =
+             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
+
+    args = muex_args(ctx)
+    assert "--no-filter" in args
+    assert "--no-optimize" in args
+  end
+
+  # muex finds nothing to mutate in such a path and writes no report, which
+  # would pass. The path check runs under the real bun.
+  test "`mutate.sh <path>` refuses a path that is not a lib/**/*.ex file", ctx do
+    File.rm!(Path.join(ctx.stubs, "bun"))
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {out, 2} =
+             System.cmd(
+               "bash",
+               ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/gti.ex", "code.txt"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
+
+    assert out =~ "lib/meerkat/gti.ex is not a lib/**/*.ex file"
+    assert out =~ "code.txt is not a lib/**/*.ex file"
+    refute out =~ "lib/meerkat/one.ex is not"
+    refute File.exists?(Path.join(ctx.muex, "args"))
+  end
+
+  test "`mutate.sh <path>` mutates lib/**/*.ex files the path check accepts", ctx do
+    File.rm!(Path.join(ctx.stubs, "bun"))
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+
+    assert {_, 0} =
+             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/two.ex"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
+
+    assert ["--files", "lib/meerkat/one.ex,lib/meerkat/two.ex"] in Enum.chunk_every(
+             muex_args(ctx),
+             2,
+             1
+           )
   end
 
   describe "while two other gates run" do
