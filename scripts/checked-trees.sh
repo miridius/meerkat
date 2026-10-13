@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
-# Records which commit contents have passed scripts/check.sh, so the pre-push
-# hook can tell whether a commit it is about to push was ever checked. A rebase,
-# merge or cherry-pick makes commits without running the pre-commit hook.
+# Records which commit contents have passed scripts/check.sh, or with
+# --mutated the mutation gate of scripts/mutate.sh, so the pre-push hook can
+# tell whether a commit it is about to push was ever checked. A rebase
+# or cherry-pick makes commits without running the pre-commit hook.
 #
-#   checked-trees.sh mark <tree-ish>   record that its contents passed
-#   checked-trees.sh has <tree-ish>    exit 0 if its contents passed, else 1
+#   checked-trees.sh [--mutated] mark <tree-ish>  record that its contents
+#                                                 passed
+#   checked-trees.sh [--mutated] has <tree-ish>   exit 0 if its contents
+#                                                 passed, else 1
 #   checked-trees.sh holds <tree-ish>  exit 0 if the worktree holds exactly its
 #                                      contents, with no untracked file, else 1
 #
-# Contents are keyed on every file except Markdown, which check.sh skips: a
-# commit that changes only Markdown counts as checked when its parent was.
+# Contents are keyed on every file except Markdown, which neither gate tests:
+# a commit that changes only Markdown counts as checked when its parent was.
 # Marks live in the git common dir, so every worktree shares them.
 set -euo pipefail
 
 usage() {
-  echo "usage: checked-trees.sh mark|has|holds <tree-ish>" >&2
+  echo "usage: checked-trees.sh [--mutated] mark|has|holds <tree-ish>" >&2
   exit 2
 }
+
+store=meerkat-checked
+if [[ "${1:-}" == --mutated ]]; then
+  store=meerkat-mutated
+  shift
+fi
 
 [[ $# -eq 2 ]] || usage
 
@@ -24,7 +33,7 @@ key() {
   git ls-tree -r --full-tree "$1^{tree}" | { grep -v $'\t.*\\.md$' || true; } | git hash-object --stdin
 }
 
-dir="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-checked"
+dir="$(git rev-parse --path-format=absolute --git-common-dir)/$store"
 k=$(key "$2")
 
 case "$1" in

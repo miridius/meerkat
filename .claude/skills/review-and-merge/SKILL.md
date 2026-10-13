@@ -19,9 +19,9 @@ description: Shepherd a GitHub PR through review-to-merge. Runs /pr-review-toolk
 
 ## Guardrails
 
-- Never push, rebase, or update PRs without explicit permission. Invoking this skill counts as permission to push fix commits to the PR’s branch, mark it ready for review with `gh pr ready <N>`, and run `scripts/merge-queue.sh <N>@<sha>` to update the PR’s branch with `main` when needed, wait for all checks on the PR head, squash-merge it via GitHub only if none failed, and delete its remote branch; after a merge, it also authorizes step 7’s `main` update and deployment, and deletion of only the dead branches and worktrees defined there, including pushes to delete qualifying remote branches. It does not authorize unlocking or force-removing worktrees, or anything broader.
+- Never push, rebase, or update PRs without explicit permission. Invoking this skill counts as permission to push fix commits to the PR’s branch, mark it ready for review with `gh pr ready <N>`, and run `scripts/merge-queue.sh <N>@<sha>` to rebase the PR’s branch onto its base branch and push it through the pre-push gates when needed, wait for all checks on the PR head, squash-merge it via GitHub only if none failed, and delete its remote branch; after a merge, it also authorizes step 7’s `main` update and deployment, and deletion of only the dead branches and worktrees defined there, including pushes to delete qualifying remote branches. It does not authorize unlocking or force-removing worktrees, or anything broader.
 - Fix commits go on the PR's branch. Never commit to `main` — `scripts/no-main-commits.sh` blocks this; don't bypass with `--no-verify`.
-- Land the PR through `scripts/merge-queue.sh <N>@<sha>`; it updates the PR branch with `main` if needed, waits for all checks on the PR head, merges only if none failed, and deletes the remote PR branch. Never merge locally or bypass the queue with a separate merge command.
+- Land the PR through `scripts/merge-queue.sh <N>@<sha>`; it rebases the PR branch onto its base branch and pushes it through the pre-push gates if needed, waits for all checks on the PR head, merges only if none failed, and deletes the remote PR branch. Never merge locally or bypass the queue with a separate merge command.
 
 ## No follow-up PRs
 

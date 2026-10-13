@@ -2,17 +2,22 @@ defmodule Meerkat.MergeQueueTest do
   # Runs scripts/merge-queue.sh against a stub `gh` on PATH. The stub answers
   # each `gh pr view` with the next JSON line from that PR's fixture (the last
   # line repeats) and applies the script's own `-q`/`--jq` filters with jq, so
-  # those filters are exercised against gh-shaped JSON.
-  use ExUnit.Case, async: true
+  # those filters are exercised against gh-shaped JSON. A PR behind main is
+  # rebased with real git, in a fixture clone of a fixture origin.
+  use Meerkat.Case, async: false
+
+  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
 
   @script Path.expand("scripts/merge-queue.sh")
 
   setup do
+    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-merge-queue")
     on_exit(fn -> File.rm_rf!(dir) end)
     File.mkdir_p!(Path.join(dir, "bin"))
     gh = Path.join([dir, "bin", "gh"])
 
+    # `@pushed@` in a fixture line stands for the head the queue pushed.
     File.write!(gh, ~S"""
     #!/usr/bin/env bash
     dir=$(dirname "$0")/..
@@ -21,15 +26,12 @@ defmodule Meerkat.MergeQueueTest do
       "pr view")
         f="$dir/view-$3"
         [ -f "$f" ] || { echo "GraphQL: Could not resolve to a PullRequest with the number of $3." >&2; exit 1; }
-        head -n 1 "$f" > "$dir/line"
+        pushed=$(git --git-dir="$dir/origin.git" rev-parse --verify --quiet refs/heads/claude/feature 2>/dev/null)
+        head -n 1 "$f" | sed "s/@pushed@/$pushed/g" > "$dir/line"
         if [ "$(wc -l < "$f")" -gt 1 ]; then tail -n +2 "$f" > "$f.next"; mv "$f.next" "$f"; fi
         q=""; prev=""
         for a in "$@"; do [ "$prev" = -q ] && q=$a; prev=$a; done
         if [ -n "$q" ]; then jq -r "$q" < "$dir/line"; else cat "$dir/line"; fi
-        ;;
-      "pr update-branch")
-        cat "$dir/update-branch-out-$3" 2>/dev/null
-        exit "$(cat "$dir/update-branch-status-$3" 2>/dev/null || echo 0)"
         ;;
       "pr checks")
         case " $* " in
@@ -56,7 +58,6 @@ defmodule Meerkat.MergeQueueTest do
         jq=""; prev=""
         for a in "$@"; do [ "$prev" = --jq ] && jq=$a; prev=$a; done
         case "$2" in
-          */commits/*) { cat "$dir/commit-${2##*/}.json" 2>/dev/null || echo '{}'; } | jq -r "$jq" ;;
           */merge-async/*)
             f="$dir/merge-poll"
             head -n 1 "$f"
@@ -70,6 +71,20 @@ defmodule Meerkat.MergeQueueTest do
     """)
 
     File.chmod!(gh, 0o755)
+
+    # The worktree setup before a push, logged with where it ran.
+    for tool <- ~w(mix pnpm) do
+      stub = Path.join([dir, "bin", tool])
+
+      File.write!(stub, """
+      #!/usr/bin/env bash
+      echo "#{tool} $* in $(git rev-parse HEAD)" >> '#{dir}/log'
+      exit "$(cat '#{dir}/setup-status' 2>/dev/null || echo 0)"
+      """)
+
+      File.chmod!(stub, 0o755)
+    end
+
     {:ok, dir: dir}
   end
 
@@ -82,13 +97,17 @@ defmodule Meerkat.MergeQueueTest do
   # come from `gh pr checks --watch`, stubbed per PR with a checks-status file.
   defp view({head, merge_state, checks}), do: view({head, merge_state, checks, "OPEN"})
 
-  defp view({head, merge_state, checks, state}) do
+  defp view({head, merge_state, checks, state}),
+    do: view({head, merge_state, checks, state, "claude/#{head}"})
+
+  defp view({head, merge_state, checks, state, branch}) do
     checks = if checks, do: [%{name: "test", status: "IN_PROGRESS", conclusion: ""}], else: []
 
     %{
       state: state,
       headRefOid: head,
-      headRefName: "claude/#{head}",
+      headRefName: branch,
+      baseRefName: "main",
       mergeStateStatus: merge_state,
       mergeable: if(merge_state == "DIRTY", do: "CONFLICTING", else: "MERGEABLE"),
       url: "https://github.com/o/r/pull/1",
@@ -96,30 +115,66 @@ defmodule Meerkat.MergeQueueTest do
     }
   end
 
-  # The commit GitHub's API returns for `sha`, by default GitHub's signed merge
-  # of main into `parent`, as `gh pr update-branch` makes.
-  defp commit(dir, sha, parent, opts \\ []) do
-    json = %{
-      commit: %{
-        verification: %{
-          verified: Keyword.get(opts, :verified, true),
-          reason: Keyword.get(opts, :reason, "valid")
-        }
-      },
-      committer: %{login: Keyword.get(opts, :committer, "web-flow")},
-      parents: [%{sha: parent}, %{sha: "main0"}]
-    }
+  # An origin whose branch claude/feature is one commit behind main, and a
+  # clone of it the queue runs in. The clone's pre-push hook stands in for
+  # the gates: it logs the commit it was asked to push and fails when told
+  # to. With `conflict: true`, main and the branch change the same line.
+  # Returns the clone and the branch's head.
+  defp behind_branch(dir, opts \\ []) do
+    origin = Path.join(dir, "origin.git")
+    work = Path.join(dir, "work")
+    git(dir, ["init", "-q", "--bare", "--initial-branch=main", origin])
+    git(dir, ["init", "-q", "--initial-branch=main", work])
+    git(work, ["config", "user.email", "t@t.t"])
+    git(work, ["config", "user.name", "t"])
+    git(work, ["remote", "add", "origin", origin])
+    commit(work, "code.txt", "base\n")
+    git(work, ["push", "-q", "origin", "main"])
+    git(work, ["switch", "-q", "-c", "claude/feature"])
+    commit(work, "code.txt", "feature\n")
+    git(work, ["push", "-q", "origin", "claude/feature"])
+    feature = git(work, ["rev-parse", "HEAD"])
+    git(work, ["switch", "-q", "main"])
 
-    File.write!(Path.join(dir, "commit-#{sha}.json"), JSON.encode!(json))
+    if opts[:conflict],
+      do: commit(work, "code.txt", "main\n"),
+      else: commit(work, "main.txt", "main\n")
+
+    git(work, ["push", "-q", "origin", "main"])
+
+    hook = Path.join([work, ".git", "hooks", "pre-push"])
+
+    File.write!(hook, """
+    #!/usr/bin/env bash
+    echo "pre-push $(git rev-parse HEAD)" >> '#{dir}/log'
+    echo "the gates' last words"
+    exit "$(cat '#{dir}/push-status' 2>/dev/null || echo 0)"
+    """)
+
+    File.chmod!(hook, 0o755)
+    {work, feature}
   end
 
-  defp run_queue(dir, prs, env \\ []) do
+  defp commit(work, name, content) do
+    stage(work, name, content)
+    git(work, ["commit", "-qm", name])
+  end
+
+  defp origin_head(dir, ref), do: git(Path.join(dir, "origin.git"), ["rev-parse", ref])
+
+  defp worktrees(work) do
+    git(work, ["worktree", "list", "--porcelain"])
+    |> String.split("\n")
+    |> Enum.filter(&String.starts_with?(&1, "worktree "))
+  end
+
+  defp run_queue(dir, prs, env \\ [], cd \\ nil) do
     env = [
       {"PATH", Path.join(dir, "bin") <> ":" <> System.get_env("PATH")},
-      {"MERGE_QUEUE_POLL", "0"} | env
+      {"MERGE_QUEUE_POLL", "0"} | env ++ hook_env()
     ]
 
-    System.cmd("bash", [@script | prs], env: env, stderr_to_stdout: true)
+    System.cmd("bash", [@script | prs], env: env, stderr_to_stdout: true, cd: cd || File.cwd!())
   end
 
   defp log(dir), do: dir |> Path.join("log") |> File.read!() |> String.split("\n", trim: true)
@@ -143,8 +198,6 @@ defmodule Meerkat.MergeQueueTest do
     assert calls(dir, "api -X DELETE") == [
              "api -X DELETE repos/{owner}/{repo}/git/refs/heads/claude/aaa"
            ]
-
-    assert calls(dir, "pr update-branch") == []
   end
 
   test "a merge GitHub is still processing is followed to its result", %{dir: dir} do
@@ -196,42 +249,137 @@ defmodule Meerkat.MergeQueueTest do
     assert run_queue(dir, ["1"]) == {"#1 merged sq1\n", 0}
   end
 
-  test "a PR behind main is updated once, then merged at the new head after its checks",
+  test "a PR behind main is rebased onto it locally, pushed through the pre-push hook, then merged at the rebased head after its checks",
        %{dir: dir} do
+    {work, feature} = behind_branch(dir)
     pr(dir, 1, [{"aaa", "CLEAN", true}])
 
     pr(dir, 2, [
-      {"bbb", "BEHIND", true},
-      {"bbb", "BEHIND", true},
-      {"ccc", "UNKNOWN", false},
-      {"ccc", "BLOCKED", false},
-      {"ccc", "BLOCKED", true}
+      {feature, "BEHIND", true, "OPEN", "claude/feature"},
+      {feature, "BEHIND", true, "OPEN", "claude/feature"},
+      {"@pushed@", "UNKNOWN", false, "OPEN", "claude/feature"},
+      {"@pushed@", "BLOCKED", false, "OPEN", "claude/feature"},
+      {"@pushed@", "BLOCKED", true, "OPEN", "claude/feature"}
     ])
 
-    commit(dir, "ccc", "bbb")
+    assert {"#1 merged sq1\n#2 merged sq2 (rebased onto main)\n", 0} =
+             run_queue(dir, ["1", "2@#{feature}"], [], work)
 
-    assert run_queue(dir, ["1", "2"]) == {"#1 merged sq1\n#2 merged sq2 (updated with main)\n", 0}
-
-    assert calls(dir, "pr update-branch") == ["pr update-branch 2"]
-    assert Enum.any?(log(dir), &(&1 =~ "commits/ccc"))
+    rebased = origin_head(dir, "claude/feature")
+    assert origin_head(dir, "#{rebased}~1") == origin_head(dir, "main")
+    assert git(Path.join(dir, "origin.git"), ["show", "#{rebased}:code.txt"]) == "feature"
+    # The worktree is set up, as check.sh sets one up, before the push.
+    assert Enum.filter(log(dir), &(&1 =~ ~r/^(mix|pnpm|pre-push) /)) == [
+             "mix deps.get in #{rebased}",
+             "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline in #{rebased}",
+             "pre-push #{rebased}"
+           ]
 
     # Only once the new head has checks registered are they watched.
     assert calls(dir, "pr view 2") |> length() == 6
     assert calls(dir, "pr checks 2") == ["pr checks 2 --watch --fail-fast --interval 0"]
 
-    assert merges(dir) == [merge(1, "aaa"), merge(2, "ccc")]
+    assert merges(dir) == [merge(1, "aaa"), merge(2, rebased)]
 
     assert Enum.find_index(log(dir), &(&1 =~ "pulls/1/merge-async")) <
-             Enum.find_index(log(dir), &(&1 =~ "pr update-branch 2"))
+             Enum.find_index(log(dir), &(&1 =~ "pre-push"))
+
+    assert length(worktrees(work)) == 1
   end
 
-  test "a PR given with its reviewed SHA is accepted at that SHA and merged at GitHub's update of it",
-       %{dir: dir} do
-    pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
-    commit(dir, "bbb", "aaa")
+  test "a rebase that conflicts with main stops the queue and pushes nothing", %{dir: dir} do
+    {work, feature} = behind_branch(dir, conflict: true)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
 
-    assert run_queue(dir, ["1@aaa"]) == {"#1 merged sq1 (updated with main)\n", 0}
-    assert merges(dir) == [merge(1, "bbb")]
+    assert {"#1 conflicts with main\n" <> rest, 1} = run_queue(dir, ["1", "2"], [], work)
+    assert rest =~ "CONFLICT"
+    assert String.ends_with?(rest, "not attempted: 2\n")
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
+    assert merges(dir) == []
+  end
+
+  test "a rebase that fails without a conflict stops the queue saying so", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    git(work, ["config", "commit.gpgsign", "true"])
+    git(work, ["config", "gpg.program", "false"])
+
+    assert {"#1 could not be rebased onto main\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
+  end
+
+  test "the rebase runs no checkout or commit hook", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    File.write!(Path.join(dir, "push-status"), "1")
+
+    for hook <- ~w(post-checkout post-commit post-rewrite) do
+      path = Path.join([work, ".git", "hooks", hook])
+      File.write!(path, "#!/usr/bin/env bash\necho #{hook} >> '#{dir}/log'\n")
+      File.chmod!(path, 0o755)
+    end
+
+    assert {"#1 rebase onto main could not be pushed\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert Enum.filter(log(dir), &(&1 =~ ~r/^post-/)) == []
+  end
+
+  test "a rebase the pre-push gates refuse stops the queue with their output", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    File.write!(Path.join(dir, "push-status"), "1")
+
+    assert {"#1 rebase onto main could not be pushed\n" <> rest, 1} =
+             run_queue(dir, ["1"], [], work)
+
+    assert rest =~ "the gates' last words"
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
+    assert merges(dir) == []
+  end
+
+  test "a worktree that cannot be set up stops the queue before any push", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    File.write!(Path.join(dir, "setup-status"), "1")
+
+    assert {"#1 could not be set up to push\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert calls(dir, "pre-push") == []
+    assert origin_head(dir, "claude/feature") == feature
+    assert length(worktrees(work)) == 1
+  end
+
+  test "a head other than the rebased one stops the queue unmerged", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+
+    pr(dir, 1, [
+      {feature, "BEHIND", true, "OPEN", "claude/feature"},
+      {"zzz", "CLEAN", true, "OPEN", "claude/feature"}
+    ])
+
+    assert {out, 1} = run_queue(dir, ["1"], [], work)
+
+    assert out ==
+             "#1 head moved from #{origin_head(dir, "claude/feature")} to zzz\nnot attempted:\n"
+
+    assert merges(dir) == []
+  end
+
+  test "a branch that moved since it was read is not overwritten", %{dir: dir} do
+    {work, feature} = behind_branch(dir)
+    pr(dir, 1, [{feature, "BEHIND", true, "OPEN", "claude/feature"}])
+    other = Path.join(dir, "other")
+    git(dir, ["clone", "-q", "--branch", "claude/feature", Path.join(dir, "origin.git"), other])
+    git(other, ["config", "user.email", "t@t.t"])
+    git(other, ["config", "user.name", "t"])
+    commit(other, "late.txt", "late\n")
+    git(other, ["push", "-q", "origin", "claude/feature"])
+    moved = git(other, ["rev-parse", "HEAD"])
+
+    # The fetch brings the moved branch, but the lease is on the head read.
+    assert {"#1 rebase onto main could not be pushed\n" <> _, 1} = run_queue(dir, ["1"], [], work)
+    assert origin_head(dir, "claude/feature") == moved
   end
 
   test "a PR whose head moved past its reviewed SHA stops the queue unmerged", %{dir: dir} do
@@ -248,43 +396,6 @@ defmodule Meerkat.MergeQueueTest do
 
     assert run_queue(dir, ["1@aaa"]) ==
              {"#1 head moved from aaa to zzz\nnot attempted:\n", 1}
-
-    assert merges(dir) == []
-  end
-
-  test "an update commit GitHub did not sign stops the queue", %{dir: dir} do
-    pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
-    commit(dir, "bbb", "aaa", verified: false, reason: "unsigned")
-
-    assert {out, 1} = run_queue(dir, ["1"])
-
-    assert out ==
-             "#1 update commit bbb is not verified\nfalse\nunsigned\nweb-flow\naaa\nmain0\nnot attempted:\n"
-
-    assert merges(dir) == []
-  end
-
-  test "a new head after an update that is not GitHub's merge of the pinned head stops the queue",
-       %{dir: dir} do
-    pr(dir, 1, [{"aaa", "BEHIND", true}, {"bbb", "CLEAN", true}])
-    commit(dir, "bbb", "other")
-
-    pr(dir, 2, [{"ccc", "BEHIND", true}, {"ddd", "CLEAN", true}])
-    commit(dir, "ddd", "ccc", committer: "someone")
-
-    assert {"#1 head bbb is not GitHub's update of aaa\n" <> _, 1} = run_queue(dir, ["1@aaa"])
-    assert {"#2 head ddd is not GitHub's update of ccc\n" <> _, 1} = run_queue(dir, ["2"])
-    assert merges(dir) == []
-  end
-
-  test "an update GitHub refuses stops the queue with gh's message", %{dir: dir} do
-    pr(dir, 1, [{"aaa", "BEHIND", true}])
-    File.write!(Path.join(dir, "update-branch-status-1"), "1")
-    File.write!(Path.join(dir, "update-branch-out-1"), "merge conflict between base and head\n")
-
-    assert run_queue(dir, ["1", "2"]) ==
-             {"#1 update with main refused\nmerge conflict between base and head\nnot attempted: 2\n",
-              1}
 
     assert merges(dir) == []
   end
@@ -352,7 +463,6 @@ defmodule Meerkat.MergeQueueTest do
 
     assert %{"mergeable" => "CONFLICTING", "headRefName" => "claude/ddd"} = JSON.decode!(json)
     assert merges(dir) == []
-    assert calls(dir, "pr update-branch") == []
   end
 
   test "a failing check stops the queue with the checks output", %{dir: dir} do
