@@ -405,6 +405,9 @@
         applyCommentMarkers();
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
+        // The library reuses row elements for other lines, so the moved
+        // tint and links must be placed again by line number.
+        applyMovedHighlights(file.moved_lines ?? []);
         drawRulers();
       });
     });
@@ -1080,14 +1083,23 @@
   // Moved-line highlighting + jump badges. Each block of moved lines
   // gets a coloured background (4 colors cycled by pairId) on the
   // covered rows, plus a clickable "← from foo:N" / "→ to foo:N"
-  // badge in the corner of the first row. Click dispatches a
+  // badge at the right of the first row. Click dispatches a
   // document-level `meerkat-move-jump` event the sibling DiffViewers
   // listen for so the target file scrolls into view and flashes.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
-    const handle = requestAnimationFrame(() => applyMovedHighlights(blocks));
-    return () => cancelAnimationFrame(handle);
+    // A split/unified or wrap toggle re-renders the table without them.
+    void diffViewMode;
+    void wrap_lines;
+    let handle2 = 0;
+    const handle = requestAnimationFrame(() => {
+      handle2 = requestAnimationFrame(() => applyMovedHighlights(blocks));
+    });
+    return () => {
+      cancelAnimationFrame(handle);
+      cancelAnimationFrame(handle2);
+    };
   });
 
   function clearMovedHighlights() {
@@ -1111,7 +1123,7 @@
       for (let ln = block.line_start; ln <= block.line_end; ln++) {
         anchorRowsFor(side, ln).forEach((row) => {
           row.classList.add("moved-line", pairClass);
-          const td = row.querySelector(`td.diff-line-${side}-content`);
+          const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
           if (td) td.classList.add("moved-line", pairClass);
         });
       }
@@ -1145,8 +1157,7 @@
           }),
         );
       });
-      contentTd.style.position = "relative";
-      contentTd.appendChild(badge);
+      contentTd.prepend(badge);
     }
   }
 
@@ -1445,8 +1456,8 @@
     margin: 4px 0;
     padding-left: 20px;
   }
-  /* Moved-line highlighting — 4 colors cycled by pair id. A split
-     view's content cell draws its rulers over the tint. */
+  /* Moved-line highlighting — 4 colors cycled by pair id. Each content
+     cell draws its rulers over the tint. */
   :global(.diff-content .moved-line.moved-pair-0) {
     --meerkat-moved-tint: rgba(96, 165, 250, 0.18);
   }
@@ -1472,6 +1483,11 @@
       var(--meerkat-rulers-new, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
+  :global(.diff-content td.diff-line-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-unified, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
+  }
   :global(.diff-content tr.diff-line.moved-flash) {
     animation: moved-flash-anim 1.6s ease-out;
   }
@@ -1479,13 +1495,16 @@
     0%, 60% { background-color: rgba(88, 166, 255, 0.35); }
     100% { background-color: transparent; }
   }
+  /* Floated ahead of the code, so the line's text wraps or the cell
+     widens rather than running under it. */
   :global(.moved-badge) {
-    position: absolute;
-    top: 2px;
-    right: 6px;
-    z-index: 2;
+    float: right;
+    margin-left: 1ch;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 10px;
+    /* Shorter than the line, so it never makes its row taller than the
+       other side's at any font size. */
+    font-size: 0.8em;
+    line-height: 1;
     padding: 1px 6px;
     border-radius: 3px;
     border: 1px solid #30363d;
