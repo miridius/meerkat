@@ -490,6 +490,7 @@
   // below that line's comments and the forms listed before it.
   function renderInlineForms(descs: InlineFormDescriptor[]) {
     if (!diffContainer) return;
+    removeMirrorRows();
     const wanted = new Set(descs.map((d) => d.key));
     for (const [key, m] of mountedInlineForms) {
       if (wanted.has(key)) continue;
@@ -561,6 +562,80 @@
       }
       placed.add(m.row);
     }
+    mirrorInjectedRows();
+  }
+
+  // With Wrap off, Split view draws each side in its own table, so a row
+  // injected into one side's table would push only that side's lines
+  // down. Give each injected row a blank mirror row in the other side's
+  // table, as tall as the row, so the sides stay in line as they do with
+  // Wrap on, where the row's other half is a spacer cell. At a line with
+  // rows on both sides, the old side's rows come first.
+  let mirrorHeights: ResizeObserver | null = null;
+
+  function removeMirrorRows() {
+    mirrorHeights?.disconnect();
+    mirrorHeights = null;
+    diffContainer?.querySelectorAll("tr.meerkat-mirror-row").forEach((tr) => {
+      tr.remove();
+    });
+  }
+
+  function mirrorInjectedRows() {
+    removeMirrorRows();
+    const oldBody = diffContainer?.querySelector("table.old-diff-table > tbody");
+    const newBody = diffContainer?.querySelector("table.new-diff-table > tbody");
+    if (!oldBody || !newBody) return;
+    const mirrors = new Map<Element, HTMLTableRowElement>();
+    // Old side first: its mirrors go straight after the new side's
+    // anchor; the new side's mirrors go after everything at the old
+    // side's anchor.
+    for (const [body, other] of [
+      [oldBody, newBody],
+      [newBody, oldBody],
+    ] as const) {
+      const rows = body.querySelectorAll(":scope > tr.meerkat-comment-row, :scope > tr.meerkat-form-row");
+      for (const row of rows) {
+        let anchor = row.previousElementSibling;
+        while (anchor && isInjectedRow(anchor)) anchor = anchor.previousElementSibling;
+        const line = anchor?.getAttribute("data-line");
+        // The two tables give the same split line the same `data-line`.
+        let after = line ? other.querySelector(`:scope > tr[data-line="${line}"]`) : null;
+        if (!after) continue;
+        const skip = body === oldBody ? isMirrorRow : isInjectedRow;
+        while (after.nextElementSibling && skip(after.nextElementSibling)) after = after.nextElementSibling;
+        const mirror = document.createElement("tr");
+        mirror.className = "meerkat-mirror-row";
+        const cell = document.createElement("td");
+        cell.setAttribute("colspan", "2");
+        cell.className = "meerkat-mirror-cell";
+        mirror.appendChild(cell);
+        after.after(mirror);
+        mirrors.set(row, mirror);
+      }
+    }
+    if (mirrors.size === 0) return;
+    const sync = () => {
+      for (const [row, mirror] of mirrors) {
+        mirror.style.height = `${row.getBoundingClientRect().height}px`;
+      }
+    };
+    sync();
+    mirrorHeights = new ResizeObserver(sync);
+    for (const row of mirrors.keys()) mirrorHeights.observe(row);
+  }
+
+  function isMirrorRow(el: Element): boolean {
+    return el.classList.contains("meerkat-mirror-row");
+  }
+
+  // A comment, form or mirror row: anything we put in the diff table.
+  function isInjectedRow(el: Element): boolean {
+    return (
+      isMirrorRow(el) ||
+      el.classList.contains("meerkat-comment-row") ||
+      el.classList.contains("meerkat-form-row")
+    );
   }
 
   // A form or comment can be anchored on a context line the reviewer
@@ -686,6 +761,7 @@
   // host row keeps the diff table's column structure.
   function renderInlineComments() {
     if (!diffContainer) return;
+    removeMirrorRows();
     // Tear down previously mounted components AND their host rows.
     // Belt-and-braces also queries the live DOM for any orphan rows
     // we've stamped — `mountedInlineComments` only tracks li hosts,
@@ -739,6 +815,7 @@
         mountedInlineComments.push({ component: cmp, host: liHost });
       }
     }
+    mirrorInjectedRows();
   }
 
   // Build a <tr> that mirrors the anchor row's column structure but
@@ -1025,6 +1102,7 @@
       injectedCommentRows = [];
       for (const m of mountedInlineForms.values()) unmountInlineForm(m);
       mountedInlineForms.clear();
+      removeMirrorRows();
     };
   });
 </script>
@@ -1203,10 +1281,12 @@
     user-select: text;
   }
   /* Spacer halves on the opposite side from a side-aware comment /
-     form row. Subtle border so the spatial relationship to the
+     form row, and the mirror rows standing in for them with Wrap off.
+     Subtle border so the spatial relationship to the
      anchor row reads correctly. */
   :global(.diff-content tr.meerkat-comment-row > td.meerkat-comment-cell-spacer),
-  :global(.diff-content tr.meerkat-form-row > td.meerkat-form-cell-spacer) {
+  :global(.diff-content tr.meerkat-form-row > td.meerkat-form-cell-spacer),
+  :global(.diff-content tr.meerkat-mirror-row > td.meerkat-mirror-cell) {
     background: rgba(13, 17, 23, 0.6);
     border-top: 1px solid #30363d;
     border-bottom: 1px solid #30363d;

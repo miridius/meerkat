@@ -253,6 +253,71 @@ test.describe("multiple open comment forms", () => {
 		}
 	});
 
+	test("in Split view, comments and forms on either side keep the two sides in line, with Wrap on or off", async ({
+		page,
+	}) => {
+		const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+		const fixture = makeFixture({ files: { "a.txt": `${lines.join("\n")}\n` } });
+		fixture.git("commit", "-q", "-m", "base");
+		lines[9] = "line 10 changed";
+		lines[19] = "line 20 changed";
+		writeFileSync(join(fixture.dir, "a.txt"), `${lines.join("\n")}\n`);
+		fixture.git("add", "a.txt");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const file = page.locator(".file-section").filter({ hasText: "a.txt" });
+			const splitOldLine = (n: number) => file.locator(`td.diff-line-old-num:has(span[data-line-num="${n}"])`);
+			// Each shown line below the rows sits at the same height on both
+			// sides.
+			const misaligned = () =>
+				file.evaluate((section) => {
+					const top = (side: string, n: number) =>
+						section
+							.querySelector(`td.diff-line-${side}-num span[data-line-num="${n}"]`)
+							?.closest("tr")
+							?.getBoundingClientRect().top;
+					const off: number[] = [];
+					for (const n of [11, 14, 17, 21, 23]) {
+						const [o, w] = [top("old", n), top("new", n)];
+						if (o === undefined || w === undefined || Math.abs(o - w) > 1) off.push(n);
+					}
+					return off;
+				});
+
+			// An old-side comment and a new-side form at line 10, and a
+			// new-side form alone at line 20.
+			await splitOldLine(10).click();
+			await formAt(file, 10).locator("textarea").fill("old side");
+			await formAt(file, 10).getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(file.locator('tr.meerkat-comment-row[data-meerkat-anchor-side="old"]')).toContainText("old side");
+			await splitNewLine(file, 10).click();
+			await splitNewLine(file, 20).click();
+			await expect(formAt(file, 20)).toBeVisible();
+
+			const wrap = page.getByRole("checkbox", { name: "Wrap" });
+			await expect(wrap).toBeChecked();
+			for (const checked of [true, false]) {
+				if (!checked) {
+					await wrap.click();
+					await expect(wrap).not.toBeChecked();
+					// The rows are placed again in each side's own table.
+					await expect(file.locator("table.new-diff-table tr.meerkat-form-row")).toHaveCount(2);
+					await expect(file.locator("table.old-diff-table tr.meerkat-comment-row")).toHaveCount(1);
+				}
+				await expect.poll(misaligned, `Wrap ${checked ? "on" : "off"}`).toEqual([]);
+				// A form that grows keeps the other side in line.
+				await formAt(file, 20).getByRole("button", { name: "Suggestion", exact: true }).click();
+				await expect(formAt(file, 20).locator(".cm-editor")).toBeVisible();
+				await expect.poll(misaligned, `Wrap ${checked ? "on" : "off"}, form grown`).toEqual([]);
+				await formAt(file, 20).getByRole("button", { name: "Issue", exact: true }).click();
+			}
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	test("a footer link scrolls to and focuses a form hidden by approving its file or by the filter", async ({
 		page,
 	}) => {

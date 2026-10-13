@@ -32,6 +32,13 @@ file once per diff and view mode so the form or comment stays
 visible: a collapsed hunk would hide the comment, and an open form
 blocks the decision buttons.
 
+In Split view, each form or comment row fills its anchor's side and
+leaves the other side blank at the same height, so the two sides stay
+in line with Wrap on or off. With Wrap off each side is its own table,
+so the blank is a spacer row in the other side's table that follows
+the row's height as it grows or shrinks; at a line with rows on both
+sides, the old side's rows come first.
+
 ## Form contents
 
 The form has:
