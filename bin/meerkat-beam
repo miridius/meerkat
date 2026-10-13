@@ -30,10 +30,7 @@ export MEERKAT_PWD="$ORIG_PWD"
 # the main checkout after its sources are checked out, so it can look
 # newer than sources it was not compiled from; a stamp naming the
 # checkout whose launcher last compiled the build makes the first launch in any
-# other checkout run `mix compile --force`: plain `mix compile` would keep
-# modules whose sources match, and those still carry the other checkout's
-# paths (`Meerkat.DevWatcher` would watch its `lib/`). Otherwise
-# `mix compile` decides what is stale. On
+# other checkout run `mix compile`, which decides what is stale. On
 # compile error, return non-zero WITHOUT aborting the shepherd (set -e
 # is locally disabled around the call so a syntax error in the user's
 # edits keeps the loop alive — we wait for the next source change and
@@ -41,14 +38,9 @@ export MEERKAT_PWD="$ORIG_PWD"
 precompile_if_stale() {
   local lock="_build/${MIX_ENV}/lib/meerkat/.mix/compile.elixir"
   local stamp="_build/${MIX_ENV}/.meerkat-root"
-  local force=""
-  if [[ -f "$lock" && "$(cat "$stamp" 2>/dev/null)" != "$ROOT" ]]; then
-    force="--force"
-  fi
-  if [[ ! -f "$lock" || -n "$force" ]] || \
+  if [[ ! -f "$lock" ]] || [[ "$(cat "$stamp" 2>/dev/null)" != "$ROOT" ]] || \
      [[ -n "$(find lib config mix.exs mix.lock -newer "$lock" -print -quit 2>/dev/null)" ]]; then
-    # shellcheck disable=SC2086
-    mix compile --no-warnings-as-errors $force >&2 || return $?
+    mix compile --no-warnings-as-errors >&2 || return $?
     printf '%s\n' "$ROOT" >"$stamp"
   fi
   return 0

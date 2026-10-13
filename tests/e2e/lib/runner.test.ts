@@ -77,8 +77,7 @@ describe("orphaned backend reaper", () => {
 	});
 
 	test("leaves alone runs dirs whose name carries no owner pid", async () => {
-		// Named like the runs dirs of older test runs; meerkat's own `meerkat-runs`
-		// in the same temp dir likewise has no pid in its name.
+		// Named like the runs dirs of older test runs.
 		const unowned = mkdtempSync(join(tmpdir(), "meerkat-runs-"));
 		const kept = backend(unowned);
 		try {

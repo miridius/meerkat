@@ -437,15 +437,10 @@ defmodule Meerkat.ShepherdTest do
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
     end
 
-    # Modules whose sources match keep the other checkout's paths unless
-    # forced, so its DevWatcher would watch the other checkout's lib/.
-    test "a build compiled in another checkout is recompiled in full, then stamped with its checkout" do
+    test "a successful compile stamps the build with its checkout" do
       {port, dir} = open_dev_shepherd(built: "/elsewhere", exit_codes: [0])
 
       assert await_exit(port, dir) == 0
-
-      assert File.read!(Path.join(dir, "compiles")) ==
-               "compile --no-warnings-as-errors --force\n"
 
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) ==
                Path.join(dir, "root") <> "\n"
@@ -656,10 +651,7 @@ defmodule Meerkat.ShepherdTest do
 
     File.write!(Path.join(stubs, "mix"), """
     #!/usr/bin/env bash
-    if [[ "$1" == compile ]]; then
-      echo "$*" >> "$COMPILES_FILE"
-      exit #{Keyword.get(opts, :compile_code, 0)}
-    fi
+    if [[ "$1" == compile ]]; then exit #{Keyword.get(opts, :compile_code, 0)}; fi
     i=$(cat "$I_FILE"); codes=($(cat "$SEQ_FILE"))
     echo $((i + 1)) > "$I_FILE"
     exit "${codes[$i]:-0}"
@@ -680,7 +672,6 @@ defmodule Meerkat.ShepherdTest do
           {"MEERKAT_SERVE_DIR", Path.join(dir, "serve")},
           {"MEERKAT_SERVE_TOKEN", "t"},
           {"SEQ_FILE", Path.join(dir, "seq")},
-          {"COMPILES_FILE", Path.join(dir, "compiles")},
           {"INPUT_FILE", "/dev/null"}
         ],
         cd: Path.join(dir, "review")
