@@ -12,5 +12,5 @@ user surface.
 Use `BLOCKED` if the agent cannot reach the changed behavior.
 Treat any failed check or spec deviation as `FAIL`.
 Use `PASS` only when all checks pass and no spec deviation is found.
-Use the agent's report as evidence for `/verify`'s Steps and
+Use the agent's report as evidence for `/cr:verify`'s Steps and
 Findings.

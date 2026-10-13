@@ -155,7 +155,7 @@ When behaviour changes, choose the lowest layer that exercises it:
 
 ## Mutation testing
 
-`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it waits for a gate slot and adds minutes to the commit. A staged file with unstaged edits blocks the commit. A surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) blocks the commit; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Staged lines that produce no mutants pass. When `staged` passes, it records the commit's contents, ignoring Markdown, through `scripts/checked-trees.sh --mutated`, but only when the worktree held exactly those contents, with no untracked file, before and after the run, and HEAD's contents were recorded the same way, HEAD is an ancestor of `origin/main`, or there is no HEAD. A run that mutates lines with extra muex flags records nothing. `changed` waits for a gate slot when it has lines to mutate, judges them as `staged` does and fails the same way. When it passes against `origin/main` and the worktree held exactly HEAD before and after the run, it records HEAD's contents the same way. One or more file paths mutate every line of those files. The default and file-path modes judge their mutants as `staged` does and fail the same way, without a gate slot or a record. Put extra muex flags after `--`, except `--format`, `--output` and `--fail-at`, which it refuses.
+`scripts/mutate.sh` runs muex to test whether ExUnit tests detect mutations. With no argument, it mutates every line of every `lib/meerkat/*.ex` file except `lib/meerkat/application.ex` and is slow. `changed` mutates only changed lines in `lib/**/*.ex` relative to the merge base with `origin/main` (`BASE_BRANCH` overrides the base), including uncommitted edits. `staged` mutates only `lib/**/*.ex` lines staged for the next commit; the pre-commit hook uses this mode. It exits 0 immediately when no matching lines are staged. Otherwise it waits for a gate slot and adds minutes to the commit. A staged file with unstaged edits blocks the commit. A surviving mutant or one reported as `no_coverage` (no ExUnit test executes its line) blocks the commit; each is reported with its file, line, status, and code change. Timed-out mutants count as killed. Staged lines that produce no mutants pass. When `staged` passes, it records the commit's contents, ignoring Markdown, through `scripts/checked-trees.sh --mutated`, but only when the worktree held exactly those contents, with no untracked file, before and after the run, and HEAD's contents were recorded the same way, HEAD is an ancestor of `origin/main`, or there is no HEAD. A run that mutates lines with extra muex flags records nothing. `changed` waits for a gate slot when it has lines to mutate, judges them as `staged` does and fails the same way. When it passes against `origin/main` and the worktree held exactly HEAD before and after the run, it records HEAD's contents the same way. One or more file paths mutate every line of those files. The default and file-path modes judge their mutants as `staged` does and fail the same way, without a gate slot or a record. It refuses a named path that is not a `lib/**/*.ex` file. Put extra muex flags after `--`.
 
 ```bash
 scripts/mutate.sh
@@ -165,10 +165,11 @@ scripts/mutate.sh lib/meerkat/git.ex
 scripts/mutate.sh changed -- --concurrency 4
 ```
 
-`mix muex --coverage-guided` runs each mutant against test files that
-execute its line when `:cover` has data.
-When `:cover` has no data for a line, muex falls back to dependency
-analysis and then to the full test suite.
+`mix muex --coverage-guided` runs each mutant against the test files
+that execute its line.
+A mutant on a line no test executes is skipped as `no_coverage`.
+For a line `:cover` has no entry for, such as a `def` header, muex
+falls back to dependency analysis and then to the full test suite.
 A mutant is a survivor when the test files run for its line still
 pass against it.
 
@@ -194,8 +195,6 @@ Test the extracted pure logic.
 
 `mix muex` runs ExUnit only.
 It cannot see Playwright e2e coverage.
-`StatementDeletion` mutants on thin I/O glue are unreliable.
-They can survive despite a direct test.
 Fix or document every survivor under the rules below.
 
 ### Acceptable non-fixes
@@ -233,10 +232,10 @@ else
 fi
 ```
 
-Run `git fetch origin` before the full PR check.
-Use the PR's base branch on the refreshed `origin` as `<base>`.
-Use the commit before the fixes as `<base>` for a rerun on fix
-commits.
+Run `git fetch origin` before the check.
+Use the PR's base branch on the refreshed `origin` as `<base>`, on
+reruns after fix commits too, so a fix that only adds tests still
+re-checks the files whose mutants it targets.
 The PR branch must be checked out for this command.
 The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
 The `--diff-filter=d` option omits deleted files.

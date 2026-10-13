@@ -95,11 +95,6 @@ has_added_lines() {
   awk '/^\+/ && !/^\+\+\+ / { found = 1 } END { exit !found }' <<<"$diff"
 }
 
-# Scopes muex to the lines its diff flags ($@) select.
-line_scope() {
-  scope_args=("$@")
-}
-
 # A tree whose every lib line since origin/main has passed this gate is
 # recorded, so the pre-push hook need not mutate it again. Which trees
 # qualify is decided before the run, in `tree` (the contents judged) and
@@ -150,7 +145,7 @@ case "$mode" in
       exit 0
     fi
     collect_files lib '*.ex'
-    line_scope --since "$base"
+    scope_args=(--since "$base")
     muex_env=(GIT_INDEX_FILE="$index")
     label=changed
     gate=true
@@ -176,7 +171,7 @@ case "$mode" in
       exit 0
     fi
     collect_files lib '*.ex'
-    line_scope --staged
+    scope_args=(--staged)
     muex_env=(GIT_INDEX_FILE="$index")
     label=staged
     gate=true
@@ -199,6 +194,7 @@ case "$mode" in
       files+=("$1")
       shift
     done
+    bun scripts/mutate-paths.ts "${files[@]}"
     ;;
 esac
 
@@ -213,17 +209,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --) shift; extra_args+=("$@"); break ;;
     *)  extra_args+=("$1"); shift ;;
-  esac
-done
-# The run is judged from the JSON report asked for below; muex keeps the
-# last of a repeated flag, so a later one would move or replace the
-# report, or exit before it is judged.
-for arg in "${extra_args[@]}"; do
-  case "$arg" in
-    --format | --format=* | --output | --output=* | --fail-at | --fail-at=*)
-      echo "scripts/mutate.sh: $arg is set by this script; drop it." >&2
-      exit 2
-      ;;
   esac
 done
 # A flag such as --max-mutations can narrow the run, so it records nothing.

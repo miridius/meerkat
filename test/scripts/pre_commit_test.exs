@@ -55,7 +55,8 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
-    for script <- ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh) do
+    for script <-
+          ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh mutate-paths.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -509,23 +510,25 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-optimize" in args
   end
 
-  # muex keeps the last of a repeated flag, so these would override the gate's.
-  for flag <- ~w(--format=html --output --fail-at) do
-    test "`mutate.sh` refuses #{flag} after `--`", ctx do
-      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+  # muex finds nothing to mutate in such a path and writes no report, which
+  # would pass. The path check runs under the real bun.
+  test "`mutate.sh <path>` refuses a path that is not a lib/**/*.ex file", ctx do
+    File.rm!(Path.join(ctx.stubs, "bun"))
+    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
-      assert {out, 2} =
-               System.cmd(
-                 "bash",
-                 ["scripts/mutate.sh", "lib/meerkat/one.ex", "--", unquote(flag)],
-                 cd: ctx.work,
-                 env: [{"PATH", path}],
-                 stderr_to_stdout: true
-               )
+    assert {out, 2} =
+             System.cmd(
+               "bash",
+               ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/gti.ex", "code.txt"],
+               cd: ctx.work,
+               env: [{"PATH", path}],
+               stderr_to_stdout: true
+             )
 
-      assert out =~ "#{unquote(flag)} is set by this script"
-      refute File.exists?(Path.join(ctx.muex, "args"))
-    end
+    assert out =~ "lib/meerkat/gti.ex is not a lib/**/*.ex file"
+    assert out =~ "code.txt is not a lib/**/*.ex file"
+    refute out =~ "lib/meerkat/one.ex is not"
+    refute File.exists?(Path.join(ctx.muex, "args"))
   end
 
   describe "while two other gates run" do
