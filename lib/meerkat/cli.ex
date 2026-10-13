@@ -563,8 +563,15 @@ defmodule Meerkat.CLI do
       generated?(generated_map, name) ->
         :generated
 
+      # The review records approvals under the path it shows.
       not is_nil(branch) and
-          ApprovalCache.approved?(cache, branch, name, Map.get(oid_map, name, "")) ->
+          ApprovalCache.approved?(
+            cache,
+            branch,
+            Git.display_path(name),
+            # muex:ignore equivalent: the review never records an approval under OID "" or "x"
+            Map.get(oid_map, name, "")
+          ) ->
         :approved
 
       true ->

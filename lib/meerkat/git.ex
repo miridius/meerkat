@@ -32,6 +32,10 @@ defmodule Meerkat.Git do
   what looks like an empty diff that's really a swallowed git error.
   """
   @type file_diff :: %{
+          # The raw path, present only when it is not valid UTF-8 and
+          # `file_name` escapes it (see `display_path/1`). Never sent
+          # to the page.
+          optional(:git_path) => binary(),
           is_binary: boolean(),
           status: status,
           file_name: String.t(),
@@ -497,11 +501,12 @@ defmodule Meerkat.Git do
   Read a commit message from the given commit ref via
   `git log -1 --format=%B`. Used when the user passes a single ref like
   `meerkat HEAD` and wants the commit's own message in the gutter.
+  Bytes that are not valid UTF-8 become U+FFFD.
   """
   @spec commit_message(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def commit_message(repo_path, ref) do
     case run_git(repo_path, ["log", "-1", "--format=%B", ref]) do
-      {:ok, output} -> {:ok, String.trim(output)}
+      {:ok, output} -> {:ok, output |> String.trim() |> String.replace_invalid()}
       {:error, _} = err -> err
     end
   end
@@ -555,6 +560,7 @@ defmodule Meerkat.Git do
           file
           |> Map.put(:is_binary, entry.is_binary)
           |> Map.put(:read_errors, file.read_errors ++ global_read_errors)
+          |> displayable()
         end)
         |> Enum.reject(&whitespace_only?/1)
         |> Enum.map(&put_line_counts/1)
@@ -708,9 +714,11 @@ defmodule Meerkat.Git do
         :error ->
           # Attribution is unsafe when the header itself is malformed.
           # Propagate the error to every file rather than silently dropping it.
+          # The header quotes paths, which need not be valid UTF-8.
+          [first_line | _] = block |> String.replace_invalid() |> String.split("\n")
+
           msg =
-            "couldn't parse staged-diff block (first line: " <>
-              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)})"
+            "couldn't parse staged-diff block (first line: #{String.slice(first_line, 0, 200)})"
 
           IO.puts(:stderr, "meerkat: warning — #{msg}")
           {acc, errors ++ [msg]}
@@ -861,11 +869,47 @@ defmodule Meerkat.Git do
           file = materialise_range(repo_path, entry, effective_base, head, generated_map)
           Map.put(file, :read_errors, file.read_errors ++ binary_paths_error)
         end)
+        |> Enum.map(&displayable/1)
         |> Enum.map(&put_line_counts/1)
         |> Meerkat.Moves.detect()
 
       {:ok, diffs}
     end
+  end
+
+  # Show paths as `display_path/1` does, and keep a path that changed in
+  # `:git_path` for later git lookups. Read errors are already valid
+  # UTF-8 when they are built.
+  defp displayable(%{file_name: name} = file) do
+    file = Map.update!(file, :old_file_name, &(&1 && display_path(&1)))
+
+    case display_path(name) do
+      ^name ->
+        file
+
+      shown ->
+        # muex:ignore equivalent: no file map has :git_path before this
+        %{file | file_name: shown} |> Map.put(:git_path, name)
+    end
+  end
+
+  @doc """
+  The path the review shows and keys a file by. Git paths are raw bytes
+  that need not be valid UTF-8; each invalid byte becomes an octal
+  escape, as `git status` shows it (`caf\\351.txt`), so distinct paths
+  stay distinct.
+  """
+  @spec display_path(binary()) :: String.t()
+  def display_path(path), do: escape_invalid(path, <<>>)
+
+  defp escape_invalid(<<>>, acc), do: acc
+
+  defp escape_invalid(<<char::utf8, rest::binary>>, acc),
+    do: escape_invalid(rest, <<acc::binary, char::utf8>>)
+
+  defp escape_invalid(<<byte, rest::binary>>, acc) do
+    # An invalid byte is at least 0o200, so it always has three digits.
+    escape_invalid(rest, <<acc::binary, ?\\, Integer.to_string(byte, 8)::binary>>)
   end
 
   @doc """
@@ -1006,6 +1050,8 @@ defmodule Meerkat.Git do
     end
   end
 
+  # The error reason quotes paths and git's output, which need not be
+  # valid UTF-8; it is printed to stderr (opened as UTF-8) and shown.
   defp run_git(repo_path, args, merge_stderr \\ true) do
     case System.cmd("git", args,
            cd: repo_path,
@@ -1016,7 +1062,10 @@ defmodule Meerkat.Git do
         {:ok, output}
 
       {output, code} ->
-        {:error, "git #{Enum.join(args, " ")} exited #{code}: #{String.trim(output)}"}
+        {:error,
+         String.replace_invalid(
+           "git #{Enum.join(args, " ")} exited #{code}: #{String.trim(output)}"
+         )}
     end
   end
 
@@ -1292,9 +1341,15 @@ defmodule Meerkat.Git do
   # auto-approve never short-circuits on a transient git failure).
   defp lookup_generated(generated_map, name) do
     case Map.get(generated_map, name) do
-      {:generated, bool} -> {bool, []}
-      {:error, msg} -> {false, ["linguist-generated check failed for #{name}: #{msg}"]}
-      nil -> {false, []}
+      {:generated, bool} ->
+        {bool, []}
+
+      {:error, msg} ->
+        msg = String.replace_invalid(msg)
+        {false, ["linguist-generated check failed for #{display_path(name)}: #{msg}"]}
+
+      nil ->
+        {false, []}
     end
   end
 
@@ -1330,7 +1385,7 @@ defmodule Meerkat.Git do
         {String.replace_invalid(content), []}
 
       {:error, reason} ->
-        msg = "couldn't read #{path} at #{ref}: #{reason}"
+        msg = "couldn't read #{display_path(path)} at #{ref}: #{reason}"
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {"", [msg]}
     end
@@ -1346,7 +1401,7 @@ defmodule Meerkat.Git do
         {String.replace_invalid(content), []}
 
       {:error, reason} ->
-        msg = "couldn't read staged content for #{path}: #{reason}"
+        msg = "couldn't read staged content for #{display_path(path)}: #{reason}"
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {"", [msg]}
     end
@@ -1365,7 +1420,11 @@ defmodule Meerkat.Git do
         {split_hunks(output), []}
 
       {:error, reason} ->
-        msg = "couldn't compute diff (args: #{Enum.join(diff_args, " ")}): #{reason}"
+        msg =
+          String.replace_invalid(
+            "couldn't compute diff (args: #{Enum.join(diff_args, " ")}): #{reason}"
+          )
+
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {[], [msg]}
     end

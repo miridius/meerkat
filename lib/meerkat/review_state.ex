@@ -285,10 +285,15 @@ defmodule Meerkat.ReviewState do
 
   defp read_commit_msg(nil), do: ""
 
+  # Meerkat never writes the message back, so replacing bytes that are
+  # not valid UTF-8 with U+FFFD changes only what the review shows.
   defp read_commit_msg(path) do
     case File.read(path) do
-      {:ok, content} -> content |> strip_git_comments() |> String.trim()
-      {:error, _} -> ""
+      {:ok, content} ->
+        content |> strip_git_comments() |> String.trim() |> String.replace_invalid()
+
+      {:error, _} ->
+        ""
     end
   end
 

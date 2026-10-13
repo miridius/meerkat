@@ -809,8 +809,12 @@ defmodule MeerkatWeb.ReviewLive do
      "Couldn't verify #{file_name}'s staged blob OID — refresh the review before approving."}
   end
 
-  defp stale_oid_check(repo_path, %{effective_oid: rendered_oid, file_name: file_name}, true) do
-    case Meerkat.Git.fetch_staged_blob_oid(repo_path, file_name) do
+  defp stale_oid_check(
+         repo_path,
+         %{effective_oid: rendered_oid, file_name: file_name} = file,
+         true
+       ) do
+    case Meerkat.Git.fetch_staged_blob_oid(repo_path, Map.get(file, :git_path, file_name)) do
       {:ok, ^rendered_oid} ->
         :ok
 
@@ -1500,7 +1504,7 @@ defmodule MeerkatWeb.ReviewLive do
           name="DiffViewer"
           props={
             %{
-              file: file,
+              file: Map.delete(file, :git_path),
               file_index: idx,
               mode: @mode,
               wrap_lines: @wrap_lines,

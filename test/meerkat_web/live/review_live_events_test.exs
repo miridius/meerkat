@@ -144,6 +144,32 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     ])
   end
 
+  # `git commit` re-encodes a message that is not valid UTF-8, so write
+  # the commit object directly to keep its raw bytes.
+  defp commit_raw(repo, message) do
+    tree = git(repo, ["write-tree"])
+    parent = git(repo, ["rev-parse", "HEAD"])
+    object = Path.join(repo, ".git/raw-commit")
+    author = "t <t@t> 0 +0000"
+
+    File.write!(
+      object,
+      "tree #{tree}\nparent #{parent}\nauthor #{author}\ncommitter #{author}\n\n#{message}"
+    )
+
+    commit = git(repo, ["hash-object", "-t", "commit", "-w", object])
+    git(repo, ["update-ref", "HEAD", commit])
+  end
+
+  # Stage `content` at `path` in the index only, since macOS refuses file
+  # names that are not valid UTF-8.
+  defp stage_index_only(repo, path, content) do
+    blob_file = Path.join(repo, ".git/raw-blob")
+    File.write!(blob_file, content)
+    blob = git(repo, ["hash-object", "-w", blob_file])
+    git(repo, ["update-index", "--add", "--cacheinfo", "100644,#{blob},#{path}"])
+  end
+
   defp count(view, selector) do
     view |> render() |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> Enum.count()
   end
@@ -454,6 +480,43 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
              ".toolbar-line-counts",
              ~r/^\s*showing\s*\+1\s*-1\s*of\s*\+3\s*-2\s*$/
            )
+  end
+
+  test "a commit message that is not valid UTF-8 renders with its invalid bytes replaced", %{
+    conn: conn
+  } do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    stage(repo, "menu.txt", "soup\n")
+    commit(repo, "base")
+    stage(repo, "menu.txt", "soup\ncoffee\n")
+    msg_path = Path.join(repo, "COMMIT_EDITMSG")
+    File.write!(msg_path, "Add caf\xe9 to the menu\n")
+    commit_raw(repo, "Add caf\xe9 to the menu\n")
+
+    {:ok, staged} = ReviewState.from_target({:staged, msg_path}, repo)
+    {:ok, single_ref} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
+
+    for state <- [staged, single_ref] do
+      assert state.commit_message == "Add caf� to the menu"
+      view = mount_unbound(conn, state)
+      assert has_element?(view, ".commit-message-section", "Add caf� to the menu")
+    end
+  end
+
+  test "a path that is not valid UTF-8 renders with its invalid bytes escaped", %{conn: conn} do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    commit(repo, "base")
+    stage_index_only(repo, "caf\xe9.txt", "menu\n")
+
+    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    view = mount_unbound(conn, state)
+
+    assert has_element?(view, "#file-0 button.file-row", ~r/▾\s*A\s*caf\\351\.txt/)
+
+    assert %{"file" => %{"file_name" => "caf\\351.txt", "new_content" => "menu\n"}} =
+             svelte_props(render(view), "DiffViewer-0")
   end
 
   test "pending answers render as a banner with markdown questions and answers", %{conn: conn} do
@@ -1516,6 +1579,24 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     html = render_hook(view, "file.toggle_approved", %{"file_name" => "f.ex"})
     refute html =~ "didn&#39;t persist"
     refute html =~ "changed since"
+  end
+
+  test "approving a file whose path is not valid UTF-8 checks its staged blob", %{conn: conn} do
+    isolate_git_config()
+    repo = tmp_git_repo()
+    commit(repo, "base")
+    stage_index_only(repo, "caf\xe9.txt", "menu\n")
+    {:ok, round1} = ReviewState.from_target({:staged, nil}, repo)
+    {view, _rid} = mount_bound(conn, round1, repo)
+
+    html =
+      view
+      |> element(".approved-toggle input[phx-value-file_name='caf\\\\351.txt']")
+      |> render_click()
+
+    refute html =~ "no longer staged"
+    {:ok, round2} = ReviewState.from_target({:staged, nil}, repo)
+    assert round2.approved_file_names == MapSet.new(["caf\\351.txt"])
   end
 
   ## --- Filter ---

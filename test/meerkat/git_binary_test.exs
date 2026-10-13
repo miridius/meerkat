@@ -156,6 +156,79 @@ defmodule Meerkat.GitBinaryTest do
     end
   end
 
+  test "paths that are not valid UTF-8 show replaced and keep the raw path", %{dir: dir} do
+    rename_latin1_path(dir)
+
+    assert {:ok, [range]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+    assert range.status == :renamed
+    assert range.file_name == "th\\351.txt"
+    assert range.old_file_name == "caf\\351.txt"
+    assert range.git_path == "th\xe9.txt"
+  end
+
+  test "paths that differ only in bytes that are not valid UTF-8 stay distinct", %{dir: dir} do
+    for path <- ["twin_\xe9.txt", "twin_\xe8.txt"] do
+      blob = git(dir, ["hash-object", "-w", "--", Path.join(dir, ".git/HEAD")])
+      git(dir, ["update-index", "--add", "--cacheinfo", "100644,#{blob},#{path}"])
+    end
+
+    assert {:ok, files} = Git.staged_file_diffs(dir)
+
+    assert Enum.map(files, &{&1.file_name, &1.git_path}) == [
+             {"twin_\\350.txt", "twin_\xe8.txt"},
+             {"twin_\\351.txt", "twin_\xe9.txt"}
+           ]
+  end
+
+  test "a failed generated check names a path that is not valid UTF-8 readably" do
+    reason = "no row for caf\xe9.txt"
+
+    assert Git.lookup_generated_for_test(%{"caf\xe9.txt" => {:error, reason}}, "caf\xe9.txt") ==
+             {false, ["linguist-generated check failed for caf\\351.txt: no row for caf�.txt"]}
+  end
+
+  # Warnings quoting such a path or git's output reach stderr, which the
+  # CLI opens as UTF-8, and the page.
+  test "a failed read of a path that is not valid UTF-8 is reported readably", %{dir: dir} do
+    rename_latin1_path(dir)
+    intercept_git(dir, "show", "echo show-failed >&2; exit 1")
+    errors = read_errors(fn -> Git.staged_file_diffs(dir) end)
+    assert errors =~ "couldn't read th\\351.txt at HEAD"
+    assert errors =~ "couldn't read staged content for th\\351.txt"
+  end
+
+  test "a failed diff of a path that is not valid UTF-8 is reported readably", %{dir: dir} do
+    rename_latin1_path(dir)
+    intercept_git(dir, "-U3", "echo diff-failed >&2; exit 1")
+
+    assert read_errors(fn -> Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) end) =~
+             "th�.txt"
+  end
+
+  test "an unparsable diff header that is not valid UTF-8 is quoted alone", %{dir: dir} do
+    rename_latin1_path(dir)
+    intercept_git(dir, "-U3", "printf 'diff --git caf\\351\\n@@ -1 +1 @@\\n-x\\n'; exit 0")
+
+    assert read_errors(fn -> Git.staged_file_diffs(dir) end) ==
+             "couldn't parse staged-diff block (first line: diff --git caf�)"
+  end
+
+  test "a long unparsable diff header that is not valid UTF-8 is cut short", %{dir: dir} do
+    rename_latin1_path(dir)
+    long = String.duplicate("x", 300)
+    intercept_git(dir, "-U3", "printf 'diff --git caf\\351#{long}\\n@@ -1 +1 @@\\n-x\\n'; exit 0")
+    shown = String.slice("diff --git caf�#{long}", 0, 200)
+
+    assert read_errors(fn -> Git.staged_file_diffs(dir) end) ==
+             "couldn't parse staged-diff block (first line: #{shown})"
+  end
+
+  test "git output that is not valid UTF-8 in a failure is reported readably", %{dir: dir} do
+    rename_latin1_path(dir)
+    intercept_git(dir, "--numstat", "printf 'bad caf\\351\\n' >&2; exit 1")
+    assert read_errors(fn -> Git.staged_file_diffs(dir) end) =~ "bad caf�"
+  end
+
   test "numstat failure keeps every file listed with the reason", %{dir: dir} do
     stage(dir, "BUILD.bazel", <<0, 255>>)
     intercept_git(dir, "--numstat", "echo numstat-failed >&2; exit 1")
@@ -302,6 +375,34 @@ defmodule Meerkat.GitBinaryTest do
 
     assert {:error, reason} = Git.staged_file_diffs(dir)
     assert reason =~ "staged files changed while loading"
+  end
+
+  # Commit `caf\xe9.txt`, then its rename to `th\xe9.txt`, and stage a
+  # change to it. macOS refuses such file names, so they live only in
+  # the index.
+  defp rename_latin1_path(dir) do
+    blob = git(dir, ["hash-object", "-w", "--", Path.join(dir, ".git/HEAD")])
+    add = &git(dir, ["update-index", "--add", "--cacheinfo", "100644,#{blob},#{&1}"])
+    add.("caf\xe9.txt")
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["update-index", "--force-remove", "caf\xe9.txt"])
+    add.("th\xe9.txt")
+    git(dir, ["commit", "-qm", "rename"])
+    other = git(dir, ["hash-object", "-w", "--", Path.join(dir, ".git/config")])
+    git(dir, ["update-index", "--cacheinfo", "100644,#{other},th\xe9.txt"])
+  end
+
+  # The single file's read errors, after checking the file JSON-encodes
+  # for the page.
+  defp read_errors(load) do
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      assert {:ok, [file]} = load.()
+      assert :json.encode(Map.delete(file, :git_path))
+      send(self(), {:errors, Enum.join(file.read_errors, "\n")})
+    end)
+
+    assert_received {:errors, errors}
+    errors
   end
 
   defp assert_binary(file, status) do

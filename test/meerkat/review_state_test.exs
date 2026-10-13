@@ -181,6 +181,20 @@ defmodule Meerkat.ReviewStateTest do
                state.commit_message_blocks
     end
 
+    test "an unreadable commit-msg file reviews the staged diff with no message", %{base: base} do
+      repo = Path.join(base, "repo")
+      File.mkdir_p!(repo)
+      init_repo(repo)
+      git(repo, ["commit", "--allow-empty", "-qm", "initial"])
+      stage(repo, "a.rs", "fn a() {}\n")
+      stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
+
+      missing = Path.join(base, "MISSING_COMMIT_MSG")
+      assert {:ok, state} = ReviewState.from_target({:staged, missing}, repo)
+      assert state.commit_message == ""
+      assert [%{file_name: "a.rs"}] = state.files
+    end
+
     test "--pr reviews the PR head against its base, with the PR's metadata", %{base: base} do
       # Mirrors how GitHub publishes a PR: a remote holding the base
       # branch and `refs/pull/<N>/head`, cloned locally.
