@@ -103,9 +103,14 @@ When the UI does open, the reviewer sees, top-to-bottom:
    and between hunks appear only in the right-hand (new-side)
    gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
    on the right; Unified view keeps them in its single gutter.
-   A block of lines git's moved-code detection finds is tinted, and
-   its first line carries a link to its counterpart, with Wrap on or
-   off.
+   Moved code is tinted. A moved block is at least 2 identical
+   consecutive lines of 3 or more characters, removed in one place and
+   added in another, with any shorter or blank lines among them. It
+   takes in changed blank or short lines directly before or after it
+   that a longer block hasn't taken, and counts once it spans 3 lines on either side. An icon in the
+   line-number gutter of the block's first line, titled with where the
+   code moved, jumps to its counterpart. It shows in both views with
+   Wrap on or off, and covers no code.
 8. **Decision footer**, sticky at the bottom — Cancel, Post to
    GitHub (only when `state.pr` is set and not precommit mode),
    Send Feedback, Approve, plus a "N comments" running counter

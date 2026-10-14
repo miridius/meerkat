@@ -2,22 +2,28 @@ defmodule Meerkat.Moves do
   @moduledoc """
   Detect moved blocks of lines across the file list of a review.
 
-  Scans every removed (`-`) and added (`+`) line across all files,
-  pairs up maximal identical contiguous runs of `@min_block_size` or
-  more, and attaches the resulting `moved_block` entries to each
-  file's `:moved_lines` key. Same algorithm git uses for
-  `--color-moved` (and GitHub's "Moved lines" indicator): exact-line
-  matching with a minimum block size to suppress spurious matches on
-  `}` / blanks. Cross-file AND within-file moves both detected.
+  Scans every removed (`-`) and added (`+`) line across all files and
+  attaches the moved blocks it finds to each file's `:moved_lines`
+  key. Lines are compared with surrounding whitespace trimmed. A
+  line of `@min_line_chars` or more characters is substantial; a
+  shorter one, such as a blank or `}`, is short.
 
-  Greedy: the longest candidate runs win, shorter overlapping
-  matches get suppressed.
+  - A block is a run of identical consecutive removed and added lines
+    that starts at a substantial line. Short lines inside it must
+    match too, and do not break it.
+  - It needs `@min_substantial_lines` substantial lines.
+  - On each side, the changed short lines directly before and after
+    it join the block, unless a longer block has taken them. git often puts a moved block's blank line
+    after it on one side and before it on the other.
+  - It counts as moved when it has `@min_block_size` lines on either
+    side, and the block covers those lines on each side.
+
+  Cross-file and within-file moves are both found. Greedy: the
+  longest runs win, and shorter overlapping ones are dropped.
   """
 
   @min_block_size 3
-  # Trivial-line threshold — single tokens / single chars are
-  # statistically noisy; we'd otherwise match every `}` across the
-  # diff.
+  @min_substantial_lines 2
   @min_line_chars 3
 
   @type side :: :old | :new
@@ -54,14 +60,13 @@ defmodule Meerkat.Moves do
     {moves, _, _} =
       Enum.reduce(candidates, {[], MapSet.new(), MapSet.new()}, fn {r_start, a_start, len},
                                                                    {acc, r_taken, a_taken} ->
-        r_span = span(r_start, len)
-        a_span = span(a_start, len)
+        r = extend(removed_arr, r_start, len, r_taken)
+        a = extend(added_arr, a_start, len, a_taken)
 
-        if taken?(r_taken, r_span) or taken?(a_taken, a_span) do
+        if taken?(r_taken, r) or taken?(a_taken, a) or not qualifies?(removed_arr, r, a) do
           {acc, r_taken, a_taken}
         else
-          {[{r_start, a_start, len} | acc], Enum.into(r_span, r_taken),
-           Enum.into(a_span, a_taken)}
+          {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
         end
       end)
 
@@ -71,8 +76,8 @@ defmodule Meerkat.Moves do
       moves
       |> Enum.reverse()
       |> Enum.with_index()
-      |> Enum.reduce(%{}, fn {{r_start, a_start, len}, pair_id}, acc ->
-        record_pair(acc, removed_arr, r_start, added_arr, a_start, len, pair_id, files)
+      |> Enum.reduce(%{}, fn {{r, a}, pair_id}, acc ->
+        record_pair(acc, removed_arr, r, added_arr, a, pair_id, files)
       end)
 
     Enum.map(files, fn file ->
@@ -90,21 +95,49 @@ defmodule Meerkat.Moves do
       positions ->
         for a_start <- positions,
             len = run_length(removed_arr, r_start, added_arr, a_start),
-            len >= @min_block_size,
+            len >= @min_substantial_lines,
             do: {r_start, a_start, len}
     end
   end
 
-  # The positions a run of `len` lines from `start` covers.
-  defp span(start, len), do: start..(start + len - 1)//1
+  # The block's index range on one side: the run, widened over the
+  # changed short lines directly before and after it that no block
+  # has taken yet.
+  defp extend(arr, start, len, taken) do
+    widen_back(arr, start, taken)..widen_forward(arr, start + len - 1, taken)
+  end
 
-  defp taken?(taken, span), do: Enum.any?(span, &MapSet.member?(taken, &1))
+  defp widen_back(arr, i, taken) do
+    if i > 0 and joins?(arr, i - 1, taken) and continues?(elem(arr, i - 1), elem(arr, i)),
+      do: widen_back(arr, i - 1, taken),
+      else: i
+  end
 
-  defp record_pair(acc, removed_arr, r_start, added_arr, a_start, len, pair_id, files) do
-    r_first = elem(removed_arr, r_start)
-    r_last = elem(removed_arr, r_start + len - 1)
-    a_first = elem(added_arr, a_start)
-    a_last = elem(added_arr, a_start + len - 1)
+  defp widen_forward(arr, i, taken) do
+    if i + 1 < tuple_size(arr) and joins?(arr, i + 1, taken) and
+         continues?(elem(arr, i), elem(arr, i + 1)),
+       do: widen_forward(arr, i + 1, taken),
+       else: i
+  end
+
+  defp joins?(arr, j, taken), do: not substantial?(elem(arr, j)) and not MapSet.member?(taken, j)
+
+  # The widened lines are all short, so counting over the whole block
+  # counts the run's substantial lines.
+  defp qualifies?(removed_arr, r, a) do
+    Enum.count(r, &substantial?(elem(removed_arr, &1))) >= @min_substantial_lines and
+      (Range.size(r) >= @min_block_size or Range.size(a) >= @min_block_size)
+  end
+
+  defp substantial?(line), do: String.length(line.content) >= @min_line_chars
+
+  defp taken?(taken, range), do: Enum.any?(range, &MapSet.member?(taken, &1))
+
+  defp record_pair(acc, removed_arr, r, added_arr, a, pair_id, files) do
+    r_first = elem(removed_arr, r.first)
+    r_last = elem(removed_arr, r.last)
+    a_first = elem(added_arr, a.first)
+    a_last = elem(added_arr, a.last)
 
     # Look up file names by file_idx via Enum.at — these are stable
     # post-mount and called at most twice per move. The O(idx) cost
@@ -162,9 +195,11 @@ defmodule Meerkat.Moves do
   defp continues?(prev, line),
     do: line.file_idx == prev.file_idx and line.number == prev.number + 1
 
+  # Indexes substantial lines only, as only they start a block.
   defp build_index(lines) do
     lines
     |> Enum.with_index()
+    |> Enum.filter(fn {line, _pos} -> substantial?(line) end)
     |> Enum.reduce(%{}, fn {%{content: c}, pos}, acc ->
       Map.update(acc, c, [pos], &[pos | &1])
     end)
@@ -172,8 +207,7 @@ defmodule Meerkat.Moves do
   end
 
   # Walk each file's hunks and emit one Line per `-` / `+` line on
-  # the requested side. Strips whitespace, skips lines under
-  # @min_line_chars chars (single-token noise).
+  # the requested side, with surrounding whitespace stripped.
   defp collect_lines(files, side_char) do
     files
     |> Enum.with_index()
@@ -217,7 +251,7 @@ defmodule Meerkat.Moves do
   defp consume_line({:del, "-" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?- do
-        maybe_add(acc, rest, file_idx, old_ln)
+        add_line(acc, rest, file_idx, old_ln)
       else
         acc
       end
@@ -228,7 +262,7 @@ defmodule Meerkat.Moves do
   defp consume_line({:add, "+" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?+ do
-        maybe_add(acc, rest, file_idx, new_ln)
+        add_line(acc, rest, file_idx, new_ln)
       else
         acc
       end
@@ -243,15 +277,8 @@ defmodule Meerkat.Moves do
   # No-newline-at-eof marker (`\`) or anything else: skip.
   defp consume_line({:other, _}, state, _file_idx, _side_char), do: state
 
-  defp maybe_add(acc, raw, file_idx, number) do
-    content = String.trim(raw)
-
-    if String.length(content) >= @min_line_chars do
-      [%{file_idx: file_idx, number: number, content: content} | acc]
-    else
-      acc
-    end
-  end
+  defp add_line(acc, raw, file_idx, number),
+    do: [%{file_idx: file_idx, number: number, content: String.trim(raw)} | acc]
 
   @doc false
   # Parse `@@ -10,5 +12,7 @@` → `{10, 12}`, or `nil` for any other
