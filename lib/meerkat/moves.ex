@@ -13,8 +13,9 @@ defmodule Meerkat.Moves do
     match too, and do not break it.
   - It needs `@min_substantial_lines` substantial lines.
   - On each side, the changed short lines directly before and after
-    it join the block, unless a longer block has taken them. git often puts a moved block's blank line
-    after it on one side and before it on the other.
+    it join the block, unless a longer block has taken them. git
+    often puts a moved block's blank line after it on one side and
+    before it on the other.
   - It counts as moved when it has `@min_block_size` lines on either
     side, and the block covers those lines on each side.
 
