@@ -36,8 +36,9 @@ In Split view, each form or comment row fills its anchor's side and
 leaves the other side blank at the same height, so the two sides stay
 in line with Wrap on or off. With Wrap off each side is its own table,
 so the blank is a spacer row in the other side's table that follows
-the row's height as it grows or shrinks; at a line with rows on both
-sides, the old side's rows come first.
+the row's height as it grows or shrinks. With Wrap off, at a line with
+rows on both sides, the old side's rows come first; with Wrap on they
+keep the order described above.
 
 ## Form contents
 
