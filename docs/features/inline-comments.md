@@ -132,7 +132,7 @@ since Chrome takes Ctrl+J for Downloads.
 | Key | Does |
 |---|---|
 | ⌥↑ / ⌥↓ | Expand / shrink the selection to the enclosing node |
-| ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, key) past its previous / next sibling |
+| ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, map or dict entry) past its previous / next sibling |
 
 ⌥↑ first selects the word at the caret, then each enclosing node,
 the inside of its brackets before the node itself. In a file with no
@@ -152,7 +152,8 @@ select to the start / end.
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
 move by word. ⌥⇧← / ⌥⇧→ select by word everywhere, as in Cursive,
 which has no selecting form move. The Clojure keys leave a list
-the seeded lines cut off from its closer alone.
+the seeded lines cut off from its closer alone, and never move a
+bracket past one cut off from its partner.
 
 **Structural typing in Clojure:**
 
@@ -160,7 +161,8 @@ the seeded lines cut off from its closer alone.
   if there is one. Typing a closer just before the same matched closer
   steps over it. `'` is a quote and gets no partner.
 - Backspace or Delete on one bracket of a matched pair is blocked: the
-  caret steps over it. Inside an empty pair, either deletes both.
+  caret steps over it. Inside an empty pair, either deletes both,
+  with any `#` before the opener.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.

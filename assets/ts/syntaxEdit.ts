@@ -99,17 +99,65 @@ function movable(state: EditorState, node: SyntaxNode): boolean {
 	return node.firstChild !== null || !/^[^\w\s"'`]+$/.test(state.doc.sliceString(node.from, node.to));
 }
 
-/** The node `node` would swap with moving by `dir`: the next movable
+type Span = { from: number; to: number };
+
+/** `node`'s range without the line break and indentation a grammar may
+ *  end a block statement with. */
+function span(state: EditorState, node: SyntaxNode): Span {
+	const text = state.doc.sliceString(node.from, node.to);
+	return { from: node.from, to: node.to - (text.length - text.trimEnd().length) };
+}
+
+/** The span `node` would swap with moving by `dir`: the next movable
  *  sibling across only whitespace, comments and separators. Null when a
  *  bracket, keyword or operator comes first, or nothing parts them. */
-function swapPartner(state: EditorState, node: SyntaxNode, dir: -1 | 1): SyntaxNode | null {
+function swapPartner(state: EditorState, node: SyntaxNode, dir: -1 | 1): Span | null {
+	const own = span(state, node);
 	for (let sib = dir > 0 ? node.nextSibling : node.prevSibling; sib; sib = dir > 0 ? sib.nextSibling : sib.prevSibling) {
 		if (SEPARATORS.has(sib.name) || /Comment/.test(sib.name)) continue;
 		if (!movable(state, sib)) return null;
-		const gap = dir > 0 ? sib.from - node.to : node.from - sib.to;
-		return gap > 0 ? sib : null;
+		const other = span(state, sib);
+		const gap = dir > 0 ? other.from - own.to : own.from - other.to;
+		return gap > 0 ? other : null;
 	}
 	return null;
+}
+
+/** The items of a bracketed list whose items commas part, such as an
+ *  argument list or a dict, or null for any other node. An item spans all
+ *  the children between two commas, so a key moves with its value and a
+ *  parameter with its type. */
+function commaItems(state: EditorState, list: SyntaxNode): Span[] | null {
+	const closer = list.lastChild;
+	if (!closer || !interior(state, list)) return null;
+	const items: Span[] = [];
+	let item: Span | null = null;
+	let commas = false;
+	for (let child = list.firstChild?.nextSibling; child && child.from < closer.from; child = child.nextSibling) {
+		if (child.name === ",") {
+			commas = true;
+			if (item) items.push(item);
+			item = null;
+		} else if (!/Comment/.test(child.name)) {
+			item = { from: item?.from ?? child.from, to: span(state, child).to };
+		}
+	}
+	if (item) items.push(item);
+	return commas ? items : null;
+}
+
+/** `node`'s span and the span it swaps with moving by `dir`: in a comma
+ *  list, its item and the next item; elsewhere, the node and its swap
+ *  partner. Null when it has nothing to swap with. */
+function swapPair(state: EditorState, node: SyntaxNode, dir: -1 | 1): [Span, Span] | null {
+	const items = node.parent && commaItems(state, node.parent);
+	if (!items) {
+		const partner = swapPartner(state, node, dir);
+		return partner && [span(state, node), partner];
+	}
+	const at = items.findIndex((item) => item.from <= node.from && node.from < item.to);
+	const partner = at < 0 ? undefined : items[at + dir];
+	return partner ? [items[at], partner] : null;
 }
 
 /** The innermost node holding the main selection: for a caret, the one
@@ -134,15 +182,16 @@ export function moveNode(state: EditorState, dir: -1 | 1): TransactionSpec | nul
 	if (syntaxTree(state).length === 0) return null;
 	for (let node: SyntaxNode | null = nodeAtSelection(state); node?.parent; node = node.parent) {
 		if (!movable(state, node)) continue;
-		const partner = swapPartner(state, node, dir);
-		if (!partner) continue;
-		const [a, b] = dir > 0 ? [node, partner] : [partner, node];
+		const pair = swapPair(state, node, dir);
+		if (!pair) continue;
+		const [own, partner] = pair;
+		const [a, b] = dir > 0 ? [own, partner] : [partner, own];
 		const textA = state.doc.sliceString(a.from, a.to);
 		const textB = state.doc.sliceString(b.from, b.to);
-		// Where the node starts once moved.
+		// Where the moved span starts once moved.
 		const start = dir > 0 ? b.to - textA.length : a.from;
 		const { anchor, head } = state.selection.main;
-		const shift = start - node.from;
+		const shift = start - own.from;
 		return {
 			changes: [
 				{ from: a.from, to: a.to, insert: textB },
@@ -156,9 +205,9 @@ export function moveNode(state: EditorState, dir: -1 | 1): TransactionSpec | nul
 	return null;
 }
 
-/** Whether no space belongs between `before` and `after` when a join
- *  puts them side by side. */
-export type Tight = (before: string, after: string) => boolean;
+/** Whether no space belongs between the text ending at `end` and the
+ *  text starting at `start` when a join puts them side by side. */
+export type Tight = (state: EditorState, end: number, start: number) => boolean;
 
 /** Join the line after each caret's line onto it, or all the lines a
  *  selection touches. Each line break and the whitespace around it become
@@ -183,9 +232,7 @@ export function joinLines(state: EditorState, tight: Tight = () => false): Trans
 				changes.push({ from: line.from, to: next.from });
 				caret = line.from;
 			} else {
-				const before = doc.sliceString(end - 1, end);
-				const after = doc.sliceString(start, start + 1);
-				const insert = start === next.to || tight(before, after) ? "" : " ";
+				const insert = start === next.to || tight(state, end, start) ? "" : " ";
 				changes.push({ from: end, to: start, insert });
 				caret = end;
 			}

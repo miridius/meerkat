@@ -5,7 +5,7 @@ import { python } from "@codemirror/lang-python";
 import { ensureSyntaxTree, type LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type TransactionSpec } from "@codemirror/state";
 import { clojure } from "@nextjournal/lang-clojure";
-import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit";
+import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection, type Tight } from "./syntaxEdit";
 
 /** A state from `marked`, whose `|` marks the caret, or `<` and `>` the
  *  selection. */
@@ -107,8 +107,29 @@ describe("moveNode", () => {
 		expect(move("def f():\n    x = 1\n    re|turn x\n", python(), -1)).toBe("def f():\n    re|turn x\n    x = 1\n");
 	});
 
+	test("moves a block statement as whole lines", () => {
+		expect(move("def f(x):\n    if x:\n        y = 1\n    re|turn 0\n", python(), -1)).toBe(
+			"def f(x):\n    re|turn 0\n    if x:\n        y = 1\n",
+		);
+		expect(move("|if x:\n    y = 1\nz = 1\n", python(), 1)).toBe("z = 1\n|if x:\n    y = 1\n");
+	});
+
 	test("moves an object property, not its key past its value", () => {
 		expect(move('{"a": |1, "b": 2}', json(), 1)).toBe('{"b": 2, "a": |1}');
+	});
+
+	test("moves a dict entry whose key and value are siblings", () => {
+		expect(move("d = {'a': 1, |'b': 2}", python(), -1)).toBe("d = {|'b': 2, 'a': 1}");
+	});
+
+	test("moves a typed parameter with its type", () => {
+		expect(move("function g(|p: P, q: number) {}", javascript({ typescript: true }), 1)).toBe(
+			"function g(q: number, |p: P) {}",
+		);
+	});
+
+	test("moves one name of a comma list without brackets", () => {
+		expect(move("|a, b = 1, 2", python(), 1)).toBe("b, |a = 1, 2");
 	});
 
 	test("moves a whole statement from its first name", () => {
@@ -134,7 +155,7 @@ describe("moveNode", () => {
 });
 
 describe("joinLines", () => {
-	const join = (doc: string, tight?: (a: string, b: string) => boolean) => {
+	const join = (doc: string, tight?: Tight) => {
 		const state = stateOf(doc);
 		const spec = joinLines(state, tight);
 		return spec ? marked(state.update(spec).state) : null;
@@ -154,8 +175,10 @@ describe("joinLines", () => {
 	});
 
 	test("adds no space where tight says so", () => {
-		expect(join("(foo|\n  bar\n  )", (a, b) => a === "(" || b === ")")).toBe("(foo| bar\n  )");
-		expect(join("(|\n  bar)", (a) => a === "(")).toBe("(|bar)");
+		const char = (s: EditorState, at: number) => s.doc.sliceString(at, at + 1);
+		const tight: Tight = (s, end, start) => char(s, end - 1) === "(" || char(s, start) === ")";
+		expect(join("(foo|\n  bar\n  )", tight)).toBe("(foo| bar\n  )");
+		expect(join("(|\n  bar)", tight)).toBe("(|bar)");
 	});
 
 	test("does nothing on the last line", () => {
