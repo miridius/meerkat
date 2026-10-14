@@ -4,10 +4,10 @@ defmodule Meerkat.CljHover do
   `docs/features/clojure-hover.md`).
 
   One server per review, started on the first page open of a review
-  with a Clojure file. It indexes in `handle_continue/2`, so a hover
-  that arrives first waits in its mailbox. Each side's diff files are
-  analysed from that side's text, the rest of the project from the
-  worktree, and dependency namespaces lazily from the classpath, each
+  with a Clojure file. It analyses each side's diff files from that
+  side's text in `handle_continue/2`, so a hover that arrives first
+  waits in its mailbox. Other namespaces are analysed lazily, one file
+  each, found through the user's clj-kondo cache or the classpath, and
   cached for the life of the server.
   """
 
@@ -18,7 +18,6 @@ defmodule Meerkat.CljHover do
   alias Meerkat.Git
 
   @extensions ~w(.clj .cljc .cljs .edn)
-  @source_extensions ["*.clj", "*.cljc", "*.cljs"]
 
   @type side :: :old | :new
 
@@ -78,10 +77,21 @@ defmodule Meerkat.CljHover do
         {:error, _} -> repo_path
       end
 
-    state = %{root: root, files: files, sides: nil, classpath: nil, jars: nil, deps: %{}}
+    state = %{
+      root: root,
+      files: files,
+      sides: nil,
+      classpath: nil,
+      jars: nil,
+      located: %{},
+      outside: %{}
+    }
+
     {:ok, state, {:continue, :index}}
   end
 
+  # Kondo's cache can't stand in here: it records no usages, so not
+  # which var a symbol names, nor docs, and the old side was never linted.
   @impl true
   def handle_continue(:index, %{root: root, files: files} = state) do
     texts = %{old: side_texts(files, :old), new: side_texts(files, :new)}
@@ -91,21 +101,19 @@ defmodule Meerkat.CljHover do
         {side, Task.async(fn -> Kondo.analyse_texts(root, t) end)}
       end)
 
-    diff_paths = Enum.flat_map(files, &[&1.file_name, &1.old_file_name])
-    outside = Kondo.analyse_paths(root, worktree_roots(root), diff_paths).defs
     classpath = Classpath.read(root)
 
     sides =
       Map.new(tasks, fn {side, task} ->
         analysis = Task.await(task, :infinity)
 
-        side_defs =
+        defs =
           Map.new(analysis.defs, fn {k, d} ->
             # muex:ignore equivalent: kondo's definitions never hold :text, so put and put_new agree
             {k, Map.put(d, :text, texts[side][d.file])}
           end)
 
-        {side, %{spans: analysis.spans, defs: Map.merge(outside, side_defs)}}
+        {side, %{spans: analysis.spans, defs: defs}}
       end)
 
     {:noreply, %{state | sides: sides, classpath: classpath}}
@@ -117,7 +125,7 @@ defmodule Meerkat.CljHover do
          path = side_path(file, side),
          %{ns: ns, name: name} <- span_at(state.sides[side].spans, path, line, col),
          {d, state} when d != nil <- definition(state, side, ns, name, path) do
-      {:reply, render(d, state.root), state}
+      {:reply, render(d), state}
     else
       {nil, state} -> {:reply, nil, state}
       _ -> {:reply, nil, state}
@@ -137,20 +145,6 @@ defmodule Meerkat.CljHover do
   defp side_path(file, :old), do: file.old_file_name || file.file_name
   defp side_path(file, :new), do: file.file_name
 
-  # The top-level entries holding tracked Clojure files: linting those
-  # rather than each file keeps the command line short.
-  defp worktree_roots(root) do
-    case Git.tracked_files(root, @source_extensions) do
-      {:ok, paths} ->
-        tops = Enum.map(paths, &hd(Path.split(&1)))
-        # muex:ignore equivalent: a path linted twice gives the same definitions
-        Enum.uniq(tops)
-
-      {:error, _} ->
-        []
-    end
-  end
-
   defp span_at(spans, path, line, col) do
     spans
     |> Map.get({path, line}, [])
@@ -159,52 +153,87 @@ defmodule Meerkat.CljHover do
 
   defp definition(state, side, ns, name, path) do
     case Map.get(state.sides[side].defs, {ns, name}) do
-      nil -> dependency_definition(state, ns, name, path)
+      nil -> outside_definition(state, ns, name, path)
       d -> {d, state}
     end
   end
 
-  defp dependency_definition(state, ns, name, path) do
+  # A namespace no diff file defines: the one file holding it, analysed
+  # on first hover. A diff file answers only from the side's text.
+  defp outside_definition(state, ns, name, path) do
     # ClojureScript also reaches Clojure namespaces, for macros.
     exts = if Path.extname(path) == ".cljs", do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
-    state = list_jars(state)
+    {location, state} = located(state, ns, exts)
 
-    case Classpath.find(state.classpath, ns, exts, &Map.fetch!(state.jars, &1)) do
-      nil ->
-        {nil, state}
-
-      location ->
-        {defs, state} = dependency(state, location)
-        {Map.get(defs, {ns, name}), state}
+    if location == nil or diff_file?(state, location) do
+      {nil, state}
+    else
+      {defs, state} = analysed(state, location)
+      {Map.get(defs, {ns, name}), state}
     end
   end
 
-  # Listed on the first dependency hover: reading a jar's directory is
+  # Looked up once per namespace and language, so the file first found
+  # answers for the rest of the review.
+  defp located(state, ns, exts) do
+    case Map.fetch(state.located, {ns, exts}) do
+      {:ok, location} ->
+        {location, state}
+
+      :error ->
+        {location, state} = locate(state, ns, exts)
+
+        # muex:ignore equivalent: this branch runs only when the key is absent, so put and put_new agree
+        {location, %{state | located: Map.put(state.located, {ns, exts}, location)}}
+    end
+  end
+
+  # The file the user's kondo runs found the namespace in, else the
+  # classpath's.
+  defp locate(state, ns, exts) do
+    langs = Enum.map(exts, &String.trim_leading(&1, "."))
+
+    case Kondo.cached_file(state.root, ns, langs) do
+      nil ->
+        state = list_jars(state)
+        {Classpath.find(state.classpath, ns, exts, &Map.fetch!(state.jars, &1)), state}
+
+      file ->
+        {{:dir, Path.dirname(file), Path.basename(file)}, state}
+    end
+  end
+
+  # A jar's `where` names the jar, so it is never a diff file.
+  defp diff_file?(state, location),
+    do:
+      where(location, state.root) in Enum.flat_map(state.files, &[&1.file_name, &1.old_file_name])
+
+  # Listed on the first classpath lookup: reading a jar's directory is
   # cheap, and jars don't change.
   defp list_jars(%{jars: nil, classpath: classpath} = state),
     do: %{state | jars: Map.new(classpath, &{&1, Classpath.jar_entries(&1)})}
 
   defp list_jars(state), do: state
 
-  defp dependency(state, location) do
-    case Map.fetch(state.deps, location) do
+  defp analysed(state, location) do
+    case Map.fetch(state.outside, location) do
       {:ok, defs} ->
         {defs, state}
 
       :error ->
-        defs = analyse_dependency(state.root, location)
+        defs = analyse(state.root, location)
 
         # muex:ignore equivalent: this branch runs only when location is absent, so put and put_new agree
-        {defs, %{state | deps: Map.put(state.deps, location, defs)}}
+        {defs, %{state | outside: Map.put(state.outside, location, defs)}}
     end
   end
 
-  defp analyse_dependency(root, location) do
+  defp analyse(root, location) do
     rel = elem(location, 2)
 
     case Classpath.read_file(location) do
       {:ok, text} ->
-        where = dependency_where(location, root)
+        where = where(location, root)
 
         root
         |> Kondo.analyse_texts(%{rel => text})
@@ -218,12 +247,10 @@ defmodule Meerkat.CljHover do
     end
   end
 
-  defp dependency_where({:jar, jar, rel}, _root), do: "#{Path.basename(jar)}:#{rel}"
-  defp dependency_where({:dir, dir, rel}, root), do: Path.relative_to(Path.join(dir, rel), root)
+  defp where({:jar, jar, rel}, _root), do: "#{Path.basename(jar)}:#{rel}"
+  defp where({:dir, dir, rel}, root), do: Path.relative_to(Path.join(dir, rel), root)
 
-  defp render(d, root) do
-    text = Map.get_lazy(d, :text, fn -> read_worktree(root, d.file) end)
-
+  defp render(d) do
     %{
       name: "#{d.ns}/#{d.name}",
       macro: d.macro,
@@ -231,15 +258,8 @@ defmodule Meerkat.CljHover do
       line: d.row,
       arglists: d.arglists,
       doc: d.doc,
-      source: slice(text, d.row, d.end_row)
+      source: slice(d.text, d.row, d.end_row)
     }
-  end
-
-  defp read_worktree(root, file) do
-    case File.read(Path.join(root, file)) do
-      {:ok, text} -> text
-      {:error, _} -> ""
-    end
   end
 
   defp slice(text, row, end_row) do

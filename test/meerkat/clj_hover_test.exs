@@ -7,9 +7,9 @@ defmodule Meerkat.CljHoverTest do
 
   alias Meerkat.{CljHover, Git}
 
-  # Each top-level directory holds one kind of Clojure file, so the
-  # worktree pass must find each kind. Only the jar and `vendor` are on
-  # the classpath, so project vars can't answer from it.
+  # Each top-level directory holds one kind of Clojure file, which the
+  # user's own kondo run has linted. Only the jar and `vendor` are on
+  # the classpath, so project vars answer only through kondo's cache.
   @base %{
     "src/app/util.clj" => """
     (ns app.util)
@@ -136,6 +136,13 @@ defmodule Meerkat.CljHoverTest do
     File.chmod!(locked, 0)
     write(dir, ".cpcache/1.cp", "libs/dep.jar:vendor\n")
 
+    # The user's kondo run, as a hook or editor runs it, from the repo
+    # root with the default cache. `app.util` is linted last in the
+    # diff's file, so its cache names that file.
+    File.mkdir_p!(Path.join(dir, ".clj-kondo"))
+    {_, _} = System.cmd("clj-kondo", ["--lint", "src", "shared", "web"], cd: dir)
+    {_, _} = System.cmd("clj-kondo", ["--lint", "src/app/util.clj"], cd: dir)
+
     {:ok, files} = Git.staged_file_diffs(dir)
     rid = "clj-hover-#{System.unique_integer([:positive])}"
     {:ok, pid} = CljHover.ensure_started(rid, dir, files)
@@ -193,7 +200,7 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "src/app/core.clj", :old, "u/helper")
   end
 
-  test "vars outside the diff answer from the worktree, each kind of file", ctx do
+  test "vars outside the diff answer from the file kondo's cache names, each kind", ctx do
     assert %{doc: "Other doc.", where: "src/app/other.clj"} =
              hover = hover_on(ctx, "src/app/core.clj", :new, "o/thing")
 
@@ -212,14 +219,17 @@ defmodule Meerkat.CljHoverTest do
     refute hover_on(ctx, "src/app/core.clj", :new, "u/extra")
   end
 
-  test "a source read after its file is gone is empty", ctx do
+  test "a namespace is analysed once, keeping the source it was read with", ctx do
     assert %{source: "(ns app.top) (defn" <> _} =
-             hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
+             hover = hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
 
     File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
+    assert hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn") == hover
+  end
 
-    assert %{doc: "Top doc.", source: ""} =
-             hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
+  test "a namespace whose cached file is gone, and off the classpath, answers nothing", ctx do
+    File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
+    refute hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
   end
 
   test "dependency vars answer from the classpath, by the hovering file's language", ctx do

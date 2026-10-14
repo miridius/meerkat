@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dedentDoc, SOURCE_PREVIEW_LINES, shownSource } from "./cljHover";
+import { dedentDoc, popupLeft, popupSide } from "./cljHover";
 
 describe("dedentDoc", () => {
 	test("removes the indent the later lines share, keeping deeper indents", () => {
@@ -14,21 +14,35 @@ describe("dedentDoc", () => {
 	});
 });
 
-describe("shownSource", () => {
-	const lines = (n: number) => Array.from({ length: n }, (_, i) => `l${i + 1}`).join("\n");
-
-	test("shows short source whole", () => {
-		const source = lines(SOURCE_PREVIEW_LINES);
-		expect(shownSource(source, false)).toEqual({ text: source, total: 20, collapsed: false });
+describe("popupSide", () => {
+	// A 900px window: 60% is 540px; the gap and margin take 12px.
+	test("opens below, capped at 60% of the window, when below has that room", () => {
+		expect(popupSide(100, 120, 900)).toEqual({ above: false, cap: 540 });
+		expect(popupSide(336, 348, 900)).toEqual({ above: false, cap: 540 });
 	});
 
-	test("collapses long source to its first lines until expanded", () => {
-		const source = lines(SOURCE_PREVIEW_LINES + 1);
-		expect(shownSource(source, false)).toEqual({
-			text: lines(SOURCE_PREVIEW_LINES),
-			total: 21,
-			collapsed: true,
-		});
-		expect(shownSource(source, true)).toEqual({ text: source, total: 21, collapsed: false });
+	test("opens above when below is short of 60% and above has more room", () => {
+		// The symbol near the window's bottom: 112px below, 749px above.
+		expect(popupSide(761, 776, 900)).toEqual({ above: true, cap: 540 });
+		expect(popupSide(400, 700, 900)).toEqual({ above: true, cap: 388 });
+	});
+
+	test("stays below, capped to the room there, when above has no more", () => {
+		expect(popupSide(300, 600, 900)).toEqual({ above: false, cap: 288 });
+	});
+});
+
+describe("popupLeft", () => {
+	test("sits at the symbol when it fits", () => {
+		expect(popupLeft(100, 400, 1280)).toBe(100);
+		expect(popupLeft(872, 400, 1280)).toBe(872);
+	});
+
+	test("moves left to stay inside the window", () => {
+		expect(popupLeft(784, 539, 1280)).toBe(733);
+	});
+
+	test("keeps the margin on the left when wider than the window", () => {
+		expect(popupLeft(300, 1300, 1280)).toBe(8);
 	});
 });

@@ -1,11 +1,9 @@
 // Clojure hover (docs/features/clojure-hover.md): finds the character
-// under the pointer in a diff code cell, and shapes the popup's source.
+// under the pointer in a diff code cell, places the popup, and shapes
+// its docstring.
 
 /** How long the pointer rests on a symbol before the popup opens. */
 export const HOVER_DELAY_MS = 400;
-
-/** Source lines shown before the `Show all` expander. */
-export const SOURCE_PREVIEW_LINES = 20;
 
 /** The server's answer for a hovered var (`Meerkat.CljHover.hover/5`). */
 export type CljHover = {
@@ -36,18 +34,30 @@ export function dedentDoc(doc: string): string {
 	return [first, ...rest.map((l) => l.slice(cut))].join("\n");
 }
 
-/** The source to show: all of it, or its first lines while collapsed. */
-export function shownSource(
-	source: string,
-	expanded: boolean,
-): { text: string; total: number; collapsed: boolean } {
-	const lines = source.split("\n");
-	const collapsed = !expanded && lines.length > SOURCE_PREVIEW_LINES;
-	return {
-		text: collapsed ? lines.slice(0, SOURCE_PREVIEW_LINES).join("\n") : source,
-		total: lines.length,
-		collapsed,
-	};
+/** Space kept between the popup and the symbol it describes. */
+export const POPUP_GAP = 4;
+/** Space kept between the popup and the window's edges. */
+export const POPUP_MARGIN = 8;
+
+/** The side of a symbol spanning viewport rows `top`..`bottom` the popup
+ *  opens on, and the tallest it may open there: below, unless below has
+ *  less room than 60% of the window and above has more. */
+export function popupSide(
+	top: number,
+	bottom: number,
+	viewHeight: number,
+): { above: boolean; cap: number } {
+	const below = viewHeight - bottom - POPUP_GAP - POPUP_MARGIN;
+	const above = top - POPUP_GAP - POPUP_MARGIN;
+	const full = viewHeight * 0.6;
+	const isAbove = below < full && above > below;
+	return { above: isAbove, cap: Math.min(full, isAbove ? above : below) };
+}
+
+/** The viewport x of a popup `width` wide for a symbol at `left`: at the
+ *  symbol, moved left as far as it must to stay inside the window. */
+export function popupLeft(left: number, width: number, viewWidth: number): number {
+	return Math.max(POPUP_MARGIN, Math.min(left, viewWidth - width - POPUP_MARGIN));
 }
 
 /** The code character at viewport point (x, y) in a diff table, or null

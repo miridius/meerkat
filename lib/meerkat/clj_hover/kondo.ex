@@ -1,7 +1,8 @@
 defmodule Meerkat.CljHover.Kondo do
   @moduledoc """
   Runs clj-kondo's analysis and keeps what hover needs: where each var
-  is named (`spans`, per file) and each var's definition (`defs`).
+  is named (`spans`, per file) and each var's definition (`defs`). Also
+  reads which file the user's own kondo runs found a namespace in.
 
   Kondo runs from the repo root, so the repo's `.clj-kondo` config
   applies, with `--cache false`, so it writes nothing there.
@@ -59,44 +60,33 @@ defmodule Meerkat.CljHover.Kondo do
         File.write!(file, text)
       end
 
-      # muex:ignore equivalent: kondo names these files by tmp paths, which no except list could hold
-      except = []
-      root |> run([dir], except) |> relative_to(dir)
+      root |> run(dir) |> relative_to(dir)
     after
       File.rm_rf(dir)
     end
   end
 
-  @doc """
-  Analyse `paths`, relative to `root` or absolute, as they are on disk,
-  leaving out definitions in the files named in `except`.
-  """
-  @spec analyse_paths(String.t(), [String.t()], [String.t()]) :: analysis
-  # Kondo given no path prints its help.
-  def analyse_paths(_root, [], _except), do: @empty
-  def analyse_paths(root, paths, except), do: run(root, paths, except)
-
-  defp run(root, paths, except) do
-    args = ["--cache", "false", @parallel, "--config", @config, "--lint" | paths]
+  defp run(root, path) do
+    args = ["--cache", "false", @parallel, "--config", @config, "--lint", path]
     # Kondo exits non-zero when it reports findings; the JSON is what counts.
     {output, _status} = System.cmd("clj-kondo", args, cd: root)
 
     case Jason.decode(output) do
       {:ok, %{"analysis" => analysis}} ->
-        reduce(analysis, except)
+        reduce(analysis)
 
       _ ->
         # muex:ignore observability: log text only
-        IO.puts(:stderr, "meerkat: clj-kondo gave no analysis for #{Enum.join(paths, " ")}")
+        IO.puts(:stderr, "meerkat: clj-kondo gave no analysis")
         @empty
     end
   end
 
-  defp reduce(analysis, except) do
+  defp reduce(analysis) do
     # A var kondo can't place names the namespace
     # `clj-kondo/unknown-namespace`, which no classpath holds.
     usages = analysis["var-usages"] || []
-    definitions = Enum.reject(analysis["var-definitions"] || [], &(&1["filename"] in except))
+    definitions = analysis["var-definitions"] || []
 
     # muex:ignore equivalent: a usage never shares a name position with a definition, so order is moot
     named = Enum.map(usages, &{&1, &1["to"]}) ++ Enum.map(definitions, &{&1, &1["ns"]})
@@ -137,5 +127,43 @@ defmodule Meerkat.CljHover.Kondo do
       spans: Map.new(spans, fn {{file, row}, list} -> {{strip.(file), row}, list} end),
       defs: Map.new(defs, fn {key, d} -> {key, %{d | file: strip.(d.file)}} end)
     }
+  end
+
+  @doc """
+  The absolute path of the file that the user's own clj-kondo runs
+  recorded for namespace `ns` in `root`'s `.clj-kondo/.cache`, trying
+  the cache's `langs` (`"clj"`, `"cljs"`, `"cljc"`) in order; nil when
+  none records a file that is still there.
+
+  Each cached namespace is a transit map whose `:filename` is the path
+  kondo linted, relative to where it ran or absolute, or `jar:entry`,
+  which is no file, so jars are left to the classpath.
+  """
+  @spec cached_file(String.t(), String.t(), [String.t()]) :: String.t() | nil
+  def cached_file(root, ns, langs) do
+    Enum.find_value(langs, fn lang ->
+      cache = Path.join([root, ".clj-kondo", ".cache", "v1", lang, ns <> ".transit.json"])
+
+      with {:ok, body} <- File.read(cache),
+           {:ok, ["^ " | pairs]} <- Jason.decode(body),
+           file when is_binary(file) <- filename(pairs),
+           path = Path.expand(file, root),
+           true <- File.regular?(path) do
+        path
+      else
+        _ -> nil
+      end
+    end)
+  end
+
+  # `:filename` appears once, as a top-level key, so transit writes it
+  # out rather than as a cache ref.
+  defp filename(pairs) do
+    pairs
+    |> Enum.chunk_every(2)
+    |> Enum.find_value(fn
+      ["~:filename", file] -> file
+      _ -> nil
+    end)
   end
 end

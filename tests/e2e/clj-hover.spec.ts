@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -38,6 +39,9 @@ function stagedReview(base: Record<string, string>, files: Record<string, string
 	write(base);
 	fixture.git("commit", "-qm", "base");
 	write(files);
+	// The user's own clj-kondo run, whose cache names each namespace's file.
+	mkdirSync(join(fixture.dir, ".clj-kondo"));
+	spawnSync("clj-kondo", ["--lint", "src"], { cwd: fixture.dir });
 	return fixture;
 }
 
@@ -84,11 +88,18 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 		const popup = page.locator('[data-test="clj-hover"]');
 
 		await restOn(page, "new", "u/helper");
-		await expect(popup).toContainText("app.util/helper");
+		// It opens on the docs tab.
+		const docTab = popup.getByRole("tab", { name: "app.util/helper" });
+		await expect(docTab).toHaveAttribute("aria-selected", "true");
 		await expect(popup).toContainText("New doc.");
-		await expect(popup).toContainText("src/app/util.clj:3");
-		// Highlighted by the diff's own highlighter.
+		await expect(popup.locator(".clj-hover-source")).toHaveCount(0);
+
+		// The pointer can move onto the popup and switch to the source tab,
+		// highlighted by the diff's own highlighter.
+		await popup.getByRole("tab", { name: "src/app/util.clj:3" }).click();
+		await expect(popup.locator(".clj-hover-doc")).toHaveCount(0);
 		await expect(popup.locator('.clj-hover-source span[style*="--diff-view-"]').first()).toBeAttached();
+		await expect(popup.locator(".clj-hover-source")).toContainText('"New doc."');
 
 		// Leaving the diff closes it.
 		await page.mouse.move(5, 5);
@@ -101,8 +112,10 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 	}
 });
 
-test("a long source is collapsed until expanded, in unified view", async ({ page }) => {
-	const long = Array.from({ length: 30 }, (_, i) => `(+ x ${i})`).join("\n  ");
+test("a long source scrolls in a popup the reviewer can resize, in unified view", async ({
+	page,
+}) => {
+	const long = Array.from({ length: 80 }, (_, i) => `(+ x ${i})`).join("\n  ");
 	const fixture = stagedReview(
 		{ "src/app/util.clj": util("Doc.", long), "src/app/core.clj": core("(u/helper y)") },
 		{ "src/app/core.clj": core("(inc (u/helper y))") },
@@ -115,14 +128,32 @@ test("a long source is collapsed until expanded, in unified view", async ({ page
 		const popup = page.locator('[data-test="clj-hover"]');
 
 		await restOn(page, "new", "u/helper");
-		const expand = popup.getByRole("button", { name: "Show all 33 lines" });
-		await expect(expand).toBeVisible();
-		await expect(popup).not.toContainText("(+ x 29)");
+		await popup.getByRole("tab", { name: "src/app/util.clj:3" }).click();
+		const panel = popup.getByRole("tabpanel");
+		const last = panel.getByText("(+ x 79)");
+		await expect(last).toBeAttached();
+		await expect(last).not.toBeInViewport();
 
-		// The pointer can move onto the popup and use it.
-		await expand.click();
-		await expect(popup).toContainText("(+ x 29)");
-		await expect(expand).toHaveCount(0);
+		// Scrolled within the popup, the whole source is there.
+		await panel.hover();
+		await page.mouse.wheel(0, 5000);
+		await expect(last).toBeInViewport();
+
+		// Dragging the bottom-right corner resizes it, past its opening
+		// cap, and the popup stays open and in place.
+		const before = await popup.boundingBox();
+		if (!before) throw new Error("no popup box");
+		const corner = { x: before.x + before.width - 3, y: before.y + before.height - 3 };
+		await page.mouse.move(corner.x, corner.y);
+		await page.mouse.down();
+		await page.mouse.move(corner.x + 60, corner.y + 120, { steps: 6 });
+		await page.mouse.up();
+		const after = await popup.boundingBox();
+		expect(after?.x).toBe(before.x);
+		expect(after?.y).toBe(before.y);
+		expect(after?.height).toBeGreaterThan(before.height + 100);
+		expect(after?.width).toBeGreaterThan(before.width + 40);
+		await expect(popup).toBeVisible();
 	} finally {
 		await meerkat.kill();
 	}

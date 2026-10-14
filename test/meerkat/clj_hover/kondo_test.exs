@@ -51,39 +51,84 @@ defmodule Meerkat.CljHover.KondoTest do
 
   test "writes no cache into the repo's .clj-kondo", %{dir: dir} do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
-    File.write!(Path.join(dir, "a.clj"), "(ns a)\n(def x 1)\n")
 
-    assert %{defs: %{{"a", "x"} => _}} = Kondo.analyse_paths(dir, ["a.clj"], [])
+    assert %{defs: %{{"a", "x"} => _}} =
+             Kondo.analyse_texts(dir, %{"a.clj" => "(ns a)\n(def x 1)\n"})
+
     assert File.ls!(Path.join(dir, ".clj-kondo")) == []
   end
 
-  test "a var's last definition wins, and excepted files define nothing", %{dir: dir} do
-    File.write!(Path.join(dir, "a.clj"), "(ns a)\n(declare f)\n(defn f \"Doc.\" [] 1)\n")
-    File.write!(Path.join(dir, "b.clj"), "(ns b)\n(def y 1)\n")
+  test "a var's last definition wins", %{dir: dir} do
+    text = "(ns a)\n(declare f)\n(defn f \"Doc.\" [] 1)\n"
 
-    assert %{defs: %{{"a", "f"} => %{doc: "Doc.", row: 3}} = defs} =
-             Kondo.analyse_paths(dir, ["a.clj", "b.clj"], ["b.clj"])
-
-    refute Map.has_key?(defs, {"b", "y"})
-  end
-
-  test "no paths analyse to nothing without running kondo", %{dir: dir} do
-    assert capture_io(:stderr, fn ->
-             assert Kondo.analyse_paths(dir, [], []) == @empty
-           end) == ""
+    assert %{defs: %{{"a", "f"} => %{doc: "Doc.", row: 3}}} =
+             Kondo.analyse_texts(dir, %{"a.clj" => text})
   end
 
   test "output that isn't an analysis analyses to nothing", %{dir: dir} do
     fake_kondo(dir, "not json")
 
     assert capture_io(:stderr, fn ->
-             assert Kondo.analyse_paths(dir, ["a.clj"], []) == @empty
+             assert Kondo.analyse_texts(dir, %{"a.clj" => ""}) == @empty
            end) =~
              "clj-kondo gave no analysis"
   end
 
   test "an analysis missing its var lists analyses to nothing", %{dir: dir} do
     fake_kondo(dir, ~s({"analysis": {}}))
-    assert Kondo.analyse_paths(dir, ["a.clj"], []) == @empty
+    assert Kondo.analyse_texts(dir, %{"a.clj" => ""}) == @empty
+  end
+
+  describe "cached_file/3, from the user's own kondo runs" do
+    # Lints `paths` the way a user's hook or editor does: with the
+    # default cache, which a `.clj-kondo` dir turns on.
+    defp lint(dir, paths) do
+      File.mkdir_p!(Path.join(dir, ".clj-kondo"))
+      System.cmd("clj-kondo", ["--lint" | paths], cd: dir, stderr_to_stdout: true)
+    end
+
+    defp write(dir, path, text) do
+      file = Path.join(dir, path)
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file, text)
+      file
+    end
+
+    test "names the file a namespace was linted in, linted by relative or absolute path",
+         %{dir: dir} do
+      a = write(dir, "src/a.clj", "(ns a)\n(def x 1)\n")
+      b = write(dir, "src/b.cljc", "(ns b)\n(def x 1)\n")
+      lint(dir, ["src/a.clj", b])
+
+      assert Kondo.cached_file(dir, "a", ["clj", "cljc"]) == a
+      assert Kondo.cached_file(dir, "b", ["clj", "cljc"]) == b
+      # Only the languages asked for.
+      refute Kondo.cached_file(dir, "b", ["clj", "cljs"])
+      refute Kondo.cached_file(dir, "c", ["clj", "cljc"])
+    end
+
+    test "tries the languages in order", %{dir: dir} do
+      clj = write(dir, "src/a.clj", "(ns a)\n(def x 1)\n")
+      cljs = write(dir, "src/a.cljs", "(ns a)\n(def x 1)\n")
+      lint(dir, ["src"])
+
+      assert Kondo.cached_file(dir, "a", ["cljs", "clj"]) == cljs
+      assert Kondo.cached_file(dir, "a", ["clj", "cljs"]) == clj
+    end
+
+    test "skips a file that is gone, a jar entry, and a cache it can't read", %{dir: dir} do
+      gone = write(dir, "src/gone.clj", "(ns gone)\n(def x 1)\n")
+      {:ok, _} = :zip.create(~c"#{dir}/dep.jar", [{~c"dep/lib.clj", "(ns dep.lib)\n(def x 1)\n"}])
+      lint(dir, ["src", "dep.jar"])
+      File.rm!(gone)
+      write(dir, ".clj-kondo/.cache/v1/clj/bad.transit.json", "not json")
+      write(dir, ".clj-kondo/.cache/v1/clj/odd.transit.json", ~s(["^ ","~:filename",1]))
+
+      refute Kondo.cached_file(dir, "gone", ["clj"])
+      assert File.exists?(Path.join(dir, ".clj-kondo/.cache/v1/clj/dep.lib.transit.json"))
+      refute Kondo.cached_file(dir, "dep.lib", ["clj"])
+      refute Kondo.cached_file(dir, "bad", ["clj"])
+      refute Kondo.cached_file(dir, "odd", ["clj"])
+    end
   end
 end

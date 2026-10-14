@@ -26,15 +26,22 @@ not necessarily the worktree.
 
 ## Popup
 
-Top to bottom:
+The header is two tabs, and the popup opens on the left one.
 
-1. The var's qualified name (`ns/name`), marked `macro` for a macro,
-   and where it is defined (repo path, or jar and entry) with its line.
-2. Its signature: one line per arglist.
-3. Its docstring, as plain text with line breaks kept.
-4. Its source, highlighted with the diff's own highlighter, theme
-   and font size. Source longer than 20 lines shows its first 20
-   lines with a `Show all N lines` button that expands it in place.
+- **Docs**, labelled with the var's qualified name (`ns/name`), marked
+  `macro` for a macro: its signature, one line per arglist, then its
+  docstring as plain text with line breaks kept, or `No docstring`.
+- **Source**, labelled with where the var is defined (repo path, or
+  jar and entry) and its line: its whole source, highlighted with the
+  diff's own highlighter, theme and font size.
+
+The popup opens below the symbol, unless below has less room than 60%
+of the window and above has more. It stays on that side, at most 60%
+of the window tall, and content larger than it scrolls inside it.
+Above the symbol, it keeps its bottom edge just above the symbol. It
+starts at the symbol's left edge, moved left as far as it must to
+stay inside the window. Dragging its bottom-right corner resizes it,
+up to the window's size, and it then stays where it is.
 
 ## Where definitions come from
 
@@ -44,24 +51,35 @@ It runs kondo from the repo root, so the repo's `.clj-kondo` config
 applies.
 
 - **Diff files.** Each side's changed Clojure files are analysed from
-  that side's text.
-- **The rest of the project.** One kondo pass over the worktree's
-  top-level directories that hold tracked Clojure files, untracked
-  files in them included. A file in the diff is answered from the
-  side's text, never from the worktree.
-- **Dependencies.** On the first hover of a var from a namespace not
-  in the project, meerkat finds the namespace's file on the classpath,
-  analyses it, and keeps the result for the rest of the review. Docs and source come from that file.
+  that side's text. Nothing on disk holds this: kondo's cache records
+  no usages, so not which var a symbol names, and the old side was
+  never linted.
+- **Other namespaces.** On the first hover of a var from a namespace
+  no diff file defines, meerkat finds the namespace's file, analyses
+  that one file, and keeps the result for the rest of the review.
+  Docs and source come from that file. A file in the diff is answered
+  from the side's text, never from disk.
+- **Finding the file.** First the file the user's own clj-kondo runs
+  recorded for the namespace in
+  `.clj-kondo/.cache/v1/<lang>/<ns>.transit.json`, unless it is in a
+  jar: kondo's cache keeps a jar's entries after the classpath moves
+  to a newer version. Then the classpath. The cache holds no
+  docstrings, arglists or form ends, so the file is still analysed.
 - **Classpath.** meerkat reads only what the user's tooling already
   computed: the newest `.cpcache/*.cp` in the repo root, else the
   `:classpath` in clojure-lsp's `.lsp/.cache/db.transit.json`. It runs
-  no classpath command. With neither, dependency vars show nothing.
+  no classpath command. With neither, only namespaces kondo's cache
+  names answer.
+- **Language.** A `.clj` or `.cljc` file looks for `clj` then `cljc`
+  namespaces; a `.cljs` file for `cljs`, `cljc`, then `clj`, for
+  macros.
 
 ## Indexing
 
-Indexing starts in the background when a review page opens, only for
-reviews that contain a Clojure file. A hover made before indexing
-finishes waits for it. All tabs of a review share one index.
+Analysing the diff files starts in the background when a review page
+opens, only for reviews that contain a Clojure file. A hover made
+before it finishes waits for it. All browser tabs of a review share
+one index.
 
 ## clj-kondo missing
 
