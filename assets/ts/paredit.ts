@@ -68,13 +68,23 @@ function enclosing(state: EditorState, pos: number): SyntaxNode | null {
 	return null;
 }
 
-/** The form after `el` among its parent's forms, or before it. */
+/** Whether `node` holds no stray bracket and no collection cut off from
+ *  its closer. */
+function whole(node: SyntaxNode): boolean {
+	if (node.type.isError) return false;
+	for (let child = node.firstChild; child; child = child.nextSibling) if (!whole(child)) return false;
+	return true;
+}
+
+/** The form after `el` among its parent's forms, or before it. Null past
+ *  a bracket, stray or not, and when the form is not whole. */
 function sibling(el: SyntaxNode, dir: -1 | 1): SyntaxNode | null {
-	const parent = el.parent;
-	if (!parent) return null;
-	const all = forms(parent);
-	const at = all.findIndex((f) => f.from === el.from && f.to === el.to);
-	return all[at + dir] ?? null;
+	for (let sib = dir > 0 ? el.nextSibling : el.prevSibling; sib; sib = dir > 0 ? sib.nextSibling : sib.prevSibling) {
+		if (sib.name === "LineComment") continue;
+		if (sib.type.isError || BRACKETS.has(sib.name)) return null;
+		return whole(sib) ? sib : null;
+	}
+	return null;
 }
 
 /** The changes, and the selection mapped through them, for each range's
@@ -313,8 +323,9 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 		const opener = parent.firstChild as SyntaxNode;
 		const closer = closerOf(parent) as SyntaxNode;
 		if (opener.to === pos && closer.from === pos) {
-			const set = state.changes({ from: opener.from, to: closer.to });
-			return { changes: set, range: EditorSelection.cursor(opener.from) };
+			const from = openStart(parent);
+			const set = state.changes({ from, to: closer.to });
+			return { changes: set, range: EditorSelection.cursor(from) };
 		}
 		return { range: EditorSelection.cursor(pos + dir) };
 	});
@@ -379,8 +390,12 @@ export const bracketTyping = EditorView.inputHandler.of((view, _from, _to, text)
 	return spec !== null;
 });
 
-/** Whether no space belongs between `before` and `after` when lines
- *  join: none after an opener or before a closer. */
-export function tightInClojure(before: string, after: string): boolean {
-	return before in PAIRS || Object.values(PAIRS).includes(after);
+/** Whether no space belongs between the text ending at `end` and the
+ *  text starting at `start` when lines join: none after an opening
+ *  bracket or before a closing one, though a `\(` character takes one. */
+export function tightInClojure(state: EditorState, end: number, start: number): boolean {
+	const tree = syntaxTree(state);
+	const before = tree.resolveInner(end, -1);
+	const after = tree.resolveInner(start, 1);
+	return (before.to === end && before.name in PAIRS) || (after.from === start && Object.values(PAIRS).includes(after.name));
 }
