@@ -103,6 +103,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    and between hunks appear only in the right-hand (new-side)
    gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
    on the right; Unified view keeps them in its single gutter.
+   A block of lines git's moved-code detection finds is tinted, and
+   its first line carries a link to its counterpart, with Wrap on or
+   off.
 8. **Decision footer**, sticky at the bottom — Cancel, Post to
    GitHub (only when `state.pr` is set and not precommit mode),
    Send Feedback, Approve, plus a "N comments" running counter

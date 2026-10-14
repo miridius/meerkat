@@ -20,8 +20,10 @@ const helper = (n: number) =>
 // helper2 moves to the end of the file, leaving collapsed context above
 // and between the hunks. Its lines 6-8 are long enough to count as
 // moved, and land on lines 56-58.
-function movedBlockFixture() {
+// `wide` ends helper1's first line in a comment wider than any window.
+function movedBlockFixture({ wide = false } = {}) {
 	const helpers = Array.from({ length: 12 }, (_, i) => helper(i + 1));
+	if (wide) helpers[0] = helpers[0].replace("{\n", `{ // ${"wide ".repeat(100)}\n`);
 	const fixture = makeFixture({ files: { "util.ts": helpers.join("\n") } });
 	fixture.git("commit", "-q", "-m", "base");
 	const [moved] = helpers.splice(1, 1);
@@ -125,6 +127,80 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(expected);
 		expect(await flashOnClick(file)).toContain(FLASH);
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("with Wrap off, a fresh load tints moved lines and links them in both views", async ({ page }) => {
+	const meerkat = await startMeerkat({ fixture: movedBlockFixture({ wide: true }) });
+	try {
+		await page.goto(meerkat.url);
+		await page.getByLabel("Wrap").click();
+		await expect(page.getByLabel("Wrap")).not.toBeChecked();
+		for (const view of ["Split", "Unified"]) {
+			await page.getByRole("button", { name: new RegExp(`^${view}$`) }).click();
+			// A fresh load draws the Wrap-off table from the start.
+			await page.reload();
+			const file = page.locator(".file-section").filter({ hasText: "util.ts" });
+			await expect
+				.poll(() => movedState(file), { message: view })
+				.toEqual({ tinted: MOVED, links: ["new:56", "old:6"], drawn: true });
+		}
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("a moved block's link covers none of its code, stays out of copied code and jumps to the counterpart", async ({ page }) => {
+	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
+	try {
+		// Narrow and short: the first moved line wraps, and the counterpart
+		// starts out of view.
+		await page.setViewportSize({ width: 1000, height: 400 });
+		await page.goto(meerkat.url);
+		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
+		const link = file.locator(".moved-badge", { hasText: "util.ts:56-58" });
+		await expect(link).toBeVisible();
+
+		const covered = await link.evaluate((badge) => {
+			const b = badge.getBoundingClientRect();
+			const walker = document.createTreeWalker(badge.closest("td") as Node, NodeFilter.SHOW_TEXT);
+			const range = document.createRange();
+			let hidden = "";
+			for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+				if (badge.contains(n)) continue;
+				for (let i = 0; i < (n.textContent ?? "").length; i++) {
+					range.setStart(n, i);
+					range.setEnd(n, i + 1);
+					const r = range.getBoundingClientRect();
+					if (r.width > 0 && r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom)
+						hidden += n.textContent?.[i];
+				}
+			}
+			return hidden;
+		});
+		expect(covered).toBe("");
+
+		const counterpart = file.locator("td.diff-line-new-num:has(span[data-line-num='56'])");
+		await expect(counterpart).not.toBeInViewport();
+		await link.click();
+		await expect(counterpart).toBeInViewport();
+
+		// Code copied across the link's line leaves the link's text out.
+		const codeOn = (line: number) =>
+			file.locator(`tr.diff-line:has(td.diff-line-old-num span[data-line-num='${line}']) td.diff-line-old-content`);
+		await codeOn(5).scrollIntoViewIfNeeded();
+		const from = await codeOn(5).boundingBox();
+		const to = await codeOn(7).boundingBox();
+		if (!from || !to) throw new Error("code cells have no box");
+		await page.mouse.move(from.x + 40, from.y + from.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(to.x + to.width - 20, to.y + to.height / 2, { steps: 5 });
+		await page.mouse.up();
+		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+		expect(copied).toContain("helper2(input");
+		expect(copied).not.toContain("util.ts:56-58");
 	} finally {
 		await meerkat.kill();
 	}
