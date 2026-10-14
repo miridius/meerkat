@@ -38,9 +38,15 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	vue: () => import("@codemirror/lang-vue").then((m) => m.vue()),
 	// The pack's own rule puts arguments one column past the opener, or two
 	// after def-like and special-form heads; ours follows cljfmt's defaults.
+	// Brackets pair through `paredit.ts`, so CodeMirror's pairing keeps only
+	// `"`: in Clojure, `'` is a quote.
 	clojure: () =>
 		Promise.all([import("@nextjournal/lang-clojure"), import("./clojureIndent.js")]).then(
-			([m, indent]) => new LanguageSupport(m.clojureLanguage, indent.clojureIndent),
+			([m, indent]) =>
+				new LanguageSupport(m.clojureLanguage, [
+					indent.clojureIndent,
+					m.clojureLanguage.data.of({ closeBrackets: { brackets: ['"'] } }),
+				]),
 		),
 };
 
