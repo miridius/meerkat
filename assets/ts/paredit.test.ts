@@ -76,6 +76,14 @@ describe("slurpForward", () => {
 		expect(run(slurpForward, "(foo (a|) b")).toBe("(foo (a| b)");
 	});
 
+	test("does nothing past a closer the editor cut off from its opener", () => {
+		expect(run(slurpForward, "(f|oo a)) b")).toBeNull();
+	});
+
+	test("does not pull in a list the editor cut off from its closer", () => {
+		expect(run(slurpForward, "(f|oo) (g b")).toBeNull();
+	});
+
 	test("re-indents the slurped lines", () => {
 		expect(run(slurpForward, "(let [x 1]\n  (foo |x))\n(bar\n y)")).toBe(
 			"(let [x 1]\n  (foo |x)\n  (bar\n   y))",
@@ -120,6 +128,10 @@ describe("slurpBackward", () => {
 
 	test("does nothing with no previous form", () => {
 		expect(run(slurpBackward, "(|a)")).toBeNull();
+	});
+
+	test("does nothing past a closer the editor cut off from its opener", () => {
+		expect(run(slurpBackward, 'z "s"] (f|oo y)')).toBeNull();
 	});
 });
 
@@ -232,6 +244,11 @@ describe("deleteGuarded", () => {
 		expect(fwd("x {|} y")).toBe("x | y");
 	});
 
+	test("deletes an empty set or anonymous function with its #", () => {
+		expect(back("x #{|} y")).toBe("x | y");
+		expect(fwd("#(|)")).toBe("|");
+	});
+
 	test("lets an unmatched bracket be deleted", () => {
 		expect(back("a)|")).toBeNull();
 		expect(back("(|foo\n  bar")).toBeNull();
@@ -296,9 +313,22 @@ describe("typeBracket", () => {
 });
 
 describe("tightInClojure", () => {
+	// `|` marks where the line before ends and `^` where the next starts.
+	const tight = (marked: string) => {
+		const end = marked.indexOf("|");
+		const doc = marked.replace("|", "");
+		const start = doc.indexOf("^");
+		return tightInClojure(stateOf(`|${doc.replace("^", "")}`), end, start);
+	};
+
 	test("wants no space after an opener or before a closer", () => {
-		expect(tightInClojure("(", "a")).toBe(true);
-		expect(tightInClojure("a", "]")).toBe(true);
-		expect(tightInClojure("a", "b")).toBe(false);
+		expect(tight("(|\n^a)")).toBe(true);
+		expect(tight("[a|\n^]")).toBe(true);
+		expect(tight("(a|\n^b)")).toBe(false);
+	});
+
+	test("treats a bracket character literal as a form", () => {
+		expect(tight("(\\(|\n ^a)")).toBe(false);
+		expect(tight("(a|\n ^\\))")).toBe(false);
 	});
 });
