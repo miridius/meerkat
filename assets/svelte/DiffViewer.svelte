@@ -1083,7 +1083,7 @@
   // Moved-line highlighting + jump badges. Each block of moved lines
   // gets a coloured background (4 colors cycled by pairId) on the
   // covered rows, plus a clickable "← from foo:N" / "→ to foo:N"
-  // badge at the right of the first row. Click dispatches a
+  // badge in the corner of the first row. Click dispatches a
   // document-level `meerkat-move-jump` event the sibling DiffViewers
   // listen for so the target file scrolls into view and flashes.
   $effect(() => {
@@ -1157,7 +1157,8 @@
           }),
         );
       });
-      contentTd.prepend(badge);
+      contentTd.style.position = "relative";
+      contentTd.appendChild(badge);
     }
   }
 
@@ -1495,18 +1496,13 @@
     0%, 60% { background-color: rgba(88, 166, 255, 0.35); }
     100% { background-color: transparent; }
   }
-  /* Floated ahead of the code, so the line's text wraps or the cell
-     widens rather than running under it. */
   :global(.moved-badge) {
-    float: right;
-    margin-left: 1ch;
-    /* Copied code leaves it out. */
-    user-select: none;
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    z-index: 2;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    /* Shorter than the line, so it never makes its row taller than the
-       other side's at any font size. */
-    font-size: 0.8em;
-    line-height: 1;
+    font-size: 10px;
     padding: 1px 6px;
     border-radius: 3px;
     border: 1px solid #30363d;
