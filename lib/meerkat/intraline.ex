@@ -45,7 +45,8 @@ defmodule Meerkat.Intraline do
   defp split_body(orig_hunk, body, old_start, new_start) do
     classified =
       body
-      |> String.split("\n", trim: true)
+      |> String.split("\n")
+      |> drop_final_empty()
       |> Enum.map(&classify/1)
 
     state = %{
@@ -71,19 +72,24 @@ defmodule Meerkat.Intraline do
     end
   end
 
+  # Only the empty string after the hunk's final newline. An empty line
+  # inside the hunk is a line of the diff.
+  defp drop_final_empty(lines),
+    do: if(List.last(lines) == "", do: Enum.drop(lines, -1), else: lines)
+
   defp walk([], state), do: state
 
-  defp walk([{:context, _} = line | rest], state) do
+  defp walk([{:context, line} | rest], state) do
     walk(rest, %{
       state
-      | current: [line | state.current],
+      | current: [{:context, line} | state.current],
         old_cur: state.old_cur + 1,
         new_cur: state.new_cur + 1
     })
   end
 
-  defp walk([{:other, _} = line | rest], state) do
-    walk(rest, %{state | current: [line | state.current]})
+  defp walk([{:other, line} | rest], state) do
+    walk(rest, %{state | current: [{:other, line} | state.current]})
   end
 
   defp walk(lines, state) do
@@ -105,11 +111,15 @@ defmodule Meerkat.Intraline do
       })
     else
       pair_count = length(paired_dels)
-      paired = Enum.reverse(state.current, paired_dels ++ paired_adds)
       {others, rest2} = Enum.split_while(rest, &match?({:other, _}, &1))
 
+      # A no-newline marker after the run describes its last line: the
+      # last addition, which is paired when deletions outnumber additions.
+      {paired_tail, orphan_tail} = if orphan_adds == [], do: {others, []}, else: {[], others}
+      paired = Enum.reverse(state.current, paired_dels ++ paired_adds ++ paired_tail)
+
       acc = [
-        emit(orphan ++ others, state.old_cur + pair_count, state.new_cur + pair_count),
+        emit(orphan ++ orphan_tail, state.old_cur + pair_count, state.new_cur + pair_count),
         emit(paired, state.cur_old_start, state.cur_new_start) | state.acc
       ]
 

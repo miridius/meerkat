@@ -73,8 +73,22 @@ defmodule Meerkat.IntralineTest do
            ]
   end
 
+  test "a no-newline marker after a split stays with the paired addition it describes" do
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\n+x\n\\ No newline at end of file\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n\\ No newline at end of file\n",
+             "@@ -2,1 +2,0 @@\n-b\n"
+           ]
+  end
+
   test "a hunk with no trailing newline gains one" do
     assert Intraline.split(["@@ -1,1 +1,1 @@\n-a\n+b"]) == ["@@ -1,1 +1,1 @@\n-a\n+b\n"]
+  end
+
+  test "an empty line inside a hunk is kept" do
+    hunk = "@@ -1,3 +1,3 @@\n a\n\n-b\n+c\n"
+    assert Intraline.split([hunk]) == ["@@ -1,2 +1,2 @@\n a\n\n-b\n+c\n"]
   end
 
   test "malformed hunk passed through unchanged" do

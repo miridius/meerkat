@@ -51,11 +51,9 @@ defmodule Meerkat.Moves do
       |> Enum.flat_map(&candidates_from(&1, added_index, removed_arr, added_arr))
       |> Enum.sort_by(&elem(&1, 2), :desc)
 
-    # muex:ignore equivalent: swapping the two empty sets changes nothing
-    init = {[], MapSet.new(), MapSet.new()}
-
     {moves, _, _} =
-      Enum.reduce(candidates, init, fn {r_start, a_start, len}, {acc, r_taken, a_taken} ->
+      Enum.reduce(candidates, {[], MapSet.new(), MapSet.new()}, fn {r_start, a_start, len},
+                                                                   {acc, r_taken, a_taken} ->
         r_span = span(r_start, len)
         a_span = span(a_start, len)
 
@@ -85,10 +83,16 @@ defmodule Meerkat.Moves do
   ## Internals
 
   defp candidates_from({%{content: c}, r_start}, added_index, removed_arr, added_arr) do
-    for a_start <- Map.get(added_index, c, []),
-        len = run_length(removed_arr, r_start, added_arr, a_start),
-        len >= @min_block_size,
-        do: {r_start, a_start, len}
+    case Map.get(added_index, c) do
+      nil ->
+        []
+
+      positions ->
+        for a_start <- positions,
+            len = run_length(removed_arr, r_start, added_arr, a_start),
+            len >= @min_block_size,
+            do: {r_start, a_start, len}
+    end
   end
 
   # The positions a run of `len` lines from `start` covers.
@@ -138,12 +142,12 @@ defmodule Meerkat.Moves do
   # The length of the run starting at the matching lines `r` and `a`.
   # The run extends while the next lines on both sides match AND
   # continue contiguously in the same file.
-  defp run_length(removed_arr, r, added_arr, a) do
+  defp run_length(removed_arr, r, added_arr, a, len \\ 1) do
     if r + 1 < tuple_size(removed_arr) and a + 1 < tuple_size(added_arr) and
          extends?(removed_arr, r, added_arr, a) do
-      1 + run_length(removed_arr, r + 1, added_arr, a + 1)
+      run_length(removed_arr, r + 1, added_arr, a + 1, len + 1)
     else
-      1
+      len
     end
   end
 
