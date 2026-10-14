@@ -124,7 +124,7 @@ since Chrome takes Ctrl+J for Downloads.
 | Key | Does |
 |---|---|
 | ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
-| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Each line break and the next line's leading indentation become one space; in Clojure, no space follows an opener or precedes a closer |
+| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Each line break and the whitespace around it become one space, or nothing when either line is blank; in Clojure, no space follows an opener or precedes a closer |
 
 **Every language with a syntax grammar** (every language in
 `assets/ts/cmLang.ts`):
@@ -134,26 +134,38 @@ since Chrome takes Ctrl+J for Downloads.
 | ⌥↑ / ⌥↓ | Expand / shrink the selection to the enclosing node |
 | ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, key) past its previous / next sibling |
 
+⌥↑ first selects the word at the caret, then each enclosing node,
+the inside of its brackets before the node itself. In a file with no
+grammar, ⌥↑ and ⌥↓ do nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's
+select to the start / end.
+
 **Clojure only:**
 
 | Key | Does |
 |---|---|
+| ⌥← / ⌥→ | Move the caret back / forward over one form, or out past the enclosing list's opener / closer when no form is left (Cursive's Move Backward / Forward) |
 | ⇧⌘K / ⇧⌘J | Slurp / barf forward |
 | ⌃⌘J / ⌃⌘K | Slurp / barf backward |
 | ⌘' | Raise the form at the caret, replacing its parent |
 | ⌥S | Splice: remove the enclosing brackets (also works where ⌥S types ß) |
 
-Outside Clojure, ⇧⌘K keeps CodeMirror's delete line.
+Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
+move by word. ⌥⇧← / ⌥⇧→ select by word everywhere, as in Cursive,
+which has no selecting form move. The Clojure keys leave a list
+the seeded lines cut off from its closer alone.
 
 **Structural typing in Clojure:**
 
-- Typing an opening bracket inserts its closer.
+- Typing an opening bracket inserts its closer, around the selection
+  if there is one. Typing a closer just before the same matched closer
+  steps over it. `'` is a quote and gets no partner.
 - Backspace or Delete on one bracket of a matched pair is blocked: the
   caret steps over it. Inside an empty pair, either deletes both.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.
-- Edited lines re-indent.
+- Lines that a structural key or a paste changes re-indent, as Enter
+  indents them.
 
 **Keys cheat sheet:** a "Keys" link in the editor's corner opens the
 list of keys for this file's language, ⌃J join lines included,
