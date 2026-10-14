@@ -1136,6 +1136,7 @@
 {:else if diffInstance}
   <div
     class="diff-content"
+    class:no-wrap={!wrap_lines}
     role="presentation"
     bind:this={diffContainer}
     onpointerdown={handlePointerDown}
@@ -1281,6 +1282,19 @@
     border-top: 1px solid #30363d;
     border-bottom: 1px solid #30363d;
     user-select: text;
+  }
+  /* With wrap off, a long line makes the table wider than its side's
+     scroll view, and the injected cell spans the whole table. Size the
+     form or comment list to the view (`cqi`) and pin it to the view's
+     left edge, so it and its buttons stay in view at any scroll. */
+  .diff-content.no-wrap :global(.diff-table-scroll-container) {
+    container-type: inline-size;
+  }
+  .diff-content.no-wrap :global(td.meerkat-form-cell > .comment-form),
+  .diff-content.no-wrap :global(td.meerkat-comment-cell > .extend-comments) {
+    position: sticky;
+    left: 0;
+    width: 100cqi;
   }
   /* Spacer halves on the opposite side from a side-aware comment /
      form row, and the mirror rows standing in for them with Wrap off.
