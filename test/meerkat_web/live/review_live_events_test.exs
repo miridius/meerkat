@@ -72,17 +72,22 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     test_pid = self()
 
     prev =
-      for key <- [:review_state, :review_id, :repo_path, :restart_fun] do
+      for key <- [:review_state, :review_id, :repo_path, :restart_fun, :settings_path] do
         {key, Application.fetch_env(:meerkat, key)}
       end
 
     Application.put_env(:meerkat, :restart_fun, fn code -> send(test_pid, {:restart, code}) end)
+    # Each test starts from the default toolbar settings.
+    settings_dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-settings")
+    Application.put_env(:meerkat, :settings_path, Path.join(settings_dir, "settings.json"))
 
     on_exit(fn ->
       Enum.each(prev, fn
         {key, {:ok, val}} -> Application.put_env(:meerkat, key, val)
         {key, :error} -> Application.delete_env(:meerkat, key)
       end)
+
+      File.rm_rf!(settings_dir)
     end)
 
     :ok
@@ -218,8 +223,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view = mount_unbound(conn)
 
     assert render_click(view, "toolbar.set_tab_size", %{"n" => "8"}) =~ "8"
-    assert_push_event(view, "settings:save", saved)
-    assert saved == %{tab_size: 8}
+    assert saved_settings() == %{"tab_size" => 8}
     assert render_click(view, "toolbar.set_tab_size", %{"n" => "3"}) =~ "8"
   end
 
@@ -257,17 +261,13 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     html = view |> element("#ruler-columns-form") |> render_change(%{"columns" => "120 72,72"})
     assert rulers.(html) == Map.new(ids, &{&1, [72, 120]})
     assert has_element?(view, "input[name=columns][value='72, 120']")
-    # Each save carries only the changed setting, so it can't overwrite
-    # another tab's change to a different one.
-    assert_push_event(view, "settings:save", saved)
-    assert saved == %{ruler_columns: [72, 120]}
+    assert saved_settings() == %{"ruler_columns" => [72, 120]}
 
     # Unchecking hides them without forgetting the columns.
     html = view |> element(".toolbar-settings input[type=checkbox]") |> render_click()
     assert rulers.(html) == Map.new(ids, &{&1, []})
     assert has_element?(view, "input[name=columns][value='72, 120']")
-    assert_push_event(view, "settings:save", saved)
-    assert saved == %{rulers: false}
+    assert saved_settings() == %{"ruler_columns" => [72, 120], "rulers" => false}
 
     # Junk stays in the field, marked, through other changes, and the
     # last list stays in force.
@@ -285,19 +285,39 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   # DiffViewer names it `ruler_columns`, CommentForm `rulerColumns`.
   defp rulers_prop(props), do: props["ruler_columns"] || props["rulerColumns"]
 
-  test "settings.load restores the rulers setting", %{conn: conn} do
+  # The settings file's contents.
+  defp saved_settings, do: Jason.decode!(File.read!(Meerkat.Settings.path()))
+
+  test "a tab opens with the saved settings", %{conn: conn} do
+    Meerkat.Settings.put(:rulers, false)
+    Meerkat.Settings.put(:ruler_columns, [100])
+    Meerkat.Settings.put(:wrap_lines, false)
     view = mount_unbound(conn)
-    render_hook(view, "settings.load", %{"rulers" => false, "ruler_columns" => [100]})
     refute has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
     assert has_element?(view, "input[name=columns][value='100']")
+    refute has_element?(view, ".wrap-toggle input[checked]")
+  end
+
+  test "a change in one tab applies in the review's other tabs", %{conn: conn} do
+    view = mount_unbound(conn)
+    other = mount_unbound(conn)
+    other |> element("#ruler-columns-form") |> render_change(%{"columns" => "80, wide"})
+
+    view |> element(".wrap-toggle input") |> render_click()
+    refute has_element?(other, ".wrap-toggle input[checked]")
+    # A change to another setting leaves the other tab's field alone.
+    assert has_element?(other, "input[name=columns][value='80, wide'][aria-invalid=true]")
+
+    view |> element("#ruler-columns-form") |> render_change(%{"columns" => "100"})
+    assert has_element?(other, "input[name=columns][value='100'][aria-invalid=false]")
+    assert svelte_props(render(other), "DiffViewer-0") |> rulers_prop() == [100]
   end
 
   test "set_diff_mode flips the active segment", %{conn: conn} do
     view = mount_unbound(conn)
     html = render_click(view, "set_diff_mode", %{"mode" => "unified"})
     assert html =~ "active"
-    assert_push_event(view, "settings:save", saved)
-    assert saved == %{diff_mode: "unified"}
+    assert saved_settings() == %{"diff_mode" => "unified"}
   end
 
   test "the Wrap toggle starts checked and unchecks on click", %{conn: conn} do
@@ -306,8 +326,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     view |> element(".wrap-toggle input") |> render_click()
     refute has_element?(view, ".wrap-toggle input[checked]")
-    assert_push_event(view, "settings:save", saved)
-    assert saved == %{wrap_lines: false}
+    assert saved_settings() == %{"wrap_lines" => false}
   end
 
   test "the version chip shows a dev label with no changelog, or a release's commit and PR links",

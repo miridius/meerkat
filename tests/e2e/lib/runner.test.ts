@@ -94,7 +94,7 @@ describe("orphaned backend reaper", () => {
 	});
 });
 
-test("a meerkat that exits before printing its URL leaves no backend, fixture or runs dir behind", async () => {
+test("a meerkat that exits before printing its URL leaves no backend, fixture, runs or config dir behind", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
 	const seen = join(dir, "seen");
 	// Starts a backend and records it the way meerkat-attach does, then
@@ -103,10 +103,10 @@ test("a meerkat that exits before printing its URL leaves no backend, fixture or
 	writeFileSync(
 		bin,
 		`#!/bin/sh
-mkdir -p "$MEERKAT_RUNS_DIR/run"
+mkdir -p "$MEERKAT_RUNS_DIR/run" "$XDG_CONFIG_HOME/meerkat"
 sleep 60 </dev/null >/dev/null 2>&1 &
 echo $! > "$MEERKAT_RUNS_DIR/run/pid"
-echo "$MEERKAT_RUNS_DIR $!" > "$SEEN"
+echo "$MEERKAT_RUNS_DIR $! $XDG_CONFIG_HOME" > "$SEEN"
 echo boom >&2
 exit 1
 `,
@@ -123,10 +123,12 @@ exit 1
 		});
 
 		await expect(start).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
-		const [runsDir, recorded] = readFileSync(seen, "utf8").trim().split(" ");
+		const [runsDir, recorded, configHome] = readFileSync(seen, "utf8").trim().split(" ");
 		pid = Number(recorded);
 		expect(alive(pid), "backend is stopped").toBe(false);
 		expect(existsSync(runsDir), "runs dir is removed").toBe(false);
+		expect(configHome, "settings stay out of the user's config dir").toBe(`${runsDir}cfg`);
+		expect(existsSync(configHome), "config dir is removed").toBe(false);
 		expect(cleaned, "fixture is cleaned up").toBe(true);
 	} finally {
 		if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");

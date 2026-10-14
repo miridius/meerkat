@@ -34,54 +34,6 @@ const hooks = {
       }, 500);
     },
   },
-  // Persists toolbar prefs (split/unified, wrap, font size, tab size,
-  // rulers)
-  // in localStorage and rehydrates them on mount so they survive a
-  // reload. The server keeps an in-memory copy; on mount we push our
-  // values up, and the LV pushes any subsequent change back via
-  // `settings:save` for us to save.
-  Settings: {
-    mounted() {
-      const KEY = "meerkat:settings";
-      try {
-        const raw = localStorage.getItem(KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          this.pushEvent("settings.load", parsed);
-        }
-      } catch (_e) {
-        /* corrupt data — fall back to server defaults */
-      }
-      // Each save carries only the settings that changed, merged into
-      // what is stored, so another tab's change to a different setting
-      // isn't overwritten.
-      this.handleEvent("settings:save", (changed) => {
-        try {
-          let stored = {};
-          try {
-            stored = JSON.parse(localStorage.getItem(KEY) ?? "{}") ?? {};
-          } catch (_e) {
-            /* corrupt data — replace it */
-          }
-          localStorage.setItem(KEY, JSON.stringify({ ...stored, ...changed }));
-        } catch (_e) {
-          /* storage full / disabled — stays in-memory for this tab */
-        }
-      });
-      // The hint banner is dismissed once per browser via
-      // `meerkat:hint-dismissed`. The LV pushes `hint.dismiss` only on
-      // explicit click, but the JS hook hides the banner on mount if
-      // the flag is already set so reviewers don't see the same line
-      // every session.
-      this.handleEvent("hint:set-dismissed", () => {
-        try {
-          localStorage.setItem("meerkat:hint-dismissed", "1");
-        } catch (_e) {
-          /* storage disabled */
-        }
-      });
-    },
-  },
   // Ticks in the browser from an absolute deadline rather than from a
   // server push: the alternative sends every connected tab a diff once a
   // second, for as long as the review stays open.
@@ -176,8 +128,8 @@ const hooks = {
   },
   // Hide the line-comment hint banner on mount if the user has
   // already dismissed it once in this browser. The dismiss flag
-  // lives under `meerkat:hint-dismissed` and is set by the Settings
-  // hook when the LV pushes `hint:set-dismissed`.
+  // lives under `meerkat:hint-dismissed` and is set when the LV
+  // pushes `hint:set-dismissed`.
   HintDismiss: {
     mounted() {
       try {
@@ -189,6 +141,11 @@ const hooks = {
       }
       this.handleEvent("hint:set-dismissed", () => {
         this.el.style.display = "none";
+        try {
+          localStorage.setItem("meerkat:hint-dismissed", "1");
+        } catch (_e) {
+          /* storage disabled */
+        }
       });
     },
   },

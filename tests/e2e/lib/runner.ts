@@ -55,9 +55,18 @@ export type Runner = {
 const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 
 // Specs that spawn meerkat directly, without `startMeerkat`, would otherwise start
-// their backends in the user's own runs dir, which the reaper leaves alone.
-// meerkat creates the dir on first use.
+// their backends in the user's own runs dir, and save toolbar settings in the
+// user's own config dir, which the reaper leaves alone.
+// meerkat creates the dirs on first use.
 process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
+process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
+
+// The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
+// toolbar settings and runs reattaching to it share its settings. Named like
+// a runs dir, so the reaper removes it too.
+function configHome(runsDir: string): string {
+	return `${runsDir}cfg`;
+}
 
 const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
 
@@ -78,7 +87,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 				})());
 
 	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
-	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, ...opts.env };
+	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, XDG_CONFIG_HOME: configHome(runsDir), ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}
@@ -152,6 +161,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			);
 		}
 		rmSync(runsDir, { recursive: true, force: true });
+		rmSync(configHome(runsDir), { recursive: true, force: true });
 		throw e;
 	});
 
@@ -178,7 +188,10 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 			await stopBackends(runsDir);
 			if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGTERM");
 			await exitPromise;
-			if (opts.runsDir === undefined) rmSync(runsDir, { recursive: true, force: true });
+			if (opts.runsDir === undefined) {
+				rmSync(runsDir, { recursive: true, force: true });
+				rmSync(configHome(runsDir), { recursive: true, force: true });
+			}
 		},
 		killCaller: async () => {
 			proc.kill("SIGKILL");
@@ -201,7 +214,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 }
 
 // Each `startMeerkat` call without `runsDir` creates `meerkat-runs-<worker pid>-<random>`
-// in the OS temp dir.
+// in the OS temp dir, and its run saves settings in that name with `cfg` appended.
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
 // live owners, including concurrent runs, and dirs without a PID are left alone.
 export async function reapOrphanedBackends(): Promise<void> {

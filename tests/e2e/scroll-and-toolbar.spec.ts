@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import type { BrowserContext, Page } from "@playwright/test";
 import { makeFixture, manifestRoot } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -107,3 +108,95 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		rmSync(releaseRoot, { recursive: true, force: true });
 	}
 });
+
+// Toolbar settings live in the config dir's settings.json. A change
+// reaches the review's other tabs live over PubSub; another review runs
+// in its own BEAM, so its tabs read the file when they load or rejoin.
+// A rejoin without a reload, such as after a dropped socket, would also
+// have LiveView's form recovery resubmit the page's stale ruler columns,
+// saving them over the newer ones.
+//
+// The other review gets its own browser context: each review's BEAM signs
+// its session cookie with its own key, and cookies aren't scoped by port,
+// so loading it in the same context would turn the first page's rejoin
+// into a full reload.
+test("toolbar settings reach the review's other tabs live, and other reviews on load and rejoin", async ({
+	page,
+	context,
+	browser,
+}) => {
+	const meerkat = await startMeerkat();
+	let second: Awaited<ReturnType<typeof startMeerkat>> | undefined;
+	const elsewhereContext = await browser.newContext();
+	try {
+		await page.goto(meerkat.url);
+		const other = await openJoined(context, meerkat.url);
+		const toolbar = (p: Page) => ({
+			wrap: p.getByLabel("Wrap"),
+			// Located by CSS, as it is hidden while the settings popover is closed.
+			tab8: p.locator("button[phx-value-n='8']"),
+			columns: p.getByLabel("Ruler columns"),
+			openSettings: () => p.locator(".toolbar-settings > summary").click(),
+		});
+		const mine = toolbar(page);
+		const theirs = toolbar(other);
+
+		await expect(mine.wrap).toBeChecked();
+		await mine.wrap.click();
+		await mine.openSettings();
+		await mine.tab8.click();
+		await expect(theirs.wrap).not.toBeChecked();
+		await expect(theirs.tab8).toHaveClass(/active/);
+		await theirs.openSettings();
+		await theirs.columns.fill("60");
+		await expect(mine.columns).toHaveValue("60");
+
+		second = await startMeerkat({ env: { XDG_CONFIG_HOME: `${meerkat.runsDir}cfg` } });
+		const elsewhere = toolbar(await openJoined(elsewhereContext, second.url));
+		await expect(elsewhere.wrap).not.toBeChecked();
+		await expect(elsewhere.tab8).toHaveClass(/active/);
+		await expect(elsewhere.columns).toHaveValue("60");
+		await elsewhere.openSettings();
+		await elsewhere.columns.fill("70");
+		await expect(elsewhere.columns).toHaveAttribute("value", "70");
+		await expect(mine.columns).toHaveValue("60");
+
+		await rejoin(page);
+		await expect(mine.columns).toHaveValue("70");
+		await expect(mine.wrap).not.toBeChecked();
+		await expect(mine.tab8).toHaveClass(/active/);
+		const reopened = toolbar(await openJoined(elsewhereContext, second.url));
+		await expect(reopened.columns).toHaveValue("70");
+	} finally {
+		await elsewhereContext.close();
+		await second?.kill();
+		await meerkat.kill();
+	}
+});
+
+// A page of `context` at `url`, once its LiveView has joined.
+async function openJoined(context: BrowserContext, url: string): Promise<Page> {
+	const p = await context.newPage();
+	await p.goto(url);
+	await expect(p.locator("[data-phx-main]")).toHaveClass(/phx-connected/);
+	return p;
+}
+
+// Drops the page's connection and resolves once it has rejoined.
+function rejoin(p: Page): Promise<void> {
+	return p.evaluate(
+		() =>
+			new Promise<void>((resolve) => {
+				const main = document.querySelector("[data-phx-main]") as Element;
+				let dropped = false;
+				new MutationObserver(() => {
+					if (!main.classList.contains("phx-connected")) dropped = true;
+					else if (dropped) resolve();
+				}).observe(main, { attributes: true, attributeFilter: ["class"] });
+				const { liveSocket } = window as unknown as {
+					liveSocket: { disconnect: (cb: () => void) => void; connect: () => void };
+				};
+				liveSocket.disconnect(() => liveSocket.connect());
+			}),
+	);
+}

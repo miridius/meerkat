@@ -47,71 +47,12 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
   end
 
   describe "toolbar clamps and validators" do
-    test "font size clamps into [9, 28]" do
-      assert ReviewLive.clamp_font_size_for_test(13) == 13
-      assert ReviewLive.clamp_font_size_for_test(1) == 9
-      assert ReviewLive.clamp_font_size_for_test(-5) == 9
-      assert ReviewLive.clamp_font_size_for_test(28) == 28
-      assert ReviewLive.clamp_font_size_for_test(99) == 28
-    end
-
     test "tab size allows only 2, 4, 8 — anything else falls back to 2" do
       assert ReviewLive.clamp_tab_size_for_test(2) == 2
       assert ReviewLive.clamp_tab_size_for_test(4) == 4
       assert ReviewLive.clamp_tab_size_for_test(8) == 8
       assert ReviewLive.clamp_tab_size_for_test(3) == 2
       assert ReviewLive.clamp_tab_size_for_test(16) == 2
-    end
-
-    test "settings.load validators keep defaults on junk" do
-      defaults = %{
-        diff_mode: "split",
-        wrap_lines: true,
-        font_size_px: 13,
-        tab_size: 2,
-        rulers: true,
-        ruler_columns: [80, 110]
-      }
-
-      assert ReviewLive.valid_settings_for_test(%{}, defaults) == defaults
-
-      assert ReviewLive.valid_settings_for_test(
-               %{
-                 "diff_mode" => "unified",
-                 "wrap_lines" => false,
-                 "font_size_px" => 20,
-                 "tab_size" => 4,
-                 "rulers" => false,
-                 "ruler_columns" => [120, 1, 999, 120]
-               },
-               defaults
-             ) == %{
-               diff_mode: "unified",
-               wrap_lines: false,
-               font_size_px: 20,
-               tab_size: 4,
-               rulers: false,
-               ruler_columns: [1, 120, 999]
-             }
-
-      assert ReviewLive.valid_settings_for_test(%{"ruler_columns" => []}, defaults).ruler_columns ==
-               []
-
-      for junk <- [[0], [1000], [80, "110"], [80.5], "80, 110", nil] do
-        assert ReviewLive.valid_settings_for_test(%{"ruler_columns" => junk}, defaults) ==
-                 defaults
-      end
-
-      assert ReviewLive.valid_settings_for_test(
-               %{
-                 "diff_mode" => " sideways",
-                 "wrap_lines" => "yes",
-                 "font_size_px" => "big",
-                 "tab_size" => 7,
-                 "rulers" => "no"
-               },
-               defaults
-             ) == defaults
     end
 
     test "the rulers field takes whole columns from 1 to 999, split by commas or spaces" do
