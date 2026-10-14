@@ -85,9 +85,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    diff, and meerkat never reads its content.
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
-   The exception is a hunk meerkat splits where a run removes and
-   adds different numbers of lines, to pair them for intra-line
-   highlighting.
+   The exception is a hunk meerkat splits where a run both removes
+   and adds lines, but different numbers of each, to pair them for
+   intra-line highlighting.
    In Split view, buttons that reveal hidden context lines around
    and between hunks appear only in the right-hand (new-side)
    gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
