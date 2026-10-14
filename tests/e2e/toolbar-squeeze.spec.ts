@@ -83,6 +83,8 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 					.evaluate((el) => ({ shown: el.clientWidth, full: el.scrollWidth }));
 				expect(title.full, `at ${width}px the title is cut short`).toBeGreaterThan(title.shown);
 			}
+			const head = await page.locator(".branch-head").evaluate((el) => el.clientWidth);
+			expect(head, `at ${width}px some of the head branch shows`).toBeGreaterThan(30);
 		}
 		expect(seen, "every step was needed somewhere between 2400px and 280px").toEqual(SQUEEZE_STEPS);
 

@@ -854,6 +854,11 @@ a.chip-link:hover .chip-value {
 .diff-toolbar[data-squeeze~="head"] .branch-base {
   flex: 0 0 0;
 }
+/* The head branch keeps a few characters; past that its chip overflows,
+   and the hook wraps the toolbar. */
+.diff-toolbar[data-squeeze~="head"] .branch-head {
+  min-width: 6ch;
+}
 .diff-toolbar[data-squeeze]:not([data-squeeze~="head"]) .branch-head,
 .diff-toolbar .chip-arrow {
   flex-shrink: 0;
