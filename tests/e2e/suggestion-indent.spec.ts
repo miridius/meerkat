@@ -8,12 +8,13 @@ import { expect, test } from "./lib/test";
 // themselves are covered by assets/ts/cmIndent.test.ts and
 // assets/ts/clojureIndent.test.ts.
 
-const PY = `class A:
-    def f(self, x):
-        if x:
-            y = x + 1
-            return y
-        return 0
+const CLJ = `(ns demo.core)
+
+(defn handler [req]
+  (let [x (:x req)
+        y 2]
+    (when (pos? x)
+      (println "x" x))))
 `;
 
 function newLine(fileSection: Locator, n: number): Locator {
@@ -31,26 +32,26 @@ async function dragLines(page: Page, fileSection: Locator, from: number, to: num
 	await page.mouse.up();
 }
 
-test("Enter in a suggestion on lines inside a function indents as in the file", async ({ page }) => {
-	const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "app.py": PY } }) });
+test("Enter in a Clojure suggestion on lines inside a form indents as in the file", async ({ page }) => {
+	const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "src/demo/core.clj": CLJ } }) });
 	try {
 		await page.goto(meerkat.url);
-		const fileSection = page.locator(".file-section").filter({ hasText: "app.py" });
-		await dragLines(page, fileSection, 4, 5);
-		const form = fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="5"] .comment-form');
+		const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
+		await dragLines(page, fileSection, 5, 6);
+		const form = fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="6"] .comment-form');
 		await form.getByRole("button", { name: /^Suggestion$/ }).click();
 		const lines = form.locator(".code-host .cm-line");
 		await expect(lines).toHaveCount(2);
-		// The Python pack has joined once `return` is highlighted.
-		await expect(lines.locator("span", { hasText: /^return$/ })).toHaveCount(1);
+		// The Clojure pack has joined once `when` is highlighted.
+		await expect(lines.locator("span", { hasText: /^when$/ })).toHaveCount(1);
 
 		await lines.first().click();
 		await page.keyboard.press("End");
 		await page.keyboard.press("Enter");
-		// Twelve spaces, as in the file's `if` body: alone, the lines read
-		// as top-level code, and CodeMirror's unit is two spaces, not four.
-		// toHaveText would collapse the spaces.
-		await expect.poll(() => lines.nth(1).evaluate((el) => el.textContent)).toBe(" ".repeat(12));
+		// Four spaces, the let's body, whose opener sits above the editor's
+		// lines: alone, `y 2]` closes nothing. toHaveText would collapse the
+		// spaces.
+		await expect.poll(() => lines.nth(1).evaluate((el) => el.textContent)).toBe(" ".repeat(4));
 	} finally {
 		await meerkat.kill();
 	}
