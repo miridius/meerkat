@@ -6,8 +6,8 @@ import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // The browser seam of moved-code highlighting: DiffViewer.svelte tints
-// a moved block's rows and puts an arrow over each line's +/− mark, the
-// first linking to its counterpart, in a table @git-diff-view
+// a moved block's rows and puts an arrow over each line's +/− mark, each
+// a button linking to its counterpart, in a table @git-diff-view
 // re-renders. Finding the moves is covered by the Meerkat.Moves tests.
 
 const helper = (n: number) =>
@@ -38,17 +38,19 @@ const NEW_MOVED = [55, 56, 57, 58, 59].map((n) => `new:${n}`);
 const OLD_MOVED = [6, 7, 8, 9, 10].map((n) => `old:${n}`);
 const EXPECTED = {
 	tinted: [...NEW_MOVED, ...OLD_MOVED].sort(),
-	arrows: [...NEW_MOVED.map((l) => `${l} →`), ...OLD_MOVED.map((l) => `${l} ←`)].sort(),
-	links: ["new:55", "old:6"],
+	arrows: [
+		...NEW_MOVED.map((l) => `${l} → Moved from util.ts lines 6-10`),
+		...OLD_MOVED.map((l) => `${l} ← Moved to util.ts lines 55-59`),
+	].sort(),
 	marks: ["new:32 +", "old:37 -"],
 	drawn: true,
 };
 const PAIR_0_TINT = "rgba(96, 165, 250, 0.18)";
 const FLASH = "rgba(88, 166, 255, 0.35)";
 
-// The `side:line` of each tinted code cell, of each arrow with its text,
-// of each link and of each visible +/− mark with its text, and whether
-// each tinted cell draws the tint.
+// The `side:line` of each tinted code cell, of each arrow button with
+// its text and name, and of each visible +/− mark with its text, and
+// whether each tinted cell draws the tint.
 function movedState(file: Locator) {
 	return file.evaluate((root, tint) => {
 		const lineOf = (tr: Element, side: string) =>
@@ -70,20 +72,27 @@ function movedState(file: Locator) {
 		);
 		return {
 			tinted: cells.map(where).sort(),
-			arrows: Array.from(root.querySelectorAll(".moved-arrow"), (a) => `${where(a)} ${a.textContent}`).sort(),
-			links: Array.from(root.querySelectorAll(".moved-badge"), where).sort(),
+			arrows: Array.from(
+				root.querySelectorAll("button.moved-arrow"),
+				(a) => `${where(a)} ${a.textContent} ${a.getAttribute("aria-label")}`,
+			).sort(),
 			marks: marks.map((m) => `${where(m)} ${m.textContent?.trim()}`).sort(),
 			drawn: cells.every((td) => getComputedStyle(td).backgroundImage.includes(tint)),
 		};
 	}, PAIR_0_TINT);
 }
 
-// Clicks the old block's link, and returns the box-shadow its
-// counterpart's first code cell draws in the same task: the flash,
-// which lasts only 1.6s, starts synchronously with the click.
+// Clicks the old block's first arrow, and returns the box-shadow its
+// counterpart's second code cell draws in the frame the flash starts:
+// the jump round-trips through the server, and the flash lasts only 1.6s.
 function flashOnClick(file: Locator) {
-	return file.evaluate((root) => {
-		(root.querySelector(".moved-badge") as HTMLElement).click();
+	return file.evaluate(async (root) => {
+		(root.querySelector(".moved-arrow") as HTMLElement).click();
+		const deadline = performance.now() + 3000;
+		while (!Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0)) {
+			if (performance.now() > deadline) throw new Error("no flash");
+			await new Promise((r) => requestAnimationFrame(r));
+		}
 		const tr = root.querySelector(
 			'tr.diff-line:has(td.diff-line-new-num [data-line-num="56"], [data-line-new-num="56"])',
 		) as Element;
@@ -92,20 +101,24 @@ function flashOnClick(file: Locator) {
 	});
 }
 
-// Clicks the old block's link, then a visible Expand button in the same
-// task, and returns the line numbers of the cells still flashing two
-// frames later, well inside the 1.6s flash.
+// Clicks the old block's first arrow, then, in the frame the flash
+// starts, a visible Expand button, and returns the line numbers of the
+// cells still flashing two frames later, well inside the 1.6s flash.
 function expandDuringFlash(file: Locator) {
 	return file.evaluate(async (root) => {
-		(root.querySelector(".moved-badge") as HTMLElement).click();
+		const flashing = () => Array.from(root.querySelectorAll("td")).filter((td) => td.getAnimations().length > 0);
+		(root.querySelector(".moved-arrow") as HTMLElement).click();
+		const deadline = performance.now() + 3000;
+		while (flashing().length === 0) {
+			if (performance.now() > deadline) throw new Error("no flash");
+			await new Promise((r) => requestAnimationFrame(r));
+		}
 		const expand = Array.from(
 			root.querySelectorAll<HTMLElement>('td.diff-line-hunk-action button[title^="Expand"]'),
 		).find((b) => b.checkVisibility());
 		(expand as HTMLElement).click();
 		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-		return Array.from(root.querySelectorAll("td"))
-			.filter((td) => td.getAnimations().length > 0)
-			.map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
+		return flashing().map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
 	});
 }
 
@@ -215,7 +228,7 @@ test("each moved line's arrow sits in the +/− column on screen, clear of code,
 	}
 });
 
-test("a moved block's first arrow says where the code went, jumps to it and stays out of copied code", async ({
+test("every moved line's arrow is a button that says where the code went and jumps to it by mouse or keyboard", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
@@ -224,19 +237,33 @@ test("a moved block's first arrow says where the code went, jumps to it and stay
 		await page.setViewportSize({ width: 1000, height: 400 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
-		const link = file.getByRole("button", { name: "Moved to util.ts lines 55-59" });
-		await expect(link).toBeVisible();
-		await expect(link).toHaveText("←");
-		await expect(link).toHaveAttribute("title", "Moved to util.ts lines 55-59");
-		await link.hover();
-		await expect(link).toHaveCSS("background-color", "rgb(48, 54, 61)");
-		await expect(file.getByRole("button", { name: "Moved from util.ts lines 6-10" })).toHaveText("→");
+		const oldArrows = file.getByRole("button", { name: "Moved to util.ts lines 55-59", exact: true });
+		await expect(oldArrows).toHaveCount(5);
+		await expect(oldArrows).toHaveText(Array(5).fill("←"));
+		await expect(oldArrows.nth(2)).toHaveAttribute("title", "Moved to util.ts lines 55-59");
+		await expect(file.getByRole("button", { name: "Moved from util.ts lines 6-10", exact: true })).toHaveText(
+			Array(5).fill("→"),
+		);
+		await oldArrows.nth(2).hover();
+		await expect(oldArrows.nth(2)).toHaveCSS("background-color", "rgb(48, 54, 61)");
 
 		const counterpart = file.locator("td.diff-line-new-num:has(span[data-line-num='55'])");
+		const scrollToTop = () => page.evaluate(() => window.scrollTo(0, 0));
 		await expect(counterpart).not.toBeInViewport();
-		await link.click();
+		await oldArrows.last().click();
 		await expect(counterpart).toBeInViewport();
 		await expect(file.locator("tr.meerkat-form-row")).toHaveCount(0);
+
+		// Tab moves from one arrow to the next, which shows the focus ring,
+		// and Enter jumps.
+		await scrollToTop();
+		await oldArrows.first().focus();
+		await page.keyboard.press("Tab");
+		await expect(oldArrows.nth(1)).toBeFocused();
+		await expect(oldArrows.nth(1)).toHaveCSS("box-shadow", /rgba\(88, 166, 255, 0\.5\)/);
+		await expect(counterpart).not.toBeInViewport();
+		await page.keyboard.press("Enter");
+		await expect(counterpart).toBeInViewport();
 
 		// Code copied across the moved lines leaves the arrows out.
 		const codeOn = (line: number) =>
@@ -252,6 +279,42 @@ test("a moved block's first arrow says where the code went, jumps to it and stay
 		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
 		expect(copied).toContain("helper2(input");
 		expect(copied).not.toMatch(/[←→]/);
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("an arrow whose counterpart's file is collapsed opens that file and jumps to the lines", async ({ page }) => {
+	// helper2 moves from a.ts to the end of b.ts, as old lines 6-10 and
+	// new lines 5-9 with the blank first.
+	const fixture = makeFixture({ files: { "a.ts": [1, 2, 3].map(helper).join("\n"), "b.ts": helper(4) } });
+	fixture.git("commit", "-q", "-m", "base");
+	writeFileSync(join(fixture.dir, "a.ts"), [1, 3].map(helper).join("\n"));
+	writeFileSync(join(fixture.dir, "b.ts"), [4, 2].map(helper).join("\n"));
+	fixture.git("add", "a.ts", "b.ts");
+	const meerkat = await startMeerkat({ fixture });
+	try {
+		await page.goto(meerkat.url);
+		const target = page.locator(".file-section").filter({ hasText: "b.ts" });
+		const counterpart = target.locator("td.diff-line-new-num:has(span[data-line-num='5'])");
+		await expect(counterpart).toBeVisible();
+		await target.locator("button.file-row").click();
+		await expect(counterpart).toHaveCount(0);
+
+		const arrows = page.getByRole("button", { name: "Moved to b.ts lines 5-9", exact: true });
+		await expect(arrows).toHaveCount(5);
+		await arrows.nth(2).click();
+		await expect(counterpart).toBeInViewport();
+		const flashingRows = () =>
+			target.evaluate(
+				(root) =>
+					new Set(
+						Array.from(root.querySelectorAll("td"))
+							.filter((td) => td.getAnimations().length > 0)
+							.map((td) => td.closest("tr")),
+					).size,
+			);
+		await expect.poll(flashingRows).toBe(5);
 	} finally {
 		await meerkat.kill();
 	}

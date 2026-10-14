@@ -109,10 +109,11 @@ When the UI does open, the reviewer sees, top-to-bottom:
    takes in changed blank or short lines directly before or after it
    that a longer block hasn't taken, and counts once it spans 3 lines
    on either side. Each moved line shows an arrow in place of its
-   `+` / `−` mark: `→` on the new side, `←` on the old side. The
-   block's first arrow, titled with where the code moved, jumps to its
-   counterpart. Arrows show in both views with Wrap on or off, cover
-   no code, and stay out of copied code.
+   `+` / `−` mark: `→` on the new side, `←` on the old side. Each
+   arrow is a button, titled with where the code moved, that jumps to
+   the block's counterpart, first showing its file's diff if that file
+   is collapsed, filtered out or rendered. Arrows show in both views with Wrap on or
+   off, cover no code, and stay out of copied code.
 8. **Decision footer**, sticky at the bottom — Cancel, Post to
    GitHub (only when `state.pr` is set and not precommit mode),
    Send Feedback, Approve, plus a "N comments" running counter

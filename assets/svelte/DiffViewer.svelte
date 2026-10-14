@@ -1069,10 +1069,11 @@
   // Moved-line highlighting + jump arrows. Each block of moved lines
   // gets a coloured background (4 colors cycled by pairId) on the
   // covered rows, and an arrow in place of each line's +/− mark: → on
-  // the new side, ← on the old. The first line's arrow is a button
-  // titled with where the code moved. Click dispatches a
-  // document-level `meerkat-move-jump` event the sibling DiffViewers
-  // listen for so the target file scrolls into view and flashes.
+  // the new side, ← on the old. Each arrow is a button titled with
+  // where the code moved. A click asks the server to show the
+  // counterpart's file; app.js then dispatches a document-level
+  // `meerkat-move-jump` event the DiffViewers listen for, so the target
+  // lines scroll into view and flash.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
@@ -1106,7 +1107,7 @@
       const pairClass = `moved-pair-${block.pair_id % 4}`;
       const side = block.side === "old" ? "old" : "new";
       for (let ln = block.line_start; ln <= block.line_end; ln++) {
-        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row, i) => {
+        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row) => {
           row.classList.add("moved-line", pairClass);
           const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
           if (!td) return;
@@ -1116,40 +1117,32 @@
           const mark = td.querySelector(".diff-line-content-operator");
           if (!mark) return;
           mark.classList.add("moved-mark");
-          mark.append(movedArrow(block, pairClass, ln === block.line_start && i === 0));
+          mark.append(movedArrow(block, pairClass));
         });
       }
     }
   }
 
-  function movedArrow(block: MovedBlock, pairClass: string, link: boolean): HTMLElement {
-    const arrow = document.createElement(link ? "button" : "span");
+  function movedArrow(block: MovedBlock, pairClass: string): HTMLButtonElement {
+    const arrow = document.createElement("button");
+    arrow.type = "button";
     arrow.className = `moved-arrow ${pairClass}`;
     arrow.textContent = block.side === "old" ? "←" : "→";
-    if (link) {
-      const badge = arrow as HTMLButtonElement;
-      badge.type = "button";
-      badge.classList.add("moved-badge");
-      const lines =
-        block.to_line_start === block.to_line_end
-          ? `line ${block.to_line_start}`
-          : `lines ${block.to_line_start}-${block.to_line_end}`;
-      badge.title = `Moved ${block.side === "old" ? "to" : "from"} ${block.to_file} ${lines}`;
-      badge.setAttribute("aria-label", badge.title);
-      badge.addEventListener("click", (e) => {
-        e.stopPropagation();
-        document.dispatchEvent(
-          new CustomEvent("meerkat-move-jump", {
-            detail: {
-              fileName: block.to_file,
-              side: block.to_side,
-              lineStart: block.to_line_start,
-              lineEnd: block.to_line_end,
-            },
-          }),
-        );
+    const lines =
+      block.to_line_start === block.to_line_end
+        ? `line ${block.to_line_start}`
+        : `lines ${block.to_line_start}-${block.to_line_end}`;
+    arrow.title = `Moved ${block.side === "old" ? "to" : "from"} ${block.to_file} ${lines}`;
+    arrow.setAttribute("aria-label", arrow.title);
+    arrow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      live.pushEvent("moved.jump", {
+        file_name: block.to_file,
+        side: block.to_side,
+        line_start: block.to_line_start,
+        line_end: block.to_line_end,
       });
-    }
+    });
     return arrow;
   }
 
@@ -1170,17 +1163,22 @@
     movedFlash = [];
   }
 
-  // Listen for jump events from sibling DiffViewers. If the event's
-  // fileName matches THIS file, scroll the target line into view and
-  // flash a temporary highlight so the reviewer can spot the
-  // counterpart of a moved block they just clicked.
+  // Listen for jump events to a moved block's counterpart. If the
+  // event's fileName matches THIS file and its lines are rendered,
+  // scroll them into view, flash a temporary highlight so the reviewer
+  // can spot them, and cancel the event to tell app.js it landed.
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {
       const ev = e as CustomEvent<{ fileName: string; side: "old" | "new"; lineStart: number; lineEnd: number }>;
       if (!ev.detail || ev.detail.fileName !== file.file_name) return;
+      // live_svelte unmounts a removed viewer only at the next
+      // `phx:page-loading-stop`, so a collapsed file's old viewer still
+      // listens, over rows no longer on the page.
+      if (!diffContainer?.isConnected) return;
       const rows = anchorRowsFor(ev.detail.side, ev.detail.lineStart);
       if (rows.length === 0) return;
+      ev.preventDefault();
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       // Flash the target side's cells for 1.6s, as an inset shadow over
@@ -1513,24 +1511,20 @@
     position: relative;
     color: transparent;
   }
+  /* A borderless app.css button: it keeps the pointer and focus ring. */
   :global(.moved-arrow) {
     position: absolute;
     inset: 0;
     padding: 0;
     border: 0;
-    border-radius: 3px;
     background: none;
-    font: inherit;
     font-weight: bold;
     text-align: center;
     text-indent: 0;
   }
-  :global(.moved-badge) {
-    cursor: pointer;
-  }
   /* Outranks app.css's `button:hover:not(:disabled)`. */
-  :global(.diff-content .moved-badge:hover) {
-    background: #30363d;
+  :global(.diff-content .moved-arrow:hover) {
+    background: var(--border);
   }
   :global(.moved-arrow.moved-pair-0) { color: rgb(96, 165, 250); }
   :global(.moved-arrow.moved-pair-1) { color: rgb(192, 132, 252); }
