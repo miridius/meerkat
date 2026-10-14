@@ -30,37 +30,13 @@ export function anchorContext(source: string, start: number, end: number): FileC
 	};
 }
 
-/** The indent unit `text` is written in: a tab when more lines start
- *  with one than step in by spaces, else the commonest step of 2 to 8
- *  spaces between consecutive lines (the smaller on a tie). Smaller steps
- *  are alignment, as in Clojure. Null when the text has none. */
-export function detectIndentUnit(text: string): string | null {
-	let tabs = 0;
-	let previous = 0;
-	const steps = new Map<number, number>();
-	for (const line of text.split("\n")) {
-		if (line.trim() === "") continue;
-		if (line.startsWith("\t")) {
-			tabs++;
-			continue;
-		}
-		const width = line.length - line.trimStart().length;
-		const step = width - previous;
-		if (step >= 2 && step <= 8) steps.set(step, (steps.get(step) ?? 0) + 1);
-		previous = width;
-	}
-	let best: number | null = null;
-	let bestCount = 0;
-	let votes = 0;
-	for (const [step, count] of steps) {
-		votes += count;
-		if (count > bestCount || (count === bestCount && best !== null && step < best)) {
-			best = step;
-			bestCount = count;
-		}
-	}
-	if (tabs > votes) return "\t";
-	return best === null ? null : " ".repeat(best);
+/** How the editor indents a new line. Clojure indents by its rules over
+ *  the whole file, when the editor holds lines of one. Other languages
+ *  keep the line's indentation: their rules see only the editor's lines,
+ *  cut from the code around them, and misjudge it. */
+export function indentation(language: string, context: FileContext | undefined, support: Compartment): Extension {
+	if (language !== "clojure") return Prec.high(indentService.of(() => null));
+	return context ? contextIndentation(context, support) : [];
 }
 
 /** The fields CodeMirror's commands pass in an IndentContext's options.

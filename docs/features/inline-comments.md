@@ -88,11 +88,9 @@ When `finding_type === "suggestion"`:
   diff's, a ruler beyond the editor's width shows once a line
   reaches it and the editor is scrolled there. Changing the setting
   updates open editors.
-- Enter indents the new line as it would sit in the file: the
-  language's rules see the file around the anchored lines, and indent
-  in the file's unit (tabs, or its commonest step of 2 to 8 spaces). A
-  line the language re-indents as it is typed, such as a closing `}`,
-  indents the same way. Clojure follows cljfmt's default indentation.
+- In Clojure, Enter indents the new line as it would sit in the file,
+  by cljfmt's default indentation over the file around the anchored
+  lines. In other languages, Enter keeps the line's indentation.
 - The caret is a 2px gold bar. The selection is a purple tint drawn
   under the text, visible on the caret's line too, and dimmer while
   the editor is unfocused. Only a focused editor marks the caret's
