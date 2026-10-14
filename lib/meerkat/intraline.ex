@@ -18,6 +18,8 @@ defmodule Meerkat.Intraline do
        longer side. These still render plain — there is no paired
        counterpart to diff against.
 
+  The first part's header gives git's range for the whole hunk.
+
   Context, already-matched runs and runs with only deletions or only
   additions pass through unchanged.
   """
@@ -33,8 +35,8 @@ defmodule Meerkat.Intraline do
     case String.split(hunk, "\n", parts: 2) do
       [header, body_with_trailer] ->
         case parse_header(header) do
-          {:ok, old_start, new_start} ->
-            split_body(hunk, body_with_trailer, old_start, new_start)
+          {:ok, range} ->
+            split_body(hunk, body_with_trailer, range)
 
           :error ->
             [hunk]
@@ -50,9 +52,9 @@ defmodule Meerkat.Intraline do
          [new_part | _] <- String.split(rest2, " "),
          "-" <> old_body <- old_part,
          "+" <> new_body <- new_part,
-         {old_start, _} <- Integer.parse(hd(String.split(old_body, ","))),
-         {new_start, _} <- Integer.parse(hd(String.split(new_body, ","))) do
-      {:ok, old_start, new_start}
+         {:ok, old_start, old_count} <- parse_range(old_body),
+         {:ok, new_start, new_count} <- parse_range(new_body) do
+      {:ok, {old_start, old_count, new_start, new_count}}
     else
       _ -> :error
     end
@@ -60,7 +62,24 @@ defmodule Meerkat.Intraline do
 
   defp parse_header(_), do: :error
 
-  defp split_body(orig_hunk, body, old_start, new_start) do
+  # Git leaves out a count of one, as in `@@ -5 +5,2 @@`.
+  defp parse_range(range) do
+    case String.split(range, ",", parts: 2) do
+      [start] -> parse_range(start, "1")
+      [start, count] -> parse_range(start, count)
+    end
+  end
+
+  defp parse_range(start, count) do
+    with {start, ""} <- Integer.parse(start),
+         {count, ""} <- Integer.parse(count) do
+      {:ok, start, count}
+    else
+      _ -> :error
+    end
+  end
+
+  defp split_body(orig_hunk, body, {old_start, _, new_start, _} = range) do
     classified =
       body
       |> String.split("\n")
@@ -89,10 +108,18 @@ defmodule Meerkat.Intraline do
           ])
       end
 
+    # The parts follow each other with no hidden lines between them, so
+    # the review page shows only the first part's header, which carries
+    # git's range for the whole hunk.
     case out do
       [] -> [orig_hunk]
-      _ -> out
+      [first | rest] -> [with_range(first, range) | rest]
     end
+  end
+
+  defp with_range(part, range) do
+    [_header, body] = String.split(part, "\n", parts: 2)
+    header(range) <> "\n" <> body
   end
 
   defp drop_trailing_empty([]), do: []
@@ -208,6 +235,9 @@ defmodule Meerkat.Intraline do
       end)
 
     body_text = text_rev |> Enum.reverse() |> Enum.join("\n")
-    "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@\n#{body_text}\n"
+    header({old_start, old_count, new_start, new_count}) <> "\n#{body_text}\n"
   end
+
+  defp header({old_start, old_count, new_start, new_count}),
+    do: "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@"
 end
