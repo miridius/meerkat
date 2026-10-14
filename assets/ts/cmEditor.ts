@@ -6,7 +6,8 @@ import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
 import { indentation } from "./cmIndent.js";
-import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
+import { getLoadedLanguage, preloadLanguages, SUPPORTED_LANGUAGES } from "./cmLang.js";
+import { editorKeys } from "./editorKeys.js";
 import { rulerBackground } from "./rulers.js";
 
 /** Rose Pine Moon — a dark-medium variant that reads well inside the
@@ -225,6 +226,9 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 		// Tab indents the selection, Shift+Tab dedents — overrides the
 		// default "move focus" behaviour for Tab inside the editor.
 		keymap.of([indentWithTab]),
+		// The IDE-style hotkeys replace basicSetup's bindings for the
+		// same keys, such as ⌥↑ move line.
+		Prec.high(editorKeys(options.language, SUPPORTED_LANGUAGES.includes(options.language))),
 		// Form-level shortcuts (submit / cancel) need `Prec.high` so they
 		// beat basicSetup's defaultKeymap, which binds Mod-Enter to
 		// `insertBlankLine` and Escape to `simplifySelection` — both of
