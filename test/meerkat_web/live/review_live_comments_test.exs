@@ -64,6 +64,126 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
     assert [%{anchor: %{start_line: 2, end_line: 3}}] = state.open_forms
   end
 
+  describe "a Clojure suggestion" do
+    @clj_file %{
+      @plain_file
+      | file_name: "src/demo.clj",
+        old_content: "(ns demo)\n(defn f [x]\n  (inc x))\n",
+        new_content: "(ns demo)\n(defn f [x]\n  (dec x))\n"
+    }
+
+    setup do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-cljfmt")
+      File.mkdir_p!(dir)
+      calls = Path.join(dir, "calls")
+      prev_path = System.get_env("PATH")
+
+      on_exit(fn ->
+        System.put_env("PATH", prev_path)
+        File.rm_rf!(dir)
+      end)
+
+      # A hook that records its working directory and each file it is
+      # given, and formats by putting `(inc x)` and `(dec x)` at column 4.
+      File.write!(Path.join(dir, "clj-paren-repair-claude-hook"), """
+      #!/bin/sh
+      file=$(sed 's/.*"file_path":"\\([^"]*\\)".*/\\1/')
+      pwd -P >> '#{calls}'
+      cat "$file" >> '#{calls}'
+      echo '---' >> '#{calls}'
+      if [ "$2" = --cljfmt ]; then
+        sed -e 's/^ *(inc x)/    (inc x)/' -e 's/^ *(dec x)/    (dec x)/' "$file" > "$file.new"
+        mv "$file.new" "$file"
+      fi
+      """)
+
+      File.chmod!(Path.join(dir, "clj-paren-repair-claude-hook"), 0o755)
+      System.put_env("PATH", dir <> ":" <> prev_path)
+      %{calls: calls}
+    end
+
+    # `repo` with its symlinks resolved, as `pwd -P` prints it.
+    defp real_path(repo) do
+      {path, 0} = System.cmd("pwd", ["-P"], cd: repo)
+      String.trim_trailing(path)
+    end
+
+    test "is formatted on save inside the anchored side's file, when added and when edited",
+         %{conn: conn, calls: calls} do
+      repo = tmp_git_repo()
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "0",
+        "start_line" => "2",
+        "end_line" => "3",
+        "side" => "old"
+      })
+
+      submit_comment(
+        view,
+        "inline:0:old:2-3",
+        "Why\n\n```clojure\n(defn f [x]\n(inc x))\n```",
+        "suggestion"
+      )
+
+      assert [%{id: id, body: "Why\n\n```clojure\n(defn f [x]\n    (inc x))\n```"}] =
+               ReviewServer.get_state(rid).comments
+
+      # Repaired, then formatted, each inside the old file.
+      assert File.read!(calls) ==
+               String.duplicate("#{real_path(repo)}\n(ns demo)\n(defn f [x]\n(inc x))\n---\n", 2)
+
+      render_click(view, "comment_form.edit", %{"surface" => "inline", "id" => id})
+
+      submit_comment(
+        view,
+        "inline:0:old:2-3:edit:#{id}",
+        "\n\n```clojure\n(defn f [x]\n(dec x))\n```",
+        "suggestion"
+      )
+
+      assert [%{body: "\n\n```clojure\n(defn f [x]\n    (dec x))\n```"}] =
+               ReviewServer.get_state(rid).comments
+    end
+
+    test "on a file comment is formatted on its own", %{conn: conn, calls: calls} do
+      repo = tmp_git_repo()
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+
+      render_click(view, "comment_form.show_file", %{"file_index" => "0"})
+      submit_comment(view, "file:0", "```\n\n```clojure\n(inc x)\n```", "suggestion")
+
+      assert [%{body: "```\n\n```clojure\n    (inc x)\n```"}] =
+               ReviewServer.get_state(rid).file_comments
+
+      assert File.read!(calls) == String.duplicate("#{real_path(repo)}\n(inc x)---\n", 2)
+    end
+
+    test "is left alone in other languages, other finding types and global comments",
+         %{conn: conn, calls: calls} do
+      repo = tmp_git_repo()
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+
+      render_click(view, "comment_form.show_file", %{"file_index" => "0"})
+      submit_comment(view, "file:0", "\n\n```rust\n(inc x)\n```", "suggestion")
+      render_click(view, "comment_form.show_file", %{"file_index" => "0"})
+      submit_comment(view, "file:0", "\n\n```clojure\n(inc x)\n```")
+      render_click(view, "comment_form.show_global", %{})
+      submit_comment(view, "global", "\n\n```clojure\n(inc x)\n```", "suggestion")
+
+      state = ReviewServer.get_state(rid)
+
+      assert Enum.map(state.file_comments, & &1.body) == [
+               "\n\n```rust\n(inc x)\n```",
+               "\n\n```clojure\n(inc x)\n```"
+             ]
+
+      assert [%{body: "\n\n```clojure\n(inc x)\n```"}] = state.global_comments
+      refute File.exists?(calls)
+    end
+  end
+
   test "commit-msg gutter form opens for block ranges", %{conn: conn} do
     state = %ReviewState{
       files: [@plain_file],

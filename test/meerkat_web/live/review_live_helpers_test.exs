@@ -126,6 +126,9 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     test "unknown side, missing content, or missing file yield empty" do
       assert ReviewLive.extract_snippet_for_test(@snip_file, 1, 1, "middle") == ""
       assert ReviewLive.extract_snippet_for_test(%{file_name: "f"}, 1, 1, "new") == ""
+      assert ReviewLive.extract_snippet_for_test(%{file_name: "f"}, 1, 1, :old) == ""
+      assert ReviewLive.extract_snippet_for_test(%{new_content: nil}, 1, 1, "new") == ""
+      assert ReviewLive.extract_snippet_for_test(%{old_content: nil}, 1, 1, "old") == ""
       assert ReviewLive.extract_snippet_for_test(nil, 1, 1, "new") == ""
     end
   end
