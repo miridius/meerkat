@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { insertNewlineAndIndent } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { indentOnInput, indentUnit, LanguageSupport } from "@codemirror/language";
+import { LanguageSupport } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState, type Extension, type Transaction } from "@codemirror/state";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
-import { anchorContext, contextIndentation, detectIndentUnit } from "./cmIndent";
+import { anchorContext, indentation } from "./cmIndent";
 
 describe("anchorContext", () => {
 	const source = "one\ntwo\nthree\nfour\n";
@@ -23,38 +21,25 @@ describe("anchorContext", () => {
 	});
 });
 
-describe("detectIndentUnit", () => {
-	test("finds four spaces", () => {
-		expect(detectIndentUnit("class A:\n    def f(self):\n        return 1\n")).toBe("    ");
-	});
+const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
 
-	test("finds a tab", () => {
-		expect(detectIndentUnit("func f() {\n\tif a {\n\t\tb()\n\t}\n}\n")).toBe("\t");
-	});
-
-	test("ignores one-column alignment steps, as in Clojure", () => {
-		expect(detectIndentUnit("(defn f [a]\n  (foo a\n   b)\n  (let [x 1]\n    x))")).toBe("  ");
-	});
-
-	test("prefers the smaller step on a tie", () => {
-		expect(detectIndentUnit("a\n    b\nc\n  d")).toBe("  ");
-	});
-
-	test("finds none in flat text", () => {
-		expect(detectIndentUnit("a\nb\n")).toBeNull();
-	});
-});
-
-/** Press Enter at the end of line `line` of an editor holding lines
- *  `start..end` of `file`, and return the new line. */
-function enterIn(file: string, start: number, end: number, line: number, support: Extension): string {
-	const context = anchorContext(file, start, end);
-	const doc = file.split("\n").slice(start - 1, end).join("\n");
-	const language = new Compartment();
-	const unit = detectIndentUnit(file);
+/** Press Enter at the end of line `line` of an editor in `language`
+ *  holding lines `start..end` of `file`, and return the new line. */
+function enterIn(
+	file: string,
+	start: number,
+	end: number,
+	line: number,
+	language: string,
+	support: Extension,
+	withContext = true,
+): string {
+	const context = withContext ? anchorContext(file, start, end) : undefined;
+	const doc = file.split(/\r?\n/).slice(start - 1, end).join("\n");
+	const compartment = new Compartment();
 	let state = EditorState.create({
 		doc,
-		extensions: [language.of(support), contextIndentation(context, language), unit ? indentUnit.of(unit) : []],
+		extensions: [compartment.of(support), indentation(language, context, compartment)],
 	});
 	state = state.update({ selection: EditorSelection.cursor(state.doc.line(line).to) }).state;
 	let tr: Transaction | null = null;
@@ -63,22 +48,6 @@ function enterIn(file: string, start: number, end: number, line: number, support
 	return (tr as Transaction).state.doc.line(line + 1).text;
 }
 
-const PY = `class A:
-    def f(self, x):
-        if x:
-            y = x + 1
-            return y
-        return 0
-`;
-const GO = "package main\n\nfunc f(a bool) int {\n\tif a {\n\t\tb := 1\n\t\treturn b\n\t}\n\treturn 0\n}\n";
-const JS = `function f(a) {
-    if (a) {
-        const b = 1;
-        return b;
-    }
-    return 0;
-}
-`;
 const CLJ = `(ns demo.core)
 
 (defn handler [req]
@@ -89,53 +58,36 @@ const CLJ = `(ns demo.core)
                y))))
 `;
 
-describe("Enter in lines cut from a file", () => {
-	test("Python indents as inside the function", () => {
-		expect(enterIn(PY, 4, 5, 1, python())).toBe("            ");
-		expect(enterIn(PY, 3, 4, 1, python())).toBe("            ");
-	});
+const JS = `function f(a) {
+    if (a) {
+        const b = 1;
+        return b;
+    }
+}
+`;
 
-	test("Go indents with the file's tabs", () => {
-		expect(enterIn(GO, 5, 6, 1, go())).toBe("\t\t");
-		expect(enterIn(GO, 4, 5, 1, go())).toBe("\t\t");
-	});
-
-	test("JavaScript indents as inside the block", () => {
-		expect(enterIn(JS, 3, 4, 1, javascript())).toBe("        ");
-		expect(enterIn(JS, 2, 3, 1, javascript())).toBe("        ");
-	});
-
-	test("Clojure indents as inside the form", () => {
-		const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
+describe("Enter", () => {
+	test("in Clojure, indents as inside the form in the file", () => {
 		// After the binding vector the editor's lines close, the let's
 		// body: its opener sits above them.
-		expect(enterIn(CLJ, 5, 6, 1, clojure)).toBe("    ");
-		expect(enterIn(CLJ, 6, 7, 1, clojure)).toBe("      ");
-		expect(enterIn(CLJ, 6, 7, 2, clojure)).toBe("               ");
+		expect(enterIn(CLJ, 5, 6, 1, "clojure", clojure)).toBe("    ");
+		expect(enterIn(CLJ, 6, 7, 1, "clojure", clojure)).toBe("      ");
+		expect(enterIn(CLJ, 6, 7, 2, "clojure", clojure)).toBe("               ");
 	});
 
-	test("a file with CRLF line ends indents as one with LF", () => {
+	test("in Clojure, a file with CRLF line ends indents as one with LF", () => {
 		// Each `\r` before the editor's lines would shift positions by one.
-		const crlf = `${"a();\n".repeat(80)}${JS}`.replaceAll("\n", "\r\n");
-		expect(enterIn(crlf, 82, 83, 1, javascript())).toBe("        ");
+		const crlf = `${"(a)\n".repeat(80)}${CLJ}`.replaceAll("\n", "\r\n");
+		expect(enterIn(crlf, 85, 86, 1, "clojure", clojure)).toBe("    ");
 	});
 
-	test("without a language, keeps the line's indentation", () => {
-		expect(enterIn(PY, 4, 5, 1, [])).toBe("            ");
+	test("in Clojure without the file, indents by the editor's lines alone", () => {
+		expect(enterIn(CLJ, 6, 7, 2, "clojure", clojure, false)).toBe("               ");
 	});
-});
 
-test("typing a closer re-indents its line as in the file", () => {
-	const context = anchorContext(JS, 3, 4);
-	const language = new Compartment();
-	let state = EditorState.create({
-		doc: "        const b = 1;\n        return b;\n        ",
-		extensions: [language.of(javascript()), contextIndentation(context, language), indentUnit.of("    "), indentOnInput()],
+	test("in other languages, keeps the line's indentation", () => {
+		// JavaScript's own rules would indent the `if` body one level more.
+		expect(enterIn(JS, 2, 3, 1, "javascript", javascript())).toBe("    ");
+		expect(enterIn(JS, 3, 4, 1, "javascript", javascript())).toBe("        ");
 	});
-	state = state.update({
-		changes: { from: state.doc.length, insert: "}" },
-		selection: EditorSelection.cursor(state.doc.length + 1),
-		userEvent: "input.type",
-	}).state;
-	expect(state.doc.line(3).text).toBe("    }");
 });

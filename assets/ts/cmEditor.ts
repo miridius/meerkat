@@ -1,11 +1,11 @@
 import { indentWithTab } from "@codemirror/commands";
-import { HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState, type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
-import { contextIndentation, detectIndentUnit, type FileContext } from "./cmIndent.js";
+import { type FileContext, indentation } from "./cmIndent.js";
 import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
 import { rulerBackground } from "./rulers.js";
 
@@ -204,21 +204,13 @@ export interface CmEditorOptions {
 	onCancel?: () => void;
 }
 
-/** The indent unit the file, or without one the editor's text, is
- *  written in; CodeMirror's two spaces when it shows none. */
-function indentUnitOf(options: CmEditorOptions): Extension {
-	const { before = "", after = "" } = options.context ?? {};
-	const unit = detectIndentUnit(before + options.doc + after);
-	return unit ? indentUnit.of(unit) : [];
-}
-
 /** Mount a CodeMirror 6 editor into `parent` with this repo's standard
  *  extension set — `basicSetup` (history, line numbers, syntax highlight,
  *  bracket matching + auto-close, indent-on-input, search, autocomplete,
  *  multi-cursor, active line highlight, selection-match highlight) plus
  *  Tab-indents-selection, Rose Pine Moon theming, rulers, and the
  *  language's pack. Lines don't wrap, so the rulers sit at true columns.
- *  New lines indent as they would in the file, in its indent unit.
+ *  Enter indents as `indentation` says.
  *
  *  Returns the EditorView; destroy it with `.destroy()` on unmount. */
 export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): EditorView {
@@ -226,8 +218,7 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 	const extensions: Extension[] = [
 		basicSetup,
 		language.of(getLoadedLanguage(options.language) ?? []),
-		options.context ? contextIndentation(options.context, language) : [],
-		indentUnitOf(options),
+		indentation(options.language, options.context, language),
 		rosePineChrome,
 		rulers.of(rulersTheme(options.rulerColumns)),
 		syntaxHighlighting(rosePineHighlight),
