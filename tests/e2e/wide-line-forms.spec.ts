@@ -46,7 +46,7 @@ test("with Wrap off, inline forms and comments stay in view beside a long line i
 }) => {
 	const meerkat = await startMeerkat({ fixture: wideFixture() });
 	try {
-		await page.setViewportSize({ width: 1200, height: 900 });
+		await page.setViewportSize({ width: 600, height: 900 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
 		const wrap = page.getByRole("checkbox", { name: "Wrap" });
