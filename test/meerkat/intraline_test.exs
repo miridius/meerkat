@@ -82,6 +82,11 @@ defmodule Meerkat.IntralineTest do
            ]
   end
 
+  test "a line that is not a no-newline marker ends a run" do
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\nstray\n+x\n"
+    assert Intraline.split([hunk]) == [hunk]
+  end
+
   test "a no-newline marker after a context line stays in place" do
     hunk = "@@ -1,2 +1,2 @@\n-a\n+b\n c\n\\ No newline at end of file\n"
     assert Intraline.split([hunk]) == [hunk]

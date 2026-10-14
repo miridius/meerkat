@@ -195,6 +195,25 @@ defmodule Meerkat.Moves do
     end
   end
 
+  @doc false
+  # The lines of a hunk body, each as `{kind, line}` with `kind` one of
+  # `:context`, `:del`, `:add` or `:other` (any other line, such as a
+  # `\ No newline` marker). Like `@git-diff-view`, an empty line is
+  # context: git writes a blank context line that way under
+  # `diff.suppressBlankEmpty`. Only the empty string after the body's
+  # final newline is no line. `Meerkat.Intraline` shares it.
+  def hunk_lines(body) do
+    lines = String.split(body, "\n")
+    lines = if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
+    Enum.map(lines, &{hunk_line_kind(&1), &1})
+  end
+
+  defp hunk_line_kind(""), do: :context
+  defp hunk_line_kind(" " <> _), do: :context
+  defp hunk_line_kind("-" <> _), do: :del
+  defp hunk_line_kind("+" <> _), do: :add
+  defp hunk_line_kind(_), do: :other
+
   defp consume_line({:del, "-" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?- do
@@ -244,23 +263,4 @@ defmodule Meerkat.Moves do
       _ -> nil
     end
   end
-
-  @doc false
-  # The lines of a hunk body, each as `{kind, line}` with `kind` one of
-  # `:context`, `:del`, `:add` or `:other` (a `\ No newline` marker).
-  # Like `@git-diff-view`, an empty line is context: git writes a blank
-  # context line that way under `diff.suppressBlankEmpty`. Only the
-  # empty string after the body's final newline is no line.
-  # `Meerkat.Intraline` shares it.
-  def hunk_lines(body) do
-    lines = String.split(body, "\n")
-    lines = if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
-    Enum.map(lines, &{hunk_line_kind(&1), &1})
-  end
-
-  defp hunk_line_kind(""), do: :context
-  defp hunk_line_kind(" " <> _), do: :context
-  defp hunk_line_kind("-" <> _), do: :del
-  defp hunk_line_kind("+" <> _), do: :add
-  defp hunk_line_kind(_), do: :other
 end

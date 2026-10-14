@@ -122,7 +122,7 @@ defmodule Meerkat.Intraline do
   end
 
   defp collect_run([{kind, _} = line | rest], dels, adds) when kind in [:del, :add] do
-    {markers, rest} = Enum.split_while(rest, &match?({:other, _}, &1))
+    {markers, rest} = Enum.split_while(rest, &match?({:other, "\\" <> _}, &1))
 
     case kind do
       :del -> collect_run(rest, [[line | markers] | dels], adds)
