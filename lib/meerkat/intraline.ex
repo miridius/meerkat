@@ -20,8 +20,9 @@ defmodule Meerkat.Intraline do
 
   Context, already-matched runs and runs with only deletions or only
   additions stay in their hunk unsplit. Every hunk's header is rebuilt
-  as `@@ -a,b +c,d @@`, with git's line ranges but without the text
-  git puts after the second `@@`.
+  as `@@ -a,b +c,d @@`, without the text git puts after the second
+  `@@`. The first part's header gives git's range for the whole hunk;
+  each later part's header gives the range of its own lines.
   """
 
   alias Meerkat.Moves
@@ -52,7 +53,8 @@ defmodule Meerkat.Intraline do
       cur_new_start: new_start
     }
 
-    final = walk(Moves.hunk_lines(body), state)
+    lines = Moves.hunk_lines(body)
+    final = walk(lines, state)
 
     out =
       case final.current do
@@ -60,9 +62,16 @@ defmodule Meerkat.Intraline do
         cur -> [emit(Enum.reverse(cur), final.cur_old_start, final.cur_new_start) | final.acc]
       end
 
-    case out do
-      [] -> [orig_hunk]
-      _ -> Enum.reverse(out)
+    # The parts follow each other with no hidden lines between them, so
+    # the review page shows only the first part's header, which gives
+    # git's range for the whole hunk.
+    case Enum.reverse(out) do
+      [] ->
+        [orig_hunk]
+
+      [first | rest] ->
+        [_header, first_body] = String.split(first, "\n", parts: 2)
+        [header(lines, old_start, new_start) <> "\n" <> first_body | rest]
     end
   end
 
@@ -133,9 +142,13 @@ defmodule Meerkat.Intraline do
   defp collect_run(rest, dels, adds), do: {Enum.reverse(dels), Enum.reverse(adds), rest}
 
   defp emit(body, old_start, new_start) do
+    text = Enum.map_join(body, &(elem(&1, 1) <> "\n"))
+    "#{header(body, old_start, new_start)}\n#{text}"
+  end
+
+  defp header(body, old_start, new_start) do
     old_count = Enum.count(body, &(elem(&1, 0) in [:context, :del]))
     new_count = Enum.count(body, &(elem(&1, 0) in [:context, :add]))
-    text = Enum.map_join(body, &(elem(&1, 1) <> "\n"))
-    "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@\n#{text}"
+    "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@"
   end
 end
