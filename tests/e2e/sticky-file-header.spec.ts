@@ -8,11 +8,14 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 
 const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
-const WRAPPED_WIDTHS = [1150, 900, 600];
+// Narrow enough that the toolbar has moved Split / Unified and Wrap into
+// the ⚙ popover, which changes its height (see toolbar-squeeze.spec.ts).
+// It wraps only below about 230px, too narrow for the file header.
+const NARROW_WIDTHS = [900, 600];
 
 const SHORT_BRANCH = "fix/typo";
-// A branch name and commit subject long enough that the toolbar wraps
-// at 1400px, and short enough that it still fits one row at 1500px.
+// A branch name long enough that its chip clips it, with the toolbar
+// still taking no squeeze step at 1500px.
 const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
 
 function stickyFixture() {
@@ -88,7 +91,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	});
 	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
 
-	test(`the header is pinned on the first paint, the review spans the window, a long branch name is clipped, and narrowing it from ${ONE_ROW_WIDTH}px to ${WRAPPED_WIDTHS.join("px and ")}px re-pins the header below the wrapped toolbar`, async ({
+	test(`the header is pinned on the first paint, the review spans the window, a long branch name is clipped, and narrowing it from ${ONE_ROW_WIDTH}px to ${NARROW_WIDTHS.join("px and ")}px re-pins the header below the toolbar's new height`, async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
@@ -112,7 +115,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 					};
 				});
 
-				expect(published.hookMounted, "the bundle that carries the ToolbarHeight hook never loaded").toBe(
+				expect(published.hookMounted, "the bundle that carries the Toolbar hook never loaded").toBe(
 					false,
 				);
 				expect(
@@ -172,13 +175,13 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 				wide.toolbarH,
 			);
 
-			for (const width of WRAPPED_WIDTHS) {
+			for (const width of NARROW_WIDTHS) {
 				await page.setViewportSize({ width, height: 800 });
 				await expect
 					.poll(async () => (await probe(page)).toolbarH, {
-						message: `the toolbar wrapped onto more rows at ${width}px`,
+						message: `the toolbar's height changed at ${width}px`,
 					})
-					.toBeGreaterThan(ONE_ROW_H);
+					.not.toBe(ONE_ROW_H);
 
 				await afterNextFrame(page);
 				const narrow = await probe(page);
