@@ -19,6 +19,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   alias Meerkat.{
     ApprovalCache,
+    CljHover,
     Comment,
     Decision,
     GitHub,
@@ -67,6 +68,8 @@ defmodule MeerkatWeb.ReviewLive do
     # still wipes the drafts the broadcast would have wiped.
     done = done_view(Decision.current())
 
+    clj_hover = start_clj_hover(state.files, review_id, repo_path)
+
     {:ok,
      assign(socket,
        page_title: page_title(state),
@@ -113,10 +116,25 @@ defmodule MeerkatWeb.ReviewLive do
        # Pinned pending-answers banner. Best-effort: nil if no file
        # / malformed / wrong schema version. Cleared on any
        # terminal decision via PendingAnswers.clear/1.
-       pending_answers: PendingAnswers.load(repo_path)
+       pending_answers: PendingAnswers.load(repo_path),
+       # Whether Clojure files show hover docs, and whether they would
+       # but for a missing clj-kondo.
+       clj_hover: clj_hover.on,
+       clj_kondo_missing: clj_hover.kondo_missing
      )
      |> assign_settings(Settings.load())
      |> mount_pushes(done)}
+  end
+
+  # Whether the review has Clojure hover, its index started when it
+  # does. Hover needs a review server to key its index on, so an
+  # unbound review gets none.
+  defp start_clj_hover(files, review_id, repo_path) do
+    clojure? = Enum.any?(files, &CljHover.clojure_file?(&1.file_name))
+    kondo? = CljHover.Kondo.available?()
+    on? = clojure? and kondo? and review_id != "unbound"
+    if on?, do: {:ok, _pid} = CljHover.ensure_started(review_id, repo_path, files)
+    %{on: on?, kondo_missing: clojure? and not kondo?}
   end
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"
@@ -707,6 +725,23 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
+  ## --- Clojure hover ---
+
+  # Answered through `handle_async/3`, so a slow first hover doesn't
+  # hold up other events; a later hover's answer replaces an earlier one's.
+  def handle_event("clj.hover", params, %{assigns: %{clj_hover: true}} = socket) do
+    %{"id" => id, "file_index" => idx, "side" => side, "line" => line, "col" => col} = params
+    rid = socket.assigns.review_id
+    side = if side == "old", do: :old, else: :new
+
+    {:noreply,
+     start_async(socket, :clj_hover, fn ->
+       %{id: id, hover: CljHover.hover(rid, idx, side, line, col)}
+     end)}
+  end
+
+  def handle_event("clj.hover", _params, socket), do: {:noreply, socket}
+
   ## --- Decision ---
 
   def handle_event("decision.approve", _, socket) do
@@ -983,6 +1018,17 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, assign(socket, flash_error: msg)}
   end
 
+  @impl true
+  def handle_async(:clj_hover, {:ok, reply}, socket) do
+    {:noreply, push_event(socket, "clj:hover", reply)}
+  end
+
+  def handle_async(:clj_hover, {:exit, reason}, socket) do
+    # muex:ignore observability: log text only
+    IO.puts(:stderr, "meerkat: Clojure hover failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   ## --- Render ---
 
   @impl true
@@ -1048,6 +1094,7 @@ defmodule MeerkatWeb.ReviewLive do
         repo_path={@repo_path}
         open_forms={@open_forms}
         version={@version}
+        clj_kondo_missing={@clj_kondo_missing}
         expanded_files={
           expanded_files(@state, @visible_indices, @expanded_approved, @collapsed_unapproved)
         }
@@ -1112,6 +1159,7 @@ defmodule MeerkatWeb.ReviewLive do
           inline_comments_by_file={@inline_comments_by_file}
           file_comments_by_file={@file_comments_by_file}
           plantuml_available={@plantuml_available}
+          clj_hover={@clj_hover}
           review_id={@review_id}
         />
       </div>
@@ -1421,6 +1469,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :inline_comments_by_file, :any, required: true
   attr :file_comments_by_file, :any, required: true
   attr :plantuml_available, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :clj_hover, :boolean, required: true
   attr :review_id, :string, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
@@ -1550,7 +1600,8 @@ defmodule MeerkatWeb.ReviewLive do
               ruler_columns: @ruler_columns,
               comments: Map.get(@inline_comments_by_file, idx, []),
               inline_forms: inline_forms_for_diff(@open_forms, idx, @state, @review_id),
-              plantuml_available: @plantuml_available
+              plantuml_available: @plantuml_available,
+              clj_hover: @clj_hover and CljHover.clojure_file?(file.file_name)
             }
           }
           socket={@socket}
@@ -1843,6 +1894,8 @@ defmodule MeerkatWeb.ReviewLive do
   attr :repo_path, :string, required: true
   attr :open_forms, :list, required: true
   attr :version, :map, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :clj_kondo_missing, :boolean, required: true
 
   # muex:ignore equivalent: an attr declaration is compile-time validation only, and the one call site passes it
   attr :expanded_files, :list, required: true
@@ -1895,6 +1948,14 @@ defmodule MeerkatWeb.ReviewLive do
       </span>
 
       <.version_chip version={@version} />
+
+      <span
+        :if={@clj_kondo_missing}
+        class="toolbar-note"
+        title="Put clj-kondo on PATH and reload the page to see docs and source on hover"
+      >
+        Clojure hover off: clj-kondo not found
+      </span>
 
       <span class="toolbar-line-counts">
         <%= if length(@expanded_files) < length(@state.files) do %>

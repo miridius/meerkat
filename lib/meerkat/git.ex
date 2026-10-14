@@ -405,6 +405,17 @@ defmodule Meerkat.Git do
   end
 
   @doc """
+  The worktree's tracked files matching `pathspecs`, relative to the
+  worktree root.
+  """
+  @spec tracked_files(String.t(), [String.t()]) :: {:ok, [String.t()]} | {:error, String.t()}
+  def tracked_files(repo_path, pathspecs) do
+    with {:ok, output} <- run_git(repo_path, ["ls-files", "-z", "--full-name", "--" | pathspecs]) do
+      {:ok, String.split(output, <<0>>, trim: true)}
+    end
+  end
+
+  @doc """
   Resolve the per-worktree gitdir via `git rev-parse --git-dir`. In a
   secondary worktree this is `.git/worktrees/<name>`; in the main
   worktree it's `.git`. Returns the absolute path. Per-worktree state

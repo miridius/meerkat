@@ -128,6 +128,8 @@ request changes / comment) from github.com.
   invocation replays the saved comments.
 - **PlantUML inline render** for `.puml` files (when the `plantuml` CLI
   is on PATH).
+- **Clojure hover**: rest the pointer on a symbol in a Clojure diff for
+  its docs and source (when `clj-kondo` is on PATH).
 - **Suggestion-mode CodeMirror editor** with syntax highlighting per
   file extension.
 - **Column rulers** in the diff and the suggestion editor, at 80 and

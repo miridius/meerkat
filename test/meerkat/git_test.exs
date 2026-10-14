@@ -879,6 +879,19 @@ defmodule Meerkat.GitTest do
     end
   end
 
+  describe "tracked_files/2" do
+    setup :git_repo
+
+    test "lists tracked matches relative to the root, from a subdirectory too", %{dir: dir} do
+      stage(dir, "src/a b.clj", "")
+      stage(dir, "src/c.txt", "")
+      File.write!(Path.join(dir, "src/untracked.clj"), "")
+
+      assert Git.tracked_files(dir, ["*.clj"]) == {:ok, ["src/a b.clj"]}
+      assert Git.tracked_files(Path.join(dir, "src"), ["*.clj"]) == {:ok, ["src/a b.clj"]}
+    end
+  end
+
   describe "git_dir/1" do
     setup :git_repo
 

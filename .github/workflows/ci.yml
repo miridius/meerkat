@@ -57,6 +57,19 @@ jobs:
           brew install bash plantuml
           [[ "$(bash -c 'echo "${BASH_VERSINFO[0]}"')" -ge 4 ]]
 
+      # Clojure hover's unit and e2e tests analyse with the real clj-kondo,
+      # which Homebrew core doesn't carry.
+      - name: Install clj-kondo
+        env:
+          VERSION: "2026.08.04"
+          SHA256: 8fe3a57820890a35d843599097276f56ce483a1501abd7f68edd1897770f1559
+        run: |
+          curl -fsSLo kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$VERSION/clj-kondo-$VERSION-macos-aarch64.zip"
+          echo "$SHA256  kondo.zip" | shasum -a 256 -c
+          unzip -q kondo.zip -d "$RUNNER_TEMP/clj-kondo"
+          rm kondo.zip
+          echo "$RUNNER_TEMP/clj-kondo" >> "$GITHUB_PATH"
+
       - run: mix deps.get
       - run: bun scripts/hex-audit.ts
       - run: pnpm install --frozen-lockfile --ignore-scripts
