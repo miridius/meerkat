@@ -11,6 +11,7 @@ import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
+import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -70,17 +71,33 @@ const hooks = {
       document.removeEventListener("keydown", this._onKey);
     },
   },
-  // The toolbar wraps onto more rows as the window narrows, so
-  // `.file-section-header` cannot pin itself below it at a fixed offset.
-  ToolbarHeight: {
+  // Takes the fewest steps that fit the toolbar's content on one row
+  // (see toolbarSqueeze.ts), whenever its width or content changes. The
+  // last step wraps it onto more rows, so `.file-section-header` cannot
+  // pin itself below it at a fixed offset: this publishes its height.
+  Toolbar: {
     mounted() {
-      this._publish = () => {
+      this._fit = () => {
+        // The branch chip can shrink past the part that may truncate, and
+        // then its other part runs out of it.
+        const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
+        this.el.dataset.squeeze = squeeze((taken) => {
+          this.el.dataset.squeeze = taken.join(" ");
+          return boxes.every((box) => box.scrollWidth <= box.clientWidth);
+        }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
         document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
       };
-      this._observer = new ResizeObserver(this._publish);
-      this._observer.observe(this.el);
-      this._publish();
+      // Its items too, as one can change size without the toolbar
+      // changing size, such as the version chip gaining its badge.
+      this._observe = () => {
+        for (const el of [this.el, ...this.el.children]) this._observer.observe(el);
+      };
+      this._observer = new ResizeObserver(this._fit);
+      this._observe();
+    },
+    updated() {
+      this._observe();
     },
     destroyed() {
       this._observer?.disconnect();

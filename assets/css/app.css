@@ -799,6 +799,71 @@ a.chip-link:hover .chip-value {
   padding: 4px 10px;
 }
 
+/* --- Toolbar squeeze steps ---
+   The Toolbar hook (app.js) sets `data-squeeze` to the steps, from
+   toolbarSqueeze.ts, that fit the toolbar's content on one row. Until
+   it runs, the toolbar wraps. Once it has, nothing shrinks or wraps
+   until a step lets it, so overflow tells the hook a step is needed. */
+.diff-toolbar[data-squeeze]:not([data-squeeze~="wrap"]) {
+  flex-wrap: nowrap;
+}
+.diff-toolbar[data-squeeze]:not([data-squeeze~="wrap"]) > * {
+  flex-shrink: 0;
+}
+/* Split / Unified and Wrap are rendered in both places; one shows. */
+.diff-toolbar > .view-controls {
+  display: contents;
+}
+.counts-slash,
+.toolbar-settings-popover .view-controls,
+.diff-toolbar[data-squeeze~="version"] .version-chip-wrap,
+.diff-toolbar[data-squeeze~="files"] .files-label,
+.diff-toolbar[data-squeeze~="counts"] .counts-showing,
+.diff-toolbar[data-squeeze~="counts"] .counts-of,
+.diff-toolbar[data-squeeze~="view"] > .view-controls {
+  display: none;
+}
+.diff-toolbar[data-squeeze~="counts"] .counts-slash {
+  display: inline;
+}
+.diff-toolbar[data-squeeze~="conn"] .conn-indicator {
+  padding: 0;
+  border: none;
+  background: none;
+}
+.diff-toolbar[data-squeeze~="conn"] .conn-indicator > :not(.conn-dot) {
+  display: none;
+}
+.diff-toolbar[data-squeeze~="view"] .toolbar-settings-popover .view-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* Title, then base branch, then head branch: each shrinks only once the
+   one before it is gone. */
+.diff-toolbar[data-squeeze~="title"] > .toolbar-title {
+  flex-shrink: 1;
+}
+/* The hook checks the chip too, as it can shrink past what its base
+   branch gives up. */
+.diff-toolbar[data-squeeze~="base"] > .branch-chip {
+  flex-shrink: 1;
+  min-width: 0;
+}
+.diff-toolbar[data-squeeze~="base"] > .toolbar-title,
+.diff-toolbar[data-squeeze~="head"] .branch-base {
+  flex: 0 0 0;
+}
+.diff-toolbar[data-squeeze]:not([data-squeeze~="head"]) .branch-head,
+.diff-toolbar .chip-arrow {
+  flex-shrink: 0;
+}
+/* Wrapped, each part takes its natural width again, cut only by its row. */
+.diff-toolbar[data-squeeze~="wrap"] > .toolbar-title,
+.diff-toolbar[data-squeeze~="wrap"] .branch-base {
+  flex: 0 1 auto;
+}
+
 .toolbar-group {
   display: inline-flex;
   align-items: center;

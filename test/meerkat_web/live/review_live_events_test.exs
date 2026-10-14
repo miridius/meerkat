@@ -88,7 +88,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # Later renders carry only changed props, so only the form this
     # render mounted shows its initial columns.
     assert rulers_prop(svelte_props(html, "CommentForm-commit_msg-1-1")) == [80, 110]
-    assert has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
+    assert has_element?(view, ".rulers-toggle input[type=checkbox][checked]")
     assert has_element?(view, "input[name=columns][value='80, 110'][aria-invalid=false]")
 
     # Commas and spaces separate columns; the list is sorted and deduped.
@@ -98,7 +98,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert saved_settings() == %{"ruler_columns" => [72, 120]}
 
     # Unchecking hides them without forgetting the columns.
-    html = view |> element(".toolbar-settings input[type=checkbox]") |> render_click()
+    html = view |> element(".rulers-toggle input[type=checkbox]") |> render_click()
     assert rulers.(html) == Map.new(ids, &{&1, []})
     assert has_element?(view, "input[name=columns][value='72, 120']")
     assert saved_settings() == %{"ruler_columns" => [72, 120], "rulers" => false}
@@ -106,7 +106,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # Junk stays in the field, marked, through other changes, and the
     # last list stays in force.
     view |> element("#ruler-columns-form") |> render_change(%{"columns" => "80, wide"})
-    html = view |> element(".toolbar-settings input[type=checkbox]") |> render_click()
+    html = view |> element(".rulers-toggle input[type=checkbox]") |> render_click()
     assert rulers.(html) == Map.new(ids, &{&1, [72, 120]})
     assert has_element?(view, "input[name=columns][value='80, wide'][aria-invalid=true]")
 
@@ -121,7 +121,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     Meerkat.Settings.put(:ruler_columns, [100])
     Meerkat.Settings.put(:wrap_lines, false)
     view = mount_unbound(conn)
-    refute has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
+    refute has_element?(view, ".rulers-toggle input[type=checkbox][checked]")
     assert has_element?(view, "input[name=columns][value='100']")
     # A rejoin leaves a focused field's text alone, so the hook gets it too.
     assert_push_event(view, "ruler-columns:set", %{text: "100"})
@@ -135,7 +135,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert_push_event(other, "ruler-columns:set", %{text: "80, 110"})
     other |> element("#ruler-columns-form") |> render_change(%{"columns" => "80, wide"})
 
-    view |> element(".wrap-toggle input") |> render_click()
+    view |> element(".diff-toolbar > .view-controls .wrap-toggle input") |> render_click()
     refute has_element?(other, ".wrap-toggle input[checked]")
     # A change to another setting leaves the other tab's field alone.
     assert has_element?(other, "input[name=columns][value='80, wide'][aria-invalid=true]")
@@ -158,11 +158,27 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "the Wrap toggle starts checked and unchecks on click", %{conn: conn} do
     view = mount_unbound(conn)
-    assert has_element?(view, ".wrap-toggle input[checked]")
+    assert has_element?(view, ".diff-toolbar > .view-controls .wrap-toggle input[checked]")
 
-    view |> element(".wrap-toggle input") |> render_click()
-    refute has_element?(view, ".wrap-toggle input[checked]")
+    view |> element(".diff-toolbar > .view-controls .wrap-toggle input") |> render_click()
+    refute has_element?(view, ".diff-toolbar > .view-controls .wrap-toggle input[checked]")
     assert saved_settings() == %{"wrap_lines" => false}
+  end
+
+  # The toolbar moves them there when it is short of room.
+  test "the ⚙ popover's Split / Unified and Wrap set and show the same settings", %{conn: conn} do
+    view = mount_unbound(conn)
+    popover = ".toolbar-settings-popover .view-controls"
+    assert has_element?(view, "#{popover} button.active", "Split")
+    assert has_element?(view, "#{popover} .wrap-toggle input[checked]")
+
+    view |> element("#{popover} button", "Unified") |> render_click()
+    view |> element("#{popover} .wrap-toggle input") |> render_click()
+
+    for controls <- [popover, ".diff-toolbar > .view-controls"] do
+      assert has_element?(view, "#{controls} button.active", "Unified")
+      refute has_element?(view, "#{controls} .wrap-toggle input[checked]")
+    end
   end
 
   test "the version chip shows a dev label with no changelog, or a release's commit and PR links",
@@ -360,7 +376,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(
              view,
              ".toolbar-line-counts",
-             ~r/^\s*showing\s*\+3\s*-1\s*of\s*\+3\s*-2\s*$/
+             ~r/^\s*showing\s*\+3\s*-1\s*of\s*\/\s*\+3\s*-2\s*$/
            )
 
     view |> element("button.file-row", "b.txt") |> render_click()
@@ -368,7 +384,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(
              view,
              ".toolbar-line-counts",
-             ~r/^\s*showing\s*\+2\s*-1\s*of\s*\+3\s*-2\s*$/
+             ~r/^\s*showing\s*\+2\s*-1\s*of\s*\/\s*\+3\s*-2\s*$/
            )
 
     view = mount_unbound(conn, %{state | approved_file_names: MapSet.new(["a.txt"])})
@@ -376,7 +392,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(
              view,
              ".toolbar-line-counts",
-             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\+3\s*-2\s*$/
+             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\/\s*\+3\s*-2\s*$/
            )
   end
 

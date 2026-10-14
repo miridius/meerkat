@@ -169,8 +169,8 @@ test("diff rulers show only where the visible code column fits them and follow t
 			expect((await numberInsets(gutter)).fromPadding).toBeGreaterThanOrEqual(0);
 		};
 		await expectNumbersClear();
-		await page.getByLabel("Wrap").click();
-		await expect(page.getByLabel("Wrap")).not.toBeChecked();
+		await page.getByRole("checkbox", { name: "Wrap" }).click();
+		await expect(page.getByRole("checkbox", { name: "Wrap" })).not.toBeChecked();
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["80"]);
 		await expectNumbersClear();
