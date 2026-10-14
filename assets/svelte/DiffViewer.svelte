@@ -84,6 +84,7 @@
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground } from "../ts/rulers";
+  import { unifiedDiff } from "../ts/unifiedDiff";
 
   // Renders ONE file's diff body via `@git-diff-view`, the read-only
   // inline comment list, and the pointer-drag selection logic that
@@ -248,18 +249,11 @@
       return;
     }
     const oldName = file.old_file_name ?? file.file_name;
-    const unifiedDiff = [
-      `diff --git a/${oldName} b/${file.file_name}`,
-      `--- a/${oldName}`,
-      `+++ b/${file.file_name}`,
-      ...file.hunks,
-    ].join("\n");
-
     try {
       const instance = DiffFile.createInstance({
         oldFile: { fileName: oldName, fileLang: fileLanguage, content: file.old_content },
         newFile: { fileName: file.file_name, fileLang: fileLanguage, content: file.new_content },
-        hunks: [unifiedDiff],
+        hunks: [unifiedDiff(oldName, file.file_name, file.hunks)],
       });
       instance.init();
       instance.buildSplitDiffLines();

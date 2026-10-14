@@ -5,65 +5,123 @@ defmodule Meerkat.IntralineTest do
 
   test "matched run passes through" do
     hunk = "@@ -1,3 +1,3 @@\n ctx\n-old2\n-old3\n+new2\n+new3\n"
-    [out] = Intraline.split([hunk])
-    assert out =~ "ctx"
-    assert out =~ "-old2"
-    assert out =~ "-old3"
-    assert out =~ "+new2"
-    assert out =~ "+new3"
+    assert Intraline.split([hunk]) == [hunk]
   end
 
   test "mismatched run splits paired from orphan" do
-    # 1 ctx + run(3 del, 2 add). Expected:
-    #   sub 1: ctx + 2 del + 2 add  (pair_count=2)
-    #   sub 2: 1 del  (orphan, header -4,1 +4,0)
     hunk = "@@ -1,4 +1,3 @@\n ctx\n-a\n-b\n-c\n+x\n+y\n"
-    out = Intraline.split([hunk])
-    assert length(out) == 2
-    [first, orphan] = out
-    assert String.starts_with?(first, "@@ -1,3 +1,3 @@\n")
 
-    for tok <- ["ctx", "-a", "-b", "+x", "+y"] do
-      assert first =~ tok, "first sub-hunk missing #{tok}: #{first}"
-    end
-
-    refute first =~ "-c"
-    assert String.starts_with?(orphan, "@@ -4,1 +4,0 @@\n")
-    assert orphan =~ "-c"
+    assert Intraline.split([hunk]) == [
+             "@@ -1,3 +1,3 @@\n ctx\n-a\n-b\n+x\n+y\n",
+             "@@ -4,1 +4,0 @@\n-c\n"
+           ]
   end
 
   test "mismatched run at start of hunk" do
     hunk = "@@ -1,5 +1,4 @@\n-a\n-b\n-c\n-d\n-e\n+w\n+x\n+y\n+z\n"
-    out = Intraline.split([hunk])
-    assert length(out) == 2
-    [first, orphan] = out
-    assert String.starts_with?(first, "@@ -1,4 +1,4 @@\n")
 
-    for tok <- ["-a", "-b", "-c", "-d", "+w", "+x", "+y", "+z"] do
-      assert first =~ tok, "missing #{tok} in #{first}"
-    end
-
-    refute first =~ "-e"
-    assert String.starts_with?(orphan, "@@ -5,1 +5,0 @@\n")
-    assert orphan =~ "-e"
+    assert Intraline.split([hunk]) == [
+             "@@ -1,4 +1,4 @@\n-a\n-b\n-c\n-d\n+w\n+x\n+y\n+z\n",
+             "@@ -5,1 +5,0 @@\n-e\n"
+           ]
   end
 
   test "additions exceed deletions" do
     hunk = "@@ -1,2 +1,5 @@\n-a\n-b\n+x\n+y\n+z1\n+z2\n+z3\n"
-    out = Intraline.split([hunk])
-    assert length(out) == 2
-    [first, orphan] = out
-    assert String.starts_with?(first, "@@ -1,2 +1,2 @@\n")
-    assert String.starts_with?(orphan, "@@ -3,0 +3,3 @@\n")
-    for tok <- ["+z1", "+z2", "+z3"], do: assert(orphan =~ tok)
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,2 +1,2 @@\n-a\n-b\n+x\n+y\n",
+             "@@ -3,0 +3,3 @@\n+z1\n+z2\n+z3\n"
+           ]
   end
 
-  test "multiple mismatched runs in one hunk" do
+  # With nothing to pair, a split would only cut the hunk in two and
+  # show a header that disagrees with git's.
+  test "one-sided runs pass through unsplit" do
+    added = "@@ -2,3 +2,4 @@\n bravo\n charlie\n delta\n+echo\n"
+    removed = "@@ -1,3 +1,2 @@\n a\n-b\n c\n"
+    assert Intraline.split([added, removed]) == [added, removed]
+  end
+
+  test "lines after a split start a hunk where the run ended" do
     hunk = "@@ -1,6 +1,4 @@\n-a\n-b\n+x\n ctx\n-c\n-d\n+y\n"
-    out = Intraline.split([hunk])
-    assert length(out) >= 3
-    joined = Enum.join(out, "\n---\n")
-    for tok <- ["-a", "-b", "+x", "ctx", "-c", "-d", "+y"], do: assert(joined =~ tok)
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n",
+             "@@ -2,1 +2,0 @@\n-b\n",
+             "@@ -3,2 +2,2 @@\n ctx\n-c\n+y\n",
+             "@@ -5,1 +4,0 @@\n-d\n"
+           ]
+  end
+
+  test "a one-sided run before a split stays with the paired lines" do
+    hunk = "@@ -1,3 +1,4 @@\n+n\n a\n-b\n-c\n+x\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,2 +1,3 @@\n+n\n a\n-b\n+x\n",
+             "@@ -3,1 +4,0 @@\n-c\n"
+           ]
+  end
+
+  test "a no-newline marker after a split travels with the orphan" do
+    hunk = "@@ -1,1 +1,2 @@\n-a\n+x\n+y\n\\ No newline at end of file\n ctx\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n",
+             "@@ -2,0 +2,1 @@\n+y\n\\ No newline at end of file\n",
+             "@@ -2,1 +3,1 @@\n ctx\n"
+           ]
+  end
+
+  test "a no-newline marker after a split stays with the paired addition it describes" do
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\n+x\n\\ No newline at end of file\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n\\ No newline at end of file\n",
+             "@@ -2,1 +2,0 @@\n-b\n"
+           ]
+  end
+
+  test "a line that is not a no-newline marker ends a run" do
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\nstray\n+x\n"
+    assert Intraline.split([hunk]) == [hunk]
+  end
+
+  test "a no-newline marker after a context line stays in place" do
+    hunk = "@@ -1,2 +1,2 @@\n-a\n+b\n c\n\\ No newline at end of file\n"
+    assert Intraline.split([hunk]) == [hunk]
+  end
+
+  test "a hunk with no trailing newline gains one" do
+    assert Intraline.split(["@@ -1,1 +1,1 @@\n-a\n+b"]) == ["@@ -1,1 +1,1 @@\n-a\n+b\n"]
+  end
+
+  # Git writes a blank context line as an empty line under
+  # `diff.suppressBlankEmpty`; `@git-diff-view` reads it as context.
+  test "an empty line inside a hunk is a context line" do
+    hunk = "@@ -1,3 +1,3 @@\n a\n\n-b\n+c\n"
+    assert Intraline.split([hunk]) == [hunk]
+
+    assert Intraline.split(["@@ -1,4 +1,3 @@\n a\n\n-b\n-c\n+x\n"]) == [
+             "@@ -1,3 +1,3 @@\n a\n\n-b\n+x\n",
+             "@@ -4,1 +4,0 @@\n-c\n"
+           ]
+
+    assert Intraline.split(["@@ -1,4 +1,3 @@\n-a\n-b\n+x\n\n c\n"]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n",
+             "@@ -2,1 +2,0 @@\n-b\n",
+             "@@ -3,2 +2,2 @@\n\n c\n"
+           ]
+  end
+
+  test "a no-newline marker between deletions and additions stays with its line" do
+    marker = "\\ No newline at end of file\n"
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\n" <> marker <> "+x\n" <> marker
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n" <> marker,
+             "@@ -2,1 +2,0 @@\n-b\n" <> marker
+           ]
   end
 
   test "malformed hunk passed through unchanged" do
@@ -71,14 +129,14 @@ defmodule Meerkat.IntralineTest do
     assert Intraline.split([hunk]) == [hunk]
   end
 
-  test "pure addition with no newline trailer absorbs into orphan" do
+  test "a header with no body passes through unchanged" do
+    for hunk <- ["@@ -1,0 +1,0 @@", "@@ -1,0 +1,0 @@\n"] do
+      assert Intraline.split([hunk]) == [hunk]
+    end
+  end
+
+  test "pure addition with a no-newline marker stays one hunk" do
     hunk = "@@ -0,0 +1,2 @@\n+line1\n+line2\n\\ No newline at end of file\n"
-    out = Intraline.split([hunk])
-    # 0 dels + 2 adds — orphan-only; trailer travels with the orphan.
-    assert length(out) == 1
-    joined = List.first(out)
-    assert joined =~ "+line1"
-    assert joined =~ "+line2"
-    assert joined =~ "\\ No newline at end of file"
+    assert Intraline.split([hunk]) == [hunk]
   end
 end

@@ -642,6 +642,27 @@ defmodule Meerkat.GitTest do
                {:ok, one_of_each_diffs(%{})}
     end
 
+    test "under diff.suppressBlankEmpty an empty blank context line still numbers moved lines",
+         %{dir: dir} do
+      git(dir, ["config", "diff.suppressBlankEmpty", "true"])
+      moved = "moved line one\nmoved line two\nmoved line three\n"
+      File.write!(Path.join(dir, "a.txt"), "top\n\n" <> moved <> "bottom\n")
+      git(dir, ["add", "."])
+      git(dir, ["commit", "-qm", "base"])
+      File.write!(Path.join(dir, "a.txt"), "top\n\nbottom\n")
+      File.write!(Path.join(dir, "b.txt"), moved)
+      git(dir, ["add", "-A"])
+      git(dir, ["commit", "-qm", "head"])
+
+      {:ok, [a, _b]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+
+      assert a.hunks == [
+               "@@ -1,6 +1,3 @@\n top\n\n-moved line one\n-moved line two\n-moved line three\n bottom\n"
+             ]
+
+      assert [%{side: :old, line_start: 3, line_end: 5, to_file: "b.txt"}] = a.moved_lines
+    end
+
     test "file names git would read as pathspec magic carry their own hunks and no read errors",
          %{dir: dir} do
       File.write!(Path.join(dir, ":(bogus)old.rs"), "alpha\nbeta\ngamma\ndelta\n")

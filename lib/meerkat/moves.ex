@@ -38,22 +38,9 @@ defmodule Meerkat.Moves do
   overwritten).
   """
   @spec detect([map()]) :: [map()]
-  def detect(files) when is_list(files) do
+  def detect(files) do
     removed = collect_lines(files, ?-)
     added = collect_lines(files, ?+)
-
-    files = Enum.map(files, &Map.put(&1, :moved_lines, []))
-
-    cond do
-      removed == [] -> files
-      added == [] -> files
-      true -> place_moves(files, removed, added)
-    end
-  end
-
-  ## Internals
-
-  defp place_moves(files, removed, added) do
     removed_arr = List.to_tuple(removed)
     added_arr = List.to_tuple(added)
     added_index = build_index(added)
@@ -62,23 +49,24 @@ defmodule Meerkat.Moves do
       removed
       |> Enum.with_index()
       |> Enum.flat_map(&candidates_from(&1, added_index, removed_arr, added_arr))
-      |> Enum.sort_by(fn {_r, _a, len} -> -len end)
+      |> Enum.sort_by(&elem(&1, 2), :desc)
 
     {moves, _, _} =
       Enum.reduce(candidates, {[], MapSet.new(), MapSet.new()}, fn {r_start, a_start, len},
                                                                    {acc, r_taken, a_taken} ->
-        if range_overlaps?(r_start, len, r_taken) or range_overlaps?(a_start, len, a_taken) do
+        r_span = span(r_start, len)
+        a_span = span(a_start, len)
+
+        if taken?(r_taken, r_span) or taken?(a_taken, a_span) do
           {acc, r_taken, a_taken}
         else
-          {[{r_start, a_start, len} | acc], mark_taken(r_taken, r_start, len),
-           mark_taken(a_taken, a_start, len)}
+          {[{r_start, a_start, len} | acc], Enum.into(r_span, r_taken),
+           Enum.into(a_span, a_taken)}
         end
       end)
 
     # Build moved-line entries indexed by file_idx in O(M) total, then
-    # do one pass over `files` to merge them in. The previous shape
-    # was Enum.at + List.update_at per move (O(F + K) per move, with
-    # `list ++ [block]` appends inside) — quadratic on large refactors.
+    # do one pass over `files` to merge them in.
     moved_by_file =
       moves
       |> Enum.reverse()
@@ -88,11 +76,11 @@ defmodule Meerkat.Moves do
       end)
 
     Enum.map(files, fn file ->
-      Map.update(file, :moved_lines, [], fn existing ->
-        existing ++ Enum.reverse(Map.get(moved_by_file, file.file_name, []))
-      end)
+      Map.put(file, :moved_lines, Enum.reverse(Map.get(moved_by_file, file.file_name, [])))
     end)
   end
+
+  ## Internals
 
   defp candidates_from({%{content: c}, r_start}, added_index, removed_arr, added_arr) do
     case Map.get(added_index, c) do
@@ -107,28 +95,10 @@ defmodule Meerkat.Moves do
     end
   end
 
-  defp range_overlaps?(_start, len, _taken) when len <= 0, do: false
+  # The positions a run of `len` lines from `start` covers.
+  defp span(start, len), do: start..(start + len - 1)//1
 
-  defp range_overlaps?(start, 1, taken), do: MapSet.member?(taken, start)
-
-  defp range_overlaps?(start, len, taken) do
-    # Fast-reject: a typical block of length L either entirely overlaps
-    # an already-taken range (so the endpoints hit) or is entirely
-    # disjoint. Probe the endpoints first to short-circuit the common
-    # "no overlap" case in O(1) instead of O(L). Only fall through to
-    # the full scan when an endpoint check is inconclusive.
-    last = start + len - 1
-
-    if MapSet.member?(taken, start) or MapSet.member?(taken, last) do
-      true
-    else
-      Enum.any?(start..last, &MapSet.member?(taken, &1))
-    end
-  end
-
-  defp mark_taken(taken, start, len) do
-    Enum.reduce(start..(start + len - 1), taken, &MapSet.put(&2, &1))
-  end
+  defp taken?(taken, span), do: Enum.any?(span, &MapSet.member?(taken, &1))
 
   defp record_pair(acc, removed_arr, r_start, added_arr, a_start, len, pair_id, files) do
     r_first = elem(removed_arr, r_start)
@@ -169,33 +139,24 @@ defmodule Meerkat.Moves do
     |> Map.update(a_name, [new_block], &[new_block | &1])
   end
 
-  # Extend candidate run as far as both content matches AND line
-  # numbers continue to advance contiguously in the same file. A
-  # break in file_idx or line continuity ends the run.
-  defp run_length(removed_arr, r_start, added_arr, a_start) do
-    do_run_length(removed_arr, r_start, added_arr, a_start, 0)
+  # The length of the run starting at the matching lines `r` and `a`.
+  # The run extends while the next lines on both sides match AND
+  # continue contiguously in the same file.
+  defp run_length(removed_arr, r, added_arr, a, len \\ 1) do
+    if r + 1 < tuple_size(removed_arr) and a + 1 < tuple_size(added_arr) and
+         extends?(removed_arr, r, added_arr, a) do
+      run_length(removed_arr, r + 1, added_arr, a + 1, len + 1)
+    else
+      len
+    end
   end
 
-  defp do_run_length(removed_arr, r_start, added_arr, a_start, k) do
-    if r_start + k >= tuple_size(removed_arr) or a_start + k >= tuple_size(added_arr) do
-      k
-    else
-      r = elem(removed_arr, r_start + k)
-      a = elem(added_arr, a_start + k)
+  defp extends?(removed_arr, r, added_arr, a) do
+    next_r = elem(removed_arr, r + 1)
+    next_a = elem(added_arr, a + 1)
 
-      cond do
-        r.content != a.content ->
-          k
-
-        k > 0 and
-            not (continues?(elem(removed_arr, r_start + k - 1), r) and
-                     continues?(elem(added_arr, a_start + k - 1), a)) ->
-          k
-
-        true ->
-          do_run_length(removed_arr, r_start, added_arr, a_start, k + 1)
-      end
-    end
+    next_r.content == next_a.content and continues?(elem(removed_arr, r), next_r) and
+      continues?(elem(added_arr, a), next_a)
   end
 
   defp continues?(prev, line),
@@ -217,36 +178,43 @@ defmodule Meerkat.Moves do
     files
     |> Enum.with_index()
     |> Enum.flat_map(fn {file, file_idx} ->
-      Enum.flat_map(file.hunks || [], &collect_from_hunk(&1, file_idx, side_char))
+      Enum.flat_map(file.hunks, &collect_from_hunk(&1, file_idx, side_char))
     end)
   end
 
   defp collect_from_hunk(hunk, file_idx, side_char) do
-    {_old, _new, acc} =
-      hunk
-      |> String.split("\n")
-      |> Enum.reduce({0, 0, []}, &collect_hunk_line(&1, &2, file_idx, side_char))
-
-    Enum.reverse(acc)
-  end
-
-  defp collect_hunk_line(line, {old_ln, new_ln, acc}, file_idx, side_char) do
-    cond do
-      line == "" ->
-        {old_ln, new_ln, acc}
-
-      String.starts_with?(line, "@@ ") ->
-        case parse_hunk_header(line) do
-          {o, n} -> {o, n, acc}
-          _ -> {old_ln, new_ln, acc}
-        end
-
-      true ->
-        consume_line(line, old_ln, new_ln, acc, file_idx, side_char)
+    with [header, body] <- String.split(hunk, "\n", parts: 2),
+         {old_ln, new_ln} <- parse_hunk_header(header) do
+      body
+      |> hunk_lines()
+      |> Enum.reduce({old_ln, new_ln, []}, &consume_line(&1, &2, file_idx, side_char))
+      |> elem(2)
+      |> Enum.reverse()
+    else
+      _ -> []
     end
   end
 
-  defp consume_line("-" <> rest, old_ln, new_ln, acc, file_idx, side_char) do
+  @doc false
+  # The lines of a hunk body, each as `{kind, line}` with `kind` one of
+  # `:context`, `:del`, `:add` or `:other` (any other line, such as a
+  # `\ No newline` marker). Like `@git-diff-view`, an empty line is
+  # context: git writes a blank context line that way under
+  # `diff.suppressBlankEmpty`. Only the empty string after the body's
+  # final newline is no line. `Meerkat.Intraline` shares it.
+  def hunk_lines(body) do
+    lines = String.split(body, "\n")
+    lines = if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
+    Enum.map(lines, &{hunk_line_kind(&1), &1})
+  end
+
+  defp hunk_line_kind(""), do: :context
+  defp hunk_line_kind(" " <> _), do: :context
+  defp hunk_line_kind("-" <> _), do: :del
+  defp hunk_line_kind("+" <> _), do: :add
+  defp hunk_line_kind(_), do: :other
+
+  defp consume_line({:del, "-" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?- do
         maybe_add(acc, rest, file_idx, old_ln)
@@ -257,7 +225,7 @@ defmodule Meerkat.Moves do
     {old_ln + 1, new_ln, acc}
   end
 
-  defp consume_line("+" <> rest, old_ln, new_ln, acc, file_idx, side_char) do
+  defp consume_line({:add, "+" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?+ do
         maybe_add(acc, rest, file_idx, new_ln)
@@ -268,14 +236,12 @@ defmodule Meerkat.Moves do
     {old_ln, new_ln + 1, acc}
   end
 
-  defp consume_line(" " <> _rest, old_ln, new_ln, acc, _file_idx, _side_char) do
+  defp consume_line({:context, _}, {old_ln, new_ln, acc}, _file_idx, _side_char) do
     {old_ln + 1, new_ln + 1, acc}
   end
 
   # No-newline-at-eof marker (`\`) or anything else: skip.
-  defp consume_line(_other, old_ln, new_ln, acc, _file_idx, _side_char) do
-    {old_ln, new_ln, acc}
-  end
+  defp consume_line({:other, _}, state, _file_idx, _side_char), do: state
 
   defp maybe_add(acc, raw, file_idx, number) do
     content = String.trim(raw)
@@ -287,9 +253,11 @@ defmodule Meerkat.Moves do
     end
   end
 
-  # Parse `@@ -10,5 +12,7 @@` → `{10, 12}`. Counts after the comma
-  # are ignored (the hunk body tells the real story).
-  defp parse_hunk_header(line) do
+  @doc false
+  # Parse `@@ -10,5 +12,7 @@` → `{10, 12}`, or `nil` for any other
+  # line. Counts after the comma are ignored (the hunk body tells the
+  # real story). `Meerkat.Intraline` shares it.
+  def parse_hunk_header(line) do
     case Regex.run(~r/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/, line) do
       [_, old, new] -> {String.to_integer(old), String.to_integer(new)}
       _ -> nil
