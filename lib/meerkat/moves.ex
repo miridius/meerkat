@@ -183,21 +183,19 @@ defmodule Meerkat.Moves do
   end
 
   defp collect_from_hunk(hunk, file_idx, side_char) do
-    [header | lines] = String.split(hunk, "\n")
-
-    case parse_hunk_header(header) do
-      {old_ln, new_ln} ->
-        lines
-        |> Enum.reduce({old_ln, new_ln, []}, &consume_line(&1, &2, file_idx, side_char))
-        |> elem(2)
-        |> Enum.reverse()
-
-      nil ->
-        []
+    with [header, body] <- String.split(hunk, "\n", parts: 2),
+         {old_ln, new_ln} <- parse_hunk_header(header) do
+      body
+      |> hunk_lines()
+      |> Enum.reduce({old_ln, new_ln, []}, &consume_line(&1, &2, file_idx, side_char))
+      |> elem(2)
+      |> Enum.reverse()
+    else
+      _ -> []
     end
   end
 
-  defp consume_line("-" <> rest, {old_ln, new_ln, acc}, file_idx, side_char) do
+  defp consume_line({:del, "-" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?- do
         maybe_add(acc, rest, file_idx, old_ln)
@@ -208,7 +206,7 @@ defmodule Meerkat.Moves do
     {old_ln + 1, new_ln, acc}
   end
 
-  defp consume_line("+" <> rest, {old_ln, new_ln, acc}, file_idx, side_char) do
+  defp consume_line({:add, "+" <> rest}, {old_ln, new_ln, acc}, file_idx, side_char) do
     acc =
       if side_char == ?+ do
         maybe_add(acc, rest, file_idx, new_ln)
@@ -219,13 +217,12 @@ defmodule Meerkat.Moves do
     {old_ln, new_ln + 1, acc}
   end
 
-  defp consume_line(" " <> _rest, {old_ln, new_ln, acc}, _file_idx, _side_char) do
+  defp consume_line({:context, _}, {old_ln, new_ln, acc}, _file_idx, _side_char) do
     {old_ln + 1, new_ln + 1, acc}
   end
 
-  # No-newline-at-eof marker (`\`), the empty string after the last
-  # newline, or anything else: skip.
-  defp consume_line(_other, state, _file_idx, _side_char), do: state
+  # No-newline-at-eof marker (`\`) or anything else: skip.
+  defp consume_line({:other, _}, state, _file_idx, _side_char), do: state
 
   defp maybe_add(acc, raw, file_idx, number) do
     content = String.trim(raw)
@@ -247,4 +244,23 @@ defmodule Meerkat.Moves do
       _ -> nil
     end
   end
+
+  @doc false
+  # The lines of a hunk body, each as `{kind, line}` with `kind` one of
+  # `:context`, `:del`, `:add` or `:other` (a `\ No newline` marker).
+  # Like `@git-diff-view`, an empty line is context: git writes a blank
+  # context line that way under `diff.suppressBlankEmpty`. Only the
+  # empty string after the body's final newline is no line.
+  # `Meerkat.Intraline` shares it.
+  def hunk_lines(body) do
+    lines = String.split(body, "\n")
+    lines = if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
+    Enum.map(lines, &{hunk_line_kind(&1), &1})
+  end
+
+  defp hunk_line_kind(""), do: :context
+  defp hunk_line_kind(" " <> _), do: :context
+  defp hunk_line_kind("-" <> _), do: :del
+  defp hunk_line_kind("+" <> _), do: :add
+  defp hunk_line_kind(_), do: :other
 end

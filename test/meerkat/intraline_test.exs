@@ -82,13 +82,41 @@ defmodule Meerkat.IntralineTest do
            ]
   end
 
+  test "a no-newline marker after a context line stays in place" do
+    hunk = "@@ -1,2 +1,2 @@\n-a\n+b\n c\n\\ No newline at end of file\n"
+    assert Intraline.split([hunk]) == [hunk]
+  end
+
   test "a hunk with no trailing newline gains one" do
     assert Intraline.split(["@@ -1,1 +1,1 @@\n-a\n+b"]) == ["@@ -1,1 +1,1 @@\n-a\n+b\n"]
   end
 
-  test "an empty line inside a hunk is kept" do
+  # Git writes a blank context line as an empty line under
+  # `diff.suppressBlankEmpty`; `@git-diff-view` reads it as context.
+  test "an empty line inside a hunk is a context line" do
     hunk = "@@ -1,3 +1,3 @@\n a\n\n-b\n+c\n"
-    assert Intraline.split([hunk]) == ["@@ -1,2 +1,2 @@\n a\n\n-b\n+c\n"]
+    assert Intraline.split([hunk]) == [hunk]
+
+    assert Intraline.split(["@@ -1,4 +1,3 @@\n a\n\n-b\n-c\n+x\n"]) == [
+             "@@ -1,3 +1,3 @@\n a\n\n-b\n+x\n",
+             "@@ -4,1 +4,0 @@\n-c\n"
+           ]
+
+    assert Intraline.split(["@@ -1,4 +1,3 @@\n-a\n-b\n+x\n\n c\n"]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n",
+             "@@ -2,1 +2,0 @@\n-b\n",
+             "@@ -3,2 +2,2 @@\n\n c\n"
+           ]
+  end
+
+  test "a no-newline marker between deletions and additions stays with its line" do
+    marker = "\\ No newline at end of file\n"
+    hunk = "@@ -1,2 +1,1 @@\n-a\n-b\n" <> marker <> "+x\n" <> marker
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,1 @@\n-a\n+x\n" <> marker,
+             "@@ -2,1 +2,0 @@\n-b\n" <> marker
+           ]
   end
 
   test "malformed hunk passed through unchanged" do

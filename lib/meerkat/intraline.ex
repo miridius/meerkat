@@ -43,12 +43,6 @@ defmodule Meerkat.Intraline do
   end
 
   defp split_body(orig_hunk, body, old_start, new_start) do
-    classified =
-      body
-      |> String.split("\n")
-      |> drop_final_empty()
-      |> Enum.map(&classify/1)
-
     state = %{
       acc: [],
       current: [],
@@ -58,7 +52,7 @@ defmodule Meerkat.Intraline do
       cur_new_start: new_start
     }
 
-    final = walk(classified, state)
+    final = walk(Moves.hunk_lines(body), state)
 
     out =
       case final.current do
@@ -71,11 +65,6 @@ defmodule Meerkat.Intraline do
       _ -> Enum.reverse(out)
     end
   end
-
-  # Only the empty string after the hunk's final newline. An empty line
-  # inside the hunk is a line of the diff.
-  defp drop_final_empty(lines),
-    do: if(List.last(lines) == "", do: Enum.drop(lines, -1), else: lines)
 
   defp walk([], state), do: state
 
@@ -92,6 +81,8 @@ defmodule Meerkat.Intraline do
     walk(rest, %{state | current: [{:other, line} | state.current]})
   end
 
+  # `dels` and `adds` hold one entry per line: the line, then any
+  # no-newline marker that follows it, so a marker stays with its line.
   defp walk(lines, state) do
     {dels, adds, rest} = collect_run(lines, [], [])
     post_old = state.old_cur + length(dels)
@@ -105,25 +96,20 @@ defmodule Meerkat.Intraline do
     if dels == [] or adds == [] or orphan == [] do
       walk(rest, %{
         state
-        | current: Enum.reverse(dels ++ adds, state.current),
+        | current: Enum.reverse(Enum.concat(dels ++ adds), state.current),
           old_cur: post_old,
           new_cur: post_new
       })
     else
       pair_count = length(paired_dels)
-      {others, rest2} = Enum.split_while(rest, &match?({:other, _}, &1))
-
-      # A no-newline marker after the run describes its last line: the
-      # last addition, which is paired when deletions outnumber additions.
-      {paired_tail, orphan_tail} = if orphan_adds == [], do: {others, []}, else: {[], others}
-      paired = Enum.reverse(state.current, paired_dels ++ paired_adds ++ paired_tail)
+      paired = Enum.reverse(state.current, Enum.concat(paired_dels ++ paired_adds))
 
       acc = [
-        emit(orphan ++ orphan_tail, state.old_cur + pair_count, state.new_cur + pair_count),
+        emit(Enum.concat(orphan), state.old_cur + pair_count, state.new_cur + pair_count),
         emit(paired, state.cur_old_start, state.cur_new_start) | state.acc
       ]
 
-      walk(rest2, %{
+      walk(rest, %{
         state
         | acc: acc,
           current: [],
@@ -135,18 +121,16 @@ defmodule Meerkat.Intraline do
     end
   end
 
-  defp collect_run([{:del, _} = line | rest], dels, adds),
-    do: collect_run(rest, [line | dels], adds)
+  defp collect_run([{kind, _} = line | rest], dels, adds) when kind in [:del, :add] do
+    {markers, rest} = Enum.split_while(rest, &match?({:other, _}, &1))
 
-  defp collect_run([{:add, _} = line | rest], dels, adds),
-    do: collect_run(rest, dels, [line | adds])
+    case kind do
+      :del -> collect_run(rest, [[line | markers] | dels], adds)
+      :add -> collect_run(rest, dels, [[line | markers] | adds])
+    end
+  end
 
   defp collect_run(rest, dels, adds), do: {Enum.reverse(dels), Enum.reverse(adds), rest}
-
-  defp classify(<<" ", _::binary>> = line), do: {:context, line}
-  defp classify(<<"-", _::binary>> = line), do: {:del, line}
-  defp classify(<<"+", _::binary>> = line), do: {:add, line}
-  defp classify(line), do: {:other, line}
 
   defp emit(body, old_start, new_start) do
     old_count = Enum.count(body, &(elem(&1, 0) in [:context, :del]))

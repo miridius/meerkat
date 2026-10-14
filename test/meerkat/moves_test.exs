@@ -247,6 +247,22 @@ defmodule Meerkat.MovesTest do
              ]
     end
 
+    # Git writes a blank context line as an empty line under
+    # `diff.suppressBlankEmpty`; `@git-diff-view` numbers it as context.
+    test "an empty line counts as a context line" do
+      a = "@@ -1,4 +1,1 @@\n\n" <> Enum.map_join(@abc, &"-#{&1}\n")
+
+      files = [
+        file("a.txt", [a]),
+        file("b.txt", [hunk(1, 1, lines("+", @abc))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 2..4, 0, "b.txt", 1..3)],
+               [block(:new, 1..3, 0, "a.txt", 2..4)]
+             ]
+    end
+
     test "a hunk with an unreadable header contributes no lines" do
       files = [
         file("a.txt", ["not a header\n" <> Enum.map_join(@abc, &"-#{&1}\n")]),
