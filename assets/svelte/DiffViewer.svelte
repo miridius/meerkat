@@ -298,8 +298,7 @@
   // selection (copy/paste). Only the line-number gutter triggers a
   // comment-range drag.
   function extractLineTarget(target: HTMLElement): DragHit | null {
-    // The moved-code icon sits in the gutter but is a link, not a line.
-    if (!target.closest("tr.diff-line") || target.closest(".moved-badge")) return null;
+    if (!target.closest("tr.diff-line")) return null;
 
     // Restrict to the line-number cell. In split mode the td carries
     // `.diff-line-old-num` / `.diff-line-new-num`; in unified mode
@@ -1067,10 +1066,11 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  // Moved-line highlighting + jump icons. Each block of moved lines
+  // Moved-line highlighting + jump arrows. Each block of moved lines
   // gets a coloured background (4 colors cycled by pairId) on the
-  // covered rows, plus a clickable icon in the line-number gutter of
-  // the first row, titled with where the code moved. Click dispatches a
+  // covered rows, and an arrow in place of each line's +/− mark: → on
+  // the new side, ← on the old. The first line's arrow is a button
+  // titled with where the code moved. Click dispatches a
   // document-level `meerkat-move-jump` event the sibling DiffViewers
   // listen for so the target file scrolls into view and flashes.
   $effect(() => {
@@ -1088,8 +1088,11 @@
     diffContainer.querySelectorAll(".moved-line").forEach((el) => {
       el.classList.remove("moved-line", "moved-pair-0", "moved-pair-1", "moved-pair-2", "moved-pair-3");
     });
-    diffContainer.querySelectorAll(".moved-badge").forEach((el) => {
+    diffContainer.querySelectorAll(".moved-arrow").forEach((el) => {
       el.remove();
+    });
+    diffContainer.querySelectorAll(".moved-mark").forEach((el) => {
+      el.classList.remove("moved-mark");
     });
   }
 
@@ -1103,21 +1106,30 @@
       const pairClass = `moved-pair-${block.pair_id % 4}`;
       const side = block.side === "old" ? "old" : "new";
       for (let ln = block.line_start; ln <= block.line_end; ln++) {
-        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row) => {
+        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row, i) => {
           row.classList.add("moved-line", pairClass);
           const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
-          if (td) td.classList.add("moved-line", pairClass);
+          if (!td) return;
+          td.classList.add("moved-line", pairClass);
+          // The arrow covers the library's +/− mark rather than
+          // replacing it: @git-diff-view reuses the row for other lines.
+          const mark = td.querySelector(".diff-line-content-operator");
+          if (!mark) return;
+          mark.classList.add("moved-mark");
+          mark.append(movedArrow(block, pairClass, ln === block.line_start && i === 0));
         });
       }
-      const firstRows = rowsBySideLine.get(`${side}:${block.line_start}`);
-      if (!firstRows) continue;
-      const numTd = firstRows[0].querySelector(`td.diff-line-${side}-num, td.diff-line-num`);
-      if (!numTd) continue;
+    }
+  }
 
-      const badge = document.createElement("button");
+  function movedArrow(block: MovedBlock, pairClass: string, link: boolean): HTMLElement {
+    const arrow = document.createElement(link ? "button" : "span");
+    arrow.className = `moved-arrow ${pairClass}`;
+    arrow.textContent = block.side === "old" ? "←" : "→";
+    if (link) {
+      const badge = arrow as HTMLButtonElement;
       badge.type = "button";
-      badge.className = `moved-badge ${pairClass}`;
-      badge.textContent = "⇄";
+      badge.classList.add("moved-badge");
       const lines =
         block.to_line_start === block.to_line_end
           ? `line ${block.to_line_start}`
@@ -1137,8 +1149,8 @@
           }),
         );
       });
-      numTd.prepend(badge);
     }
+    return arrow;
   }
 
   // Held for 60% of the flash, then eased out.
@@ -1239,7 +1251,6 @@
   <div
     class="diff-content"
     class:no-wrap={!wrap_lines}
-    class:has-moved-lines={(file.moved_lines ?? []).length > 0}
     role="presentation"
     bind:this={diffContainer}
     onpointerdown={handlePointerDown}
@@ -1497,36 +1508,14 @@
       var(--meerkat-rulers-unified, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
-  /* A file with moved code widens its line-number gutter by the
-     icon's width. The library sets the gutter width as an inline
-     variable on the table's wrapper, so the table redefines it from a
-     copy taken on the wrapper. */
-  :global(.diff-content.has-moved-lines) {
-    --meerkat-moved-icon: 16px;
+  /* A moved line's arrow covers its +/− mark, which turns invisible. */
+  :global(.diff-content .diff-line-content-operator.moved-mark) {
+    position: relative;
+    color: transparent;
   }
-  :global(.diff-content.has-moved-lines [style*="--diff-aside-width--"]) {
-    --meerkat-aside-base: var(--diff-aside-width--);
-  }
-  :global(.diff-content.has-moved-lines [style*="--diff-aside-width--"] > table) {
-    --diff-aside-width--: calc(var(--meerkat-aside-base) + var(--meerkat-moved-icon));
-  }
-  /* Split view with Wrap on sizes its gutters by `<col width>` instead. */
-  :global(.diff-content.has-moved-lines col.diff-table-old-num-col),
-  :global(.diff-content.has-moved-lines col.diff-table-new-num-col) {
-    width: var(--diff-aside-width--);
-  }
-  :global(.diff-content.has-moved-lines td.diff-line-old-num),
-  :global(.diff-content.has-moved-lines td.diff-line-new-num),
-  :global(.diff-content.has-moved-lines td.diff-line-num) {
-    padding-left: calc(10px + var(--meerkat-moved-icon));
-  }
-  /* Floated into the gutter's added left padding, clear of the line
-     number and the code. */
-  :global(.moved-badge) {
-    float: left;
-    width: var(--meerkat-moved-icon);
-    /* The gutter's own 10px padding stays clear for a long number. */
-    margin-left: calc(-10px - var(--meerkat-moved-icon));
+  :global(.moved-arrow) {
+    position: absolute;
+    inset: 0;
     padding: 0;
     border: 0;
     border-radius: 3px;
@@ -1534,13 +1523,17 @@
     font: inherit;
     font-weight: bold;
     text-align: center;
+    text-indent: 0;
+  }
+  :global(.moved-badge) {
     cursor: pointer;
   }
-  :global(.moved-badge:hover) {
+  /* Outranks app.css's `button:hover:not(:disabled)`. */
+  :global(.diff-content .moved-badge:hover) {
     background: #30363d;
   }
-  :global(.moved-badge.moved-pair-0) { color: rgb(96, 165, 250); }
-  :global(.moved-badge.moved-pair-1) { color: rgb(192, 132, 252); }
-  :global(.moved-badge.moved-pair-2) { color: rgb(52, 211, 153); }
-  :global(.moved-badge.moved-pair-3) { color: rgb(251, 191, 36); }
+  :global(.moved-arrow.moved-pair-0) { color: rgb(96, 165, 250); }
+  :global(.moved-arrow.moved-pair-1) { color: rgb(192, 132, 252); }
+  :global(.moved-arrow.moved-pair-2) { color: rgb(52, 211, 153); }
+  :global(.moved-arrow.moved-pair-3) { color: rgb(251, 191, 36); }
 </style>

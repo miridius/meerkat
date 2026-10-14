@@ -6,9 +6,9 @@ import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // The browser seam of moved-code highlighting: DiffViewer.svelte tints
-// a moved block's rows and puts an icon linking to its counterpart in
-// the first row's gutter, in a table @git-diff-view re-renders. Finding
-// the moves is covered by the Meerkat.Moves tests.
+// a moved block's rows and puts an arrow over each line's +/− mark, the
+// first linking to its counterpart, in a table @git-diff-view
+// re-renders. Finding the moves is covered by the Meerkat.Moves tests.
 
 const helper = (n: number) =>
 	`export function helper${n}(input: string, options: { locale: string; strict: boolean }): string {
@@ -19,47 +19,60 @@ const helper = (n: number) =>
 
 // helper2 moves to the end of the file, leaving collapsed context above
 // and between the hunks. It and its blank line are lines 6-10, and land
-// on lines 55-59 with the blank first.
+// on lines 55-59 with the blank first. helper8's second line, old line
+// 37 and new line 32, changes in place.
 // `wide` ends helper1's first line in a comment wider than any window.
 function movedBlockFixture({ wide = false } = {}) {
 	const helpers = Array.from({ length: 12 }, (_, i) => helper(i + 1));
 	if (wide) helpers[0] = helpers[0].replace("{\n", `{ // ${"wide ".repeat(100)}\n`);
 	const fixture = makeFixture({ files: { "util.ts": helpers.join("\n") } });
 	fixture.git("commit", "-q", "-m", "base");
+	helpers[7] = helpers[7].replace(".trim()", ".trimEnd()");
 	const [moved] = helpers.splice(1, 1);
 	writeFileSync(join(fixture.dir, "util.ts"), [...helpers, moved].join("\n"));
 	fixture.git("add", "util.ts");
 	return fixture;
 }
 
-const MOVED = [
-	...[55, 56, 57, 58, 59].map((n) => `new:${n}`),
-	...[6, 7, 8, 9, 10].map((n) => `old:${n}`),
-].sort();
-const EXPECTED = { tinted: MOVED, links: ["new:55", "old:6"], drawn: true };
+const NEW_MOVED = [55, 56, 57, 58, 59].map((n) => `new:${n}`);
+const OLD_MOVED = [6, 7, 8, 9, 10].map((n) => `old:${n}`);
+const EXPECTED = {
+	tinted: [...NEW_MOVED, ...OLD_MOVED].sort(),
+	arrows: [...NEW_MOVED.map((l) => `${l} →`), ...OLD_MOVED.map((l) => `${l} ←`)].sort(),
+	links: ["new:55", "old:6"],
+	marks: ["new:32 +", "old:37 -"],
+	drawn: true,
+};
 const PAIR_0_TINT = "rgba(96, 165, 250, 0.18)";
 const FLASH = "rgba(88, 166, 255, 0.35)";
 
-// The `side:line` of each tinted code cell and of each link's row, and
-// whether each tinted cell draws the tint.
+// The `side:line` of each tinted code cell, of each arrow with its text,
+// of each link and of each visible +/− mark with its text, and whether
+// each tinted cell draws the tint.
 function movedState(file: Locator) {
 	return file.evaluate((root, tint) => {
 		const lineOf = (tr: Element, side: string) =>
 			tr.querySelector(`td.diff-line-${side}-num [data-line-num]`)?.getAttribute("data-line-num") ||
 			tr.querySelector(`[data-line-${side}-num]`)?.getAttribute(`data-line-${side}-num`);
-		const where = (td: Element) => {
+		const where = (el: Element) => {
+			const td = el.closest("td") as Element;
 			const tr = td.closest("tr") as Element;
-			const side = /diff-line-new-(content|num)/.test(td.className)
+			const side = td.classList.contains("diff-line-new-content")
 				? "new"
-				: /diff-line-old-(content|num)/.test(td.className) || !lineOf(tr, "new")
+				: td.classList.contains("diff-line-old-content") || !lineOf(tr, "new")
 					? "old"
 					: "new";
 			return `${side}:${lineOf(tr, side)}`;
 		};
 		const cells = Array.from(root.querySelectorAll("td.moved-line"));
+		const marks = Array.from(root.querySelectorAll(".diff-line-content-operator[data-operator]")).filter(
+			(m) => getComputedStyle(m).color !== "rgba(0, 0, 0, 0)",
+		);
 		return {
 			tinted: cells.map(where).sort(),
-			links: Array.from(root.querySelectorAll(".moved-badge"), (b) => where(b.closest("td") as Element)).sort(),
+			arrows: Array.from(root.querySelectorAll(".moved-arrow"), (a) => `${where(a)} ${a.textContent}`).sort(),
+			links: Array.from(root.querySelectorAll(".moved-badge"), where).sort(),
+			marks: marks.map((m) => `${where(m)} ${m.textContent?.trim()}`).sort(),
 			drawn: cells.every((td) => getComputedStyle(td).backgroundImage.includes(tint)),
 		};
 	}, PAIR_0_TINT);
@@ -96,31 +109,16 @@ function expandDuringFlash(file: Locator) {
 	});
 }
 
-// Each line number that runs into its gutter cell's right padding.
-function crampedNumbers(file: Locator) {
-	return file.evaluate((root) =>
-		Array.from(root.querySelectorAll("td.diff-line-old-num, td.diff-line-new-num, td.diff-line-num")).flatMap(
-			(td) => {
-				const limit = td.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(td).paddingRight);
-				return Array.from(td.querySelectorAll("span"))
-					.filter((s) => s.textContent?.trim() && s.getBoundingClientRect().right > limit + 0.5)
-					.map((s) => s.textContent?.trim());
-			},
-		),
-	);
-}
-
-// Each icon's text, unless it sits in a line-number gutter cell, inside
-// the visible part of its scroll pane, and clear of every line number
-// and every character of code.
-function misplacedIcons(file: Locator) {
+// Each arrow's line, unless it sits over its line's +/− mark, inside the
+// visible part of its scroll pane, and clear of every character of code.
+function misplacedArrows(file: Locator) {
 	return file.evaluate((root) => {
 		const range = document.createRange();
 		const textBoxes = (el: Element) => {
 			const boxes: DOMRect[] = [];
 			const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
 			for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-				if (n.parentElement?.closest(".moved-badge")) continue;
+				if (n.parentElement?.closest(".diff-line-content-operator")) continue;
 				for (let i = 0; i < (n.textContent ?? "").length; i++) {
 					range.setStart(n, i);
 					range.setEnd(n, i + 1);
@@ -130,21 +128,24 @@ function misplacedIcons(file: Locator) {
 			}
 			return boxes;
 		};
-		return Array.from(root.querySelectorAll(".moved-badge")).flatMap((icon) => {
-			const b = icon.getBoundingClientRect();
-			const td = icon.closest("td") as Element;
-			const pane = (icon.closest(".diff-table-scroll-container") ?? root).getBoundingClientRect();
-			const inGutter = /diff-line-(old-|new-)?num/.test(td.className);
+		return Array.from(root.querySelectorAll(".moved-arrow")).flatMap((arrow) => {
+			const b = arrow.getBoundingClientRect();
+			const mark = arrow.parentElement?.closest(".diff-line-content-operator");
+			const m = mark?.getBoundingClientRect();
+			const overMark =
+				!!m && Math.abs(b.left - m.left) < 0.5 && Math.abs(b.right - m.right) < 0.5 && b.width > 0;
+			const pane = (arrow.closest(".diff-table-scroll-container") ?? root).getBoundingClientRect();
 			const inPane = b.left >= pane.left && b.right <= pane.right;
-			const hit = textBoxes(td.closest("tr") as Element).some(
+			const hit = textBoxes(arrow.closest("tr") as Element).some(
 				(r) => r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom,
 			);
-			return inGutter && inPane && !hit ? [] : [`${icon.getAttribute("title")}: ${JSON.stringify({ inGutter, inPane, hit })}`];
+			const line = arrow.closest("tr")?.textContent?.trim().slice(0, 40);
+			return overMark && inPane && !hit ? [] : [`${line}: ${JSON.stringify({ overMark, inPane, hit })}`];
 		});
 	});
 }
 
-test("moved lines keep their tint and links when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
+test("moved lines keep their tint and arrows when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
@@ -183,7 +184,7 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 	}
 });
 
-test("each moved block's icon sits in the gutter on screen, clear of code, with Wrap on or off in both views", async ({
+test("each moved line's arrow sits in the +/− column on screen, clear of code, with Wrap on or off in both views", async ({
 	page,
 }) => {
 	// A line wider than any window makes each side's pane scroll with Wrap off.
@@ -206,9 +207,7 @@ test("each moved block's icon sits in the gutter on screen, clear of code, with 
 				await expect(table).toHaveCount(1);
 				const message = `${view}, Wrap ${wrap ? "on" : "off"}`;
 				await expect.poll(() => movedState(file), { message }).toEqual(EXPECTED);
-				expect(await misplacedIcons(file), message).toEqual([]);
-				// The gutter widens by the icon, so the line numbers keep their room.
-				expect(await crampedNumbers(file), message).toEqual([]);
+				expect(await misplacedArrows(file), message).toEqual([]);
 			}
 		}
 	} finally {
@@ -216,7 +215,9 @@ test("each moved block's icon sits in the gutter on screen, clear of code, with 
 	}
 });
 
-test("a moved block's icon says where the code went, jumps to it and stays out of copied code", async ({ page }) => {
+test("a moved block's first arrow says where the code went, jumps to it and stays out of copied code", async ({
+	page,
+}) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
 	try {
 		// Short: the counterpart starts out of view.
@@ -225,17 +226,19 @@ test("a moved block's icon says where the code went, jumps to it and stays out o
 		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
 		const link = file.getByRole("button", { name: "Moved to util.ts lines 55-59" });
 		await expect(link).toBeVisible();
+		await expect(link).toHaveText("←");
 		await expect(link).toHaveAttribute("title", "Moved to util.ts lines 55-59");
-		await expect(file.getByRole("button", { name: "Moved from util.ts lines 6-10" })).toHaveCount(1);
+		await link.hover();
+		await expect(link).toHaveCSS("background-color", "rgb(48, 54, 61)");
+		await expect(file.getByRole("button", { name: "Moved from util.ts lines 6-10" })).toHaveText("→");
 
 		const counterpart = file.locator("td.diff-line-new-num:has(span[data-line-num='55'])");
 		await expect(counterpart).not.toBeInViewport();
 		await link.click();
 		await expect(counterpart).toBeInViewport();
-		// The click is the icon's, not the gutter's: it starts no comment.
 		await expect(file.locator("tr.meerkat-form-row")).toHaveCount(0);
 
-		// Code copied across the icon's line leaves the icon out.
+		// Code copied across the moved lines leaves the arrows out.
 		const codeOn = (line: number) =>
 			file.locator(`tr.diff-line:has(td.diff-line-old-num span[data-line-num='${line}']) td.diff-line-old-content`);
 		await codeOn(5).scrollIntoViewIfNeeded();
@@ -248,7 +251,7 @@ test("a moved block's icon says where the code went, jumps to it and stays out o
 		await page.mouse.up();
 		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
 		expect(copied).toContain("helper2(input");
-		expect(copied).not.toContain("⇄");
+		expect(copied).not.toMatch(/[←→]/);
 	} finally {
 		await meerkat.kill();
 	}
