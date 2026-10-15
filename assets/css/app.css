@@ -816,7 +816,7 @@ a.chip-link:hover .chip-value {
 }
 .counts-slash,
 .toolbar-settings-popover .view-controls,
-.diff-toolbar[data-squeeze~="version"] .version-chip-wrap,
+.diff-toolbar[data-squeeze~="version"] .version-chip-btn > .chip-label,
 .diff-toolbar[data-squeeze~="files"] .files-label,
 .diff-toolbar[data-squeeze~="counts"] .counts-showing,
 .diff-toolbar[data-squeeze~="counts"] .counts-of,
@@ -839,8 +839,10 @@ a.chip-link:hover .chip-value {
   align-items: center;
   gap: 12px;
 }
-/* Title, then base branch, then head branch: each shrinks only once the
-   one before it is gone. */
+/* Title, then base branch, then head branch: each truncates down to a few
+   characters, keeping its ellipsis and tooltip, before the next starts.
+   Past the head branch's floor its chip overflows, and the hook wraps
+   the toolbar. */
 .diff-toolbar[data-squeeze~="title"] > .toolbar-title {
   flex-shrink: 1;
 }
@@ -850,23 +852,29 @@ a.chip-link:hover .chip-value {
   flex-shrink: 1;
   min-width: 0;
 }
-.diff-toolbar[data-squeeze~="base"] > .toolbar-title,
-.diff-toolbar[data-squeeze~="head"] .branch-base {
-  flex: 0 0 0;
+/* The floor: 6ch, or the whole text when shorter. Browsers without
+   calc-size() pad a shorter text out to 6ch. */
+.diff-toolbar {
+  --squeeze-floor: 6ch;
 }
-/* The head branch keeps a few characters; past that its chip overflows,
-   and the hook wraps the toolbar. */
+@supports (min-width: calc-size(max-content, size)) {
+  .diff-toolbar {
+    --squeeze-floor: calc-size(max-content, min(size, 6ch));
+  }
+}
+.diff-toolbar[data-squeeze~="title"] > .toolbar-title,
+.diff-toolbar[data-squeeze~="base"] .branch-base,
 .diff-toolbar[data-squeeze~="head"] .branch-head {
-  min-width: 6ch;
+  min-width: var(--squeeze-floor);
+}
+.diff-toolbar[data-squeeze~="base"]:not([data-squeeze~="wrap"]) > .toolbar-title,
+.diff-toolbar[data-squeeze~="head"]:not([data-squeeze~="wrap"]) .branch-base {
+  flex: 0 0 auto;
+  max-width: 6ch;
 }
 .diff-toolbar[data-squeeze]:not([data-squeeze~="head"]) .branch-head,
 .diff-toolbar .chip-arrow {
   flex-shrink: 0;
-}
-/* Wrapped, each part takes its natural width again, cut only by its row. */
-.diff-toolbar[data-squeeze~="wrap"] > .toolbar-title,
-.diff-toolbar[data-squeeze~="wrap"] .branch-base {
-  flex: 0 1 auto;
 }
 
 .toolbar-group {
