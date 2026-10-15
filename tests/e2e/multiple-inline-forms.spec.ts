@@ -19,6 +19,11 @@ function newLine(fileSection: Locator, n: number): Locator {
 	return fileSection.locator(`td.diff-line-num span[data-line-new-num="${n}"]`);
 }
 
+// Split mode's old-side gutter cell for line `n`.
+function splitOldLine(fileSection: Locator, n: number): Locator {
+	return fileSection.locator(`td.diff-line-old-num:has(span[data-line-num="${n}"])`);
+}
+
 // Split mode's new-side gutter cell for line `n`.
 function splitNewLine(fileSection: Locator, n: number): Locator {
 	return fileSection.locator(`td.diff-line-new-num:has(span[data-line-num="${n}"])`);
@@ -248,6 +253,94 @@ test.describe("multiple open comment forms", () => {
 			await expect(formAt(long, 5).locator("textarea")).toHaveValue("on a context line");
 			await expect(commentRowAt(long, 6)).toContainText("posted on context");
 			await expect(commentRowAt(lib, 1)).toContainText("kept question");
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
+	test("in Split view, comments and forms on either side keep the two sides in line, with Wrap on or off", async ({
+		page,
+	}) => {
+		const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+		const fixture = makeFixture({ files: { "a.txt": `${lines.join("\n")}\n` } });
+		fixture.git("commit", "-q", "-m", "base");
+		lines[9] = "line 10 changed";
+		lines[19] = "line 20 changed";
+		writeFileSync(join(fixture.dir, "a.txt"), `${lines.join("\n")}\n`);
+		fixture.git("add", "a.txt");
+
+		const meerkat = await startMeerkat({ fixture });
+		try {
+			await page.goto(meerkat.url);
+			const file = page.locator(".file-section").filter({ hasText: "a.txt" });
+			// Each shown line below the rows sits at the same height on both
+			// sides.
+			const misaligned = () =>
+				file.evaluate((section) => {
+					const top = (side: string, n: number) =>
+						section
+							.querySelector(`td.diff-line-${side}-num span[data-line-num="${n}"]`)
+							?.closest("tr")
+							?.getBoundingClientRect().top;
+					const off: number[] = [];
+					for (const n of [11, 17, 21, 23]) {
+						const [o, w] = [top("old", n), top("new", n)];
+						if (o === undefined || w === undefined || Math.abs(o - w) > 1) off.push(n);
+					}
+					return off;
+				});
+
+			// An old-side comment and a new-side form at line 10, and a
+			// new-side form alone at line 20.
+			await splitOldLine(file, 10).click();
+			await formAt(file, 10).locator("textarea").fill("old side");
+			await formAt(file, 10).getByRole("button", { name: /^Add Comment$/ }).click();
+			await expect(file.locator('tr.meerkat-comment-row[data-meerkat-anchor-side="old"]')).toContainText("old side");
+			await splitNewLine(file, 10).click();
+			await splitNewLine(file, 20).click();
+			await expect(formAt(file, 20)).toBeVisible();
+
+			const wrap = page.getByRole("checkbox", { name: "Wrap" });
+			await expect(wrap).toBeChecked();
+			for (const checked of [true, false]) {
+				if (!checked) {
+					await wrap.click();
+					await expect(wrap).not.toBeChecked();
+					// The rows are placed again in each side's own table.
+					await expect(file.locator("table.new-diff-table tr.meerkat-form-row")).toHaveCount(2);
+					await expect(file.locator("table.old-diff-table tr.meerkat-comment-row")).toHaveCount(1);
+				}
+				await expect.poll(misaligned, `Wrap ${checked ? "on" : "off"}`).toEqual([]);
+				// A form that grows keeps the other side in line.
+				await formAt(file, 20).getByRole("button", { name: "Suggestion", exact: true }).click();
+				await expect(formAt(file, 20).locator(".cm-editor")).toBeVisible();
+				await expect.poll(misaligned, `Wrap ${checked ? "on" : "off"}, form grown`).toEqual([]);
+				// And one that shrinks back.
+				await formAt(file, 20).getByRole("button", { name: "Issue", exact: true }).click();
+				await expect(formAt(file, 20).locator(".cm-editor")).toHaveCount(0);
+				await expect.poll(misaligned, `Wrap ${checked ? "on" : "off"}, form shrunk`).toEqual([]);
+			}
+
+			// With Wrap off, the old side's comment at line 10 comes before
+			// the new side's form, each level with its blank on the other side.
+			const topOf = async (row: Locator) => (await row.boundingBox())?.y;
+			const newMirrors = file.locator("table.new-diff-table tr.meerkat-mirror-row");
+			const oldMirrors = file.locator("table.old-diff-table tr.meerkat-mirror-row");
+			const comment = file.locator("table.old-diff-table tr.meerkat-comment-row");
+			const form10 = file.locator('tr.meerkat-form-row[data-meerkat-form-anchor="10"]');
+			await expect(newMirrors).toHaveCount(1);
+			await expect(oldMirrors).toHaveCount(2);
+			const [commentTop, form10Top, newMirrorTop, oldMirrorTop] = await Promise.all(
+				[comment, form10, newMirrors.first(), oldMirrors.first()].map(topOf),
+			);
+			expect(commentTop).toBeLessThan(form10Top ?? 0);
+			expect(Math.abs((commentTop ?? 0) - (newMirrorTop ?? -9))).toBeLessThanOrEqual(1);
+			expect(Math.abs((form10Top ?? 0) - (oldMirrorTop ?? -9))).toBeLessThanOrEqual(1);
+
+			// Closing a row removes its blank.
+			await formAt(file, 20).getByRole("button", { name: /^Cancel$/ }).click();
+			await expect(oldMirrors).toHaveCount(1);
+			await expect.poll(misaligned, "Wrap off, form closed").toEqual([]);
 		} finally {
 			await meerkat.kill();
 		}
