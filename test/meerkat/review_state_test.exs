@@ -10,7 +10,7 @@ defmodule Meerkat.ReviewStateTest do
   # is process-global.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, isolate_git_config: 0, make_tmp_repo: 1, stage: 3]
+  import Meerkat.TestHelpers, only: [git: 2, make_tmp_repo: 1, stage: 3]
 
   alias Meerkat.ReviewState
 
@@ -138,7 +138,6 @@ defmodule Meerkat.ReviewStateTest do
 
   describe "from_target/2 — real git, `gh` stubbed on PATH" do
     setup do
-      isolate_git_config()
       base = make_tmp_repo("meerkat-review-state")
       File.rm_rf!(Path.join(base, ".git"))
       old_path = System.fetch_env!("PATH")

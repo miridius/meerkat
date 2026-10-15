@@ -6,7 +6,6 @@ defmodule Meerkat.GitBinaryTest do
   import Meerkat.TestHelpers, only: [stage: 3, intercept_git: 3, git: 2]
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-binary")
     git(dir, ["init", "-q"])
     git(dir, ["config", "user.email", "t@t.t"])

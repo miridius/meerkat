@@ -16,7 +16,6 @@ defmodule MeerkatWeb.AttachControllerTest do
   @own_run "own-run"
 
   setup do
-    isolate_git_config()
     repo = make_git_repo("meerkat-attach")
 
     git(repo, [

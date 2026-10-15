@@ -41,7 +41,6 @@ defmodule Meerkat.BumpDepsHookTest do
   @dep_files ~w(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json)
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     base = Meerkat.TestHelpers.make_tmp_repo("meerkat-bump-deps")
     on_exit(fn -> File.rm_rf!(base) end)
     File.rm_rf!(Path.join(base, ".git"))

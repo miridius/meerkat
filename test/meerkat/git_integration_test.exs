@@ -7,7 +7,6 @@ defmodule Meerkat.GitIntegrationTest do
   import Meerkat.TestHelpers, only: [stage: 3, intercept_git: 3]
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-git-integration")
     git(dir, ["init", "-q", "--initial-branch=main"])
     git(dir, ["config", "user.email", "t@t.t"])
@@ -21,11 +20,11 @@ defmodule Meerkat.GitIntegrationTest do
   test "Git helpers isolate global signing and diff-prefix settings", %{dir: dir} do
     config = Path.join(dir, "global.gitconfig")
     File.write!(config, "[commit]\n\tgpgsign = true\n[diff]\n\tnoprefix = true\n")
-    System.put_env("GIT_CONFIG_GLOBAL", config)
+    Meerkat.TestHelpers.put_env("GIT_CONFIG_GLOBAL", config)
     assert git(dir, ["config", "--get", "commit.gpgsign"]) == "true"
     assert git(dir, ["config", "--get", "diff.noprefix"]) == "true"
 
-    Meerkat.TestHelpers.isolate_git_config()
+    Meerkat.TestHelpers.put_git_config_env()
     stage(dir, "file.txt", "before\n")
     git(dir, ["commit", "-qm", "base"])
     stage(dir, "file.txt", "after\n")

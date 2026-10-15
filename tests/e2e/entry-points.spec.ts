@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { expect, test } from "./lib/test";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
 import { MEERKAT_BIN } from "./lib/runner";
 
 // The seam is a backend that exits before it serves a review: the caller
@@ -13,6 +13,7 @@ test.describe("rejected invocations", () => {
 		try {
 			const result = spawnSync(MEERKAT_BIN, ["--bogus", "--no-open"], {
 				cwd: fixture.dir,
+				env: sanitisedGitEnv(),
 				stdio: ["ignore", "ignore", "pipe"],
 				timeout: 60_000,
 				encoding: "utf8",

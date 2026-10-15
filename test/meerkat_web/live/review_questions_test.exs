@@ -7,7 +7,6 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
   alias MeerkatWeb.ReviewLive
 
   setup do
-    isolate_git_config()
     repo = make_git_repo("meerkat-question-rounds")
 
     git(repo, [

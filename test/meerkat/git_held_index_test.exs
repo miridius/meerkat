@@ -6,7 +6,6 @@ defmodule Meerkat.GitHeldIndexTest do
   alias Meerkat.Git
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_git_repo("meerkat-held-index")
     git(dir, ["config", "user.email", "t@t.t"])
     git(dir, ["config", "user.name", "t"])

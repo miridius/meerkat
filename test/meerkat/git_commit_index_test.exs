@@ -9,7 +9,6 @@ defmodule Meerkat.GitCommitIndexTest do
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0, stage: 3]
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_git_repo("meerkat-commit-index")
     on_exit(fn -> File.rm_rf!(dir) end)
 

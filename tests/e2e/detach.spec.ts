@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
 import { type Runner, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -46,7 +46,7 @@ function temporaryIndex(dir: string, name: string): string {
 	writeFileSync(join(dir, "EXTRA.md"), "only in the temporary index\n");
 	execFileSync("git", ["add", "EXTRA.md"], {
 		cwd: dir,
-		env: { ...process.env, GIT_INDEX_FILE: index },
+		env: { ...sanitisedGitEnv(), GIT_INDEX_FILE: index },
 	});
 	return index;
 }

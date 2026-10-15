@@ -10,7 +10,6 @@ defmodule Meerkat.InstallScriptTest do
   @root File.cwd!()
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     base = Meerkat.TestHelpers.make_tmp_repo("meerkat-install")
     on_exit(fn -> File.rm_rf!(base) end)
     File.rm_rf!(Path.join(base, ".git"))

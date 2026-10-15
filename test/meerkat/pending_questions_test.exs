@@ -5,7 +5,6 @@ defmodule Meerkat.PendingQuestionsTest do
   alias Meerkat.{PendingAnswers, PendingQuestions}
 
   setup do
-    isolate_git_config()
     repo = make_git_repo("meerkat-owed-questions")
     on_exit(fn -> File.rm_rf!(repo) end)
     {:ok, repo: repo}

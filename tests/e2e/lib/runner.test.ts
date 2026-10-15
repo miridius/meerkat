@@ -151,6 +151,32 @@ test("a meerkat that exits before printing its URL reports stderr read after it 
 	}
 });
 
+test("meerkat's git reads no config but the tests' global config", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	const seen = join(dir, "seen");
+	const bin = join(dir, "meerkat");
+	writeFileSync(bin, `#!/bin/sh\ngit config --list --show-scope > "$SEEN"\nexit 1\n`, { mode: 0o755 });
+	// Config a caller's `git -c` or GIT_CONFIG_COUNT would inject.
+	const injected = {
+		GIT_CONFIG_PARAMETERS: "'meerkat.injected'='1'",
+		GIT_CONFIG_COUNT: "1",
+		GIT_CONFIG_KEY_0: "meerkat.counted",
+		GIT_CONFIG_VALUE_0: "1",
+	};
+	const previous = Object.fromEntries(Object.keys(injected).map((key) => [key, process.env[key]]));
+	Object.assign(process.env, injected);
+	try {
+		await expect(startMeerkat({ bin, args: [], fixture: { dir }, env: { SEEN: seen } })).rejects.toThrow();
+		expect(readFileSync(seen, "utf8")).toBe("global\tmaintenance.auto=false\n");
+	} finally {
+		for (const [key, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 describe("ps elapsed-time parsing", () => {
 	for (const [etime, seconds] of [
 		["00:07", 7],
