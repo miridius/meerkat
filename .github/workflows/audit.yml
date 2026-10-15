@@ -1,7 +1,8 @@
 name: Dependency audit
 
-# CI audits the dependencies on every PR and push. This audits main daily
-# too, so an advisory published on a day without commits fails a run.
+# CI audits the dependencies on every PR and every push to main. This
+# audits main daily too, so an advisory published on a day without commits
+# fails a run.
 on:
   schedule:
     - cron: "17 5 * * *"

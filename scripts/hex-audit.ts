@@ -1,7 +1,7 @@
 // The Hex audit that check.sh and CI run. `mix hex.audit` falls back to
 // its cache when it cannot fetch a package's record from hex.pm, and with
-// no cache it finds no advisories and passes. This fails such a run instead. Hex reports a
-// failed fetch on stderr.
+// no cache it finds no advisories and passes. This fails such a run
+// instead. Hex reports a failed fetch on stderr.
 const audit = Bun.spawnSync(["mix", "hex.audit"], {
 	stdout: "inherit",
 	stderr: "pipe",

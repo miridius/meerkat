@@ -144,7 +144,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 `scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. `pnpm audit --prod` fails when it cannot reach the npm registry. `check.sh` runs both audits as CI does, so it fails a commit when either registry is out of reach.
 
-**Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit --prod` on `main` every day, and on demand through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
+**Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit --prod` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
 `scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set.
 
