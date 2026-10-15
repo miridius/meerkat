@@ -119,17 +119,18 @@ The end-to-end loop for a meerkat bug report or feature request:
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, once it holds a gate slot, it runs these steps in order:
 
 1. `mix deps.get`
-2. `pnpm install --frozen-lockfile --ignore-scripts --prefer-offline`
-3. `mix compile --warnings-as-errors`
-4. `mix format --check-formatted`
-5. `mix credo --strict`
-6. `bunx biome lint --error-on-warnings`
-7. `bash scripts/mix-test.sh`
-8. `bun test` in `assets/`
-9. `bun test tests/e2e/lib` from the repo root
-10. `bun run build` in `assets/`
-11. `bunx playwright install --only-shell chromium`
-12. `bun run test:e2e`
+2. `mix hex.audit`
+3. `pnpm install --frozen-lockfile --ignore-scripts --prefer-offline`
+4. `mix compile --warnings-as-errors`
+5. `mix format --check-formatted`
+6. `mix credo --strict`
+7. `bunx biome lint --error-on-warnings`
+8. `bash scripts/mix-test.sh`
+9. `bun test` in `assets/`
+10. `bun test tests/e2e/lib` from the repo root
+11. `bun run build` in `assets/`
+12. `bunx playwright install --only-shell chromium`
+13. `bun run test:e2e`
 
 `check.sh` records the checked contents, ignoring Markdown, through `scripts/checked-trees.sh` when every step passes and the worktree held exactly those contents, with no untracked file, before and after the steps. `check.sh --head` checks HEAD's contents without the Markdown-only skip.
 
@@ -137,7 +138,9 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Pre-push:** `.lefthook/pre-push/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked. If both pass, it runs `scripts/verified-push.sh`. `verified-push.sh` first refuses the push if it brings any merge commit that no remote-tracking ref holds; branches take in `main` by rebasing. It then requires `check.sh` and the mutation gate to have recorded each pushed tip's contents: a rebase or cherry-pick makes commits without the pre-commit hook, and a push is the last point git can refuse them. For each record a tip lacks, it runs `check.sh --head`, then `mutate.sh changed` against `origin/main`, stopping at the first failure. It runs them on an unrecorded HEAD when the worktree holds exactly HEAD, with no untracked file. It refuses the push if that run fails or records nothing. It refuses any other unrecorded HEAD. It runs them on an unrecorded tip other than HEAD in a temporary worktree of that tip. It refuses the push if the run fails or records nothing. It refuses any tip git cannot read. `no-private-refs.sh` reads private patterns, one extended regex per line, from the untracked `info/private-refs` in the git common dir and refuses the push if that file is missing or any pattern fails its self-test. It scans commits not already held by the target remote, plus every pushed tip’s full tree, pushed annotated tags, and pushed ref names, rejecting private-pattern matches, Claude Code session URLs, local absolute paths, and all email addresses except placeholder and no-reply addresses. It refuses the push if the remote cannot be queried.
 
-**CI:** Every PR runs, in order, `mix deps.get`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bash scripts/mix-test.sh`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
+**CI:** Every PR runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bash scripts/mix-test.sh`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
+
+`scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. In `check.sh`, `mix hex.audit` only warns about such a fetch, so an offline commit still passes.
 
 `scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set.
 

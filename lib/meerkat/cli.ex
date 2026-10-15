@@ -827,7 +827,11 @@ defmodule Meerkat.CLI do
         # diagram source in the query string, so anything shorter
         # refuses an oversized source with a 414 before
         # `MeerkatWeb.PlantUMLController` can answer with its 413.
-        http_1_options: [max_request_line_length: 2 * 1024 * 1024]
+        http_1_options: [max_request_line_length: 2 * 1024 * 1024],
+        # Browsers speak HTTP/1.1 to a plain-HTTP origin, so HTTP/2 only
+        # widens what a local process can reach: GHSA-69m6-wcv4-rwcf
+        # lets an HTTP/2 peer pin stream processes indefinitely.
+        http_2_options: [enabled: false]
       ],
       server: true,
       secret_key_base: secret_key_base(),

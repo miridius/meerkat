@@ -58,6 +58,7 @@ jobs:
           [[ "$(bash -c 'echo "${BASH_VERSINFO[0]}"')" -ge 4 ]]
 
       - run: mix deps.get
+      - run: bun scripts/hex-audit.ts
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted
