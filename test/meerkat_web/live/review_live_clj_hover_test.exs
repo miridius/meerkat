@@ -86,6 +86,17 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     # An old row reads the base, where `(f)` doesn't exist.
     render_hook(view, "clj.hover", %{params | "id" => 9, "side" => "old"})
     assert_push_event(view, "clj:hover", %{id: 9, hover: nil}, 10_000)
+
+    # Its `(defn f` on old line 3: f at col 7.
+    render_hook(view, "clj.hover", %{
+      params
+      | "id" => 10,
+        "side" => "old",
+        "line" => 3,
+        "col" => 7
+    })
+
+    assert_push_event(view, "clj:hover", %{id: 10, hover: %{name: "app.core/f"}}, 10_000)
   end
 
   test "a hover whose server is gone is logged and answers nothing", %{conn: conn} = ctx do
