@@ -145,13 +145,29 @@ test("at its step the version chip shows only its count of updates, and its drop
 		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
 		expect(await chip.evaluate((el) => el.innerText.trim())).toBe("1");
 
-		// Opening it marks the update seen, so the chip goes; its drop-down stays.
+		// Opening it marks the update seen, so the chip goes, keeping its box
+		// so the drop-down stays where it opened.
+		const box = await wrap.boundingBox();
 		await chip.click();
 		await expect(popover).toBeVisible();
 		await expect(named).toHaveText(/^\s*meerkat\s+abc1234\s*$/);
 		await expect(chip).toBeHidden();
+		expect(await wrap.boundingBox()).toEqual(box);
 		await page.keyboard.press("Escape");
 		await expect(wrap).toBeHidden();
+
+		// Wrapped, the chip can sit near the window's left edge; the
+		// drop-down still opens within the window.
+		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
+		await page.setViewportSize({ width: 300, height: 800 });
+		await page.reload();
+		await expect(chip.locator(".version-badge")).toHaveText("1");
+		await chip.click();
+		await expect(named).toBeVisible();
+		const drop = await popover.evaluate((el) => el.getBoundingClientRect().toJSON());
+		expect(drop.left).toBeGreaterThanOrEqual(0);
+		expect(drop.right).toBeLessThanOrEqual(300);
+		await page.keyboard.press("Escape");
 
 		await at(page, 2400);
 		await expect(chip).toContainText("abc1234");

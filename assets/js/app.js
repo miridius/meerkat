@@ -381,6 +381,11 @@ const hooks = {
         if (opening) {
           setSeen(maxPr());
           this._refreshBadge();
+          // It hangs left from the chip's right edge; a chip near the
+          // window's left edge shifts it right, back into view.
+          popover.style.right = "";
+          const left = popover.getBoundingClientRect().left;
+          if (left < 8) popover.style.right = `${left - 8}px`;
         }
       };
       btn.addEventListener("click", this._onClick);

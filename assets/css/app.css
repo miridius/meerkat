@@ -323,8 +323,8 @@ a.chip-link:hover .chip-value {
   top: calc(100% + 6px);
   right: 0;
   z-index: 50;
-  min-width: 280px;
-  max-width: 380px;
+  min-width: min(280px, calc(100vw - 16px));
+  max-width: min(380px, calc(100vw - 16px));
   max-height: 60vh;
   overflow-y: auto;
   background: var(--panel);
@@ -825,7 +825,6 @@ a.chip-link:hover .chip-value {
 .counts-slash,
 .toolbar-settings-popover .view-controls,
 .diff-toolbar[data-squeeze~="version"] .version-chip-btn > :not(.version-badge),
-.diff-toolbar[data-squeeze~="version"] .version-chip-btn:has(> .version-badge[hidden]),
 .diff-toolbar[data-squeeze~="version"] .version-chip-wrap:has(.version-badge[hidden]):has(.version-popover[hidden]),
 .diff-toolbar[data-squeeze~="files"] .files-label,
 .diff-toolbar[data-squeeze~="counts"] .counts-showing,
@@ -838,9 +837,16 @@ a.chip-link:hover .chip-value {
 }
 /* The version chip shows only its count of updates, and is gone when there
    are none. Opening its drop-down, which then names the version, marks them
-   seen, so the drop-down stays open where the chip was. */
+   seen; until it closes, the chip keeps its box, unseen, so nothing moves
+   and the drop-down stays where it opened. */
 .diff-toolbar[data-squeeze~="version"] .version-popover-version {
   display: block;
+}
+.diff-toolbar[data-squeeze~="version"] .version-badge[hidden] {
+  display: inline-flex;
+}
+.diff-toolbar[data-squeeze~="version"] .version-chip-btn:has(> .version-badge[hidden]) {
+  visibility: hidden;
 }
 .diff-toolbar[data-squeeze~="conn"] .conn-indicator {
   padding: 0;
