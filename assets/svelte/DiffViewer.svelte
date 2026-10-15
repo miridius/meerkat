@@ -406,6 +406,7 @@
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
+        cancelMovedFlash();
         const rowsBySideLine = buildAnchorIndex();
         applyCommentMarkers(rowsBySideLine);
         renderInlineComments();
@@ -1142,12 +1143,22 @@
     }
   }
 
-  // Held for 60% of the flash, then faded out.
+  // Held for 60% of the flash, then eased out.
   const MOVED_FLASH_SHADOW = "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)";
   const MOVED_FLASH_KEYFRAMES: Keyframe[] = [
     { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
-    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6 },
+    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6, easing: "ease-out" },
   ];
+  // The running flash. A hunk expand reuses its cells for other lines,
+  // so the expand cancels it.
+  let movedFlash: Animation[] = [];
+
+  function cancelMovedFlash() {
+    movedFlash.forEach((a) => {
+      a.cancel();
+    });
+    movedFlash = [];
+  }
 
   // Listen for jump events from sibling DiffViewers. If the event's
   // fileName matches THIS file, scroll the target line into view and
@@ -1166,12 +1177,13 @@
       // their opaque backgrounds, which hide the row's own. A click
       // during a flash starts it again.
       const side = ev.detail.side;
+      cancelMovedFlash();
       for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
         anchorRowsFor(side, ln).forEach((r) => {
           r.querySelectorAll(
             `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
           ).forEach((td) => {
-            td.animate(MOVED_FLASH_KEYFRAMES, { duration: 1600, easing: "ease-out" });
+            movedFlash.push(td.animate(MOVED_FLASH_KEYFRAMES, 1600));
           });
         });
       }

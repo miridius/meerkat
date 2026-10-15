@@ -73,6 +73,23 @@ function flashOnClick(file: Locator) {
 	});
 }
 
+// Clicks the old block's link, then a visible Expand button in the same
+// task, and returns the line numbers of the cells still flashing two
+// frames later, well inside the 1.6s flash.
+function expandDuringFlash(file: Locator) {
+	return file.evaluate(async (root) => {
+		(root.querySelector(".moved-badge") as HTMLElement).click();
+		const expand = Array.from(
+			root.querySelectorAll<HTMLElement>('td.diff-line-hunk-action button[title^="Expand"]'),
+		).find((b) => b.checkVisibility());
+		(expand as HTMLElement).click();
+		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+		return Array.from(root.querySelectorAll("td"))
+			.filter((td) => td.getAnimations().length > 0)
+			.map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
+	});
+}
+
 test("moved lines keep their tint and links when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
 	page,
 }) => {
@@ -97,7 +114,9 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		await page.getByLabel("Wrap").click();
 		await expect(file.locator(".split-diff-view-normal")).toBeVisible();
 		await expect.poll(() => movedState(file)).toEqual(expected);
-		await expand.first().click();
+		// Expanding reuses the flashing cells for other lines, so it ends
+		// the flash rather than leave it there.
+		expect(await expandDuringFlash(file)).toEqual([]);
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
 		await page.getByRole("button", { name: /^Unified$/ }).click();
