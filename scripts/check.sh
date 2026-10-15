@@ -60,6 +60,7 @@ run_checks() {
   unset $(git rev-parse --local-env-vars)
 
   step mix deps.get
+  step mix hex.audit
   step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
   step mix compile --warnings-as-errors
   step mix format --check-formatted
