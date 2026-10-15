@@ -9,7 +9,6 @@ defmodule Meerkat.CLIMainTest do
   alias Meerkat.{CLI, PendingAnswers, PendingQuestions}
 
   setup do
-    isolate_git_config()
     restore_signal_handler_on_exit()
     repo = make_git_repo("meerkat-cli-main")
     git(repo, ["config", "user.email", "t@t.t"])

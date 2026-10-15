@@ -6,26 +6,27 @@ defmodule Meerkat.TestHelpers do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
-  # These helpers change process-wide environment and are only safe in
-  # synchronous test cases. Restore it even when the test fails. The
-  # caller's identity variables would override the fixture's user.email.
-  def isolate_git_config do
-    overrides = %{
-      "GIT_CONFIG_GLOBAL" => "/dev/null",
-      "GIT_CONFIG_NOSYSTEM" => "1",
-      "GIT_CONFIG_COUNT" => "0",
-      "GIT_CONFIG_PARAMETERS" => nil,
-      "GIT_AUTHOR_NAME" => nil,
-      "GIT_AUTHOR_EMAIL" => nil,
-      "GIT_COMMITTER_NAME" => nil,
-      "GIT_COMMITTER_EMAIL" => nil,
-      "EMAIL" => nil
-    }
+  # Git reads only test.gitconfig, never the caller's or the system's
+  # config. The caller's identity variables would override the fixture's
+  # user.email.
+  @git_config_env %{
+    "GIT_CONFIG_GLOBAL" => Path.expand("test.gitconfig", __DIR__),
+    "GIT_CONFIG_NOSYSTEM" => "1",
+    "GIT_CONFIG_COUNT" => "0",
+    "GIT_CONFIG_PARAMETERS" => nil,
+    "GIT_AUTHOR_NAME" => nil,
+    "GIT_AUTHOR_EMAIL" => nil,
+    "GIT_COMMITTER_NAME" => nil,
+    "GIT_COMMITTER_EMAIL" => nil,
+    "EMAIL" => nil
+  }
 
-    previous = Map.new(overrides, fn {key, _} -> {key, System.get_env(key)} end)
-    Enum.each(overrides, &put_env/1)
-    on_exit(fn -> Enum.each(previous, &put_env/1) end)
-  end
+  @doc """
+  Sets the git config environment for the whole test BEAM, so every git a
+  test starts inherits it. test_helper.exs calls it once; a test that
+  changes it calls it again to put it back.
+  """
+  def put_git_config_env, do: Enum.each(@git_config_env, &put_env/1)
 
   # `Meerkat.CLI.main/1` installs `Meerkat.SignalHandler` VM-wide; put
   # OTP's handler back so a SIGTERM to the test VM stops it as usual.

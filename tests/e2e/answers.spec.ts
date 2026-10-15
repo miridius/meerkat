@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
 import { MEERKAT_BIN, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -41,7 +41,7 @@ test.describe("meerkat --answers", () => {
 			chmodSync(hook, 0o755);
 			const commit = () => spawnSync("git", ["commit", "-m", "Question round"], {
 				cwd: fixture.dir, encoding: "utf8", timeout: 60_000,
-				env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+				env: sanitisedGitEnv(),
 			});
 			let refused = commit();
 			expect(refused.status).toBe(1);

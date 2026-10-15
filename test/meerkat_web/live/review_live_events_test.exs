@@ -26,7 +26,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [make_git_repo: 1, git: 2, isolate_git_config: 0, stage: 3]
+  import Meerkat.TestHelpers, only: [make_git_repo: 1, git: 2, stage: 3]
 
   @plain_file %{
     status: :modified,
@@ -133,8 +133,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute pushed, "expected no #{event} push"
   end
 
-  # Commit in a fixture repo; call isolate_git_config/0 first so the
-  # user's hooks and signing config stay out of it.
+  # Commit in a fixture repo.
   defp commit(repo, message) do
     git(repo, [
       "-c",
@@ -414,7 +413,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "a staged review renders its file rows, commit-message gutter and decision buttons", %{
     conn: conn
   } do
-    isolate_git_config()
     repo = tmp_git_repo()
     commit(repo, "init")
     stage(repo, "NOTES.md", "# Notes\n")
@@ -446,7 +444,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a single-ref review shows that commit's files and message", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "base.txt", "base\n")
     commit(repo, "Base")
@@ -471,7 +468,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a two-dot range review shows only the files changed between the refs", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "first.txt", "first commit body\n")
     commit(repo, "First commit")
@@ -486,7 +482,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a range review lists a non-UTF-8 binary file without line counts", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "logo.bin", <<0, 255, 1>>)
     commit(repo, "base")
@@ -504,7 +499,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "the toolbar sums every file's line counts and a binary file's header shows none", %{
     conn: conn
   } do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "a.txt", "one\ntwo\nthree\n")
     stage(repo, "logo.bin", <<0, 1, 2>>)
@@ -523,7 +517,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "the toolbar shows the counts of the expanded files the filter shows, of the whole diff's",
        %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "a.txt", "one\ntwo\n")
     stage(repo, "c.md", "x\n")
@@ -593,7 +586,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a staged rename's header names the old path and its diff gets both sides", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     # Mostly-unchanged body so git pairs the paths as a rename.
     body = Enum.map_join(0..8, "\n", &"fn shared_#{&1}() {}")
@@ -618,7 +610,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "binary files get a header but no full-file link or rendered-markdown toggle", %{
     conn: conn
   } do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, ".gitattributes", "added.md -diff\n")
     stage(repo, "BUILD.bazel", <<0, 255, 1>>)
@@ -1497,7 +1488,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "an approved staged deletion stays approved in the next review round", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, "gone.rs", "fn gone() {}\n")
     stage(repo, "keep.rs", "fn keep() -> i32 { 1 }\n")
@@ -1739,7 +1729,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "hide *.md hides the markdown file until its chip is clicked", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     commit(repo, "init")
     stage(repo, "NOTES.md", "# Notes\n")
@@ -1760,7 +1749,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "generated files stay hidden until the generated chip shows them", %{conn: conn} do
-    isolate_git_config()
     repo = tmp_git_repo()
     stage(repo, ".gitattributes", "bun.lock linguist-generated=true\n")
     commit(repo, "seed attrs")

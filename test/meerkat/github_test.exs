@@ -13,7 +13,6 @@ defmodule Meerkat.GitHubTest do
 
   describe "current_pr/1" do
     setup do
-      Meerkat.TestHelpers.isolate_git_config()
       dir = Meerkat.TestHelpers.make_git_repo("meerkat-github")
       git(dir, ["config", "user.name", "t"])
       git(dir, ["config", "user.email", "t@t.t"])

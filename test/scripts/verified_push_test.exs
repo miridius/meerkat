@@ -9,7 +9,6 @@ defmodule Meerkat.VerifiedPushTest do
   @root File.cwd!()
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     work = Meerkat.TestHelpers.make_tmp_repo("meerkat-verified-push")
     on_exit(fn -> File.rm_rf!(work) end)
     File.rm_rf!(Path.join(work, ".git"))

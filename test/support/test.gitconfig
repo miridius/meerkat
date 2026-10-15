@@ -1,0 +1,6 @@
+# The only global git config tests read (GIT_CONFIG_GLOBAL).
+[maintenance]
+	# Git starts a detached `git maintenance run --auto` after a commit and
+	# in receive-pack; one still writing into a fixture repo makes its
+	# removal fail. receive-pack never sees `git -c`, so it has to be set here.
+	auto = false
