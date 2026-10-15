@@ -25,7 +25,6 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
       end)
     end)
 
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_git_repo("meerkat-lv-clj")
     on_exit(fn -> File.rm_rf!(dir) end)
     git(dir, ["config", "user.email", "t@t.t"])

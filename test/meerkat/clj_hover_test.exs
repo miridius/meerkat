@@ -1,6 +1,6 @@
 defmodule Meerkat.CljHoverTest do
   # Hover answers on a real staged review, analysed by the real clj-kondo.
-  # async: false — the git fixture isolates process-wide git config.
+  # async: false — each setup runs clj-kondo twice, so tests take turns.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3]
@@ -128,7 +128,6 @@ defmodule Meerkat.CljHoverTest do
   ]
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     dir = Meerkat.TestHelpers.make_git_repo("meerkat-clj-hover")
     on_exit(fn -> File.rm_rf!(dir) end)
     git(dir, ["config", "user.email", "t@t.t"])
