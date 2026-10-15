@@ -29,9 +29,10 @@ defmodule Meerkat.Feedback do
   header matches the decision the reviewer made. `:auto` keeps the
   older zero-header behaviour for callers that don't know.
 
-  - `:rejection` — "user reviewed your commit and wants changes..."
+  - `:rejection` — "user rejected the commit and left the comments
+    below..."
   - `:approval_with_feedback` — "user approved the commit and left
-    the comments below." (returns `""` when there are no comments — an
+    the comments below..." (returns `""` when there are no comments — an
     approval-without-comments needs no stderr noise).
   - `:timeout` — "nobody reviewed this commit..." for the comments a
     reviewer had saved when the review ran out of time.
@@ -62,14 +63,14 @@ defmodule Meerkat.Feedback do
 
   defp framing_header(:rejection) do
     """
-    The user reviewed your commit and wants changes before it lands. The comments below are from the user.
+    The user rejected the commit and left the comments below. They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.
 
     """
   end
 
   defp framing_header(:approval_with_feedback) do
     """
-    The user approved the commit and left the comments below.
+    The user approved the commit and left the comments below. They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.
 
     """
   end

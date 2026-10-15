@@ -18,18 +18,27 @@ defmodule Meerkat.FeedbackTest do
     }
   end
 
-  test "rejection framing leads with reviewer wants changes" do
+  @framing_tail " They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.\n\n"
+
+  test "rejection framing leads with reviewer rejected and commented" do
     out = Feedback.format(state_with_global_comment(), :rejection)
 
-    assert out =~
-             "The user reviewed your commit and wants changes before it lands. The comments below are from the user.\n\n"
+    assert String.starts_with?(
+             out,
+             "The user rejected the commit and left the comments below." <> @framing_tail
+           )
 
     assert out =~ "needs work"
   end
 
   test "approval-with-feedback framing leads with reviewer approved and commented" do
     out = Feedback.format(state_with_global_comment(), :approval_with_feedback)
-    assert out =~ "The user approved the commit and left the comments below.\n\n"
+
+    assert String.starts_with?(
+             out,
+             "The user approved the commit and left the comments below." <> @framing_tail
+           )
+
     assert out =~ "needs work"
   end
 
@@ -47,7 +56,7 @@ defmodule Meerkat.FeedbackTest do
   test "auto mode has no framing header" do
     out = Feedback.format(state_with_global_comment(), :auto)
     assert out == "\nGlobal comments:\n  > **issue:** needs work\n\n"
-    refute out =~ "user reviewed your commit"
+    refute out =~ "user rejected the commit"
     refute out =~ "user approved the commit"
     assert out =~ "needs work"
   end

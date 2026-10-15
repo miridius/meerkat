@@ -75,8 +75,8 @@ checkout and hot-restarts on source edits — see `CLAUDE.md`.
 
 `git commit` opens the review UI, blocks until you approve or send
 feedback. **Send Feedback** → exit 1, commit blocked, your comments
-render on stderr for the calling agent, marked as yours. **Approve** →
-exit 0, commit proceeds.
+render on stderr as first-party comments for the calling agent.
+**Approve** → exit 0, commit proceeds.
 
 ```bash
 # In each repo where you want the hook:
