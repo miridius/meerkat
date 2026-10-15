@@ -178,7 +178,7 @@ test("moved lines keep their tint and arrows when a collapsed section expands or
 		// Each toggle round-trips through the server before the table is
 		// replaced, so wait for the new table, or the poll reads the old one.
 		// Split view without wrap is two tables of rows, replacing the one.
-		await page.getByLabel("Wrap").click();
+		await page.getByRole("checkbox", { name: "Wrap" }).click();
 		await expect(file.locator(".split-diff-view-normal")).toBeVisible();
 		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
 		// Expanding reuses the flashing cells for other lines, so it ends
