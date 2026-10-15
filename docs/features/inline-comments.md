@@ -19,8 +19,8 @@ code content itself stays selectable for copy/paste.
 
 DiffViewer injects one `<tr class="meerkat-form-row">` per open
 inline form on that file, after its anchor row and below that line's
-comment rows. Its only child is a full-colspan `<td>` containing the
-CommentForm. Forms opened earlier at the same line stay above it.
+comment rows. Outside Split view with Wrap on, its only child is a
+full-colspan `<td>` containing the CommentForm. Forms opened earlier at the same line stay above it.
 Opening another form leaves existing forms and their typed text in
 place. After a split/unified or line-wrap toggle, open forms and
 posted comment rows are placed again in the new table, and each

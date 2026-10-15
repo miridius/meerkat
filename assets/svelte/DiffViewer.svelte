@@ -615,13 +615,15 @@
       }
     }
     if (mirrors.size === 0) return;
-    const sync = () => {
-      for (const [row, mirror] of mirrors) {
-        mirror.style.height = `${row.getBoundingClientRect().height}px`;
+    // The observer reports each row's size when it starts watching and on
+    // every change, so the mirrors take their heights without forcing a
+    // layout of the diff table.
+    mirrorHeights = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const mirror = mirrors.get(entry.target);
+        if (mirror) mirror.style.height = `${entry.borderBoxSize[0].blockSize}px`;
       }
-    };
-    sync();
-    mirrorHeights = new ResizeObserver(sync);
+    });
     for (const row of mirrors.keys()) mirrorHeights.observe(row);
   }
 
