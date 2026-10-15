@@ -20,13 +20,16 @@ defmodule Meerkat.FeedbackTest do
 
   test "rejection framing leads with reviewer wants changes" do
     out = Feedback.format(state_with_global_comment(), :rejection)
-    assert out =~ "user reviewed your commit and wants changes before it lands"
+
+    assert out =~
+             "The user reviewed your commit and wants changes before it lands. The comments below are from the user.\n\n"
+
     assert out =~ "needs work"
   end
 
-  test "approval-with-feedback framing leads with reviewer approved but commented" do
+  test "approval-with-feedback framing leads with reviewer approved and commented" do
     out = Feedback.format(state_with_global_comment(), :approval_with_feedback)
-    assert out =~ "user approved the commit but also left comments"
+    assert out =~ "The user approved the commit and left the comments below.\n\n"
     assert out =~ "needs work"
   end
 
