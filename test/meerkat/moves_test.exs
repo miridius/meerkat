@@ -177,7 +177,8 @@ defmodule Meerkat.MovesTest do
     end
 
     test "one substantial line padded out by short and blank lines is not a move" do
-      lines = ["foo();", "}", ""]
+      # Long enough to pass on letters and digits alone.
+      lines = ["const total = computeTheGrandTotal();", "}", ""]
 
       files = [
         file("a.txt", [hunk(1, 1, Enum.map(lines, &{"-", &1}))]),
