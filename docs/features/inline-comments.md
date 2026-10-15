@@ -88,6 +88,9 @@ When `finding_type === "suggestion"`:
   diff's, a ruler beyond the editor's width shows once a line
   reaches it and the editor is scrolled there. Changing the setting
   updates open editors.
+- In Clojure, Enter indents the new line as it would sit in the file,
+  by cljfmt's default indentation over the file around the anchored
+  lines. In other languages, Enter keeps the line's indentation.
 - The caret is a 2px gold bar. The selection is a purple tint drawn
   under the text, visible on the caret's line too, and dimmer while
   the editor is unfocused. Only a focused editor marks the caret's
@@ -96,6 +99,17 @@ When `finding_type === "suggestion"`:
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it
   as a suggested change.
+- On save, the server formats a Clojure suggestion as it would sit
+  in the file around the anchored lines, using
+  `clj-paren-repair-claude-hook` from
+  [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light)
+  run in the reviewed repo. First it repairs unbalanced delimiters
+  with parinfer, then it formats with cljfmt. The hook applies the
+  repo's cljfmt config only when cljfmt's defaults would also
+  change the file. The suggestion is saved as typed when the hook isn't on
+  `PATH`, when a repair would change lines outside the suggestion,
+  or when cljfmt joins a suggestion line onto a line around it. A
+  file-level comment's suggestion is formatted on its own.
 
 ## Rendered comment
 
