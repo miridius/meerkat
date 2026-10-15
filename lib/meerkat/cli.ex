@@ -829,8 +829,9 @@ defmodule Meerkat.CLI do
         # `MeerkatWeb.PlantUMLController` can answer with its 413.
         http_1_options: [max_request_line_length: 2 * 1024 * 1024],
         # Browsers speak HTTP/1.1 to a plain-HTTP origin, so HTTP/2 only
-        # widens what a local process can reach: GHSA-69m6-wcv4-rwcf
-        # lets an HTTP/2 peer pin stream processes indefinitely.
+        # widens what a local process can reach. Keeping it off is
+        # hardening against HTTP/2 flaws like GHSA-69m6-wcv4-rwcf,
+        # fixed in Bandit 1.13.0.
         http_2_options: [enabled: false]
       ],
       server: true,

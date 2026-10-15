@@ -634,8 +634,8 @@ defmodule Meerkat.CLITest do
       assert is_binary(config[:secret_key_base])
     end
 
-    # GHSA-69m6-wcv4-rwcf: Bandit's HTTP/2 lets a peer pin stream
-    # processes. Over a real socket, the server must close a connection
+    # HTTP/2 stays off as hardening against flaws like
+    # GHSA-69m6-wcv4-rwcf, fixed in Bandit 1.13.0. Over a real socket, the server must close a connection
     # that opens with the HTTP/2 preface rather than answer it with
     # HTTP/2 SETTINGS.
     test "the HTTP options it serves with refuse HTTP/2" do
