@@ -357,28 +357,32 @@
     void comments.length;
     void diffViewMode;
     void wrap_lines;
-    let cancelled = false;
-    // Defer two animation frames so @git-diff-view's syntax / extend
-    // rendering settles before we walk the rows.
-    const h1 = requestAnimationFrame(() => {
-      const h2 = requestAnimationFrame(() => {
-        if (cancelled) return;
-        applyCommentMarkers();
-        renderInlineComments();
-      });
-      (window as Window & { __h2?: number }).__h2 = h2;
+    return afterTwoFrames(() => {
+      applyCommentMarkers();
+      renderInlineComments();
     });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(h1);
-    };
   });
 
-  // Hunk-expand: re-render injected rows when @git-diff-view changes
-  // the diff body's row structure. Strictly scoped to mutations on
-  // tbody whose added/removed nodes are tr.diff-line — anything else
-  // (CodeMirror's DOM churn inside the form, our own row injects,
-  // attribute / text changes from syntax highlighting) is ignored.
+  // Runs `fn` two animation frames from now, so @git-diff-view's
+  // syntax / extend rendering settles before it walks the rows. Returns
+  // a canceller, for an effect to return as its cleanup.
+  function afterTwoFrames(fn: () => void): () => void {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(fn);
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }
+
+  // Hunk-expand: re-render injected rows and re-place the moved-line
+  // tint when @git-diff-view changes the diff body's row structure.
+  // Strictly scoped to mutations on tbody whose added/removed nodes are
+  // tr.diff-line — anything else (CodeMirror's DOM churn inside the
+  // form, our own row injects, attribute / text changes from syntax
+  // highlighting) is ignored.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     let scheduled = false;
@@ -469,15 +473,11 @@
     void diffViewMode;
     void wrap_lines;
     void font_size_px;
-    let handle2 = 0;
-    const handle = requestAnimationFrame(() => {
-      handle2 = requestAnimationFrame(drawRulers);
-    });
+    const cancel = afterTwoFrames(drawRulers);
     const resize = new ResizeObserver(() => drawRulers());
     resize.observe(diffContainer);
     return () => {
-      cancelAnimationFrame(handle);
-      cancelAnimationFrame(handle2);
+      cancel();
       resize.disconnect();
     };
   });
@@ -494,14 +494,7 @@
     // rows.
     void diffViewMode;
     void wrap_lines;
-    let handle2 = 0;
-    const handle = requestAnimationFrame(() => {
-      handle2 = requestAnimationFrame(() => renderInlineForms(descs));
-    });
-    return () => {
-      cancelAnimationFrame(handle);
-      cancelAnimationFrame(handle2);
-    };
+    return afterTwoFrames(() => renderInlineForms(descs));
   });
 
   // Reconcile the mounted forms against `descs` by key: forms that
@@ -707,33 +700,29 @@
     }
   }
 
-  // One-pass scan of every `tr.diff-line` under diffContainer; emits
-  // a `"old:N" | "new:N" -> rows[]` map. Skips our injected comment
-  // rows so we don't re-anchor comments to comment hosts.
+  // Maps every line-number anchor under diffContainer to its
+  // `tr.diff-line`s, as `"old:N" | "new:N" -> rows[]`. Skips our
+  // injected comment and form rows so we don't re-anchor comments to
+  // comment hosts. Queries the container once per anchor kind: a
+  // per-row query with a descendant combinator cost Chromium ~1s on a
+  // 3000-row diff.
   function buildAnchorIndex(): Map<string, HTMLTableRowElement[]> {
     const index = new Map<string, HTMLTableRowElement[]>();
     if (!diffContainer) return index;
-    const rows = diffContainer.querySelectorAll<HTMLTableRowElement>(
-      "tr.diff-line:not(.meerkat-comment-row):not(.meerkat-form-row)",
-    );
-    for (const row of rows) {
-      // Inspect every line-number anchor inside this row. Same row
-      // can carry both sides in unified mode; in split mode each
-      // <td> has one side.
-      row.querySelectorAll<HTMLElement>("[data-line-new-num]").forEach((el) => {
-        push(index, "new", el.getAttribute("data-line-new-num"), row);
+    const container = diffContainer;
+    const add = (side: "old" | "new", selector: string, attr: string) => {
+      container.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        const row = el.closest<HTMLTableRowElement>("tr.diff-line");
+        if (row && !row.matches(".meerkat-comment-row, .meerkat-form-row"))
+          push(index, side, el.getAttribute(attr), row);
       });
-      row.querySelectorAll<HTMLElement>("[data-line-old-num]").forEach((el) => {
-        push(index, "old", el.getAttribute("data-line-old-num"), row);
-      });
-      // Split-mode generic span: `td.diff-line-{side}-num > span[data-line-num]`.
-      row.querySelectorAll<HTMLElement>("td.diff-line-new-num span[data-line-num]").forEach((el) => {
-        push(index, "new", el.getAttribute("data-line-num"), row);
-      });
-      row.querySelectorAll<HTMLElement>("td.diff-line-old-num span[data-line-num]").forEach((el) => {
-        push(index, "old", el.getAttribute("data-line-num"), row);
-      });
-    }
+    };
+    // A unified row carries both sides; in split mode each <td> has
+    // one side, in a generic `td.diff-line-{side}-num span[data-line-num]`.
+    add("new", "[data-line-new-num]", "data-line-new-num");
+    add("old", "[data-line-old-num]", "data-line-old-num");
+    add("new", "td.diff-line-new-num span[data-line-num]", "data-line-num");
+    add("old", "td.diff-line-old-num span[data-line-num]", "data-line-num");
     return index;
   }
 
@@ -1089,17 +1078,11 @@
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
-    // A split/unified or wrap toggle re-renders the table without them.
+    // A split/unified toggle, or a wrap toggle in split view, replaces
+    // the rows, dropping the moved tint and links.
     void diffViewMode;
     void wrap_lines;
-    let handle2 = 0;
-    const handle = requestAnimationFrame(() => {
-      handle2 = requestAnimationFrame(() => applyMovedHighlights(blocks));
-    });
-    return () => {
-      cancelAnimationFrame(handle);
-      cancelAnimationFrame(handle2);
-    };
+    return afterTwoFrames(() => applyMovedHighlights(blocks));
   });
 
   function clearMovedHighlights() {
@@ -1116,19 +1099,20 @@
     if (!diffContainer) return;
     clearMovedHighlights();
     if (blocks.length === 0) return;
+    const rowsBySideLine = buildAnchorIndex();
 
     for (const block of blocks) {
       const pairClass = `moved-pair-${block.pair_id % 4}`;
       const side = block.side === "old" ? "old" : "new";
       for (let ln = block.line_start; ln <= block.line_end; ln++) {
-        anchorRowsFor(side, ln).forEach((row) => {
+        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row) => {
           row.classList.add("moved-line", pairClass);
           const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
           if (td) td.classList.add("moved-line", pairClass);
         });
       }
-      const firstRows = anchorRowsFor(side, block.line_start);
-      if (firstRows.length === 0) continue;
+      const firstRows = rowsBySideLine.get(`${side}:${block.line_start}`);
+      if (!firstRows) continue;
       const contentTd = firstRows[0].querySelector(
         `td.diff-line-${side}-content, td.diff-line-content`,
       ) as HTMLElement | null;
@@ -1175,18 +1159,26 @@
       if (rows.length === 0) return;
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Flash highlight for 1.6s.
+      // Flash the target side's cells for 1.6s: the row's own
+      // background is hidden under the cells' opaque ones.
+      const side = ev.detail.side;
+      const cells: Element[] = [];
       for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-        anchorRowsFor(ev.detail.side, ln).forEach((r) => {
-          r.classList.add("moved-flash");
+        anchorRowsFor(side, ln).forEach((r) => {
+          cells.push(
+            ...r.querySelectorAll(
+              `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
+            ),
+          );
         });
       }
+      cells.forEach((td) => {
+        td.classList.add("moved-flash");
+      });
       setTimeout(() => {
-        for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-          anchorRowsFor(ev.detail.side, ln).forEach((r) => {
-            r.classList.remove("moved-flash");
-          });
-        }
+        cells.forEach((td) => {
+          td.classList.remove("moved-flash");
+        });
       }, 1600);
     };
     document.addEventListener("meerkat-move-jump", handler);
@@ -1489,12 +1481,13 @@
       var(--meerkat-rulers-unified, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
-  :global(.diff-content tr.diff-line.moved-flash) {
+  /* An animation outranks the cell's inline background-color; with no
+     100% keyframe the flash fades back to it. */
+  :global(.diff-content td.moved-flash) {
     animation: moved-flash-anim 1.6s ease-out;
   }
   @keyframes moved-flash-anim {
     0%, 60% { background-color: rgba(88, 166, 255, 0.35); }
-    100% { background-color: transparent; }
   }
   :global(.moved-badge) {
     position: absolute;

@@ -17,8 +17,8 @@ const helper = (n: number) =>
 }
 `;
 
-// helper2 moves to the end of the file, leaving collapsed context above,
-// between and below the hunks. Its lines 6-8 are long enough to count as
+// helper2 moves to the end of the file, leaving collapsed context above
+// and between the hunks. Its lines 6-8 are long enough to count as
 // moved, and land on lines 56-58.
 function movedBlockFixture() {
 	const helpers = Array.from({ length: 12 }, (_, i) => helper(i + 1));
@@ -32,6 +32,7 @@ function movedBlockFixture() {
 
 const MOVED = ["new:56", "new:57", "new:58", "old:6", "old:7", "old:8"];
 const PAIR_0_TINT = "rgba(96, 165, 250, 0.18)";
+const FLASH = "rgba(88, 166, 255, 0.35)";
 
 // The `side:line` of each tinted code cell and of each link's row, and
 // whether each tinted cell draws the tint.
@@ -58,7 +59,7 @@ function movedState(file: Locator) {
 	}, PAIR_0_TINT);
 }
 
-test("moved lines keep their tint and links when a collapsed section expands or the view changes", async ({
+test("moved lines keep their tint and links when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
@@ -68,19 +69,34 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		const expected = { tinted: MOVED, links: ["new:56", "old:6"], drawn: true };
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
+		// A link flashes its counterpart's code, over the cell's own
+		// background.
+		await file.locator(".moved-badge").first().click();
+		const counterpart = file
+			.locator("tr.diff-line")
+			.filter({ has: page.locator('td.diff-line-new-num [data-line-num="56"]') })
+			.locator("td.diff-line-new-content");
+		await expect.poll(() => counterpart.evaluate((td) => getComputedStyle(td).backgroundColor)).toBe(FLASH);
+
 		// Expanding inserts rows above the moved ones; @git-diff-view reuses
 		// the existing row elements for the lines that shift into them.
 		const expand = file.locator('td.diff-line-hunk-action button[title^="Expand"]').filter({ visible: true });
 		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
-		await page.getByRole("button", { name: /^Unified$/ }).click();
+		// Each toggle round-trips through the server before the table is
+		// replaced, so wait for the new table before reading the old one.
+		// Split view without wrap is two tables of rows, replacing the one.
+		await page.getByLabel("Wrap").click();
+		await expect(file.locator(".split-diff-view-normal")).toBeVisible();
 		await expect.poll(() => movedState(file)).toEqual(expected);
 		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
-		await page.getByLabel("Wrap").click();
-		await expect(page.getByLabel("Wrap")).not.toBeChecked();
+		await page.getByRole("button", { name: /^Unified$/ }).click();
+		await expect(file.locator(".unified-diff-view")).toBeVisible();
+		await expect.poll(() => movedState(file)).toEqual(expected);
+		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(expected);
 	} finally {
 		await meerkat.kill();
