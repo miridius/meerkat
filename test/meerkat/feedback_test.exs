@@ -100,7 +100,20 @@ defmodule Meerkat.FeedbackTest do
 
       out = Feedback.format(state, :rejection)
       assert out =~ "Answer 1 question"
-      assert out =~ "Address 1 feedback comment"
+      assert out =~ "  2. Address 1 feedback comment below (1 issue).\n"
+    end
+
+    test "mixed — several feedback comments read as plural" do
+      state = %ReviewState{
+        global_comments: [
+          comment(body: "fix", finding_type: :issue),
+          comment(body: "fix too", finding_type: :issue),
+          comment(body: "why?", finding_type: :question)
+        ]
+      }
+
+      out = Feedback.format(state, :rejection)
+      assert out =~ "  2. Address 2 feedback comments below (2 issue).\n"
     end
 
     test "pluralisation: 1 question vs N questions" do

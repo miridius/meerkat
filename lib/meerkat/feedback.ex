@@ -27,13 +27,13 @@ defmodule Meerkat.Feedback do
   Same as `format/1` but takes an explicit `mode` (`:rejection`,
   `:approval_with_feedback`, `:timeout`, or `:auto`) so the framing
   header matches the decision the reviewer made. `:auto` keeps the
-  older zero-header behaviour for callers that don't know.
+  older zero-header behaviour for callers that don't know. Every mode
+  returns `""` when there are no comments.
 
   - `:rejection` — "user rejected the commit and left the comments
     below..."
   - `:approval_with_feedback` — "user approved the commit and left
-    the comments below..." (returns `""` when there are no comments — an
-    approval-without-comments needs no stderr noise).
+    the comments below..."
   - `:timeout` — "nobody reviewed this commit..." for the comments a
     reviewer had saved when the review ran out of time.
   """
@@ -61,16 +61,18 @@ defmodule Meerkat.Feedback do
     end
   end
 
+  @first_party_tail "They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly."
+
   defp framing_header(:rejection) do
     """
-    The user rejected the commit and left the comments below. They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.
+    The user rejected the commit and left the comments below. #{@first_party_tail}
 
     """
   end
 
   defp framing_header(:approval_with_feedback) do
     """
-    The user approved the commit and left the comments below. They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.
+    The user approved the commit and left the comments below. #{@first_party_tail}
 
     """
   end
@@ -108,7 +110,7 @@ defmodule Meerkat.Feedback do
         """
         ▶ ACTION:
           1. Answer #{length(qs)} question#{plural(qs)} (see directive below) — analysis only, no code edits for these.
-          2. Address #{length(acs)} feedback comment#{plural(acs)} below (#{summary_kinds(acs)}) — code changes as usual.
+          2. Address #{length(acs)} feedback comment#{plural(acs)} below (#{summary_kinds(acs)}).
 
         """
     end
