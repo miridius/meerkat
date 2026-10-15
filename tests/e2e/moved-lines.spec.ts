@@ -59,6 +59,20 @@ function movedState(file: Locator) {
 	}, PAIR_0_TINT);
 }
 
+// Clicks the old block's link, and returns the box-shadow its
+// counterpart's first code cell draws in the same task: the flash,
+// which lasts only 1.6s, starts synchronously with the click.
+function flashOnClick(file: Locator) {
+	return file.evaluate((root) => {
+		(root.querySelector(".moved-badge") as HTMLElement).click();
+		const tr = root.querySelector(
+			'tr.diff-line:has(td.diff-line-new-num [data-line-num="56"], [data-line-new-num="56"])',
+		) as Element;
+		const td = tr.querySelector("td.diff-line-new-content, td.diff-line-content") as Element;
+		return getComputedStyle(td).boxShadow;
+	});
+}
+
 test("moved lines keep their tint and links when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
 	page,
 }) => {
@@ -69,14 +83,7 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		const expected = { tinted: MOVED, links: ["new:56", "old:6"], drawn: true };
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
-		// A link flashes its counterpart's code, over the cell's own
-		// background.
-		await file.locator(".moved-badge").first().click();
-		const counterpart = file
-			.locator("tr.diff-line")
-			.filter({ has: page.locator('td.diff-line-new-num [data-line-num="56"]') })
-			.locator("td.diff-line-new-content");
-		await expect.poll(() => counterpart.evaluate((td) => getComputedStyle(td).backgroundColor)).toBe(FLASH);
+		expect(await flashOnClick(file)).toContain(FLASH);
 
 		// Expanding inserts rows above the moved ones; @git-diff-view reuses
 		// the existing row elements for the lines that shift into them.
@@ -85,7 +92,7 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		await expect.poll(() => movedState(file)).toEqual(expected);
 
 		// Each toggle round-trips through the server before the table is
-		// replaced, so wait for the new table before reading the old one.
+		// replaced, so wait for the new table, or the poll reads the old one.
 		// Split view without wrap is two tables of rows, replacing the one.
 		await page.getByLabel("Wrap").click();
 		await expect(file.locator(".split-diff-view-normal")).toBeVisible();
@@ -98,6 +105,7 @@ test("moved lines keep their tint and links when a collapsed section expands or 
 		await expect.poll(() => movedState(file)).toEqual(expected);
 		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(expected);
+		expect(await flashOnClick(file)).toContain(FLASH);
 	} finally {
 		await meerkat.kill();
 	}

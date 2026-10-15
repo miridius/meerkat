@@ -406,12 +406,13 @@
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        applyCommentMarkers();
+        const rowsBySideLine = buildAnchorIndex();
+        applyCommentMarkers(rowsBySideLine);
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
         // The library reuses row elements for other lines, so the moved
         // tint and links must be placed again by line number.
-        applyMovedHighlights(file.moved_lines ?? []);
+        applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
         drawRulers();
       });
     });
@@ -678,17 +679,14 @@
     m.row.parentNode?.removeChild(m.row);
   }
 
-  function applyCommentMarkers() {
+  // Takes a `"side:line" -> rows` map rather than calling
+  // `anchorRowsFor(side, n)` per line per comment, each firing two
+  // querySelectorAll: a 50-line comment range would make 100 queries.
+  function applyCommentMarkers(rowsBySideLine = buildAnchorIndex()) {
     if (!diffContainer) return;
     diffContainer.querySelectorAll("tr.diff-line.has-inline-comment").forEach((row) => {
       row.classList.remove("has-inline-comment");
     });
-    // Build a `"side:line" -> rows` map once per call. Previously we
-    // did `anchorRowsFor(side, n)` per LINE per comment, each
-    // firing two querySelectorAll. A 50-line comment range hits 100
-    // queries; this collapses to one walk of `tr.diff-line` plus
-    // O(1) Map lookups per (side, line).
-    const rowsBySideLine = buildAnchorIndex();
     for (const c of comments) {
       const wantSide = c.side === "old" ? "old" : "new";
       for (let n = c.start_line; n <= c.end_line; n++) {
@@ -701,11 +699,10 @@
   }
 
   // Maps every line-number anchor under diffContainer to its
-  // `tr.diff-line`s, as `"old:N" | "new:N" -> rows[]`. Skips our
-  // injected comment and form rows so we don't re-anchor comments to
-  // comment hosts. Queries the container once per anchor kind: a
-  // per-row query with a descendant combinator cost Chromium ~1s on a
-  // 3000-row diff.
+  // `tr.diff-line`s, as `"old:N" | "new:N" -> rows[]`; our injected
+  // comment and form rows are not `tr.diff-line`. Queries the
+  // container once per anchor kind: a per-row query with a descendant
+  // combinator cost Chromium ~1s on a 3000-row diff.
   function buildAnchorIndex(): Map<string, HTMLTableRowElement[]> {
     const index = new Map<string, HTMLTableRowElement[]>();
     if (!diffContainer) return index;
@@ -713,8 +710,7 @@
     const add = (side: "old" | "new", selector: string, attr: string) => {
       container.querySelectorAll<HTMLElement>(selector).forEach((el) => {
         const row = el.closest<HTMLTableRowElement>("tr.diff-line");
-        if (row && !row.matches(".meerkat-comment-row, .meerkat-form-row"))
-          push(index, side, el.getAttribute(attr), row);
+        if (row) push(index, side, el.getAttribute(attr), row);
       });
     };
     // A unified row carries both sides; in split mode each <td> has
@@ -1095,11 +1091,11 @@
     });
   }
 
-  function applyMovedHighlights(blocks: MovedBlock[]) {
+  function applyMovedHighlights(blocks: MovedBlock[], index?: Map<string, HTMLTableRowElement[]>) {
     if (!diffContainer) return;
     clearMovedHighlights();
     if (blocks.length === 0) return;
-    const rowsBySideLine = buildAnchorIndex();
+    const rowsBySideLine = index ?? buildAnchorIndex();
 
     for (const block of blocks) {
       const pairClass = `moved-pair-${block.pair_id % 4}`;
@@ -1146,6 +1142,13 @@
     }
   }
 
+  // Held for 60% of the flash, then faded out.
+  const MOVED_FLASH_SHADOW = "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)";
+  const MOVED_FLASH_KEYFRAMES: Keyframe[] = [
+    { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
+    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6 },
+  ];
+
   // Listen for jump events from sibling DiffViewers. If the event's
   // fileName matches THIS file, scroll the target line into view and
   // flash a temporary highlight so the reviewer can spot the
@@ -1159,27 +1162,19 @@
       if (rows.length === 0) return;
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Flash the target side's cells for 1.6s: the row's own
-      // background is hidden under the cells' opaque ones.
+      // Flash the target side's cells for 1.6s, as an inset shadow over
+      // their opaque backgrounds, which hide the row's own. A click
+      // during a flash starts it again.
       const side = ev.detail.side;
-      const cells: Element[] = [];
       for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
         anchorRowsFor(side, ln).forEach((r) => {
-          cells.push(
-            ...r.querySelectorAll(
-              `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
-            ),
-          );
+          r.querySelectorAll(
+            `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
+          ).forEach((td) => {
+            td.animate(MOVED_FLASH_KEYFRAMES, { duration: 1600, easing: "ease-out" });
+          });
         });
       }
-      cells.forEach((td) => {
-        td.classList.add("moved-flash");
-      });
-      setTimeout(() => {
-        cells.forEach((td) => {
-          td.classList.remove("moved-flash");
-        });
-      }, 1600);
     };
     document.addEventListener("meerkat-move-jump", handler);
     return () => document.removeEventListener("meerkat-move-jump", handler);
@@ -1480,14 +1475,6 @@
     background-image:
       var(--meerkat-rulers-unified, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
-  }
-  /* An animation outranks the cell's inline background-color; with no
-     100% keyframe the flash fades back to it. */
-  :global(.diff-content td.moved-flash) {
-    animation: moved-flash-anim 1.6s ease-out;
-  }
-  @keyframes moved-flash-anim {
-    0%, 60% { background-color: rgba(88, 166, 255, 0.35); }
   }
   :global(.moved-badge) {
     position: absolute;
