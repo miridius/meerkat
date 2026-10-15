@@ -39,9 +39,19 @@ When the UI does open, the reviewer sees, top-to-bottom:
    with the repo path on its tooltip, then on the right the diff's
    line counts (see [Line counts](#line-counts)), connection pill,
    Split / Unified, Wrap, `⚙` settings popover (font size, tab size,
-   rulers). The popover settings, Split / Unified and Wrap persist in
-   the browser's localStorage. A change saves only the setting it
-   changed, so tabs that change different settings keep both.
+   rulers). The popover settings, Split / Unified and Wrap are saved
+   in `settings.json` in meerkat's config dir,
+   `$XDG_CONFIG_HOME/meerkat`, or `~/.config/meerkat` when
+   `XDG_CONFIG_HOME` is unset, empty or relative, and are shared by
+   every review. A change applies at once in every open tab of the
+   same review; tabs of other running reviews pick it up when they
+   next load or reconnect. A change saves only the setting it
+   changed, so changes to different settings in one review keep
+   both; two reviews saving at the same instant can lose one. A file
+   that cannot be read or parsed prints a warning and leaves the
+   defaults in force until the next change replaces it; a value that
+   is not valid keeps its default, except that a whole-number font
+   size is clamped into 9 to 28.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup
@@ -56,7 +66,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
      takes their columns separated by commas or spaces, `80, 110` by
      default. Only whole numbers from 1 to 999 are accepted; other
      input marks the field invalid, and stays in it, while the last
-     valid list stays in force. An
+     valid list stays in force, until another tab saves columns or
+     the page reconnects; the field then shows the saved list. An
      empty list draws no rulers. The setting drives both the diff and
      the suggestion editor (see
      [inline-comments.md](inline-comments.md)).
@@ -121,6 +132,9 @@ filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`.
   snapshot under `<per-worktree-gitdir>/meerkat-precommit/in-progress/<review_id>.json`
   after every mutation. A killed BEAM / closed tab restores from
   this file on the next launch with the same target.
+- `Meerkat.Settings` keeps the toolbar settings in `settings.json`
+  in meerkat's config dir and broadcasts each change on the
+  `meerkat:settings` PubSub topic to the review's other tabs.
 - The static review payload (files + commit message + PR metadata)
   is derived once from git via `Meerkat.ReviewState.from_target/2`
   on mount, never mutated mid-review.
