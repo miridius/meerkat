@@ -357,28 +357,32 @@
     void comments.length;
     void diffViewMode;
     void wrap_lines;
-    let cancelled = false;
-    // Defer two animation frames so @git-diff-view's syntax / extend
-    // rendering settles before we walk the rows.
-    const h1 = requestAnimationFrame(() => {
-      const h2 = requestAnimationFrame(() => {
-        if (cancelled) return;
-        applyCommentMarkers();
-        renderInlineComments();
-      });
-      (window as Window & { __h2?: number }).__h2 = h2;
+    return afterTwoFrames(() => {
+      applyCommentMarkers();
+      renderInlineComments();
     });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(h1);
-    };
   });
 
-  // Hunk-expand: re-render injected rows when @git-diff-view changes
-  // the diff body's row structure. Strictly scoped to mutations on
-  // tbody whose added/removed nodes are tr.diff-line — anything else
-  // (CodeMirror's DOM churn inside the form, our own row injects,
-  // attribute / text changes from syntax highlighting) is ignored.
+  // Runs `fn` two animation frames from now, so @git-diff-view's
+  // syntax / extend rendering settles before it walks the rows. Returns
+  // a canceller, for an effect to return as its cleanup.
+  function afterTwoFrames(fn: () => void): () => void {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(fn);
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }
+
+  // Hunk-expand: re-render injected rows and re-place the moved-line
+  // tint when @git-diff-view changes the diff body's row structure.
+  // Strictly scoped to mutations on tbody whose added/removed nodes are
+  // tr.diff-line — anything else (CodeMirror's DOM churn inside the
+  // form, our own row injects, attribute / text changes from syntax
+  // highlighting) is ignored.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     let scheduled = false;
@@ -402,9 +406,14 @@
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        applyCommentMarkers();
+        cancelMovedFlash();
+        const rowsBySideLine = buildAnchorIndex();
+        applyCommentMarkers(rowsBySideLine);
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
+        // The library reuses row elements for other lines, so the moved
+        // tint and links must be placed again by line number.
+        applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
         drawRulers();
       });
     });
@@ -466,15 +475,11 @@
     void diffViewMode;
     void wrap_lines;
     void font_size_px;
-    let handle2 = 0;
-    const handle = requestAnimationFrame(() => {
-      handle2 = requestAnimationFrame(drawRulers);
-    });
+    const cancel = afterTwoFrames(drawRulers);
     const resize = new ResizeObserver(() => drawRulers());
     resize.observe(diffContainer);
     return () => {
-      cancelAnimationFrame(handle);
-      cancelAnimationFrame(handle2);
+      cancel();
       resize.disconnect();
     };
   });
@@ -491,14 +496,7 @@
     // rows.
     void diffViewMode;
     void wrap_lines;
-    let handle2 = 0;
-    const handle = requestAnimationFrame(() => {
-      handle2 = requestAnimationFrame(() => renderInlineForms(descs));
-    });
-    return () => {
-      cancelAnimationFrame(handle);
-      cancelAnimationFrame(handle2);
-    };
+    return afterTwoFrames(() => renderInlineForms(descs));
   });
 
   // Reconcile the mounted forms against `descs` by key: forms that
@@ -682,17 +680,14 @@
     m.row.parentNode?.removeChild(m.row);
   }
 
-  function applyCommentMarkers() {
+  // Takes a `"side:line" -> rows` map rather than calling
+  // `anchorRowsFor(side, n)` per line per comment, each firing two
+  // querySelectorAll: a 50-line comment range would make 100 queries.
+  function applyCommentMarkers(rowsBySideLine = buildAnchorIndex()) {
     if (!diffContainer) return;
     diffContainer.querySelectorAll("tr.diff-line.has-inline-comment").forEach((row) => {
       row.classList.remove("has-inline-comment");
     });
-    // Build a `"side:line" -> rows` map once per call. Previously we
-    // did `anchorRowsFor(side, n)` per LINE per comment, each
-    // firing two querySelectorAll. A 50-line comment range hits 100
-    // queries; this collapses to one walk of `tr.diff-line` plus
-    // O(1) Map lookups per (side, line).
-    const rowsBySideLine = buildAnchorIndex();
     for (const c of comments) {
       const wantSide = c.side === "old" ? "old" : "new";
       for (let n = c.start_line; n <= c.end_line; n++) {
@@ -704,33 +699,27 @@
     }
   }
 
-  // One-pass scan of every `tr.diff-line` under diffContainer; emits
-  // a `"old:N" | "new:N" -> rows[]` map. Skips our injected comment
-  // rows so we don't re-anchor comments to comment hosts.
+  // Maps every line-number anchor under diffContainer to its
+  // `tr.diff-line`s, as `"old:N" | "new:N" -> rows[]`; our injected
+  // comment and form rows are not `tr.diff-line`. Queries the
+  // container once per anchor kind: a per-row query with a descendant
+  // combinator cost Chromium ~1s on a 3000-row diff.
   function buildAnchorIndex(): Map<string, HTMLTableRowElement[]> {
     const index = new Map<string, HTMLTableRowElement[]>();
     if (!diffContainer) return index;
-    const rows = diffContainer.querySelectorAll<HTMLTableRowElement>(
-      "tr.diff-line:not(.meerkat-comment-row):not(.meerkat-form-row)",
-    );
-    for (const row of rows) {
-      // Inspect every line-number anchor inside this row. Same row
-      // can carry both sides in unified mode; in split mode each
-      // <td> has one side.
-      row.querySelectorAll<HTMLElement>("[data-line-new-num]").forEach((el) => {
-        push(index, "new", el.getAttribute("data-line-new-num"), row);
+    const container = diffContainer;
+    const add = (side: "old" | "new", selector: string, attr: string) => {
+      container.querySelectorAll<HTMLElement>(selector).forEach((el) => {
+        const row = el.closest<HTMLTableRowElement>("tr.diff-line");
+        if (row) push(index, side, el.getAttribute(attr), row);
       });
-      row.querySelectorAll<HTMLElement>("[data-line-old-num]").forEach((el) => {
-        push(index, "old", el.getAttribute("data-line-old-num"), row);
-      });
-      // Split-mode generic span: `td.diff-line-{side}-num > span[data-line-num]`.
-      row.querySelectorAll<HTMLElement>("td.diff-line-new-num span[data-line-num]").forEach((el) => {
-        push(index, "new", el.getAttribute("data-line-num"), row);
-      });
-      row.querySelectorAll<HTMLElement>("td.diff-line-old-num span[data-line-num]").forEach((el) => {
-        push(index, "old", el.getAttribute("data-line-num"), row);
-      });
-    }
+    };
+    // A unified row carries both sides; in split mode each <td> has
+    // one side, in a generic `td.diff-line-{side}-num span[data-line-num]`.
+    add("new", "[data-line-new-num]", "data-line-new-num");
+    add("old", "[data-line-old-num]", "data-line-old-num");
+    add("new", "td.diff-line-new-num span[data-line-num]", "data-line-num");
+    add("old", "td.diff-line-old-num span[data-line-num]", "data-line-num");
     return index;
   }
 
@@ -1086,8 +1075,11 @@
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
-    const handle = requestAnimationFrame(() => applyMovedHighlights(blocks));
-    return () => cancelAnimationFrame(handle);
+    // A split/unified toggle, or a wrap toggle in split view, replaces
+    // the rows, dropping the moved tint and links.
+    void diffViewMode;
+    void wrap_lines;
+    return afterTwoFrames(() => applyMovedHighlights(blocks));
   });
 
   function clearMovedHighlights() {
@@ -1100,23 +1092,24 @@
     });
   }
 
-  function applyMovedHighlights(blocks: MovedBlock[]) {
+  function applyMovedHighlights(blocks: MovedBlock[], index?: Map<string, HTMLTableRowElement[]>) {
     if (!diffContainer) return;
     clearMovedHighlights();
     if (blocks.length === 0) return;
+    const rowsBySideLine = index ?? buildAnchorIndex();
 
     for (const block of blocks) {
       const pairClass = `moved-pair-${block.pair_id % 4}`;
       const side = block.side === "old" ? "old" : "new";
       for (let ln = block.line_start; ln <= block.line_end; ln++) {
-        anchorRowsFor(side, ln).forEach((row) => {
+        rowsBySideLine.get(`${side}:${ln}`)?.forEach((row) => {
           row.classList.add("moved-line", pairClass);
-          const td = row.querySelector(`td.diff-line-${side}-content`);
+          const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
           if (td) td.classList.add("moved-line", pairClass);
         });
       }
-      const firstRows = anchorRowsFor(side, block.line_start);
-      if (firstRows.length === 0) continue;
+      const firstRows = rowsBySideLine.get(`${side}:${block.line_start}`);
+      if (!firstRows) continue;
       const contentTd = firstRows[0].querySelector(
         `td.diff-line-${side}-content, td.diff-line-content`,
       ) as HTMLElement | null;
@@ -1150,6 +1143,23 @@
     }
   }
 
+  // Held for 60% of the flash, then eased out.
+  const MOVED_FLASH_SHADOW = "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)";
+  const MOVED_FLASH_KEYFRAMES: Keyframe[] = [
+    { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
+    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6, easing: "ease-out" },
+  ];
+  // The running flash. A hunk expand reuses its cells for other lines,
+  // so the expand cancels it.
+  let movedFlash: Animation[] = [];
+
+  function cancelMovedFlash() {
+    movedFlash.forEach((a) => {
+      a.cancel();
+    });
+    movedFlash = [];
+  }
+
   // Listen for jump events from sibling DiffViewers. If the event's
   // fileName matches THIS file, scroll the target line into view and
   // flash a temporary highlight so the reviewer can spot the
@@ -1163,19 +1173,20 @@
       if (rows.length === 0) return;
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Flash highlight for 1.6s.
+      // Flash the target side's cells for 1.6s, as an inset shadow over
+      // their opaque backgrounds, which hide the row's own. A click
+      // during a flash starts it again.
+      const side = ev.detail.side;
+      cancelMovedFlash();
       for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-        anchorRowsFor(ev.detail.side, ln).forEach((r) => {
-          r.classList.add("moved-flash");
+        anchorRowsFor(side, ln).forEach((r) => {
+          r.querySelectorAll(
+            `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
+          ).forEach((td) => {
+            movedFlash.push(td.animate(MOVED_FLASH_KEYFRAMES, 1600));
+          });
         });
       }
-      setTimeout(() => {
-        for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-          anchorRowsFor(ev.detail.side, ln).forEach((r) => {
-            r.classList.remove("moved-flash");
-          });
-        }
-      }, 1600);
     };
     document.addEventListener("meerkat-move-jump", handler);
     return () => document.removeEventListener("meerkat-move-jump", handler);
@@ -1445,8 +1456,8 @@
     margin: 4px 0;
     padding-left: 20px;
   }
-  /* Moved-line highlighting — 4 colors cycled by pair id. A split
-     view's content cell draws its rulers over the tint. */
+  /* Moved-line highlighting — 4 colors cycled by pair id. Each content
+     cell draws its rulers over the tint. */
   :global(.diff-content .moved-line.moved-pair-0) {
     --meerkat-moved-tint: rgba(96, 165, 250, 0.18);
   }
@@ -1472,12 +1483,10 @@
       var(--meerkat-rulers-new, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
-  :global(.diff-content tr.diff-line.moved-flash) {
-    animation: moved-flash-anim 1.6s ease-out;
-  }
-  @keyframes moved-flash-anim {
-    0%, 60% { background-color: rgba(88, 166, 255, 0.35); }
-    100% { background-color: transparent; }
+  :global(.diff-content td.diff-line-content.moved-line) {
+    background-image:
+      var(--meerkat-rulers-unified, none),
+      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
   :global(.moved-badge) {
     position: absolute;
