@@ -25,7 +25,8 @@ defmodule MeerkatWeb.ReviewLive do
     OpenForms,
     PendingAnswers,
     ReviewServer,
-    ReviewState
+    ReviewState,
+    Settings
   }
 
   @impl true
@@ -58,6 +59,7 @@ defmodule MeerkatWeb.ReviewLive do
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Meerkat.VersionWatcher.topic())
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.decision_topic())
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Settings.topic())
     end
 
     # A tab mounted after the decision (a refresh, or a reconnect that
@@ -69,20 +71,6 @@ defmodule MeerkatWeb.ReviewLive do
      assign(socket,
        page_title: page_title(state),
        state: state,
-       diff_mode: "split",
-       # Wrap long lines by default — horizontal scrolling forces the
-       # reviewer off the keyboard and hides context. The toolbar
-       # toggle still lets users opt out for code that genuinely
-       # reads better unwrapped (long URLs, hex dumps).
-       wrap_lines: true,
-       font_size_px: 13,
-       tab_size: 2,
-       rulers: true,
-       ruler_columns: [80, 110],
-       # The rulers field's text, and whether it isn't a column list;
-       # while it isn't, the last valid list stays in force.
-       ruler_input: "80, 110",
-       ruler_input_invalid: false,
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
@@ -127,7 +115,8 @@ defmodule MeerkatWeb.ReviewLive do
        # terminal decision via PendingAnswers.clear/1.
        pending_answers: PendingAnswers.load(repo_path)
      )
-     |> then(&if(done && connected?(&1), do: wipe_drafts(&1), else: &1))}
+     |> assign_settings(Settings.load())
+     |> mount_pushes(done)}
   end
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"
@@ -190,11 +179,37 @@ defmodule MeerkatWeb.ReviewLive do
     )
   end
 
-  # Sets one toolbar setting and has the Settings hook save it. Only the
-  # changed key is sent, so the hook doesn't overwrite another tab's
-  # change to a different setting.
+  # Sets one toolbar setting, saves it for every review and has this
+  # review's other tabs apply it.
   defp put_setting(socket, key, value) do
-    socket |> assign(key, value) |> push_event("settings:save", %{key => value})
+    Settings.put(key, value)
+    assign(socket, key, value)
+  end
+
+  # Assigns toolbar `settings`; new ruler columns also replace the rulers
+  # field's text, `ruler_input`, and clear `ruler_input_invalid`, its mark
+  # that the text isn't a column list.
+  defp assign_settings(socket, settings) do
+    socket = assign(socket, settings)
+
+    case settings do
+      %{ruler_columns: columns} -> show_ruler_columns(socket, columns)
+      _ -> socket
+    end
+  end
+
+  # Has the RulerColumns hook show `ruler_input` in the rulers field: when
+  # the field is focused, as it stays when the reviewer switches tabs,
+  # LiveView leaves its text alone, even on a rejoin.
+  defp push_ruler_input(socket),
+    do: push_event(socket, "ruler-columns:set", %{text: socket.assigns.ruler_input})
+
+  # The pushes of a mount: the rulers field's text, and the draft wipe
+  # when the review is already `done`. A disconnected mount's static
+  # render drops them.
+  defp mount_pushes(socket, done) do
+    socket = push_ruler_input(socket)
+    if done, do: wipe_drafts(socket), else: socket
   end
 
   # Push `drafts:wipe` for the browser's `phx:drafts:wipe` window listener
@@ -222,7 +237,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.set_font_size", %{"px" => px}, socket) do
     case parse_int(px) do
       {:ok, n} ->
-        {:noreply, put_setting(socket, :font_size_px, clamp_font_size(n))}
+        {:noreply, put_setting(socket, :font_size_px, Settings.clamp_font_size(n))}
 
       :error ->
         log_ignored_event("toolbar.set_font_size", "px", px)
@@ -233,7 +248,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.bump_font_size", %{"by" => by}, socket) do
     case parse_int(by) do
       {:ok, n} ->
-        px = clamp_font_size(socket.assigns.font_size_px + n)
+        px = Settings.clamp_font_size(socket.assigns.font_size_px + n)
         {:noreply, put_setting(socket, :font_size_px, px)}
 
       :error ->
@@ -245,7 +260,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.set_tab_size", %{"n" => n}, socket) do
     case parse_int(n) do
       {:ok, v} ->
-        {:noreply, put_setting(socket, :tab_size, clamp_tab_size(v))}
+        {:noreply, put_setting(socket, :tab_size, Settings.valid_tab_size(v))}
 
       :error ->
         log_ignored_event("toolbar.set_tab_size", "n", n)
@@ -265,15 +280,6 @@ defmodule MeerkatWeb.ReviewLive do
       :error ->
         {:noreply, assign(socket, ruler_input: text, ruler_input_invalid: true)}
     end
-  end
-
-  # Hydrate toolbar prefs from the client's localStorage on mount.
-  # The Settings JS hook reads `meerkat:settings` and dispatches this
-  # once with whatever validated values it found; missing keys keep
-  # the server defaults.
-  def handle_event("settings.load", payload, socket) when is_map(payload) do
-    settings = valid_settings(payload, socket.assigns)
-    {:noreply, socket |> assign(settings) |> show_ruler_columns(settings.ruler_columns)}
   end
 
   ## --- File approval ---
@@ -946,6 +952,14 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, maybe_apply_update(socket)}
   end
 
+  # Another tab of this review changed a toolbar setting.
+  def handle_info({:settings_changed, changed}, socket) do
+    socket = assign_settings(socket, changed)
+
+    {:noreply,
+     if(is_map_key(changed, :ruler_columns), do: push_ruler_input(socket), else: socket)}
+  end
+
   def handle_info({:meerkat_deadline, deadline_ms}, socket) do
     {:noreply, assign(socket, deadline_ms: deadline_ms)}
   end
@@ -1021,7 +1035,7 @@ defmodule MeerkatWeb.ReviewLive do
       |> assign(:shown_rulers, shown_rulers(assigns))
 
     ~H"""
-    <main class="review" id="meerkat-root" phx-hook="Settings">
+    <main class="review" id="meerkat-root">
       <.diff_toolbar
         mode={@diff_mode}
         wrap_lines={@wrap_lines}
@@ -1972,15 +1986,20 @@ defmodule MeerkatWeb.ReviewLive do
             <label class="toolbar-label rulers-toggle">
               <input type="checkbox" phx-click="toolbar.toggle_rulers" checked={@rulers} /> Rulers
             </label>
+            <%!-- A rejoin reads the saved columns; form recovery would
+              instead save this tab's stale value over a newer one. --%>
             <form
               id="ruler-columns-form"
               phx-change="toolbar.set_ruler_columns"
               phx-submit="toolbar.set_ruler_columns"
+              phx-auto-recover="ignore"
             >
               <input
                 type="text"
+                id="ruler-columns"
                 name="columns"
                 class="ruler-columns"
+                phx-hook="RulerColumns"
                 value={@ruler_input}
                 placeholder="none"
                 aria-label="Ruler columns"
@@ -2357,15 +2376,6 @@ defmodule MeerkatWeb.ReviewLive do
   def parse_int_for_test(value), do: parse_int(value)
 
   @doc false
-  def clamp_font_size_for_test(n), do: clamp_font_size(n)
-
-  @doc false
-  def clamp_tab_size_for_test(n), do: clamp_tab_size(n)
-
-  @doc false
-  def valid_settings_for_test(payload, assigns), do: valid_settings(payload, assigns)
-
-  @doc false
   def parse_ruler_columns_for_test(text), do: parse_ruler_columns(text)
 
   @doc false
@@ -2696,55 +2706,17 @@ defmodule MeerkatWeb.ReviewLive do
     )
   end
 
-  # The toolbar settings in a `settings.load` payload; a missing or
-  # invalid one keeps its value in `assigns`.
-  defp valid_settings(payload, assigns),
-    do: %{
-      diff_mode: valid_diff_mode(payload["diff_mode"], assigns.diff_mode),
-      wrap_lines: valid_bool(payload["wrap_lines"], assigns.wrap_lines),
-      font_size_px: valid_font_size(payload["font_size_px"], assigns.font_size_px),
-      tab_size: valid_tab_size(payload["tab_size"], assigns.tab_size),
-      rulers: valid_bool(payload["rulers"], assigns.rulers),
-      ruler_columns: valid_ruler_columns(payload["ruler_columns"], assigns.ruler_columns)
-    }
-
-  defp valid_diff_mode(m, _default) when m in ["split", "unified"], do: m
-  defp valid_diff_mode(_, default), do: default
-
-  defp valid_bool(b, _default) when is_boolean(b), do: b
-  defp valid_bool(_, default), do: default
-
-  defp valid_font_size(n, _default) when is_integer(n), do: clamp_font_size(n)
-  defp valid_font_size(_, default), do: default
-
-  defp valid_tab_size(n, _default) when n in [2, 4, 8], do: n
-  defp valid_tab_size(_, default), do: default
-
-  # Toolbar font-size accepts integers in [9, 28] — outside the range
-  # the diff is unreadable / off the screen at typical zoom levels.
-  defp clamp_font_size(n), do: n |> max(9) |> min(28)
-
-  defp clamp_tab_size(n) when n in [2, 4, 8], do: n
-  defp clamp_tab_size(_), do: 2
-
-  defp valid_ruler_columns(columns, default) when is_list(columns) do
-    if Enum.all?(columns, &ruler_column?/1),
-      do: columns |> Enum.uniq() |> Enum.sort(),
-      else: default
-  end
-
-  defp valid_ruler_columns(_, default), do: default
-
-  # muex:ignore equivalent: `n in 999..1` holds for the same integers
-  defp ruler_column?(n), do: is_integer(n) and n in 1..999
-
   # The rulers field: whole columns separated by commas and/or spaces.
   # Blank means no rulers. Any other token makes the whole list invalid.
   defp parse_ruler_columns(text) do
     parsed = text |> String.split([",", " "], trim: true) |> Enum.map(&parse_int/1)
 
     if Enum.all?(parsed, &match?({:ok, _}, &1)),
-      do: parsed |> Enum.map(fn {:ok, n} -> n end) |> valid_ruler_columns(:error) |> ok_columns(),
+      do:
+        parsed
+        |> Enum.map(fn {:ok, n} -> n end)
+        |> Settings.valid_ruler_columns(:error)
+        |> ok_columns(),
       else: :error
   end
 
