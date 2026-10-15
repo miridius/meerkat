@@ -571,6 +571,7 @@ defmodule Meerkat.CLITest do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         banner = CLI.pause_banner_for_test(target, @url)
         flat = String.replace(banner, ~r/\s+/, " ")
+        assert flat =~ "If you remind the user to review, give them the URL"
         assert flat =~ "do NOT poll, sleep, or schedule wake-ups"
         assert flat =~ "approved or requested changes"
         assert flat =~ "not a `tail`/`head` of it"
@@ -587,6 +588,14 @@ defmodule Meerkat.CLITest do
                  "If the output ends with no outcome line, this process stopped before " <>
                    "the review completed and " <>
                    "the review is still open: run the same command again to wait for its outcome."
+      end
+    end
+
+    # `announce_url/2` appends the debug-logs line, which must start a line of its own.
+    test "ends with its last sentence and a newline" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert String.ends_with?(banner, "wait for its outcome.\n")
       end
     end
   end
