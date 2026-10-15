@@ -1,16 +1,15 @@
 // CI's dependency audit. `mix hex.audit` falls back to its cache when it
 // cannot fetch a package's record from hex.pm, and with no cache it finds
-// no advisories and passes. This fails such a run instead.
+// no advisories and passes. This fails such a run instead. Hex reports a
+// failed fetch on stderr.
 const audit = Bun.spawnSync(["mix", "hex.audit"], {
-	stdout: "pipe",
+	stdout: "inherit",
 	stderr: "pipe",
 });
-const stdout = audit.stdout.toString();
 const stderr = audit.stderr.toString();
-process.stdout.write(stdout);
 process.stderr.write(stderr);
 
-if (`${stdout}${stderr}`.includes("Failed to fetch record")) {
+if (stderr.includes("Failed to fetch record")) {
 	console.error(
 		"scripts/hex-audit.ts: Hex could not fetch every package's record, so the audit is incomplete.",
 	);

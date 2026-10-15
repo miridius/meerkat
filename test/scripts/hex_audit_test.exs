@@ -6,7 +6,7 @@ defmodule Meerkat.HexAuditTest do
   @script Path.join(File.cwd!(), "scripts/hex-audit.ts")
 
   setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-hex-audit")
+    base = Meerkat.TestHelpers.tmp_path("meerkat-hex-audit")
     on_exit(fn -> File.rm_rf!(base) end)
 
     stubs = Path.join(base, "stubs")
@@ -22,7 +22,7 @@ defmodule Meerkat.HexAuditTest do
     """)
 
     File.chmod!(mix, 0o755)
-    %{base: base, path: stubs <> ":" <> System.get_env("PATH")}
+    %{base: base, path: stubs <> ":" <> System.fetch_env!("PATH")}
   end
 
   defp audit(ctx, out, err, code) do
@@ -54,6 +54,26 @@ defmodule Meerkat.HexAuditTest do
              audit(ctx, "No retired or security advisory packages found\n", err, 0)
 
     assert out =~ "Failed to fetch record for bandit"
+    assert out =~ "the audit is incomplete"
+  end
+
+  # The real Hex, so a reworded fetch failure fails this test rather than
+  # passing CI's audit.
+  test "fails when the real Hex cannot reach its registry", ctx do
+    assert {out, 1} =
+             System.cmd("bun", [@script],
+               env: [
+                 {"HEX_HOME", ctx.base},
+                 {"HEX_MIRROR", "http://127.0.0.1:9"},
+                 {"HEX_MIRROR_URL", nil},
+                 {"HEX_TRUSTED_MIRROR", nil},
+                 {"HEX_TRUSTED_MIRROR_URL", nil},
+                 {"HEX_OFFLINE", nil},
+                 {"MIX_ENV", "test"}
+               ],
+               stderr_to_stdout: true
+             )
+
     assert out =~ "the audit is incomplete"
   end
 end

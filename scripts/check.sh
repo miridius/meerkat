@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit gate: runs every check CI runs, in this checkout.
+# Pre-commit gate: runs every check CI runs, in this checkout. Its
+# `mix hex.audit` passes on a failed hex.pm fetch, which CI's
+# scripts/hex-audit.ts fails, so an offline commit can pass.
 # `pnpm install --frozen-lockfile`, as in CI, also fails a commit whose
 # pnpm-lock.yaml does not match its package.json files.
 #
