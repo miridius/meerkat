@@ -230,7 +230,7 @@ defmodule Meerkat.FeedbackTest do
              out,
              "meerkat: review refused because these questions are unanswered:\n\n" <>
                "  file: src/x.rs\n    First question?\n\n" <>
-               "  global\n    Second question?\n\n⚠ Answer the reviewer's **question**"
+               "  global\n    Second question?\n\n⚠ Answer the reviewer's **question**-type comments with analysis — do NOT modify code in response.\n\n"
            )
 
     assert String.ends_with?(out, "\nThen re-run the command that was refused.\n")

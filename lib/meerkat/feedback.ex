@@ -226,8 +226,7 @@ defmodule Meerkat.Feedback do
     """
 
     ⚠ Answer the reviewer's **question**-type comments with analysis — \
-    do NOT modify code in response. (Non-question comments — issue / suggestion / revert / \
-    follow-up — still apply, change code for those as usual.)
+    do NOT modify code in response.
 
     Hand your answers to meerkat by running this from the repo. It validates and stores them \
     itself (exit 0 on success, exit 1 with a message on bad input); do NOT write the answers \
