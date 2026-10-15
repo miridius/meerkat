@@ -137,9 +137,10 @@ When `finding_type === "suggestion"`:
 
 ### Editor hotkeys
 
-The keys follow Cursive's macOS keymap, except ⌃J, and exist on macOS
-only: on Windows and Linux, every key below keeps CodeMirror's own
-binding. Structural typing in Clojure works everywhere.
+The keys follow Cursive's macOS keymap, except ⌃J, ⌃⌥⇧, (thread last) and
+⌃⇧[ (wrap in { }), and exist on macOS only: on Windows and Linux, every key below keeps
+CodeMirror's own binding. Structural typing in Clojure works
+everywhere.
 
 **Every language**, including files with no grammar:
 
@@ -178,8 +179,15 @@ nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
 | ⌃⌘J / ⌃⌘K | Slurp / barf backward |
 | ⌘' | Raise the form at the caret, replacing its parent |
 | ⌥S | Splice: remove the enclosing brackets with any prefix on them, such as `#`, `'`, `@`, `^:m ` or `#my.Rec` (also works where ⌥S types ß) |
+| ⇧⌘9 / ⌘[ / ⌃⇧[ | Wrap the form the caret is in or before in ( ) / [ ] / { }; else the form just before the caret, else insert an empty pair. A selection is wrapped as typing the opener wraps it. ⌃⇧[ replaces Cursive's ⇧⌘[, which is Chrome's previous tab and cannot be taken by a page |
+| ⌃⌥, / ⌃⌥⇧, | Thread first / last: `(f (g x) b)` becomes `(-> (g x) (f b))`, threading the caret's list by its first / last argument. In a `->` / `->>` list, thread its value one step further: `(-> (g x) f)` becomes `(-> x g f)`. The caret lands before the threaded value, so repeating the key threads all the way. Cursive has one Thread Form key that asks which macro; ⌃⌥⇧, is added for thread last |
+| ⌃⌥. | Unthread one step of the nearest enclosing `->` or `->>`: `(-> x g f)` becomes `(-> (g x) f)`; with one step left, the thread becomes the call |
+| ⌃⌥S | Split the list or string at the caret in two: `(a b)` becomes `(a) (b)` at a caret before `b`, `"ab"` becomes `"a" "b"`. Not inside a symbol or other form |
+| ⌃⌥J | Join the two forms either side of the caret, both strings or both collections of the same kind and prefix: `(a) (b)` becomes `(a b)`, `"a" "b"` becomes `"ab"` |
+| ⌃K | Kill: cut to the clipboard from the caret to the end of the line, or to the enclosing list's closer or string's quote when that comes first, taking in a form that crosses the line's end. At the end of a line, cut the line break. In a comment, cut to the line's end |
 
-Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
+Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, ⌃K keeps
+CodeMirror's macOS delete to line end, and ⌥← / ⌥→
 keep CodeMirror's move by word. ⌥⇧← / ⌥⇧→ keep CodeMirror's select
 by word in every language, as in Cursive, which has no selecting form move. The Clojure keys
 leave a list the seeded lines cut off from its closer alone, and

@@ -8,12 +8,18 @@ import {
 	barfForward,
 	deleteGuarded,
 	formStep,
+	joinForms,
+	kill,
 	raise,
 	slurpBackward,
 	slurpForward,
 	splice,
+	split,
+	thread,
 	tightInClojure,
 	typeBracket,
+	unthread,
+	wrap,
 } from "./paredit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
@@ -246,6 +252,210 @@ describe("raise", () => {
 
 	test("does nothing at the top level", () => {
 		expect(run(raise, "a |b")).toBeNull();
+	});
+});
+
+describe("wrap", () => {
+	const paren = (s: EditorState) => wrap(s, "(");
+
+	test("wraps the form the caret is before or in", () => {
+		expect(run(paren, "(a |b c)")).toBe("(a (|b) c)");
+		expect(run((s) => wrap(s, "["), "(a b|c)")).toBe("(a [|bc])");
+		expect(run((s) => wrap(s, "{"), "|#{a} b")).toBe("{|#{a}} b");
+	});
+
+	test("wraps the next form, else the one just before the caret", () => {
+		expect(run(paren, "(a|\n (b\n  c))")).toBe("(a\n (|(b\n   c)))");
+		expect(run(paren, "(a b|)")).toBe("(a (|b))");
+	});
+
+	test("inserts an empty pair with no form to wrap", () => {
+		expect(run(paren, "(|)")).toBe("((|))");
+	});
+
+	test("wraps a selection", () => {
+		const state = stateOf("|(a b c)");
+		const next = state.update(wrap(state.update({ selection: EditorSelection.range(3, 6) }).state, "[") ?? {}).state;
+		expect(next.doc.toString()).toBe("(a [b c])");
+	});
+
+	test("does nothing in a string or comment, or to a list cut off from its closer", () => {
+		expect(run(paren, '"a |b"')).toBeNull();
+		expect(run(paren, "; a |b")).toBeNull();
+		expect(run(paren, "a |(b")).toBeNull();
+	});
+});
+
+describe("split", () => {
+	test("splits the list at the caret, dropping the spaces there", () => {
+		expect(run(split, "(a |b)")).toBe("(a)| (b)");
+		expect(run(split, "[a| b c]")).toBe("[a]| [b c]");
+	});
+
+	test("keeps a # prefix on both halves", () => {
+		expect(run(split, "#{a |b}")).toBe("#{a}| #{b}");
+	});
+
+	test("splits a string, keeping its spaces", () => {
+		expect(run(split, '(f "ab |cd")')).toBe('(f "ab "| "cd")');
+	});
+
+	test("does nothing inside a symbol, after an escape, or at the top level", () => {
+		expect(run(split, "(fo|o)")).toBeNull();
+		expect(run(split, '"a\\|"b"')).toBeNull();
+		expect(run(split, "a |b")).toBeNull();
+	});
+
+	test("does nothing in a regex, comment, or list cut off from its closer", () => {
+		expect(run(split, '#"a|b"')).toBeNull();
+		expect(run(split, "(a ; b |c\n d)")).toBeNull();
+		expect(run(split, "(a |b")).toBeNull();
+	});
+});
+
+describe("joinForms", () => {
+	test("joins two lists, keeping what parted them", () => {
+		expect(run(joinForms, "(a b)| (c d)")).toBe("(a b| c d)");
+		expect(run(joinForms, "[(a)\n |(b)]")).toBe("[(a|\n  b)]");
+	});
+
+	test("keeps the forms apart when nothing parted them", () => {
+		expect(run(joinForms, "[a]|[b]")).toBe("[a| b]");
+	});
+
+	test("leaves no stray space beside an empty collection", () => {
+		expect(run(joinForms, "() |(b)")).toBe("(|b)");
+		expect(run(joinForms, "(a) |()")).toBe("(a|)");
+	});
+
+	test("joins sets and strings", () => {
+		expect(run(joinForms, "#{a} |#{b}")).toBe("#{a| b}");
+		expect(run(joinForms, '"ab" |"cd"')).toBe('"ab|cd"');
+	});
+
+	test("does nothing to forms of different kinds or prefixes", () => {
+		expect(run(joinForms, "(a) |[b]")).toBeNull();
+		expect(run(joinForms, "#(a) |(b)")).toBeNull();
+		expect(run(joinForms, "a |b")).toBeNull();
+	});
+
+	test("does nothing with the caret in a form or past a stray bracket", () => {
+		expect(run(joinForms, "(a) (b|) (c)")).toBeNull();
+		expect(run(joinForms, "(a) |) (b)")).toBeNull();
+		expect(run(joinForms, "(a) |(b")).toBeNull();
+	});
+});
+
+describe("kill", () => {
+	const killed = (marked: string) => {
+		const state = stateOf(marked);
+		const result = kill(state);
+		if (!result) return null;
+		const next = state.update(result.spec).state;
+		const head = next.selection.main.head;
+		const doc = next.doc.toString();
+		return { text: `${doc.slice(0, head)}|${doc.slice(head)}`, cut: result.text };
+	};
+
+	test("cuts to the end of the enclosing list", () => {
+		expect(killed("(a |b c) d")).toEqual({ text: "(a |) d", cut: "b c" });
+	});
+
+	test("cuts to the end of the line inside a list that goes on", () => {
+		expect(killed("(a |b\n c)")).toEqual({ text: "(a |\n c)", cut: "b" });
+	});
+
+	test("takes in a form that crosses the line's end", () => {
+		expect(killed("(a |(b\n c) d\n e)")).toEqual({ text: "(a | d\n e)", cut: "(b\n c)" });
+	});
+
+	test("cuts the line break at the end of a line", () => {
+		expect(killed("(a|\n b)")).toEqual({ text: "(a| b)", cut: "\n" });
+	});
+
+	test("cuts within a string to its end or the line's", () => {
+		expect(killed('(f "ab|cd" x)')).toEqual({ text: '(f "ab|" x)', cut: "cd" });
+		expect(killed('"ab|cd\nef"')).toEqual({ text: '"ab|\nef"', cut: "cd" });
+	});
+
+	test("cuts within a comment to the line's end", () => {
+		expect(killed("(a ; b |c\n d)")).toEqual({ text: "(a ; b |\n d)", cut: "c" });
+	});
+
+	test("cuts from inside a symbol", () => {
+		expect(killed("(fo|o bar)")).toEqual({ text: "(fo|)", cut: "o bar" });
+	});
+
+	test("stops at a stray closer", () => {
+		expect(killed("a |b) c")).toEqual({ text: "a |) c", cut: "b" });
+	});
+
+	test("does nothing where it would unbalance brackets", () => {
+		expect(killed("(a |(b\n c")).toBeNull();
+		expect(killed("('|(a\n b))")).toBeNull();
+		expect(killed('"a\\|"b"')).toBeNull();
+		expect(killed("(a|)")).toBeNull();
+	});
+});
+
+describe("thread", () => {
+	const first = (s: EditorState) => thread(s, "->");
+	const last = (s: EditorState) => thread(s, "->>");
+
+	test("threads the caret's list by its first or last argument", () => {
+		expect(run(first, "(f (g |x) b)")).toBe("(f (-> |x g) b)");
+		expect(run(first, "(f |(g x) b)")).toBe("(-> |(g x) (f b))");
+		expect(run(last, "(map |f (filter p xs))")).toBe("(->> |(filter p xs) (map f))");
+	});
+
+	test("threads an existing thread one step further", () => {
+		expect(run(first, "(-> |(g x 1) f)")).toBe("(-> |x (g 1) f)");
+		expect(run(last, "(->> |(filter p xs) (map f))")).toBe("(->> |xs (filter p) (map f))");
+	});
+
+	test("leaves a lone symbol or keyword step bare", () => {
+		expect(run(first, "(|f (g x))")).toBe("(-> |(g x) f)");
+		expect(run(first, "(|:k (g x))")).toBe("(-> |(g x) :k)");
+	});
+
+	test("keeps parentheses around a step whose head is not a symbol", () => {
+		expect(run(first, "(|(comp a b) x)")).toBe("(-> |x ((comp a b)))");
+	});
+
+	test("re-indents the lines it changes", () => {
+		expect(run(first, "(f |(g x) a\n   b)")).toBe("(-> |(g x) (f a\n             b))");
+	});
+
+	test("does nothing without an argument, a list to thread further, or a matching macro", () => {
+		expect(run(first, "(|f)")).toBeNull();
+		expect(run(first, "(-> |x f)")).toBeNull();
+		expect(run(last, "(-> |(g x) f)")).toBeNull();
+		expect(run(first, "[a |b]")).toBeNull();
+		expect(run(first, "(f |(g x)")).toBeNull();
+	});
+});
+
+describe("unthread", () => {
+	test("unthreads one step of the enclosing thread", () => {
+		expect(run(unthread, "(-> x g (f |b))")).toBe("(-> |(g x) (f b))");
+		expect(run(unthread, "(->> xs (filter p) (map |f))")).toBe("(->> |(filter p xs) (map f))");
+		expect(run(unthread, "(-> x (f) |g)")).toBe("(-> |(f x) g)");
+	});
+
+	test("replaces a thread with one step left by its call", () => {
+		expect(run(unthread, "(-> |x (f b))")).toBe("|(f x b)");
+		expect(run(unthread, "(->> |x (f b))")).toBe("|(f b x)");
+		expect(run(unthread, "(-> |x :k)")).toBe("|(:k x)");
+	});
+
+	test("replaces a thread with no step by its value", () => {
+		expect(run(unthread, "(-> |(f x))")).toBe("|(f x)");
+	});
+
+	test("does nothing outside a thread or with a step it cannot call", () => {
+		expect(run(unthread, "(f |x)")).toBeNull();
+		expect(run(unthread, "(-> |x [a])")).toBeNull();
+		expect(run(unthread, "(-> |x (f b)")).toBeNull();
 	});
 });
 

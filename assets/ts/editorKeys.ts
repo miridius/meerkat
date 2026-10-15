@@ -8,13 +8,19 @@ import {
 	bracketTyping,
 	clojureItems,
 	deleteGuarded,
+	joinForms,
+	kill,
 	moveByForm,
 	raise,
 	reindent,
 	slurpBackward,
 	slurpForward,
 	splice,
+	split,
+	thread,
 	tightInClojure,
+	unthread,
+	wrap,
 } from "./paredit.js";
 import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit.js";
 
@@ -59,6 +65,16 @@ function indented(edit: Edit, clojure: boolean): Edit {
 			}
 		: edit;
 }
+
+/** Cursive's Kill: cut what `kill` deletes to the clipboard. */
+const cutKill: Command = (view) => {
+	const killed = kill(view.state);
+	if (!killed) return true;
+	// The clipboard is missing outside a secure context; the kill still deletes.
+	navigator.clipboard?.writeText(killed.text).catch((error) => console.warn("meerkat: kill could not copy", error));
+	view.dispatch(killed.spec);
+	return true;
+};
 
 export const HOTKEYS: Hotkey[] = [
 	{
@@ -119,6 +135,43 @@ export const HOTKEYS: Hotkey[] = [
 		alias: ["Alt-ß"],
 		does: "Splice: remove the enclosing brackets",
 		run: [() => claim(splice)],
+	},
+	{
+		scope: "clojure",
+		// Cursive's ⇧⌘[ is Chrome's previous tab, which pages cannot take.
+		keys: ["Mod-Shift-9", "Mod-[", "Ctrl-Shift-["],
+		does: "Wrap the form in ( ) / [ ] / { }",
+		run: (["(", "[", "{"] as const).map((open) => () => claim((state) => wrap(state, open))),
+	},
+	{
+		scope: "clojure",
+		keys: ["Ctrl-Alt-,", "Ctrl-Alt-Shift-,"],
+		does: "Thread the list one step with -> / ->>",
+		run: [() => claim((state) => thread(state, "->")), () => claim((state) => thread(state, "->>"))],
+	},
+	{
+		scope: "clojure",
+		keys: ["Ctrl-Alt-."],
+		does: "Unthread one step of the enclosing -> or ->>",
+		run: [() => claim(unthread)],
+	},
+	{
+		scope: "clojure",
+		keys: ["Ctrl-Alt-s"],
+		does: "Split the list or string in two at the caret",
+		run: [() => claim(split)],
+	},
+	{
+		scope: "clojure",
+		keys: ["Ctrl-Alt-j"],
+		does: "Join the forms either side of the caret",
+		run: [() => claim(joinForms)],
+	},
+	{
+		scope: "clojure",
+		keys: ["Ctrl-k"],
+		does: "Kill: cut to the end of the line or the enclosing form",
+		run: [() => cutKill],
 	},
 ];
 

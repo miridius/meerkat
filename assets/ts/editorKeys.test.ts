@@ -90,6 +90,37 @@ describe("hotkeyBindings", () => {
 		expect(press("Mod-Shift-ArrowUp", "clojure", nested).text).toBe("(let |(c)\n  [x (a\n      b)])");
 	});
 
+	test("Clojure gets Cursive's wrap, thread, split, join and kill keys", () => {
+		const press1 = (key: string, text: string) => press(key, "clojure", stateOf(text, [clojure])).text;
+		expect(press1("Mod-Shift-9", "(a |b)")).toBe("(a (|b))");
+		expect(press1("Mod-[", "(a |b)")).toBe("(a [|b])");
+		expect(press1("Ctrl-Shift-[", "(a |b)")).toBe("(a {|b})");
+		expect(press1("Ctrl-Alt-,", "(f |(g x))")).toBe("(-> |(g x) f)");
+		expect(press1("Ctrl-Alt-Shift-,", "(f |(g x))")).toBe("(->> |(g x) f)");
+		expect(press1("Ctrl-Alt-.", "(-> x |f)")).toBe("|(f x)");
+		expect(press1("Ctrl-Alt-s", "(a |b)")).toBe("(a)| (b)");
+		expect(press1("Ctrl-Alt-j", "(a)| (b)")).toBe("(a| b)");
+	});
+
+	test("⌃K cuts to the end of the list into the clipboard", async () => {
+		const copied: string[] = [];
+		const clipboard = { writeText: async (text: string) => void copied.push(text) };
+		Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+		try {
+			expect(press("Ctrl-k", "clojure", stateOf("(a |b c) d", [clojure]))).toEqual({
+				claimed: true,
+				text: "(a |) d",
+			});
+			expect(copied).toEqual(["b c"]);
+		} finally {
+			Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+		}
+	});
+
+	test("outside Clojure ⌃K is left to CodeMirror", () => {
+		expect(hotkeyBindings("javascript").map((b) => b.mac)).not.toContain("Ctrl-k");
+	});
+
 	test("Backspace beside a matched bracket steps over it, and falls through elsewhere", () => {
 		expect(press("Backspace", "clojure", stateOf("(a)|", [clojure]))).toEqual({
 			claimed: true,
@@ -175,6 +206,12 @@ describe("cheatSheet", () => {
 			"⌃⌘J / ⌃⌘K",
 			"⌘'",
 			"⌥S",
+			"⇧⌘9 / ⌘[ / ⌃⇧[",
+			"⌃⌥, / ⌃⌥⇧,",
+			"⌃⌥.",
+			"⌃⌥S",
+			"⌃⌥J",
+			"⌃K",
 		]);
 	});
 });

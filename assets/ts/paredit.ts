@@ -303,6 +303,240 @@ export const clojureItems: Entries = (node) => {
 	return key ? [] : items;
 };
 
+/** Wrap the form at the caret in `open` and its closer, as Cursive's
+ *  Wrap with () / [] / {} do: the form the caret is in or before, else
+ *  the one it is after, else an empty pair. A selection is wrapped as
+ *  typing `open` wraps it. */
+export function wrap(state: EditorState, open: "(" | "[" | "{"): TransactionSpec | null {
+	if (state.selection.ranges.some((r) => !r.empty)) return typeBracket(state, open);
+	return edit(state, "edit.wrap", (pos) => {
+		if (inText(state, pos)) return null;
+		const all = forms(enclosing(state, pos) ?? syntaxTree(state).topNode);
+		const form =
+			all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+		if (!form) return { changes: [{ from: pos, insert: open + PAIRS[open] }], cursor: pos + 1 };
+		if (!whole(form)) return null;
+		return {
+			changes: [
+				{ from: form.from, insert: open },
+				{ from: form.to, insert: PAIRS[open] },
+			],
+			cursor: form.from + 1,
+		};
+	});
+}
+
+/** The closed string, not a regex's, whose quotes hold `pos`. */
+function stringAt(state: EditorState, pos: number): SyntaxNode | null {
+	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
+		if (node.name !== "String") continue;
+		const last = node.lastChild;
+		const closed = last !== null && last.name === '"' && last.from > node.from;
+		return closed && node.parent?.name !== "RegExp" && node.from < pos && pos < node.to ? node : null;
+	}
+	return null;
+}
+
+/** Whether the character before `pos` is escaped away by a backslash. */
+function afterEscape(state: EditorState, pos: number): boolean {
+	const before = state.doc.sliceString(Math.max(0, pos - 64), pos);
+	return /(^|[^\\])(\\\\)*\\$/.test(before);
+}
+
+/** Split the string or collection at the caret in two, as Cursive's
+ *  Split does: `(a |b)` becomes `(a)| (b)`. Not inside a form. */
+export function split(state: EditorState): TransactionSpec | null {
+	return edit(state, "edit.split", (pos) => {
+		const str = stringAt(state, pos);
+		if (str) return afterEscape(state, pos) ? null : { changes: [{ from: pos, insert: '" "' }], cursor: pos + 1 };
+		if (inText(state, pos)) return null;
+		const coll = enclosing(state, pos);
+		const closer = coll && closerOf(coll);
+		if (!coll || !closer || !coll.firstChild) return null;
+		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
+		let from = pos;
+		while (from > coll.firstChild.to && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--;
+		let to = pos;
+		while (to < closer.from && /[ \t]/.test(state.doc.sliceString(to, to + 1))) to++;
+		const opener = state.doc.sliceString(openStart(coll), coll.firstChild.to);
+		return { changes: [{ from, to, insert: `${closer.name} ${opener}` }], cursor: from + 1 };
+	});
+}
+
+/** The collection `form` is, or opens with a `#` prefix. */
+function collOf(form: SyntaxNode): SyntaxNode | null {
+	if (isColl(form)) return form;
+	if (!PREFIXED.has(form.name)) return null;
+	const inner = form.lastChild;
+	return inner && isColl(inner) ? inner : null;
+}
+
+/** Join the two forms either side of the caret into one, as Cursive's
+ *  Join does: `(a)| (b)` becomes `(a| b)`, `"a"| "b"` becomes `"a|b"`.
+ *  Both must be strings, or collections of the same kind. */
+export function joinForms(state: EditorState): TransactionSpec | null {
+	return edit(state, "edit.join", (pos) => {
+		const all = forms(enclosing(state, pos) ?? syntaxTree(state).topNode);
+		const prev = all.findLast((f) => f.to <= pos);
+		const next = all.find((f) => f.from >= pos);
+		if (!prev || !next || !whole(prev) || sibling(prev, 1)?.from !== next.from || prev.name !== next.name) return null;
+		if (prev.name === "String" && stringAt(state, prev.to - 1) && stringAt(state, next.from + 1)) {
+			return { changes: [{ from: prev.to - 1, to: next.from + 1 }], cursor: prev.to - 1 };
+		}
+		const left = collOf(prev);
+		const right = collOf(next);
+		const closer = left && closerOf(left);
+		const opener = right?.firstChild;
+		if (!left?.firstChild || !right || !closer || !opener) return null;
+		const leftOpener = state.doc.sliceString(prev.from, left.firstChild.to);
+		if (leftOpener !== state.doc.sliceString(next.from, opener.to)) return null;
+		const gap = state.doc.sliceString(closer.to, next.from);
+		const changes: ChangeSpec[] =
+			(forms(left).length === 0 || forms(right).length === 0) && gap.trim() === ""
+				? [{ from: closer.from, to: opener.to }]
+				: [
+						{ from: closer.from, to: closer.to, insert: gap === "" ? " " : "" },
+						{ from: next.from, to: opener.to },
+					];
+		return { changes, cursor: closer.from };
+	});
+}
+
+/** Where Kill from `pos` stops: the end of the line, or before the
+ *  enclosing collection's closer or string's quote when that comes
+ *  first, pushed past any form that crosses the line's end. At the end of
+ *  a line, past the line break. Null when that would unbalance brackets. */
+function killEnd(state: EditorState, pos: number): number | null {
+	const line = state.doc.lineAt(pos);
+	const str = stringAt(state, pos);
+	if (str) return afterEscape(state, pos) ? null : Math.min(line.to, str.to - 1);
+	if (inText(state, pos)) {
+		const comment = syntaxTree(state).resolveInner(pos, -1);
+		return comment.name === "LineComment" ? line.to : null;
+	}
+	const coll = enclosing(state, pos);
+	const parent = coll ?? syntaxTree(state).topNode;
+	let limit = coll ? (closerOf(coll)?.from ?? state.doc.length) : state.doc.length;
+	for (let child = parent.firstChild; child; child = child.nextSibling) {
+		const stray = child.type.isError || (BRACKETS.has(child.name) && child !== parent.firstChild);
+		if (stray && child.from >= pos && child.from < limit) limit = child.from;
+	}
+	let end = Math.min(line.to, limit);
+	if (end === pos) return pos === line.to && pos < limit ? pos + 1 : null;
+	for (const f of forms(parent)) {
+		if (f.to <= pos || f.from >= end) continue;
+		const token = f.firstChild === null || f.name === "Operator";
+		if (f.from < pos && !token) return null;
+		if (f.to > end) {
+			if (!whole(f)) return null;
+			end = f.to;
+		}
+	}
+	return end;
+}
+
+/** Cut from the caret to the end of its line or of its enclosing
+ *  collection or string, as Cursive's Kill does, keeping brackets
+ *  balanced: the transaction, and the text it cuts. */
+export function kill(state: EditorState): { spec: TransactionSpec; text: string } | null {
+	const cut: string[] = [];
+	const spec = edit(state, "delete.cut", (pos) => {
+		const end = killEnd(state, pos);
+		if (end === null || end === pos) return null;
+		cut.push(state.doc.sliceString(pos, end));
+		return { changes: [{ from: pos, to: end }] };
+	});
+	return spec && { spec, text: cut.join("\n") };
+}
+
+type Thread = "->" | "->>";
+
+/** The source text of `node`. */
+function text(state: EditorState, node: SyntaxNode): string {
+	return state.doc.sliceString(node.from, node.to);
+}
+
+/** The threading macro `coll` is a call to, if any. */
+function threadOf(state: EditorState, coll: SyntaxNode): Thread | null {
+	const head = coll.name === "List" ? forms(coll)[0] : undefined;
+	const name = head && text(state, head);
+	return name === "->" || name === "->>" ? name : null;
+}
+
+/** `call` without its argument `arg`, as a threading step: `(f b)` for
+ *  `(f a b)` without `a`, or just `f` when nothing else is left. */
+function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): string {
+	const all = forms(call);
+	if (all.length === 2 && (all[0].name === "Operator" || all[0].name === "Keyword")) return text(state, all[0]);
+	const i = all.findIndex((f) => f.from === arg.from);
+	const [from, to] = i === all.length - 1 ? [all[i - 1].to, arg.to] : [arg.from, all[i + 1].from];
+	return state.doc.sliceString(call.from, from) + state.doc.sliceString(to, call.to);
+}
+
+/** Thread the caret's list one step with `macro` (`->` threads its first
+ *  argument, `->>` its last): `(f (g x) b)` becomes `(-> (g x) (f b))`.
+ *  In a list that already threads with `macro`, its threaded value is
+ *  threaded one step further: `(-> (g x) f)` becomes `(-> x g f)`. The
+ *  caret lands before the threaded value. */
+export function thread(state: EditorState, macro: Thread): TransactionSpec | null {
+	return edit(state, "edit.thread", (pos) => {
+		const coll = enclosing(state, pos);
+		if (coll?.name !== "List" || !closerOf(coll) || !whole(coll)) return null;
+		const all = forms(coll);
+		const pick = (args: SyntaxNode[]) => (macro === "->" ? args[1] : args[args.length - 1]);
+		const existing = threadOf(state, coll);
+		if (existing) {
+			const value = all[1];
+			if (existing !== macro || value?.name !== "List" || forms(value).length < 2) return null;
+			const arg = pick(forms(value));
+			return {
+				changes: [{ from: value.from, to: value.to, insert: `${text(state, arg)} ${stepWithout(state, value, arg)}` }],
+				cursor: value.from,
+			};
+		}
+		if (all.length < 2) return null;
+		const arg = pick(all);
+		return {
+			changes: [
+				{ from: coll.from, to: coll.to, insert: `(${macro} ${text(state, arg)} ${stepWithout(state, coll, arg)})` },
+			],
+			cursor: coll.from + macro.length + 2,
+		};
+	});
+}
+
+/** Undo one step of the nearest `->` or `->>` around the caret, as
+ *  Cursive's Unthread Form does: `(-> x g f)` becomes `(-> (g x) f)`, and
+ *  `(-> (g x))` or `(-> x g)` becomes `(g x)`. */
+export function unthread(state: EditorState): TransactionSpec | null {
+	return edit(state, "edit.unthread", (pos) => {
+		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
+			if (!closerOf(coll)) return null;
+			const macro = threadOf(state, coll);
+			if (!macro) continue;
+			if (!whole(coll)) return null;
+			const [, value, step, ...more] = forms(coll);
+			if (!value) return null;
+			if (!step) return { changes: [{ from: coll.from, to: coll.to, insert: text(state, value) }], cursor: coll.from };
+			let call: string;
+			if (step.name === "List") {
+				const args = forms(step);
+				const closer = closerOf(step) as SyntaxNode;
+				const at = macro === "->" ? (args[1]?.from ?? closer.from) : closer.from;
+				const lead = macro === "->" && args[1] ? "" : " ";
+				const trail = macro === "->" && args[1] ? " " : "";
+				call =
+					state.doc.sliceString(step.from, at) + lead + text(state, value) + trail + state.doc.sliceString(at, step.to);
+			} else if (step.name === "Symbol" || step.name === "Keyword") {
+				call = `(${text(state, step)} ${text(state, value)})`;
+			} else return null;
+			if (more.length === 0) return { changes: [{ from: coll.from, to: coll.to, insert: call }], cursor: coll.from };
+			return { changes: [{ from: value.from, to: step.to, insert: call }], cursor: value.from };
+		}
+		return null;
+	});
+}
+
 /** Where moving one form from `pos` lands: past the next form, or out
  *  past the closer after the last one (`dir` 1); before the previous
  *  form, or out before the opener ahead of the first one (`dir` -1). */
