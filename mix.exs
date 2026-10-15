@@ -13,11 +13,7 @@ defmodule Meerkat.MixProject do
       hex: [
         # Supply-chain guard, as minimumReleaseAge in pnpm-workspace.yaml:
         # never resolve a release published less than 24h ago.
-        cooldown: "1d",
-        # `Meerkat.CLI` serves with HTTP/2 off, the advisory's documented
-        # workaround, as no Bandit release fixes it yet. Drop this entry
-        # once a fixed Bandit release is locked.
-        ignore_advisories: ["GHSA-69m6-wcv4-rwcf"]
+        cooldown: "1d"
       ],
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
