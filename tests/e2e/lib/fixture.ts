@@ -262,11 +262,11 @@ export function manifestRoot(lines: string[]): string {
 	return root;
 }
 
-// For every git a test starts. The ExUnit tests' global config also turns
-// off the detached auto maintenance that would write into a fixture while
-// its cleanup removes it.
+// For every git a test starts, meerkat's included. It reads only the
+// ExUnit tests' global config, which turns off the detached auto
+// maintenance that would write into a fixture while its cleanup removes it.
 export function sanitisedGitEnv(): NodeJS.ProcessEnv {
-	return {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		GIT_AUTHOR_NAME: "test",
 		GIT_AUTHOR_EMAIL: "test@example.com",
@@ -274,5 +274,8 @@ export function sanitisedGitEnv(): NodeJS.ProcessEnv {
 		GIT_COMMITTER_EMAIL: "test@example.com",
 		GIT_CONFIG_GLOBAL: join(__dirname, "../../../test/support/test.gitconfig"),
 		GIT_CONFIG_SYSTEM: "/dev/null",
+		GIT_CONFIG_COUNT: "0",
 	};
+	delete env.GIT_CONFIG_PARAMETERS;
+	return env;
 }

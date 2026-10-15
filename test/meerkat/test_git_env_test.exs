@@ -30,7 +30,8 @@ defmodule Meerkat.TestGitEnvTest do
 
     events = trace |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
     started = for %{"event" => "child_start", "argv" => argv} <- events, do: argv
-    assert Enum.any?(started, &match?(["git-receive-pack " <> _], &1))
+    # Only receive-pack starts unpack-objects, so its children are traced.
+    assert Enum.any?(started, &match?(["git", "unpack-objects" | _], &1))
     assert Enum.filter(started, &("maintenance" in &1 or "gc" in &1)) == []
   end
 

@@ -23,8 +23,9 @@ defmodule Meerkat.TestHelpers do
 
   @doc """
   Sets the git config environment for the whole test BEAM, so every git a
-  test starts inherits it. test_helper.exs calls it once; a test that
-  changes it calls it again to put it back.
+  test starts inherits it. test_helper.exs calls it once; a synchronous
+  test that changes it with `put_env/2` can call it again to return to it
+  mid-test.
   """
   def put_git_config_env, do: Enum.each(@git_config_env, &put_env/1)
 

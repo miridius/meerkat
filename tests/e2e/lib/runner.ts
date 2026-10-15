@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { type Fixture, makeFixture } from "./fixture.js";
+import { type Fixture, makeFixture, sanitisedGitEnv } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
 
@@ -87,7 +87,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 				})());
 
 	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
-	const env = { ...process.env, MEERKAT_RUNS_DIR: runsDir, XDG_CONFIG_HOME: configHome(runsDir), ...opts.env };
+	const env = { ...sanitisedGitEnv(), MEERKAT_RUNS_DIR: runsDir, XDG_CONFIG_HOME: configHome(runsDir), ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
 	}

@@ -133,7 +133,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute pushed, "expected no #{event} push"
   end
 
-  # Commit in a fixture repo.
   defp commit(repo, message) do
     git(repo, [
       "-c",

@@ -151,6 +151,19 @@ test("a meerkat that exits before printing its URL reports stderr read after it 
 	}
 });
 
+test("meerkat's git reads no global config but the tests' own", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	const seen = join(dir, "seen");
+	const bin = join(dir, "meerkat");
+	writeFileSync(bin, `#!/bin/sh\ngit config --global --list > "$SEEN"\nexit 1\n`, { mode: 0o755 });
+	try {
+		await expect(startMeerkat({ bin, args: [], fixture: { dir }, env: { SEEN: seen } })).rejects.toThrow();
+		expect(readFileSync(seen, "utf8")).toBe("maintenance.auto=false\n");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 describe("ps elapsed-time parsing", () => {
 	for (const [etime, seconds] of [
 		["00:07", 7],
