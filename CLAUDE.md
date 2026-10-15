@@ -95,8 +95,9 @@ The end-to-end loop for a meerkat bug report or feature request:
    and the PR description you are about to post, so unchecked work
    does not reach the user when the PR opens. Does it do what was
    asked? Is it sensible? Does it avoid unnecessary changes or
-   complexity? Fix every finding from any review you run before
-   opening the PR, regardless of which review found it. Keep this
+   complexity? Does meerkat still feel snappy? Does it use no more of
+   the user's system resources than it needs? Fix every finding
+   from any review you run before opening the PR, regardless of which review found it. Keep this
    self-review cheap: it must not add review agents,
    mutation-testing runs, or extra test suites of its own. The
    thorough review still happens at merge through
@@ -105,7 +106,8 @@ The end-to-end loop for a meerkat bug report or feature request:
    When a PR changes what meerkat's review page shows, screenshots are
    called for. Use judgement to choose whichever screenshots, and how
    many, will help review that PR; for changed UI, a before/after pair
-   can help. Crop each screenshot to the changed element. Put each in
+   can help. Take "before" screenshots from the PR's base branch.
+   Crop each screenshot to the changed element. Put each in
    its own table row so they read on a phone.
 
 ## Quality gates
@@ -219,6 +221,9 @@ Name the e2e test that kills the mutant.
 
 The `/manager:review-and-merge` skill runs the merge-time checks and
 post-merge steps in this section.
+
+Review every change for snappiness and system load: meerkat must feel
+snappy and use no more of the user's system resources than it needs.
 
 ### Mutation-test the PR
 
