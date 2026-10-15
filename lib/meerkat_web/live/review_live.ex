@@ -116,7 +116,7 @@ defmodule MeerkatWeb.ReviewLive do
        pending_answers: PendingAnswers.load(repo_path)
      )
      |> assign_settings(Settings.load())
-     |> then(&if(done && connected?(&1), do: wipe_drafts(&1), else: &1))}
+     |> mount_pushes(done)}
   end
 
   defp page_title(%ReviewState{pr: %{number: n}}), do: "meerkat — PR ##{n}"
@@ -196,6 +196,20 @@ defmodule MeerkatWeb.ReviewLive do
       %{ruler_columns: columns} -> show_ruler_columns(socket, columns)
       _ -> socket
     end
+  end
+
+  # Has the RulerColumns hook show `ruler_input` in the rulers field: when
+  # the field is focused, as it stays when the reviewer switches tabs,
+  # LiveView leaves its text alone, even on a rejoin.
+  defp push_ruler_input(socket),
+    do: push_event(socket, "ruler-columns:set", %{text: socket.assigns.ruler_input})
+
+  # The pushes of a mount: the rulers field's text, and the draft wipe
+  # when the review is already `done`. A disconnected mount's static
+  # render drops them.
+  defp mount_pushes(socket, done) do
+    socket = push_ruler_input(socket)
+    if done, do: wipe_drafts(socket), else: socket
   end
 
   # Push `drafts:wipe` for the browser's `phx:drafts:wipe` window listener
@@ -940,7 +954,10 @@ defmodule MeerkatWeb.ReviewLive do
 
   # Another tab of this review changed a toolbar setting.
   def handle_info({:settings_changed, changed}, socket) do
-    {:noreply, assign_settings(socket, changed)}
+    socket = assign_settings(socket, changed)
+
+    {:noreply,
+     if(is_map_key(changed, :ruler_columns), do: push_ruler_input(socket), else: socket)}
   end
 
   def handle_info({:meerkat_deadline, deadline_ms}, socket) do
@@ -1979,8 +1996,10 @@ defmodule MeerkatWeb.ReviewLive do
             >
               <input
                 type="text"
+                id="ruler-columns"
                 name="columns"
                 class="ruler-columns"
+                phx-hook="RulerColumns"
                 value={@ruler_input}
                 placeholder="none"
                 aria-label="Ruler columns"

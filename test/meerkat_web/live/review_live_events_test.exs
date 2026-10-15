@@ -295,22 +295,30 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view = mount_unbound(conn)
     refute has_element?(view, ".toolbar-settings input[type=checkbox][checked]")
     assert has_element?(view, "input[name=columns][value='100']")
+    # A rejoin leaves a focused field's text alone, so the hook gets it too.
+    assert_push_event(view, "ruler-columns:set", %{text: "100"})
     refute has_element?(view, ".wrap-toggle input[checked]")
   end
 
   test "a change in one tab applies in the review's other tabs", %{conn: conn} do
     view = mount_unbound(conn)
     other = mount_unbound(conn)
+    assert_push_event(view, "ruler-columns:set", %{text: "80, 110"})
+    assert_push_event(other, "ruler-columns:set", %{text: "80, 110"})
     other |> element("#ruler-columns-form") |> render_change(%{"columns" => "80, wide"})
 
     view |> element(".wrap-toggle input") |> render_click()
     refute has_element?(other, ".wrap-toggle input[checked]")
     # A change to another setting leaves the other tab's field alone.
     assert has_element?(other, "input[name=columns][value='80, wide'][aria-invalid=true]")
+    refute_push_event(other, "ruler-columns:set", _)
 
-    view |> element("#ruler-columns-form") |> render_change(%{"columns" => "100"})
-    assert has_element?(other, "input[name=columns][value='100'][aria-invalid=false]")
-    assert svelte_props(render(other), "DiffViewer-0") |> rulers_prop() == [100]
+    view |> element("#ruler-columns-form") |> render_change(%{"columns" => "100 60"})
+    assert has_element?(other, "input[name=columns][value='60, 100'][aria-invalid=false]")
+    assert svelte_props(render(other), "DiffViewer-0") |> rulers_prop() == [60, 100]
+    # The field may be focused, so its text also goes to the hook.
+    assert_push_event(other, "ruler-columns:set", %{text: "60, 100"})
+    refute_push_event(view, "ruler-columns:set", _)
   end
 
   test "set_diff_mode flips the active segment", %{conn: conn} do

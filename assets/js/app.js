@@ -149,6 +149,16 @@ const hooks = {
       });
     },
   },
+  // Shows the saved ruler columns the LV pushes on join and when another
+  // tab saves them. LiveView doesn't patch the value of a focused input,
+  // and the field stays focused when the reviewer switches tabs.
+  RulerColumns: {
+    mounted() {
+      this.handleEvent("ruler-columns:set", ({ text }) => {
+        this.el.value = text;
+      });
+    },
+  },
   // Pointer-drag range selection over the commit-message gutter.
   // Each `<li>` carries `data-start-line`/`data-end-line` for the
   // block it represents; dragging across blocks selects from the

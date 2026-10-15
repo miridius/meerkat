@@ -147,8 +147,12 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await mine.tab8.click();
 		await expect(theirs.wrap).not.toBeChecked();
 		await expect(theirs.tab8).toHaveClass(/active/);
+		// LiveView doesn't patch a focused field, and mine stays focused.
+		await mine.columns.fill("50");
+		await expect(theirs.columns).toHaveValue("50");
 		await theirs.openSettings();
 		await theirs.columns.fill("60");
+		await expect(mine.columns).toBeFocused();
 		await expect(mine.columns).toHaveValue("60");
 
 		second = await startMeerkat({ env: { XDG_CONFIG_HOME: configHome(meerkat.runsDir) } });
