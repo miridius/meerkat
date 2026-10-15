@@ -36,7 +36,9 @@ defmodule Meerkat.CljHover.Kondo do
   @type analysis :: %{
           spans: %{optional({String.t(), pos_integer()}) => [span]},
           defs: %{
-            optional({ns :: String.t(), name :: String.t(), ext :: String.t()}) => definition
+            optional(
+              {ns :: String.t(), name :: String.t(), ext :: String.t(), lang :: String.t() | nil}
+            ) => definition
           }
         }
 
@@ -112,11 +114,12 @@ defmodule Meerkat.CljHover.Kondo do
       )
 
     # The last definition of a var wins, as in Clojure: `declare`, then
-    # `defn`. A namespace's `.clj` and `.cljs` files are separate, so the
-    # file's extension is in the key.
+    # `defn`. A namespace's `.clj` and `.cljs` files are separate, and a
+    # `.cljc` file defines a var once per reader language, so the key
+    # holds the file's extension and that language.
     defs =
       Map.new(definitions, fn d ->
-        {{d["ns"], d["name"], Path.extname(d["filename"])},
+        {{d["ns"], d["name"], Path.extname(d["filename"]), d["lang"]},
          %{
            ns: d["ns"],
            name: d["name"],
@@ -144,29 +147,27 @@ defmodule Meerkat.CljHover.Kondo do
 
   @doc """
   The absolute path of the file that the user's own clj-kondo runs
-  recorded for namespace `ns` in `root`'s `.clj-kondo/.cache`, trying
-  the cache languages in `langs` (of `"clj"`, `"cljs"`, `"cljc"`) in
-  the order given; nil when none records a file that is still there.
+  recorded for namespace `ns` in `root`'s `.clj-kondo/.cache` under
+  language `lang` (`"clj"`, `"cljs"` or `"cljc"`); nil when it records
+  no file that is still there.
 
   Each cached namespace is a transit map whose `:filename` is the path
   kondo linted, relative to where it ran or absolute, or `jar:entry`,
   which is no file, so jars are left to the classpath.
   """
-  @spec cached_file(String.t(), String.t(), [String.t()]) :: String.t() | nil
-  def cached_file(root, ns, langs) do
-    Enum.find_value(langs, fn lang ->
-      cache = Path.join([root, ".clj-kondo", ".cache", "v1", lang, ns <> ".transit.json"])
+  @spec cached_file(String.t(), String.t(), String.t()) :: String.t() | nil
+  def cached_file(root, ns, lang) do
+    cache = Path.join([root, ".clj-kondo", ".cache", "v1", lang, ns <> ".transit.json"])
 
-      with {:ok, body} <- File.read(cache),
-           {:ok, ["^ " | pairs]} <- Jason.decode(body),
-           file when is_binary(file) <- filename(pairs),
-           path = Path.expand(file, root),
-           true <- File.regular?(path) do
-        path
-      else
-        _ -> nil
-      end
-    end)
+    with {:ok, body} <- File.read(cache),
+         {:ok, ["^ " | pairs]} <- Jason.decode(body),
+         file when is_binary(file) <- filename(pairs),
+         path = Path.expand(file, root),
+         true <- File.regular?(path) do
+      path
+    else
+      _ -> nil
+    end
   end
 
   # `:filename` appears once, as a top-level key, so transit writes it

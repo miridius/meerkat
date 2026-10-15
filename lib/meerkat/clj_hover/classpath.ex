@@ -47,19 +47,19 @@ defmodule Meerkat.CljHover.Classpath do
   end
 
   @doc """
-  Where on `entries` the namespace `ns` lives, trying `exts` in order
-  for each entry in classpath order, and `jars` with each jar the
-  search reached listed. A jar already in `jars` is not read again,
-  and no jar past the one found is read.
+  The first entry on `entries` holding namespace `ns`'s file with
+  extension `ext`, and `jars` with each jar the search reached listed.
+  A jar already in `jars` is not read again, and no jar past the one
+  found is read.
   """
-  @spec find([String.t()], String.t(), [String.t()], jars) :: {location | nil, jars}
-  def find(entries, ns, exts, jars) do
-    base = ns |> String.replace("-", "_") |> String.replace(".", "/")
+  @spec find([String.t()], String.t(), String.t(), jars) :: {location | nil, jars}
+  def find(entries, ns, ext, jars) do
+    rel = (ns |> String.replace("-", "_") |> String.replace(".", "/")) <> ext
 
     Enum.reduce_while(entries, {nil, jars}, fn entry, {nil, jars} ->
       jars = listed(jars, entry)
 
-      case Enum.find_value(exts, &holding(entry, base <> &1, jars)) do
+      case holding(entry, rel, jars) do
         nil -> {:cont, {nil, jars}}
         location -> {:halt, {location, jars}}
       end
@@ -92,16 +92,15 @@ defmodule Meerkat.CljHover.Classpath do
   """
   @spec jar_entries(String.t()) :: MapSet.t(String.t())
   def jar_entries(jar) do
-    # Read whole first: `:zip` reading a jar from disk is many times slower.
-    with {:ok, bytes} <- File.read(jar),
-         {:ok, entries} <- :zip.list_dir(bytes) do
-      for {:zip_file, name, _, _, _, _} <- entries,
-          name = List.to_string(name),
-          Path.extname(name) in @sources,
-          into: MapSet.new(),
-          do: name
-    else
-      _ -> MapSet.new()
+    case in_jar(jar, &Unzip.list_entries/1) do
+      {:ok, entries} ->
+        for %Unzip.Entry{file_name: name} <- entries,
+            Path.extname(name) in @sources,
+            into: MapSet.new(),
+            do: name
+
+      :error ->
+        MapSet.new()
     end
   end
 
@@ -114,13 +113,26 @@ defmodule Meerkat.CljHover.Classpath do
     end
   end
 
-  def read_file({:jar, jar, rel}) do
-    with {:ok, bytes} <- File.read(jar),
-         {:ok, [{_, text}]} <-
-           :zip.extract(bytes, [{:file_list, [String.to_charlist(rel)]}, :memory]) do
-      {:ok, text}
-    else
-      _ -> :error
+  def read_file({:jar, jar, rel}),
+    do: in_jar(jar, &(&1 |> Unzip.file_stream!(rel) |> Enum.to_list() |> IO.iodata_to_binary()))
+
+  # `fun` of the jar's central directory, the only part of the jar read
+  # unless `fun` reads an entry; :error when the jar or the entry can't
+  # be read.
+  defp in_jar(jar, fun) do
+    file = Unzip.LocalFile.open(jar)
+
+    try do
+      case Unzip.new(file) do
+        {:ok, unzip} -> {:ok, fun.(unzip)}
+        # muex:ignore equivalent: without it, the CaseClauseError is rescued below as :error
+        {:error, _} -> :error
+      end
+    after
+      Unzip.LocalFile.close(file)
     end
+  rescue
+    # A jar that can't be opened fails a match; a damaged entry raises.
+    _ -> :error
   end
 end

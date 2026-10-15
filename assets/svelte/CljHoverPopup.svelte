@@ -31,7 +31,8 @@
   // The diff highlighter's own AST, so the colours follow the diff's
   // theme through the same CSS variables.
   const sourceHtml = $derived.by(() => {
-    const ast = highlighter?.getAST(hover.source, "hover.clj", "clojure");    return ast ? hastToHtml(ast) : null;
+    const ast = highlighter?.getAST(hover.source, "hover.clj", "clojure");
+    return ast ? hastToHtml(ast) : null;
   });
 
   // On <body>, so the diff's horizontal scroller doesn't clip it, and

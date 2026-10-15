@@ -110,11 +110,11 @@ defmodule Meerkat.CljHoverTest do
       (:require [app.view :as v]
                 [dep.lib :as lib]
                 [dep.shared :as sh])
-      (:require-macros [dep.mac :as m])
+      (:require-macros [dep.mac :as m] [dep.both :as b])
       (:require [app.plat :as p]))
 
     (defn render []
-      (v/view-fn) (lib/dep-fn 1) (sh/shared-fn 1) (m/mac 1) (p/now))
+      (v/view-fn) (lib/dep-fn 1) (sh/shared-fn 1) (m/mac 1) (p/now) (b/both-mac 1))
     """
   }
 
@@ -122,9 +122,12 @@ defmodule Meerkat.CljHoverTest do
     {"dep/lib.clj", "(ns dep.lib)\n\n(defn dep-fn\n  \"Dep doc.\"\n  [a]\n  a)\n"},
     {"dep/lib.cljs", "(ns dep.lib)\n\n(defn dep-fn \"Dep cljs doc.\" [a] a)\n"},
     {"dep/mac.clj", "(ns dep.mac)\n\n(defmacro mac \"Mac doc.\" [a] a)\n"},
+    # A ClojureScript namespace keeping its macros in its .clj file.
+    {"dep/both.cljs", "(ns dep.both)\n\n(defn both-fn [a] a)\n"},
+    {"dep/both.clj", "(ns dep.both)\n\n(defmacro both-mac \"Both mac doc.\" [a] a)\n"},
     # Read as anything but .cljc, the reader conditional defines nothing.
     {"dep/shared.cljc",
-     "(ns dep.shared)\n\n#?(:clj (defn shared-fn \"Shared doc.\" [a] a)\n   :cljs (defn shared-fn \"Shared doc.\" [a] a))\n"}
+     "(ns dep.shared)\n\n#?(:clj (defn shared-fn \"Shared clj doc.\" [a] a)\n   :cljs (defn shared-fn \"Shared cljs doc.\" [a] a))\n"}
   ]
 
   setup do
@@ -279,14 +282,21 @@ defmodule Meerkat.CljHoverTest do
     assert %{doc: "Dep cljs doc.", where: "dep.jar:dep/lib.cljs"} =
              hover_on(ctx, "web/app/ui.cljs", :new, "lib/dep-fn")
 
-    for file <- ["src/app/core.clj", "web/app/ui.cljs"] do
-      assert %{doc: "Shared doc.", where: "dep.jar:dep/shared.cljc"} =
+    # A .cljc file answers with the hovering language's reader branch.
+    for {file, lang} <- [{"src/app/core.clj", "clj"}, {"web/app/ui.cljs", "cljs"}] do
+      doc = "Shared #{lang} doc."
+
+      assert %{doc: ^doc, where: "dep.jar:dep/shared.cljc"} =
                hover_on(ctx, file, :new, "sh/shared-fn")
     end
 
-    # ClojureScript reaches a Clojure namespace for its macros.
+    # ClojureScript reaches a Clojure namespace for its macros, also
+    # past the namespace's own .cljs file.
     assert %{name: "dep.mac/mac", macro: true, doc: "Mac doc."} =
              hover_on(ctx, "web/app/ui.cljs", :new, "m/mac")
+
+    assert %{doc: "Both mac doc.", where: "dep.jar:dep/both.clj"} =
+             hover_on(ctx, "web/app/ui.cljs", :new, "b/both-mac")
 
     assert %{doc: "Vendor doc.", where: "vendor/vend/tool.clj"} =
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")

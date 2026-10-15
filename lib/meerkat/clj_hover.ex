@@ -153,57 +153,67 @@ defmodule Meerkat.CljHover do
 
   defp definition(state, side, %{ns: ns, name: name, lang: lang}, path) do
     # A `.cljc` file's reader branch names its language.
-    cljs? = (lang || String.trim_leading(Path.extname(path), ".")) == "cljs"
+    lang = lang || String.trim_leading(Path.extname(path), ".")
     # ClojureScript also reaches Clojure namespaces, for macros.
-    exts = if cljs?, do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
+    exts = if lang == "cljs", do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
 
-    case defined(state.sides[side].defs, ns, name, exts) do
-      nil -> outside_definition(state, ns, name, exts)
+    case defined(state.sides[side].defs, {ns, name}, exts, lang) do
+      nil -> outside_definition(state, {ns, name}, exts, lang)
       d -> {d, state}
     end
   end
 
-  # The var's definition in the first of `exts` that defines it.
-  defp defined(defs, ns, name, exts), do: Enum.find_value(exts, &defs[{ns, name, &1}])
+  # The var's definition in the first of `exts` that defines it; in a
+  # `.cljc` file, its reader branch for `lang`.
+  defp defined(defs, {ns, name}, exts, lang),
+    do: Enum.find_value(exts, &defs[{ns, name, &1, if(&1 == ".cljc", do: lang)}])
 
-  # A var the side's diff files don't define: the one file holding its
-  # namespace, analysed on first hover. A diff file answers only from
-  # the side's text.
-  defp outside_definition(state, ns, name, exts) do
-    {location, state} = located(state, ns, exts)
+  # A var the side's diff files don't define: its namespace's file for
+  # the first of `exts` that defines it, each file analysed on first
+  # hover. A diff file answers only from the side's text.
+  defp outside_definition(state, var, exts, lang) do
+    Enum.reduce_while(exts, {nil, state}, fn ext, {nil, state} ->
+      case defined_in(state, var, ext, lang) do
+        {nil, state} -> {:cont, {nil, state}}
+        found -> {:halt, found}
+      end
+    end)
+  end
+
+  # The var's definition in its namespace's file with extension `ext`.
+  defp defined_in(state, {ns, _} = var, ext, lang) do
+    {location, state} = located(state, ns, ext)
 
     if location == nil or diff_file?(state, location) do
       {nil, state}
     else
       {defs, state} = analysed(state, location)
-      {defined(defs, ns, name, exts), state}
+      {defined(defs, var, [ext], lang), state}
     end
   end
 
-  # Looked up once per namespace and language, so the file first found
+  # Looked up once per namespace and extension, so the file first found
   # answers for the rest of the review.
-  defp located(state, ns, exts) do
-    case Map.fetch(state.located, {ns, exts}) do
+  defp located(state, ns, ext) do
+    case Map.fetch(state.located, {ns, ext}) do
       {:ok, location} ->
         {location, state}
 
       :error ->
-        {location, state} = locate(state, ns, exts)
+        {location, state} = locate(state, ns, ext)
 
         # muex:ignore equivalent: this branch runs only when the key is absent, so put and put_new agree
-        {location, %{state | located: Map.put(state.located, {ns, exts}, location)}}
+        {location, %{state | located: Map.put(state.located, {ns, ext}, location)}}
     end
   end
 
   # The file the user's kondo runs found the namespace in, else the
   # classpath's.
-  defp locate(state, ns, exts) do
-    langs = Enum.map(exts, &String.trim_leading(&1, "."))
-
-    case Kondo.cached_file(state.root, ns, langs) do
+  defp locate(state, ns, ext) do
+    case Kondo.cached_file(state.root, ns, String.trim_leading(ext, ".")) do
       nil ->
         state = read_classpath(state)
-        {location, jars} = Classpath.find(state.classpath, ns, exts, state.jars)
+        {location, jars} = Classpath.find(state.classpath, ns, ext, state.jars)
         {location, %{state | jars: jars}}
 
       file ->

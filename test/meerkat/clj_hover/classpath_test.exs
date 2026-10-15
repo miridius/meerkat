@@ -51,14 +51,19 @@ defmodule Meerkat.CljHover.ClasspathTest do
     entries = [jar, Path.join(dir, "first"), Path.join(dir, "second")]
 
     assert {{:jar, ^jar, "my_lib/core.clj"}, _} =
-             Classpath.find(entries, "my-lib.core", [".clj"], %{})
+             Classpath.find(entries, "my-lib.core", ".clj", %{})
 
-    # Classpath order comes before extension order: "first" holds only the .cljc.
+    # The first entry holding the file with that extension.
     assert {{:dir, first, "my_lib/core.cljc"}, %{}} =
-             Classpath.find(tl(entries), "my-lib.core", [".clj", ".cljc"], %{})
+             Classpath.find(tl(entries), "my-lib.core", ".cljc", %{})
 
     assert first == Path.join(dir, "first")
-    assert {nil, _} = Classpath.find(entries, "absent.ns", [".clj"], %{})
+
+    assert {{:dir, second, "my_lib/core.clj"}, %{}} =
+             Classpath.find(tl(entries), "my-lib.core", ".clj", %{})
+
+    assert second == Path.join(dir, "second")
+    assert {nil, _} = Classpath.find(entries, "absent.ns", ".clj", %{})
     assert Classpath.read_file({:jar, jar, "my_lib/core.clj"}) == {:ok, "(ns my-lib.core)"}
 
     assert Classpath.read_file({:dir, Path.join(dir, "second"), "my_lib/core.clj"}) ==
@@ -74,23 +79,62 @@ defmodule Meerkat.CljHover.ClasspathTest do
     {:ok, _} = :zip.create(~c"#{later}", [{~c"c/core.cljc", ""}])
     entries = [first, Path.join(dir, "src"), later]
 
-    assert {{:dir, _, "a/core.clj"}, jars} = Classpath.find(entries, "a.core", [".clj"], %{})
+    assert {{:dir, _, "a/core.clj"}, jars} = Classpath.find(entries, "a.core", ".clj", %{})
     assert jars == %{first => MapSet.new(["b/core.cljs"])}
 
     # The kept listing answers, though the jar is gone.
     File.rm!(first)
 
     assert {{:jar, ^first, "b/core.cljs"}, ^jars} =
-             Classpath.find(entries, "b.core", [".cljs"], jars)
+             Classpath.find(entries, "b.core", ".cljs", jars)
 
     assert {{:jar, ^later, "c/core.cljc"}, %{^later => _}} =
-             Classpath.find(entries, "c.core", [".cljc"], jars)
+             Classpath.find(entries, "c.core", ".cljc", jars)
+  end
+
+  test "closes each jar it reads", %{dir: dir} do
+    jar = Path.join(dir, "a.jar")
+    {:ok, _} = :zip.create(~c"#{jar}", [{~c"a.clj", "(ns a)"}])
+    open_fds = fn -> length(File.ls!("/dev/fd")) end
+
+    # In a process that won't collect garbage, which would close a leaked file.
+    task =
+      fn ->
+        before = open_fds.()
+
+        for _ <- 1..100 do
+          Classpath.jar_entries(jar)
+          Classpath.read_file({:jar, jar, "a.clj"})
+        end
+
+        open_fds.() - before
+      end
+
+    parent = self()
+    :erlang.spawn_opt(fn -> send(parent, {:grown, task.()}) end, min_heap_size: 50_000_000)
+    assert_receive {:grown, grown}, 10_000
+    # Other tests open files meanwhile; a leak opens 200.
+    assert grown < 50
+  end
+
+  test "reads a compressed jar entry", %{dir: dir} do
+    jar = Path.join(dir, "big.jar")
+    text = String.duplicate("(defn f [] 1)\n", 10_000)
+    {:ok, _} = :zip.create(~c"#{jar}", [{~c"a.clj", text}])
+    assert File.stat!(jar).size < byte_size(text)
+    assert Classpath.read_file({:jar, jar, "a.clj"}) == {:ok, text}
   end
 
   test "an unreadable jar or file reads as nothing", %{dir: dir} do
     bad = write(dir, "bad.jar", "not a zip")
     assert Classpath.jar_entries(bad) == MapSet.new()
     assert Classpath.read_file({:jar, bad, "a.clj"}) == :error
+    gone = Path.join(dir, "gone.jar")
+    assert Classpath.jar_entries(gone) == MapSet.new()
+    assert Classpath.read_file({:jar, gone, "a.clj"}) == :error
+    jar = Path.join(dir, "ok.jar")
+    {:ok, _} = :zip.create(~c"#{jar}", [{~c"a.clj", ""}])
+    assert Classpath.read_file({:jar, jar, "b.clj"}) == :error
     assert Classpath.read_file({:dir, dir, "missing.clj"}) == :error
   end
 end

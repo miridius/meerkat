@@ -1028,9 +1028,10 @@ defmodule MeerkatWeb.ReviewLive do
   defp hover(rid, idx, side, line, col) do
     CljHover.hover(rid, idx, side, line, col)
   catch
-    :exit, reason ->
+    # Any failure, so a hover never takes the page down with it.
+    kind, reason ->
       # muex:ignore observability: log text only
-      IO.puts(:stderr, "meerkat: Clojure hover failed: #{inspect(reason)}")
+      IO.puts(:stderr, "meerkat: Clojure hover failed: #{Exception.format_banner(kind, reason)}")
       nil
   end
 

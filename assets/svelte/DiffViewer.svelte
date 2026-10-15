@@ -96,7 +96,7 @@
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import CljHoverPopup from "./CljHoverPopup.svelte";
-  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, spotAt } from "../ts/cljHover";
+  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground } from "../ts/rulers";
   import { unifiedDiff } from "../ts/unifiedDiff";
@@ -1053,11 +1053,11 @@
     const onAnswer = (e: Event) => {
       const { id, hover } = (e as CustomEvent<{ id: number; hover: CljHover | null }>).detail;
       if (id !== hoverRequest?.id) return;
-      // The same var hovered again on its row keeps its popup where it
-      // is; another occurrence, or the other side's, moves it there.
       const { anchor, row } = hoverRequest;
-      if (hover && shownHover?.row === row && sameVar(hover, shownHover.hover)) return;
-      shownHover = hover ? { hover, anchor, row } : null;
+      if (keepsPopup(shownHover, row, hover)) return;
+      // The page may have scrolled while the answer was on its way; the
+      // popup picks its side by where the symbol is now.
+      shownHover = hover ? { hover, anchor: rescrolled(anchor, window.scrollX, window.scrollY), row } : null;
     };
     window.addEventListener("phx:clj:hover", onAnswer);
     return () => {
@@ -1066,10 +1066,6 @@
       clearTimeout(hoverCloseTimer);
     };
   });
-
-  function sameVar(a: CljHover, b: CljHover): boolean {
-    return a.name === b.name && a.where === b.where && a.line === b.line;
-  }
 
   function readLineNum(el: HTMLElement, attr: string): number | null {
     // Split mode: the line-num td itself carries the visible number

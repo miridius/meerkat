@@ -58,8 +58,10 @@ applies.
   no usages, so not which var a symbol names, and the old side was
   never linted.
 - **Other namespaces.** On the first hover of a var the side's diff
-  files don't define, meerkat finds the namespace's file, analyses
-  that one file, and keeps the result for the rest of the review.
+  files don't define, meerkat finds the namespace's file for each
+  language in turn (see Language), analysing each file it reaches,
+  until one defines the var. It keeps each result for the rest of the
+  review.
   Docs and source come from that file. A file in the diff is answered
   from the side's text, never from disk.
 - **Finding the file.** First the file the user's own clj-kondo runs
@@ -73,13 +75,17 @@ applies.
   `:classpath` in clojure-lsp's `.lsp/.cache/db.transit.json`. It runs
   no classpath command. With neither, only namespaces kondo's cache
   names answer. The classpath is read on the first lookup that needs
-  it, and a jar is listed only when a lookup reaches it; both are kept
-  for the rest of the review.
-- **Language.** A `.clj` or `.cljc` file looks for `clj` then `cljc`
-  namespaces; a `.cljs` file for `cljs`, `cljc`, then `clj`, for
-  macros. A `.cljc` file's `:cljs` reader branch looks as a `.cljs`
-  file does. This holds for diff files too, so a namespace's `.clj`
-  and `.cljs` files in one diff each answer their own language.
+  it, and a jar is listed only when a lookup reaches it, from the jar's
+  index alone; both are kept for the rest of the review. Getting a file
+  from a jar reads only that file's entry.
+- **Language.** A `.clj` or `.cljc` file looks for the var in its
+  namespace's `.clj` then `.cljc` file; a `.cljs` file in its `.cljs`,
+  `.cljc`, then `.clj` file, for macros. The first file that defines
+  the var answers. A `.cljc` file's `:cljs` reader branch looks as a
+  `.cljs` file does, and a var a `.cljc` file defines per reader branch
+  answers with the branch of the hovering language. This holds for
+  diff files too, so a namespace's `.clj` and `.cljs` files in one diff
+  each answer their own language.
 
 ## Indexing
 

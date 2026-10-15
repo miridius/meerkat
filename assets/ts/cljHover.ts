@@ -36,7 +36,36 @@ export type HoverSpot = {
 /** A symbol's box, in the window, and the page's scroll when it was
  *  measured: together they place the popup on the page, however far
  *  the page has scrolled since. */
-export type HoverAnchor = { rect: DOMRect; scrollX: number; scrollY: number };
+export type HoverAnchor = {
+	rect: Pick<DOMRect, "top" | "bottom" | "left">;
+	scrollX: number;
+	scrollY: number;
+};
+
+/** `anchor` measured again at the page's scroll `scrollX`, `scrollY`:
+ *  the same place on the page, where the window now shows it. */
+export function rescrolled(anchor: HoverAnchor, scrollX: number, scrollY: number): HoverAnchor {
+	const dx = anchor.scrollX - scrollX;
+	const dy = anchor.scrollY - scrollY;
+	const { top, bottom, left } = anchor.rect;
+	return { rect: { top: top + dy, bottom: bottom + dy, left: left + dx }, scrollX, scrollY };
+}
+
+/** Whether the answer `hover`, for a hover on `row` (`side:line`), leaves
+ *  the shown popup where it is: only when it names the popup's var and
+ *  the popup was opened from that row. Another row, or the other side's,
+ *  moves the popup there. */
+export function keepsPopup(
+	shown: { hover: CljHover; row: string } | null,
+	row: string,
+	hover: CljHover | null,
+): boolean {
+	return hover !== null && shown?.row === row && sameVar(hover, shown.hover);
+}
+
+function sameVar(a: CljHover, b: CljHover): boolean {
+	return a.name === b.name && a.where === b.where && a.line === b.line;
+}
 
 /** A docstring without the indent its later lines carry in the source
  *  (the first line has none). */
