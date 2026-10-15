@@ -72,10 +72,11 @@ defmodule Meerkat.MovesTest do
     end
 
     test "lines of 3 characters count, shorter ones do not" do
+      # Each has 20 or more letters and digits.
       for {words, expected} <- [
-            {["abc", "abd", "abe"],
-             [[block(:old, 1..3, 0, "b.txt", 1..3)], [block(:new, 1..3, 0, "a.txt", 1..3)]]},
-            {["ab", "ac", "ad"], [[], []]}
+            {~w(abc abd abe abf abg abh abi),
+             [[block(:old, 1..7, 0, "b.txt", 1..7)], [block(:new, 1..7, 0, "a.txt", 1..7)]]},
+            {~w(ab ac ad ae af ag ah ai aj ak), [[], []]}
           ] do
         files = [
           file("a.txt", [hunk(1, 1, lines("-", words))]),
@@ -135,6 +136,44 @@ defmodule Meerkat.MovesTest do
 
       [a, _b] = Moves.detect(files)
       assert [%{line_start: 1, line_end: 3}] = a.moved_lines
+    end
+
+    test "a changed short line next to a block stays out of it" do
+      files = [
+        file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two", ""]))]),
+        file("b.txt", [hunk(1, 1, lines("+", ["}", "alpha line one", "beta line two", "y"]))])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3, to_line_start: 2, to_line_end: 3}] = a.moved_lines
+      assert [%{line_start: 2, line_end: 3, to_line_start: 1, to_line_end: 3}] = b.moved_lines
+    end
+
+    test "unrelated code sharing `end`, `end` and a blank is not a move" do
+      files = [
+        file("a.ex", [
+          hunk(1, 1, lines("-", ["def foo do", "  if x do", "    1", "  end", "end", ""]))
+        ]),
+        file("b.ex", [
+          hunk(1, 1, lines("+", ["def bar do", "  case y do", "    _ -> 2", "  end", "end", ""]))
+        ])
+      ]
+
+      assert moved(files) == [[], []]
+    end
+
+    test "a block counts once its lines hold 20 letters and digits; other characters don't count" do
+      move = fn contents ->
+        moved([
+          file("a.txt", [hunk(1, 1, lines("-", contents))]),
+          file("b.txt", [hunk(1, 1, lines("+", contents))])
+        ])
+      end
+
+      assert [[_], [_]] = move.(["abcdefghij", "", "klmnopqrst"])
+      assert move.(["abcdefghij", "", "klmnopqrs"]) == [[], []]
+      assert move.(["abcde(){};.-=", "", "fghij(){};.-=+*/&|"]) == [[], []]
+      assert [[_], [_]] = move.(["ünïcödé123", "", "ßtraße4567"])
     end
 
     test "one substantial line padded out by short and blank lines is not a move" do

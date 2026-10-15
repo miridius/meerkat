@@ -12,12 +12,15 @@ defmodule Meerkat.Moves do
     that starts at a substantial line. Short lines inside it must
     match too, and do not break it.
   - It needs `@min_substantial_lines` substantial lines.
-  - On each side, the changed short lines directly before and after
+  - On each side, the changed blank lines directly before and after
     it join the block, unless a longer block has taken them. git
     often puts a moved block's blank line after it on one side and
     before it on the other.
-  - It counts as moved when it has `@min_block_size` lines on either
-    side, and the block covers those lines on each side.
+  - It counts as moved when, with those blank lines, it spans
+    `@min_block_size` lines on either side, and its lines hold
+    `@min_alnum_chars` letters and digits, as in git's
+    `--color-moved`: so `end` / `end` / blank is not a move. Each
+    side's block covers its own lines, so the two can differ in length.
 
   Cross-file and within-file moves are both found. Greedy: the
   longest runs win, and shorter overlapping ones are dropped.
@@ -26,6 +29,8 @@ defmodule Meerkat.Moves do
   @min_block_size 3
   @min_substantial_lines 2
   @min_line_chars 3
+  # git's COLOR_MOVED_MIN_ALNUM_COUNT.
+  @min_alnum_chars 20
 
   @type side :: :old | :new
   @type moved_block :: %{
@@ -102,8 +107,9 @@ defmodule Meerkat.Moves do
   end
 
   # The block's index range on one side: the run, widened over the
-  # changed short lines directly before and after it that no block
-  # has taken yet.
+  # changed blank lines directly before and after it that no block has
+  # taken yet. A short line such as `}` or `end` would let unrelated
+  # code that shares one count as moved.
   defp extend(arr, start, len, taken) do
     widen_back(arr, start, taken)..widen_forward(arr, start + len - 1, taken)
   end
@@ -121,14 +127,17 @@ defmodule Meerkat.Moves do
        else: i
   end
 
-  defp joins?(arr, j, taken), do: not substantial?(elem(arr, j)) and not MapSet.member?(taken, j)
+  defp joins?(arr, j, taken), do: elem(arr, j).content == "" and not MapSet.member?(taken, j)
 
-  # The widened lines are all short, so counting over the whole block
-  # counts the run's substantial lines.
+  # The widened lines are all blank, so counting over the whole block
+  # counts the run's substantial lines, and its letters and digits.
   defp qualifies?(removed_arr, r, a) do
     Enum.count(r, &substantial?(elem(removed_arr, &1))) >= @min_substantial_lines and
-      (Range.size(r) >= @min_block_size or Range.size(a) >= @min_block_size)
+      (Range.size(r) >= @min_block_size or Range.size(a) >= @min_block_size) and
+      Enum.sum_by(r, &alnum_count(elem(removed_arr, &1).content)) >= @min_alnum_chars
   end
+
+  defp alnum_count(content), do: length(Regex.scan(~r/[\p{L}\p{N}]/u, content))
 
   defp substantial?(line), do: String.length(line.content) >= @min_line_chars
 

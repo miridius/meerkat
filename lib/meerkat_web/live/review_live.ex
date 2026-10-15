@@ -479,24 +479,6 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
-  # A moved line's arrow: show its counterpart's file in diff view,
-  # then have the browser scroll to the counterpart lines.
-  def handle_event("moved.jump", %{"file_name" => name} = target, socket) do
-    case Enum.find_index(socket.assigns.state.files, &(&1.file_name == name)) do
-      nil ->
-        {:noreply, socket}
-
-      idx ->
-        {:noreply,
-         socket
-         |> show_file(idx, name, true)
-         |> push_event(
-           "moved:jump",
-           Map.take(target, ["file_name", "side", "line_start", "line_end"])
-         )}
-    end
-  end
-
   ## --- Submit (add / edit) ---
 
   # The submitting form names itself by key, so a submit posts at that
@@ -629,6 +611,24 @@ defmodule MeerkatWeb.ReviewLive do
         file ->
           {:noreply, show_rendered(socket, file)}
       end
+    end
+  end
+
+  # A moved line's arrow: show its counterpart's file in diff view,
+  # then have the browser scroll to the counterpart lines.
+  def handle_event("moved.jump", %{"file_name" => name} = target, socket) do
+    case Enum.find_index(socket.assigns.state.files, &(&1.file_name == name)) do
+      nil ->
+        {:noreply, socket}
+
+      idx ->
+        {:noreply,
+         socket
+         |> show_file(idx, name, true)
+         |> push_event(
+           "moved:jump",
+           Map.take(target, ["file_name", "side", "line_start", "line_end"])
+         )}
     end
   end
 
