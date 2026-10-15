@@ -19,8 +19,10 @@
 #
 # A package whose latest release is the one its scripts/dep-exemptions.json
 # entry names is left where it is; for JS, that is either the latest
-# release past the 24h floor or the registry's latest. Any failure
-# refuses the commit.
+# release past the 24h floor or the registry's latest. Before its
+# reports, it installs the locked dependencies, refusing the commit when
+# that would change mix.lock or pnpm-lock.yaml. Any failure refuses the
+# commit.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -51,6 +53,7 @@ done
 # An entry covers one release; a newer release is bumped to.
 is_exempt() { [[ "$(exemption_version "$1")" == "$2" ]]; }
 
+sync_locked_deps
 hex_outdated
 hex_names=()
 requirement_bumps=()

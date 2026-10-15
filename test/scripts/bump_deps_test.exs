@@ -54,6 +54,9 @@ defmodule Meerkat.BumpDepsHookTest do
     fail_update = Path.join(base, "fail-update")
     npm_latest = Path.join(base, "npm-latest")
     refuse = Path.join(base, "refuse")
+    fail_get = Path.join(base, "fail-deps-get")
+    fail_install = Path.join(base, "fail-pnpm-install")
+    git_env = Path.join(base, "git-env")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
@@ -107,6 +110,10 @@ defmodule Meerkat.BumpDepsHookTest do
     cmd="$(basename "$0") $*"
     echo "$cmd" >> '#{log}'
     case "$cmd" in
+      "mix deps.get --check-locked" | "pnpm install --frozen-lockfile "*)
+        echo "$cmd: ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
+        if [[ "$1" == deps.get && -e '#{fail_get}' ]]; then echo "** (Mix) lock would change"; exit 1; fi
+        if [[ "$1" == install && -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi ;;
       "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
       "mix deps.update "*)
         [[ -e '#{fail_update}' ]] && exit 1
@@ -144,7 +151,10 @@ defmodule Meerkat.BumpDepsHookTest do
      seen: seen,
      fail_update: fail_update,
      npm_latest: npm_latest,
-     refuse: refuse}
+     refuse: refuse,
+     fail_get: fail_get,
+     fail_install: fail_install,
+     git_env: git_env}
   end
 
   test "a commit while dependencies are behind carries their bump", ctx do
@@ -203,6 +213,35 @@ defmodule Meerkat.BumpDepsHookTest do
       File.write!(ctx.hex_out, report)
       assert_refused(ctx, "cannot check Hex deps")
     end
+  end
+
+  # Git exports GIT_INDEX_FILE to pre-commit; a git dependency fetched
+  # with it set would write to this checkout's index.
+  test "the bump syncs Hex then JS dependencies first, without the index Git exports", ctx do
+    stage(ctx.work, "code.txt", "change\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"])
+
+    assert Enum.take(run(ctx), 3) == [
+             "mix deps.get --check-locked",
+             "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
+             "mix hex.outdated"
+           ]
+
+    # check.sh's own pnpm install step logs a later line too.
+    assert ctx.git_env |> File.read!() |> String.split("\n", trim: true) |> Enum.uniq() == [
+             "mix deps.get --check-locked: unset",
+             "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline: unset"
+           ]
+  end
+
+  test "a sync that would change a lockfile refuses the commit before the checks", ctx do
+    File.touch!(ctx.fail_get)
+    assert_refused(ctx, "mix deps.get --check-locked failed — cannot check Hex deps")
+
+    File.rm!(ctx.fail_get)
+    File.touch!(ctx.fail_install)
+    assert_refused(ctx, "pnpm install --frozen-lockfile failed — cannot check JS deps")
   end
 
   test "an unreadable pnpm report refuses the commit before the checks", ctx do

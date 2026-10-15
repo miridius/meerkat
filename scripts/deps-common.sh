@@ -15,6 +15,35 @@ require_tools() {
   done
 }
 
+# without_git_env CMD...: runs CMD without the GIT_INDEX_FILE and other
+# variables Git exports to hooks, as scripts/check.sh does, so fetching a
+# git dependency into deps/ leaves this checkout's index alone.
+without_git_env() {
+  # shellcheck disable=SC2046
+  (unset $(git rev-parse --local-env-vars) && "$@")
+}
+
+# sync_locked_deps: installs the versions mix.lock and pnpm-lock.yaml
+# name into deps/ and node_modules/, which a rebase or branch switch can
+# leave at the previous lockfiles'. The reports need them: hex.outdated
+# aborts while deps/ differs from mix.lock, and pnpm outdated reads
+# current releases from node_modules/. Hex goes first, since
+# assets/package.json takes the Phoenix packages from deps/. Both fail
+# rather than rewrite a lockfile.
+sync_locked_deps() {
+  local out
+  out=$(without_git_env mix deps.get --check-locked 2>&1) || {
+    echo "$out"
+    echo "$prefix mix deps.get --check-locked failed — cannot check Hex deps against mix.lock."
+    return 1
+  }
+  out=$(without_git_env pnpm install --frozen-lockfile --ignore-scripts --prefer-offline 2>&1) || {
+    echo "$out"
+    echo "$prefix pnpm install --frozen-lockfile failed — cannot check JS deps against pnpm-lock.yaml."
+    return 1
+  }
+}
+
 # load_exemptions: sets EXEMPT_JSON from scripts/dep-exemptions.json, a
 # map of package name → {version, reason}. `version` is the newest
 # upstream release being declined, and `reason` says why.

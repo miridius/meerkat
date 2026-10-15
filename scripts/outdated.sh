@@ -11,10 +11,11 @@
 # contains its latest stable Hex release's tag, in the GitHub repo Hex
 # links, counts as that release; the gate fails on every other git
 # dependency, exempt or not. It also fails on a missing or malformed
-# scripts/dep-exemptions.json or a stale entry there. It fails CLOSED
-# on its own breakage: missing tools, unreachable registries,
-# unparseable probe output, or a pnpm resolution that fails for another
-# reason block the push rather than skipping a check.
+# scripts/dep-exemptions.json or a stale entry there, and when installing
+# the locked dependencies would change mix.lock or pnpm-lock.yaml. It
+# fails CLOSED on its own breakage: missing tools, unreachable
+# registries, unparseable probe output, or a pnpm resolution that fails
+# for another reason block the push rather than skipping a check.
 
 set -uo pipefail
 
@@ -57,6 +58,8 @@ for registry in https://registry.npmjs.org https://hex.pm; do
     exit 1
   }
 done
+
+sync_locked_deps || exit 1
 
 fail=0
 
