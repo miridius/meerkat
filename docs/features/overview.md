@@ -66,7 +66,7 @@ When the UI does open, the reviewer sees, top-to-bottom:
    At the version chip's step, opening its drop-down marks the
    updates seen, so the chip is gone and the drop-down stays open
    where it was; a dev build's chip, with no updates or drop-down, is
-   gone too. Branch names show in full until their step truncates
+   gone too. The drop-down opens within the window at any width. Branch names show in full until their step truncates
    them.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
