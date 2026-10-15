@@ -67,6 +67,9 @@ defmodule Meerkat.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
+      # Clojure hover lists and reads jars from their central directory,
+      # never loading a whole jar.
+      {:unzip, "~> 0.13.0"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"},
       # Mutation testing — `mix muex` rewrites operators / literals

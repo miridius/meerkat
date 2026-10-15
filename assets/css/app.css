@@ -535,6 +535,12 @@ a.chip-link:hover .chip-value {
   white-space: nowrap;
 }
 
+.toolbar-note {
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .toolbar-settings {
   position: relative;
 }

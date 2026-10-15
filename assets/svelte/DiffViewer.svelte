@@ -1,6 +1,6 @@
 <script context="module" lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
-  import { getDiffViewHighlighter } from "@git-diff-view/shiki";
+  import { getDiffViewHighlighter, highlighterReady } from "@git-diff-view/shiki";
 
   // Eagerly create ONE shiki engine with the languages we expect to
   // hit in a typical review. shiki warns at 10 instances and a
@@ -46,9 +46,15 @@
   // against generated monsters but never bites on code a human wrote.
   const MAX_SYNTAX_LINES = 20_000;
 
-  const sharedHighlighter: Promise<DiffHighlighter | null> = getDiffViewHighlighter(
-    PRELOAD_LANGS as never[],
-  )
+  // Importing @git-diff-view/shiki also builds its default engine, which
+  // lacks languages above such as clojure and elixir, and whichever
+  // engine finishes last is the one it highlights with. Once both are
+  // built, asking for ours again selects it.
+  const sharedHighlighter: Promise<DiffHighlighter | null> = Promise.all([
+    highlighterReady,
+    getDiffViewHighlighter(PRELOAD_LANGS as never[]),
+  ])
+    .then(() => getDiffViewHighlighter(PRELOAD_LANGS as never[]))
     .then((h) => {
       // Guarded separately from the engine-init catch below: a setter
       // failure (adapter shape drift on a dependency bump) must not
@@ -73,6 +79,13 @@
     if (!lang || lang === "plaintext" || lang === "text") return Promise.resolve(null);
     return sharedHighlighter;
   }
+
+  // The diff's theme, which the Clojure hover popup's source follows.
+  const DIFF_THEME = "dark";
+
+  // Clojure hover request ids, unique across every DiffViewer on the
+  // page, since each one hears every answer.
+  let lastHoverId = 0;
 </script>
 
 <script lang="ts">
@@ -82,6 +95,8 @@
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
+  import CljHoverPopup from "./CljHoverPopup.svelte";
+  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground } from "../ts/rulers";
   import { unifiedDiff } from "../ts/unifiedDiff";
@@ -155,6 +170,7 @@
     comments = [],
     inline_forms = [],
     plantuml_available = false,
+    clj_hover = false,
     live,
   }: {
     file: FileDiff;
@@ -167,6 +183,7 @@
     comments?: InlineCommentT[];
     inline_forms?: InlineFormDescriptor[];
     plantuml_available?: boolean;
+    clj_hover?: boolean;
     live: LiveBridge;
   } = $props();
 
@@ -891,6 +908,7 @@
   }
 
   function handlePointerMove(e: PointerEvent) {
+    if (clj_hover) restartHoverTimer(e.clientX, e.clientY);
     if (!dragStart) return;
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
     if (!el) return;
@@ -972,6 +990,81 @@
         td.nextElementSibling?.classList.add("drag-selecting-side");
       }
     }
+  });
+
+  // --- Clojure hover (docs/features/clojure-hover.md) ---
+  //
+  // A pointer resting on a code character asks the server what var it
+  // names; the answer to the latest request opens the popup there.
+  // Resting where no var answers, or leaving both the diff and the
+  // popup, closes it.
+
+  const HOVER_CLOSE_MS = 300;
+  let hoverTimer = 0;
+  let hoverCloseTimer = 0;
+  // `row` names the side and line hovered.
+  let hoverRequest: { id: number; anchor: HoverAnchor; row: string } | null = null;
+  let shownHover = $state<{ hover: CljHover; anchor: HoverAnchor; row: string } | null>(null);
+
+  function restartHoverTimer(x: number, y: number) {
+    clearTimeout(hoverTimer);
+    clearTimeout(hoverCloseTimer);
+    hoverTimer = window.setTimeout(() => requestHover(x, y), HOVER_DELAY_MS);
+  }
+
+  function requestHover(x: number, y: number) {
+    const spot = dragStart ? null : spotAt(x, y);
+    if (!spot) {
+      hoverRequest = null;
+      shownHover = null;
+      return;
+    }
+    lastHoverId += 1;
+    hoverRequest = {
+      id: lastHoverId,
+      anchor: { rect: spot.rect, scrollX: window.scrollX, scrollY: window.scrollY },
+      row: `${spot.side}:${spot.line}`,
+    };
+    live.pushEvent("clj.hover", {
+      id: lastHoverId,
+      file_index,
+      side: spot.side,
+      line: spot.line,
+      col: spot.col,
+    });
+  }
+
+  function closeHoverSoon() {
+    clearTimeout(hoverTimer);
+    clearTimeout(hoverCloseTimer);
+    hoverCloseTimer = window.setTimeout(() => {
+      hoverRequest = null;
+      shownHover = null;
+    }, HOVER_CLOSE_MS);
+  }
+
+  function keepHoverOpen() {
+    clearTimeout(hoverTimer);
+    clearTimeout(hoverCloseTimer);
+  }
+
+  $effect(() => {
+    if (!clj_hover) return;
+    const onAnswer = (e: Event) => {
+      const { id, hover } = (e as CustomEvent<{ id: number; hover: CljHover | null }>).detail;
+      if (id !== hoverRequest?.id) return;
+      const { anchor, row } = hoverRequest;
+      if (keepsPopup(shownHover, row, hover)) return;
+      // The page may have scrolled while the answer was on its way; the
+      // popup picks its side by where the symbol is now.
+      shownHover = hover ? { hover, anchor: rescrolled(anchor, window.scrollX, window.scrollY), row } : null;
+    };
+    window.addEventListener("phx:clj:hover", onAnswer);
+    return () => {
+      window.removeEventListener("phx:clj:hover", onAnswer);
+      clearTimeout(hoverTimer);
+      clearTimeout(hoverCloseTimer);
+    };
   });
 
   function readLineNum(el: HTMLElement, attr: string): number | null {
@@ -1143,6 +1236,7 @@
     onpointermove={handlePointerMove}
     onpointerup={handlePointerUp}
     onpointercancel={handlePointerCancel}
+    onpointerleave={clj_hover ? closeHoverSoon : undefined}
     style:tab-size={tab_size}
     style:--tab-size={tab_size}
   >
@@ -1152,11 +1246,24 @@
       diffViewWrap={wrap_lines}
       diffViewHighlight={true}
       diffViewFontSize={font_size_px}
-      diffViewTheme="dark"
+      diffViewTheme={DIFF_THEME}
       diffViewAddWidget={false}
       registerHighlighter={highlighter ?? undefined}
     />
   </div>
+  {#if shownHover}
+    {#key shownHover}
+      <CljHoverPopup
+        hover={shownHover.hover}
+        anchor={shownHover.anchor}
+        {highlighter}
+        theme={DIFF_THEME}
+        {font_size_px}
+        onpointerenter={keepHoverOpen}
+        onpointerleave={closeHoverSoon}
+      />
+    {/key}
+  {/if}
 {/if}
 
 {#if !file.is_binary && isPlantUml}

@@ -1,0 +1,296 @@
+defmodule Meerkat.CljHover do
+  @moduledoc """
+  Hover docs and source for symbols in a review's Clojure files (see
+  `docs/features/clojure-hover.md`).
+
+  One server per review, started on the first page open of a review
+  with a Clojure file. It analyses each side's diff files from that
+  side's text in `handle_continue/2`, so a hover that arrives first
+  waits in its mailbox. Other namespaces are analysed lazily, one file
+  each, found through the user's clj-kondo cache or the classpath, and
+  cached for the life of the server.
+  """
+
+  # muex:ignore equivalent: the module defines each callback it uses, and gen_server drops unexpected messages itself
+  use GenServer
+
+  alias Meerkat.CljHover.{Classpath, Kondo}
+  alias Meerkat.Git
+
+  @extensions ~w(.clj .cljc .cljs .edn)
+
+  @type side :: :old | :new
+
+  @type hover :: %{
+          name: String.t(),
+          macro: boolean(),
+          where: String.t(),
+          in_repo: boolean(),
+          line: pos_integer(),
+          arglists: [String.t()],
+          doc: String.t() | nil,
+          source: String.t()
+        }
+
+  @doc "True when `file_name` is a Clojure file hover covers."
+  @spec clojure_file?(String.t()) :: boolean()
+  def clojure_file?(file_name), do: String.downcase(Path.extname(file_name)) in @extensions
+
+  @doc "Start (or find) the server for `review_id`."
+  @spec ensure_started(String.t(), String.t(), [Git.file_diff()]) :: {:ok, pid()}
+  def ensure_started(review_id, repo_path, files) do
+    spec = {__MODULE__, %{review_id: review_id, repo_path: repo_path, files: files}}
+
+    case DynamicSupervisor.start_child(Meerkat.ReviewServerSup, spec) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+    end
+  end
+
+  @doc false
+  def start_link(%{review_id: review_id} = args),
+    do: GenServer.start_link(__MODULE__, args, name: via(review_id))
+
+  @doc false
+  def child_spec(args),
+    do: %{
+      id: {__MODULE__, args.review_id},
+      start: {__MODULE__, :start_link, [args]},
+      restart: :temporary
+    }
+
+  @doc """
+  The docs and source of the var named at 1-based `line` and `col` of
+  file `file_index` on `side`, or nil. Waits for indexing.
+  """
+  @spec hover(String.t(), non_neg_integer(), side, pos_integer(), pos_integer()) :: hover | nil
+  def hover(review_id, file_index, side, line, col) do
+    GenServer.call(via(review_id), {:hover, file_index, side, line, col}, :infinity)
+  end
+
+  defp via(review_id), do: {:via, Registry, {Meerkat.ReviewRegistry, {__MODULE__, review_id}}}
+
+  @impl true
+  def init(%{repo_path: repo_path, files: files}) do
+    root =
+      case Git.toplevel(repo_path) do
+        {:ok, root} -> root
+        {:error, _} -> repo_path
+      end
+
+    state = %{
+      root: root,
+      files: files,
+      sides: nil,
+      classpath: nil,
+      jars: %{},
+      located: %{},
+      outside: %{}
+    }
+
+    {:ok, state, {:continue, :index}}
+  end
+
+  # Kondo's cache can't stand in here: it records no usages, so not
+  # which var a symbol names, nor docs, and the old side was never linted.
+  @impl true
+  def handle_continue(:index, %{root: root, files: files} = state) do
+    texts = %{old: side_texts(files, :old), new: side_texts(files, :new)}
+
+    tasks =
+      Map.new(texts, fn {side, t} ->
+        {side, Task.async(fn -> Kondo.analyse_texts(root, t) end)}
+      end)
+
+    sides =
+      Map.new(tasks, fn {side, task} ->
+        analysis = Task.await(task, :infinity)
+
+        # A diff file is the repo's own.
+        defs =
+          Map.new(analysis.defs, fn {k, d} ->
+            # muex:ignore equivalent: kondo's definitions hold neither :text nor :in_repo, so merge order doesn't matter
+            {k, Map.merge(d, %{text: texts[side][d.file], in_repo: true})}
+          end)
+
+        {side, %{spans: analysis.spans, defs: defs}}
+      end)
+
+    {:noreply, %{state | sides: sides}}
+  end
+
+  @impl true
+  def handle_call({:hover, file_index, side, line, col}, _from, state) do
+    with %{} = file <- Enum.at(state.files, file_index),
+         path = side_path(file, side),
+         %{} = span <- span_at(state.sides[side].spans, path, line, col),
+         {d, state} when d != nil <- definition(state, side, span, path) do
+      {:reply, render(d), state}
+    else
+      {nil, state} -> {:reply, nil, state}
+      _ -> {:reply, nil, state}
+    end
+  end
+
+  # A side a file is absent from, and a binary file, hold "", which
+  # defines nothing.
+  defp side_texts(files, side) do
+    for file <- files,
+        path = side_path(file, side),
+        clojure_file?(path),
+        into: %{},
+        do: {path, if(side == :old, do: file.old_content, else: file.new_content)}
+  end
+
+  defp side_path(file, :old), do: file.old_file_name || file.file_name
+  defp side_path(file, :new), do: file.file_name
+
+  defp span_at(spans, path, line, col) do
+    spans
+    |> Map.get({path, line}, [])
+    |> Enum.find(&(&1.col <= col and col < &1.end_col))
+  end
+
+  defp definition(state, side, %{ns: ns, name: name, lang: lang}, path) do
+    # A `.cljc` file's reader branch names its language.
+    lang = lang || String.trim_leading(Path.extname(path), ".")
+    # ClojureScript also reaches Clojure namespaces, for macros.
+    exts = if lang == "cljs", do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
+
+    case defined(state.sides[side].defs, {ns, name}, exts, lang) do
+      nil -> outside_definition(state, {ns, name}, exts, lang)
+      d -> {d, state}
+    end
+  end
+
+  # The var's definition in the first of `exts` that defines it; in a
+  # `.cljc` file, its reader branch for `lang`.
+  defp defined(defs, {ns, name}, exts, lang),
+    do: Enum.find_value(exts, &defs[{ns, name, &1, if(&1 == ".cljc", do: lang)}])
+
+  # A var the side's diff files don't define: its namespace's file for
+  # the first of `exts` that defines it, each file analysed on first
+  # hover. A diff file answers only from the side's text.
+  defp outside_definition(state, var, exts, lang) do
+    Enum.reduce_while(exts, {nil, state}, fn ext, {nil, state} ->
+      case defined_in(state, var, ext, lang) do
+        {nil, state} -> {:cont, {nil, state}}
+        found -> {:halt, found}
+      end
+    end)
+  end
+
+  # The var's definition in its namespace's file with extension `ext`.
+  defp defined_in(state, {ns, _} = var, ext, lang) do
+    {location, state} = located(state, ns, ext)
+
+    if location == nil or diff_file?(state, location) do
+      {nil, state}
+    else
+      {defs, state} = analysed(state, location)
+      {defined(defs, var, [ext], lang), state}
+    end
+  end
+
+  # Looked up once per namespace and extension, so the file first found
+  # answers for the rest of the review.
+  defp located(state, ns, ext) do
+    case Map.fetch(state.located, {ns, ext}) do
+      {:ok, location} ->
+        {location, state}
+
+      :error ->
+        {location, state} = locate(state, ns, ext)
+
+        # muex:ignore equivalent: this branch runs only when the key is absent, so put and put_new agree
+        {location, %{state | located: Map.put(state.located, {ns, ext}, location)}}
+    end
+  end
+
+  # The file the user's kondo runs found the namespace in, else the
+  # classpath's.
+  defp locate(state, ns, ext) do
+    case Kondo.cached_file(state.root, ns, String.trim_leading(ext, ".")) do
+      nil ->
+        state = read_classpath(state)
+        {location, jars} = Classpath.find(state.classpath, ns, ext, state.jars)
+        {location, %{state | jars: jars}}
+
+      file ->
+        {{:dir, Path.dirname(file), Path.basename(file)}, state}
+    end
+  end
+
+  # A jar's `where` names the jar, so it is never a diff file.
+  defp diff_file?(state, location),
+    do:
+      where(location, state.root) in Enum.flat_map(state.files, &[&1.file_name, &1.old_file_name])
+
+  # Read on the first classpath lookup, so a review hovering only what
+  # its diff and kondo's cache answer never reads it: clojure-lsp's db
+  # can be tens of MB.
+  defp read_classpath(%{classpath: nil, root: root} = state),
+    do: %{state | classpath: Classpath.read(root)}
+
+  defp read_classpath(state), do: state
+
+  defp analysed(state, location) do
+    case Map.fetch(state.outside, location) do
+      {:ok, defs} ->
+        {defs, state}
+
+      :error ->
+        defs = analyse(state.root, location)
+
+        # muex:ignore equivalent: this branch runs only when location is absent, so put and put_new agree
+        {defs, %{state | outside: Map.put(state.outside, location, defs)}}
+    end
+  end
+
+  defp analyse(root, location) do
+    rel = elem(location, 2)
+
+    case Classpath.read_file(location) do
+      {:ok, text} ->
+        where = where(location, root)
+
+        # A jar, or a directory outside the repo, is a dependency's.
+        in_repo = elem(location, 0) == :dir and Path.type(where) == :relative
+
+        root
+        |> Kondo.analyse_texts(%{rel => text})
+        |> Map.fetch!(:defs)
+        |> Map.new(fn {k, d} ->
+          {k, Map.merge(d, %{text: text, file: where, in_repo: in_repo})}
+        end)
+
+      :error ->
+        # muex:ignore observability: log text only
+        IO.puts(:stderr, "meerkat: couldn't read #{rel} from #{elem(location, 1)}")
+        %{}
+    end
+  end
+
+  defp where({:jar, jar, rel}, _root), do: "#{Path.basename(jar)}:#{rel}"
+  defp where({:dir, dir, rel}, root), do: Path.relative_to(Path.join(dir, rel), root)
+
+  defp render(d) do
+    %{
+      name: "#{d.ns}/#{d.name}",
+      macro: d.macro,
+      where: d.file,
+      in_repo: d.in_repo,
+      line: d.row,
+      arglists: d.arglists,
+      doc: d.doc,
+      source: slice(d.text, d.row, d.end_row)
+    }
+  end
+
+  defp slice(text, row, end_row) do
+    text
+    |> String.split("\n")
+    |> Enum.slice((row - 1)..(end_row - 1)//1)
+    |> Enum.join("\n")
+  end
+end
