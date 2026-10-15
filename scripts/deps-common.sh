@@ -16,8 +16,8 @@ require_tools() {
 }
 
 # without_git_env CMD...: runs CMD without the GIT_INDEX_FILE and other
-# variables Git exports to hooks, as scripts/check.sh does, so installing
-# a git dependency leaves this checkout's index alone.
+# variables Git exports to hooks, as scripts/check.sh does, so fetching a
+# git dependency into deps/ leaves this checkout's index alone.
 without_git_env() {
   # shellcheck disable=SC2046
   (unset $(git rev-parse --local-env-vars) && "$@")

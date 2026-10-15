@@ -45,9 +45,9 @@ remove commits a merged PR still references). Before committing:
   their pins by hand. Fix fallout rather than pinning old
   releases. Each `scripts/dep-exemptions.json` entry needs a `version`
   and non-empty `reason`; missing or malformed files and stale entries
-  fail the gate. The gate and the bump first install the locked
-  dependencies, and fail when that would change `mix.lock` or
-  `pnpm-lock.yaml`. The gate fails closed.
+  fail the gate. Before reading their reports, the gate and the bump
+  install the locked dependencies, and fail when that would change
+  `mix.lock` or `pnpm-lock.yaml`. The gate fails closed.
 - **Script languages.** Write repo scripts (`scripts/`, `bin/`, hooks)
   with any branching, looping or parsing in TypeScript run by Bun.
   Bash only for a few lines of glue that set up and exec. Elixir
