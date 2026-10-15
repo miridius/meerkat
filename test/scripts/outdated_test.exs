@@ -79,6 +79,8 @@ defmodule Meerkat.OutdatedGateTest do
       "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline")
         echo "pnpm install ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
         if [[ -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi
+        # assets/package.json takes packages from deps/.
+        if [[ ! -e '#{synced}' ]]; then echo "ENOENT: scandir 'deps/phoenix'"; exit 1; fi
         touch '#{js_synced}' ;;
       "mix hex.outdated")
         if [[ ! -e '#{synced}' ]]; then
@@ -213,12 +215,11 @@ defmodule Meerkat.OutdatedGateTest do
 
   # Git exports GIT_INDEX_FILE to hooks; a git dependency fetched with it
   # set would write to this checkout's index.
-  test "the syncs run without the index Git exports to hooks", ctx do
+  test "the syncs run once each, Hex first, without the index Git exports to hooks", ctx do
     exempt(ctx, %{})
 
     assert {_, 0} = run(ctx, %{"GIT_INDEX_FILE" => "/nonexistent/index"})
-    assert File.read!(ctx.git_env) =~ "deps.get unset"
-    assert File.read!(ctx.git_env) =~ "pnpm install unset"
+    assert File.read!(ctx.git_env) == "deps.get unset\npnpm install unset\n"
   end
 
   test "an exemption covering the latest release passes the gate", ctx do
