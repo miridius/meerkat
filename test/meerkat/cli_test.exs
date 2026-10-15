@@ -619,7 +619,27 @@ defmodule Meerkat.CLITest do
       assert config[:server] == true
       assert config[:http][:ip] == {127, 0, 0, 1}
       assert config[:http][:port] == 4321
+      # Chrome's maximum URL length, so the PlantUML preview's long
+      # query strings reach the controller.
+      assert config[:http][:http_1_options][:max_request_line_length] == 2_097_152
       assert is_binary(config[:secret_key_base])
+    end
+
+    # GHSA-69m6-wcv4-rwcf: Bandit's HTTP/2 lets a peer pin stream
+    # processes. Over a real socket, the server must close a connection
+    # that opens with the HTTP/2 preface rather than answer it with
+    # HTTP/2 SETTINGS.
+    test "the HTTP options it serves with refuse HTTP/2" do
+      http = CLI.endpoint_config_for_test(0)[:http]
+      server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+
+      {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+      :ok = :gen_tcp.send(socket, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+
+      # A close with unread bytes in the server's buffer arrives as a reset.
+      assert {:error, reason} = :gen_tcp.recv(socket, 0, 5_000)
+      assert reason in [:closed, :econnreset]
     end
   end
 
