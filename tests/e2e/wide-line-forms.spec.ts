@@ -19,8 +19,8 @@ function wideFixture() {
 	return fixture;
 }
 
-// How far each element pokes out past either side of the scroll view
-// holding `inRow`, in px; 0 when it is fully in view.
+// How far each element pokes out past the left or right edge of the
+// scroll view holding `inRow`, in px; 0 when it is fully in view.
 async function overflowPastView(inRow: Locator, elements: Locator[]): Promise<number[]> {
 	const view = inRow.locator("xpath=ancestor::*[contains(@class, 'diff-table-scroll-container')][1]");
 	const v = await view.boundingBox();
@@ -34,10 +34,13 @@ async function overflowPastView(inRow: Locator, elements: Locator[]): Promise<nu
 	);
 }
 
-async function scrollViewTo(inRow: Locator, where: "start" | "end") {
-	await inRow.evaluate((row, where) => {
+// Scrolls the view holding `inRow` to one end and returns how far it
+// scrolled, so a check can show the long line really made it scroll.
+async function scrollViewTo(inRow: Locator, where: "start" | "end"): Promise<number> {
+	return inRow.evaluate((row, where) => {
 		const view = row.closest(".diff-table-scroll-container") as HTMLElement;
 		view.scrollLeft = where === "start" ? 0 : view.scrollWidth;
+		return view.scrollLeft;
 	}, where);
 }
 
@@ -46,7 +49,7 @@ test("with Wrap off, inline forms and comments stay in view beside a long line i
 }) => {
 	const meerkat = await startMeerkat({ fixture: wideFixture() });
 	try {
-		await page.setViewportSize({ width: 600, height: 900 });
+		await page.setViewportSize({ width: 450, height: 900 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
 		const wrap = page.getByRole("checkbox", { name: "Wrap" });
@@ -63,25 +66,35 @@ test("with Wrap off, inline forms and comments stay in view beside a long line i
 			const formRow = file.locator("tr.meerkat-form-row");
 			const form = formRow.locator(".comment-form");
 			await expect(form).toBeVisible();
-			const buttons = [form.locator(".btn-submit"), form.locator(".btn-cancel")];
+			await expect(form.locator(".flags label")).toHaveCount(2);
+			const controls = [
+				form.locator(".btn-submit"),
+				form.locator(".btn-cancel"),
+				...(await form.locator(".flags label").all()),
+			];
+			expect(await scrollViewTo(formRow, "end"), `${name} view scrolls sideways`).toBeGreaterThan(0);
 			for (const where of ["start", "end"] as const) {
 				await scrollViewTo(formRow, where);
 				await afterNextFrame(page);
-				expect(await overflowPastView(formRow, buttons), `${name} form buttons, scrolled to ${where}`).toEqual([0, 0]);
+				expect(await overflowPastView(formRow, controls), `${name} form controls, scrolled to ${where}`).toEqual(
+					controls.map(() => 0),
+				);
 			}
 
-			await form.locator("textarea").fill(`${name} comment`);
+			// A long unbreakable code span stays readable inside the view.
+			await form.locator("textarea").fill(`${name} comment \`${"y".repeat(200)}\``);
 			await form.locator(".btn-submit").click();
 			const commentRow = file.locator("tr.meerkat-comment-row").filter({ hasText: `${name} comment` });
 			await expect(commentRow).toBeVisible();
-			const actions = [
+			const parts = [
 				commentRow.getByRole("button", { name: "Edit" }),
 				commentRow.getByRole("button", { name: "Remove" }),
+				commentRow.locator(".comment-body code"),
 			];
 			for (const where of ["start", "end"] as const) {
 				await scrollViewTo(commentRow, where);
 				await afterNextFrame(page);
-				expect(await overflowPastView(commentRow, actions), `${name} comment buttons, scrolled to ${where}`).toEqual([0, 0]);
+				expect(await overflowPastView(commentRow, parts), `${name} comment, scrolled to ${where}`).toEqual([0, 0, 0]);
 			}
 			await expect(file.locator("tr.meerkat-comment-row")).toHaveCount(i + 1);
 		}

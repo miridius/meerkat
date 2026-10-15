@@ -21,9 +21,6 @@ DiffViewer injects one `<tr class="meerkat-form-row">` per open
 inline form on that file, after its anchor row and below that line's
 comment rows. Outside Split view with Wrap on, its only child is a
 full-colspan `<td>` containing the CommentForm. Forms opened earlier at the same line stay above it.
-With Wrap off, a long line can make the code scroll sideways; each
-form and posted comment is then as wide as the visible part of its
-side's code and stays in view however far the code is scrolled.
 Opening another form leaves existing forms and their typed text in
 place. After a split/unified or line-wrap toggle, open forms and
 posted comment rows are placed again in the new table, and each
@@ -42,6 +39,12 @@ so the blank is a spacer row in the other side's table that follows
 the row's height as it grows or shrinks. With Wrap off, at a line with
 rows on both sides, the old side's rows come first; with Wrap on they
 keep the order described above.
+
+With Wrap off, a long line can make the code scroll sideways. Each
+form and posted comment is then as wide as the code's visible area
+(its side's, in Split view) and stays in view however far the code
+is scrolled. Long words in it wrap, and when the view is narrow a
+posted comment's header and a form's checkboxes wrap onto new lines.
 
 ## Form contents
 

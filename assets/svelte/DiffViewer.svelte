@@ -1259,7 +1259,8 @@
   }
   /* DOM-injected comment row hosting one or more InlineComment
      instances. Stretches the full table width via the colspan'd
-     <td>; no per-line gutter so the comment body reads cleanly. */
+     <td> (with Wrap off the list inside is sized to the view, below);
+     no per-line gutter so the comment body reads cleanly. */
   :global(.diff-content tr.meerkat-comment-row > td.meerkat-comment-cell) {
     padding: 0;
     background: #161b22;
@@ -1283,10 +1284,12 @@
     border-bottom: 1px solid #30363d;
     user-select: text;
   }
-  /* With wrap off, a long line makes the table wider than its side's
-     scroll view, and the injected cell spans the whole table. Size the
-     form or comment list to the view (`cqi`) and pin it to the view's
-     left edge, so it and its buttons stay in view at any scroll. */
+  /* With wrap off, a long line makes the table wider than its scroll
+     view, and the injected cell spans the whole table. Size the form
+     or comment list to the view (`cqi`) and pin it to the view's left
+     edge, so it and its buttons stay in view at any scroll. Since it
+     no longer scrolls with the code, long words and the form's
+     checkboxes wrap. */
   .diff-content.no-wrap :global(.diff-table-scroll-container) {
     container-type: inline-size;
   }
@@ -1295,6 +1298,10 @@
     position: sticky;
     left: 0;
     width: 100cqi;
+    overflow-wrap: anywhere;
+  }
+  .diff-content.no-wrap :global(td.meerkat-form-cell > .comment-form .flags) {
+    flex-wrap: wrap;
   }
   /* Spacer halves on the opposite side from a side-aware comment /
      form row, and the mirror rows standing in for them with Wrap off.

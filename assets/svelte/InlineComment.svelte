@@ -109,7 +109,7 @@
   .comment-body {
     color: #e6edf3;
   }
-  /* Wraps so a narrow side still shows Edit and Remove. */
+  /* Wraps so a narrow view still shows Edit and Remove. */
   header {
     display: flex;
     flex-wrap: wrap;
