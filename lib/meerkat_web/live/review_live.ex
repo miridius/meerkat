@@ -246,7 +246,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_event("toolbar.set_tab_size", %{"n" => n}, socket) do
     case parse_int(n) do
       {:ok, v} ->
-        {:noreply, put_setting(socket, :tab_size, clamp_tab_size(v))}
+        {:noreply, put_setting(socket, :tab_size, Settings.valid_tab_size(v))}
 
       :error ->
         log_ignored_event("toolbar.set_tab_size", "n", n)
@@ -2357,9 +2357,6 @@ defmodule MeerkatWeb.ReviewLive do
   def parse_int_for_test(value), do: parse_int(value)
 
   @doc false
-  def clamp_tab_size_for_test(n), do: clamp_tab_size(n)
-
-  @doc false
   def parse_ruler_columns_for_test(text), do: parse_ruler_columns(text)
 
   @doc false
@@ -2689,9 +2686,6 @@ defmodule MeerkatWeb.ReviewLive do
       "meerkat: #{event} ignored — non-integer #{field}: #{inspect(value)}"
     )
   end
-
-  defp clamp_tab_size(n) when n in [2, 4, 8], do: n
-  defp clamp_tab_size(_), do: 2
 
   # The rulers field: whole columns separated by commas and/or spaces.
   # Blank means no rulers. Any other token makes the whole list invalid.

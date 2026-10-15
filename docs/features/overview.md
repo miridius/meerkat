@@ -46,10 +46,12 @@ When the UI does open, the reviewer sees, top-to-bottom:
    every review. A change applies at once in every open tab of the
    same review; tabs of other running reviews pick it up when they
    next load or reconnect. A change saves only the setting it
-   changed, so changes to different settings keep both. A file that
-   cannot be read or parsed prints a warning and leaves the defaults
-   in force until the next change replaces it; a value that is not
-   valid keeps its default.
+   changed, so changes to different settings in one review keep
+   both; two reviews saving at the same instant can lose one. A file
+   that cannot be read or parsed prints a warning and leaves the
+   defaults in force until the next change replaces it; a value that
+   is not valid keeps its default, except that a whole-number font
+   size is clamped into 9 to 28.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup

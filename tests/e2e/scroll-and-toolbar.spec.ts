@@ -174,6 +174,23 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 	}
 });
 
+// The HintDismiss hook keeps the dismissal in this browser's localStorage.
+test("a dismissed line-comment hint stays hidden after a reload", async ({ page }) => {
+	const meerkat = await startMeerkat();
+	try {
+		await page.goto(meerkat.url);
+		const hint = page.locator("#meerkat-hint");
+		await expect(hint).toBeVisible();
+		await hint.locator(".hint-dismiss").click();
+		await expect(hint).toBeHidden();
+		await page.reload();
+		await expect(page.locator("[data-phx-main]")).toHaveClass(/phx-connected/);
+		await expect(hint).toBeHidden();
+	} finally {
+		await meerkat.kill();
+	}
+});
+
 // A page of `context` at `url`, once its LiveView has joined.
 async function openJoined(context: BrowserContext, url: string): Promise<Page> {
 	const p = await context.newPage();

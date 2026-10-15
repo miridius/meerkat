@@ -20,7 +20,7 @@ defmodule Meerkat.Settings do
     ruler_columns: [80, 110]
   }
 
-  # muex:ignore equivalent: every subscriber and broadcast names the topic through topic/0
+  # muex:ignore equivalent: every subscriber and broadcast takes the topic from this attribute
   @topic "meerkat:settings"
 
   @doc "The settings a missing file or an invalid value falls back to."
@@ -53,8 +53,8 @@ defmodule Meerkat.Settings do
   end
 
   @doc """
-  The saved settings, each missing or invalid one at its default. A
-  file that cannot be read or parsed prints a warning.
+  The saved settings, as `valid/1` gives them. A file that cannot be
+  read or parsed prints a warning.
   """
   def load, do: valid(read(path()))
 
@@ -66,8 +66,8 @@ defmodule Meerkat.Settings do
   def put(key, value) when is_map_key(@defaults, key) do
     path = path()
 
-    # One read-merge-write at a time, so two tabs' changes to different
-    # settings both land.
+    # One read-merge-write at a time in this BEAM, so two of this
+    # review's tabs' changes to different settings both land.
     :global.trans(
       {__MODULE__, self()},
       fn ->
@@ -92,7 +92,8 @@ defmodule Meerkat.Settings do
 
   @doc """
   The settings in a decoded `settings.json`; a missing or invalid one
-  is at its default.
+  is at its default, except that a whole-number font size is clamped
+  by `clamp_font_size/1`.
   """
   def valid(saved),
     do: %{
@@ -109,6 +110,10 @@ defmodule Meerkat.Settings do
   unreadable or off the screen at typical zoom levels.
   """
   def clamp_font_size(n), do: n |> max(9) |> min(28)
+
+  @doc "The tab size when it is 2, 4 or 8, else the default."
+  def valid_tab_size(n) when n in [2, 4, 8], do: n
+  def valid_tab_size(_), do: @defaults.tab_size
 
   @doc "`columns` sorted and deduped when each is a whole number from 1 to 999, else `default`."
   def valid_ruler_columns(columns, default) when is_list(columns) do
@@ -154,9 +159,6 @@ defmodule Meerkat.Settings do
 
   defp valid_font_size(n) when is_integer(n), do: clamp_font_size(n)
   defp valid_font_size(_), do: @defaults.font_size_px
-
-  defp valid_tab_size(n) when n in [2, 4, 8], do: n
-  defp valid_tab_size(_), do: @defaults.tab_size
 
   # muex:ignore equivalent: `n in 999..1` holds for the same integers
   defp ruler_column?(n), do: is_integer(n) and n in 1..999

@@ -47,14 +47,6 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
   end
 
   describe "toolbar clamps and validators" do
-    test "tab size allows only 2, 4, 8 — anything else falls back to 2" do
-      assert ReviewLive.clamp_tab_size_for_test(2) == 2
-      assert ReviewLive.clamp_tab_size_for_test(4) == 4
-      assert ReviewLive.clamp_tab_size_for_test(8) == 8
-      assert ReviewLive.clamp_tab_size_for_test(3) == 2
-      assert ReviewLive.clamp_tab_size_for_test(16) == 2
-    end
-
     test "the rulers field takes whole columns from 1 to 999, split by commas or spaces" do
       assert ReviewLive.parse_ruler_columns_for_test("80, 110") == {:ok, [80, 110]}
       assert ReviewLive.parse_ruler_columns_for_test(" 110 80,,80 ") == {:ok, [80, 110]}

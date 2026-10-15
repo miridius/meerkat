@@ -106,9 +106,12 @@ defmodule Meerkat.SettingsTest do
              "rulers" => "no"
            }) == defaults
 
-    for n <- [1, 3, 7, "4"] do
+    for n <- [1, 3, 7, 16, "4"] do
       assert Settings.valid(%{"tab_size" => n}).tab_size == 2, inspect(n)
+      assert Settings.valid_tab_size(n) == 2, inspect(n)
     end
+
+    for n <- [2, 4, 8], do: assert(Settings.valid_tab_size(n) == n)
 
     for {px, clamped} <- [{13, 13}, {1, 9}, {-5, 9}, {28, 28}, {99, 28}] do
       assert Settings.valid(%{"font_size_px" => px}).font_size_px == clamped
@@ -161,6 +164,36 @@ defmodule Meerkat.SettingsTest do
 
     assert %{wrap_lines: false, tab_size: 8} = Settings.load()
     refute Process.alive?(other)
+  end
+
+  test "concurrent puts of different settings all land", %{path: path} do
+    changes = [
+      diff_mode: "unified",
+      wrap_lines: false,
+      font_size_px: 20,
+      tab_size: 8,
+      rulers: false,
+      ruler_columns: [72]
+    ]
+
+    for round <- 1..5 do
+      File.rm_rf!(path)
+      test_pid = self()
+
+      tasks =
+        for {key, value} <- changes do
+          Task.async(fn ->
+            send(test_pid, {:ready, self()})
+            receive do: (:go -> Settings.put(key, value))
+          end)
+        end
+
+      for %Task{pid: pid} <- tasks, do: assert_receive({:ready, ^pid})
+      for %Task{pid: pid} <- tasks, do: send(pid, :go)
+      Task.await_many(tasks)
+
+      assert Settings.load() == Map.new(changes), "round #{round}"
+    end
   end
 
   test "put refuses a key that isn't a setting", %{path: path} do
