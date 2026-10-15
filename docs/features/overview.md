@@ -66,7 +66,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
      takes their columns separated by commas or spaces, `80, 110` by
      default. Only whole numbers from 1 to 999 are accepted; other
      input marks the field invalid, and stays in it, while the last
-     valid list stays in force. An
+     valid list stays in force, until another tab saves columns or
+     the page reconnects; the field then shows the saved list. An
      empty list draws no rulers. The setting drives both the diff and
      the suggestion editor (see
      [inline-comments.md](inline-comments.md)).
