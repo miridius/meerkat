@@ -83,8 +83,20 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 					.evaluate((el) => ({ shown: el.clientWidth, full: el.scrollWidth }));
 				expect(title.full, `at ${width}px the title is cut short`).toBeGreaterThan(title.shown);
 			}
-			const head = await page.locator(".branch-head").evaluate((el) => el.clientWidth);
-			expect(head, `at ${width}px some of the head branch shows`).toBeGreaterThan(30);
+			for (const part of [".toolbar-title", ".branch-base", ".branch-head"]) {
+				const shown = await page.locator(part).evaluate((el) => el.clientWidth);
+				expect(shown, `at ${width}px some of ${part} shows`).toBeGreaterThan(30);
+			}
+			const version = await page.locator(".version-chip-btn").evaluate((el) => ({
+				label: el.querySelector(".chip-label")?.checkVisibility(),
+				value: el.querySelector(".chip-value")?.textContent,
+				shown: el.querySelector(".chip-value")?.checkVisibility(),
+			}));
+			expect(version, `at ${width}px the version chip keeps its version`).toEqual({
+				label: !state.steps.includes("version"),
+				value: "abc1234",
+				shown: true,
+			});
 		}
 		expect(seen, "every step was needed somewhere between 2400px and 280px").toEqual(SQUEEZE_STEPS);
 
@@ -101,6 +113,32 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
+	}
+});
+
+test("a branch name shorter than the truncation floor keeps its own width", async ({ page }) => {
+	const fixture = makePrFixture({
+		title: "Retire local review tooling for the manager plugin, keeping the review page as it was",
+		headRef: "feature/request-timing-instrumentation-with-slow-route-alerts",
+	});
+	const meerkat = await startMeerkat({
+		fixture,
+		args: ["--pr", String(fixture.prNumber)],
+		pathPrefixes: [fixture.ghStubDir],
+	});
+	try {
+		await page.setViewportSize({ width: 2400, height: 800 });
+		await page.goto(meerkat.url);
+		await expect(page.locator(".diff-toolbar")).toHaveAttribute("data-squeeze", "");
+		const base = page.locator(".branch-base");
+		await expect(base).toHaveText("main");
+		const natural = await base.evaluate((el) => el.getBoundingClientRect().width);
+
+		let width = 2400;
+		while (!(await at(page, width)).steps.includes("head")) width -= 20;
+		expect(await base.evaluate((el) => el.getBoundingClientRect().width)).toBeCloseTo(natural, 0);
+	} finally {
+		await meerkat.kill();
 	}
 });
 

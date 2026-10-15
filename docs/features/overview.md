@@ -54,13 +54,16 @@ When the UI does open, the reviewer sees, top-to-bottom:
    size is clamped into 9 to 28.
    When the toolbar's content does not fit on one row, at any window
    width, it gives up room one step at a time, only as far as it
-   needs: the version chip hides; `☰ Files` becomes `☰`; the
-   connection pill becomes its dot; the counts drop `showing` and
-   write `/` for `of`; Split / Unified and Wrap move into the `⚙`
-   popover; then the title, the base branch and the head branch
-   truncate with an ellipsis, in that order, each keeping its full
-   text on its tooltip. Only when all that is not enough does the
-   toolbar wrap onto a second row.
+   needs: the version chip drops its `ver` label, leaving the
+   version; `☰ Files` becomes `☰`; the connection pill becomes its
+   dot; the counts drop `showing` and write `/` for `of`; Split /
+   Unified and Wrap move into the `⚙` popover; then the title, the
+   base branch and the head branch truncate with an ellipsis, in that
+   order, each down to its first few characters before the next
+   starts, and each keeping its full text on its tooltip. Only when
+   all that is not enough does the toolbar wrap onto a second row.
+   Each branch name is cut at 22 characters, with an ellipsis and
+   its full text on its tooltip, whatever the width.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup
