@@ -544,7 +544,7 @@ defmodule Meerkat.CLITest do
     test "commit-msg hook flow names the git-commit process" do
       banner = CLI.pause_banner_for_test({:staged, "/tmp/COMMIT_MSG"}, @url)
       assert banner =~ "Paused for human review at #{@url}"
-      assert String.replace(banner, ~r/\s+/, " ") =~ "This `git commit` process blocks"
+      assert banner =~ "this `git commit` process blocks"
     end
 
     test "ad-hoc targets name the meerkat process" do
@@ -555,7 +555,7 @@ defmodule Meerkat.CLITest do
             {:pr, "1"}
           ] do
         banner = CLI.pause_banner_for_test(target, @url)
-        assert String.replace(banner, ~r/\s+/, " ") =~ "This `meerkat` process blocks"
+        assert banner =~ "this `meerkat` process blocks"
         refute banner =~ "git commit"
       end
     end
@@ -571,8 +571,7 @@ defmodule Meerkat.CLITest do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         banner = CLI.pause_banner_for_test(target, @url)
         flat = String.replace(banner, ~r/\s+/, " ")
-        assert flat =~ "Paused for human review at #{@url}"
-        assert flat =~ "give the user the URL above right away, before waiting"
+        assert flat =~ "If you remind the user to review, give them the URL"
         assert flat =~ "do NOT poll, sleep, or schedule wake-ups"
         assert flat =~ "approved or requested changes"
         assert flat =~ "not a `tail`/`head` of it"
