@@ -5,18 +5,24 @@ const now = 1_000_000;
 const at = (secondsLeft: number) => countdownView(now + secondsLeft * 1000, now);
 
 describe("countdownView", () => {
-	test("counts the time left in minutes and seconds", () => {
-		expect(at(1800).text).toBe("30:00 left");
-		expect(at(61).text).toBe("01:01 left");
+	test("counts the time left as h:mm:ss", () => {
+		expect(at(1800).text).toBe("0:30:00 left");
+		expect(at(61).text).toBe("0:01:01 left");
 	});
 
 	test("rounds a part-second left up", () => {
-		expect(countdownView(now + 1500, now).text).toBe("00:02 left");
+		expect(countdownView(now + 1500, now).text).toBe("0:00:02 left");
 	});
 
 	test("past the deadline, counts the time over", () => {
-		expect(at(0).text).toBe("00:00 over");
-		expect(at(-75).text).toBe("01:15 over");
+		expect(at(0).text).toBe("0:00:00 over");
+		expect(at(-75).text).toBe("0:01:15 over");
+	});
+
+	test("keeps the same shape past an hour and past a day", () => {
+		expect(at(3599).text).toBe("0:59:59 left");
+		expect(at(3600).text).toBe("1:00:00 left");
+		expect(at(-(68 * 3600 + 28 * 60 + 17)).text).toBe("68:28:17 over");
 	});
 
 	test("is plain above five minutes, a warning down to 61 seconds, and urgent from one minute on", () => {
