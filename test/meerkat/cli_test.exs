@@ -590,6 +590,14 @@ defmodule Meerkat.CLITest do
                    "the review is still open: run the same command again to wait for its outcome."
       end
     end
+
+    # `announce_url/2` appends the debug-logs line, which must start a line of its own.
+    test "ends with its last sentence and a newline" do
+      for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
+        banner = CLI.pause_banner_for_test(target, @url)
+        assert String.ends_with?(banner, "wait for its outcome.\n")
+      end
+    end
   end
 
   describe "repo_path/0" do
