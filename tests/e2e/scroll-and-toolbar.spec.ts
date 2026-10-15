@@ -125,7 +125,8 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await page.goto(meerkat.url);
 		const other = await openJoined(context, meerkat.url);
 		const toolbar = (p: Page) => ({
-			wrap: p.getByLabel("Wrap"),
+			// The ⚙ popover holds a hidden second copy.
+			wrap: p.locator(".diff-toolbar > .view-controls").getByLabel("Wrap"),
 			// Located by CSS, as it is hidden while the settings popover is closed.
 			tab8: p.locator("button[phx-value-n='8']"),
 			columns: p.getByLabel("Ruler columns"),
