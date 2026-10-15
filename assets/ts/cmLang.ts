@@ -37,10 +37,15 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	php: () => import("@codemirror/lang-php").then((m) => m.php()),
 	vue: () => import("@codemirror/lang-vue").then((m) => m.vue()),
 	// The pack's own rule indents every list's arguments two spaces; ours
-	// follows cljfmt's defaults.
+	// follows cljfmt's defaults. Brackets pair through `paredit.ts`, so
+	// CodeMirror's pairing keeps only `"`: in Clojure, `'` is a quote.
 	clojure: () =>
 		Promise.all([import("@nextjournal/lang-clojure"), import("./clojureIndent.js")]).then(
-			([m, indent]) => new LanguageSupport(m.clojureLanguage, indent.clojureIndent),
+			([m, indent]) =>
+				new LanguageSupport(m.clojureLanguage, [
+					indent.clojureIndent,
+					m.clojureLanguage.data.of({ closeBrackets: { brackets: ['"'] } }),
+				]),
 		),
 };
 
