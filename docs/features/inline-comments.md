@@ -40,6 +40,14 @@ the row's height as it grows or shrinks. With Wrap off, at a line with
 rows on both sides, the old side's rows come first; with Wrap on they
 keep the order described above.
 
+With Wrap off, a long line can make the code scroll sideways. Each
+form and posted comment is then as wide as the code's visible area
+(its side's, in Split view) and stays in view however far the code
+is scrolled. Long words in a comment's text wrap (code blocks scroll
+on their own), and a form's checkboxes wrap onto new lines when the
+view is narrow. With Wrap on or off, a posted comment's header wraps
+so Edit and Remove stay visible.
+
 ## Form contents
 
 The form has:
