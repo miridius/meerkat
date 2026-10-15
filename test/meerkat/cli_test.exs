@@ -637,9 +637,7 @@ defmodule Meerkat.CLITest do
       {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
       :ok = :gen_tcp.send(socket, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
 
-      # A close with unread bytes in the server's buffer arrives as a reset.
-      assert {:error, reason} = :gen_tcp.recv(socket, 0, 5_000)
-      assert reason in [:closed, :econnreset]
+      assert {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)
     end
   end
 
