@@ -61,6 +61,20 @@ test("Clojure keys and structural typing work in a suggestion", async ({ page })
 		await page.keyboard.press("Backspace");
 		await page.keyboard.type("[");
 		await expect.poll(text).toBe("    [](foo y bar)))");
+
+		// Caret inside `(foo y bar)`: thread first, then unthread.
+		await page.keyboard.press("Home");
+		for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+		await page.keyboard.press("Control+Alt+Comma");
+		await expect.poll(text).toBe("    [](-> y (foo bar))))");
+		await page.keyboard.press("Control+Alt+Period");
+		await expect.poll(text).toBe("    [](foo y bar)))");
+
+		// Unthreading left the caret before `(foo y bar)`.
+		await page.keyboard.press("Meta+Shift+Digit9");
+		await expect.poll(text).toBe("    []((foo y bar))))");
+		await page.keyboard.press("Control+K");
+		await expect.poll(text).toBe("    []()))");
 	} finally {
 		await meerkat.kill();
 	}
