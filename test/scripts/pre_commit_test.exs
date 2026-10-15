@@ -13,8 +13,8 @@ defmodule Meerkat.PreCommitHookTest do
   # Every gate check.sh runs, in order, as the stubs log it.
   @gates [
     "mix deps.get",
-    "mix hex.audit",
-    "pnpm audit --prod --ignore-registry-errors",
+    "bun scripts/hex-audit.ts",
+    "pnpm audit --prod",
     "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
     "mix compile --warnings-as-errors",
     "mix format --check-formatted",

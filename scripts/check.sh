@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Pre-commit gate: runs every check CI runs, in this checkout. Its
-# `mix hex.audit` passes on a failed hex.pm fetch, which CI's
-# scripts/hex-audit.ts fails, and its `pnpm audit` passes when the npm
-# registry cannot be reached, which CI's fails, so an offline commit can pass.
-# `pnpm install --frozen-lockfile`, as in CI, also fails a commit whose
-# pnpm-lock.yaml does not match its package.json files.
+# Pre-commit gate: runs every check CI runs, in this checkout. As in CI,
+# both dependency audits fail when they cannot reach their registry, and
+# `pnpm install --frozen-lockfile` fails a commit whose pnpm-lock.yaml does
+# not match its package.json files.
 #
 # `check.sh --head`, run by scripts/verified-push.sh, checks HEAD instead
 # of the commit being made.
@@ -63,8 +61,8 @@ run_checks() {
   unset $(git rev-parse --local-env-vars)
 
   step mix deps.get
-  step mix hex.audit
-  step pnpm audit --prod --ignore-registry-errors
+  step bun scripts/hex-audit.ts
+  step pnpm audit --prod
   step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
   step mix compile --warnings-as-errors
   step mix format --check-formatted

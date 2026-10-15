@@ -120,8 +120,8 @@ The end-to-end loop for a meerkat bug report or feature request:
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, once it holds a gate slot, it runs these steps in order:
 
 1. `mix deps.get`
-2. `mix hex.audit`
-3. `pnpm audit --prod --ignore-registry-errors`
+2. `bun scripts/hex-audit.ts`
+3. `pnpm audit --prod`
 4. `pnpm install --frozen-lockfile --ignore-scripts --prefer-offline`
 5. `mix compile --warnings-as-errors`
 6. `mix format --check-formatted`
@@ -142,7 +142,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **CI:** Every PR runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm audit --prod`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bash scripts/mix-test.sh`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
-`scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. `pnpm audit --prod` fails when it cannot reach the npm registry. In `check.sh`, `mix hex.audit` only warns about such a fetch and `pnpm audit` passes with `--ignore-registry-errors`, so an offline commit still passes.
+`scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. `pnpm audit --prod` fails when it cannot reach the npm registry. `check.sh` runs both audits as CI does, so it fails a commit when either registry is out of reach.
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit --prod` on `main` every day, and on demand through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
