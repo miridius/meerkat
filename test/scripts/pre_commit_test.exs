@@ -14,6 +14,7 @@ defmodule Meerkat.PreCommitHookTest do
   @gates [
     "mix deps.get",
     "mix hex.audit",
+    "pnpm audit --prod --ignore-registry-errors",
     "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
     "mix compile --warnings-as-errors",
     "mix format --check-formatted",
