@@ -61,6 +61,13 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await page.goto(meerkat.url);
 		await expect(page.locator(".diff-toolbar")).toHaveAttribute("data-squeeze", "");
 		expect(await toolbarState(page)).toEqual({ steps: [], overflows: false, wrapped: false });
+		// The ⚙ popover's copy of the view controls is in the page too, but
+		// only one copy reaches screen readers and the Tab key.
+		const oneViewControl = async () => {
+			await expect(page.getByRole("checkbox", { name: "Wrap" })).toHaveCount(1);
+			await expect(page.getByRole("button", { name: "Unified", exact: true })).toHaveCount(1);
+		};
+		await oneViewControl();
 
 		const seen: string[] = [];
 		let taken = 0;
@@ -105,7 +112,9 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await at(page, 900);
 		expect((await toolbarState(page)).steps).toContain("view");
 		await expect(page.locator(".diff-toolbar > .view-controls .wrap-toggle")).toBeHidden();
+		await expect(page.getByRole("checkbox", { name: "Wrap" })).toHaveCount(0);
 		await page.locator(".toolbar-settings > summary").click();
+		await oneViewControl();
 		const popover = page.locator(".toolbar-settings-popover");
 		await popover.getByRole("button", { name: "Unified", exact: true }).click();
 		await expect(popover.getByRole("button", { name: "Unified", exact: true })).toHaveClass(/active/);
