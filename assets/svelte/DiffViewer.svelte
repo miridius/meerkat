@@ -1288,8 +1288,8 @@
      view, and the injected cell spans the whole table. Size the form
      or comment list to the view (`cqi`) and pin it to the view's left
      edge, so it and its buttons stay in view at any scroll. Since it
-     no longer scrolls with the code, long words and the form's
-     checkboxes wrap. */
+     no longer scrolls with the code, long words in a comment's text
+     and the form's checkboxes wrap. */
   .diff-content.no-wrap :global(.diff-table-scroll-container) {
     container-type: inline-size;
   }
@@ -1298,6 +1298,8 @@
     position: sticky;
     left: 0;
     width: 100cqi;
+  }
+  .diff-content.no-wrap :global(td.meerkat-comment-cell .comment-body) {
     overflow-wrap: anywhere;
   }
   .diff-content.no-wrap :global(td.meerkat-form-cell > .comment-form .flags) {
