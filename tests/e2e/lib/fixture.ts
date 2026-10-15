@@ -273,7 +273,7 @@ export function sanitisedGitEnv(): NodeJS.ProcessEnv {
 		GIT_COMMITTER_NAME: "test",
 		GIT_COMMITTER_EMAIL: "test@example.com",
 		GIT_CONFIG_GLOBAL: join(__dirname, "../../../test/support/test.gitconfig"),
-		GIT_CONFIG_SYSTEM: "/dev/null",
+		GIT_CONFIG_NOSYSTEM: "1",
 		GIT_CONFIG_COUNT: "0",
 	};
 	delete env.GIT_CONFIG_PARAMETERS;

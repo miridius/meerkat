@@ -51,7 +51,7 @@ test.describe("meerkat --answers", () => {
 			expect(refused.stderr).not.toContain("Paused for human review");
 
 			const submit = (questions: string[]) => spawnSync(MEERKAT_BIN, ["--answers"], {
-				cwd: fixture.dir, encoding: "utf8", timeout: 60_000,
+				cwd: fixture.dir, encoding: "utf8", timeout: 60_000, env: sanitisedGitEnv(),
 				input: JSON.stringify({ answers: questions.map(question => ({ location: "global", question, answer: `Because **${question}**` })) }),
 			});
 			expect(submit(["First question?"]).status).toBe(0);

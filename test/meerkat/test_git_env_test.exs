@@ -30,13 +30,20 @@ defmodule Meerkat.TestGitEnvTest do
 
     events = trace |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
     started = for %{"event" => "child_start", "argv" => argv} <- events, do: argv
-    # Only receive-pack starts unpack-objects, so its children are traced.
+    # Here only receive-pack starts unpack-objects (the push is under
+    # receive.unpackLimit), so its children are traced.
     assert Enum.any?(started, &match?(["git", "unpack-objects" | _], &1))
     assert Enum.filter(started, &("maintenance" in &1 or "gc" in &1)) == []
   end
 
   # So the caller's signing, hooks or diff settings never reach a fixture.
-  test "git started by a test reads no global config but the tests' own", %{base: base} do
-    assert git(base, ["config", "--global", "--list"]) == "maintenance.auto=false"
+  test "git started by a test reads no config but the tests' global config", %{base: base} do
+    Meerkat.TestHelpers.put_env("GIT_CONFIG_PARAMETERS", "'meerkat.injected'='1'")
+    Meerkat.TestHelpers.put_env("GIT_CONFIG_COUNT", "1")
+    Meerkat.TestHelpers.put_env("GIT_CONFIG_KEY_0", "meerkat.counted")
+    Meerkat.TestHelpers.put_env("GIT_CONFIG_VALUE_0", "1")
+    Meerkat.TestHelpers.put_git_config_env()
+
+    assert git(base, ["config", "--list", "--show-scope"]) == "global\tmaintenance.auto=false"
   end
 end
