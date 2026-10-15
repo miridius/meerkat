@@ -87,16 +87,17 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 				const shown = await page.locator(part).evaluate((el) => el.clientWidth);
 				expect(shown, `at ${width}px some of ${part} shows`).toBeGreaterThan(30);
 			}
-			const version = await page.locator(".version-chip-btn").evaluate((el) => ({
-				label: el.querySelector(".chip-label")?.checkVisibility(),
-				value: el.querySelector(".chip-value")?.textContent,
-				shown: el.querySelector(".chip-value")?.checkVisibility(),
-			}));
-			expect(version, `at ${width}px the version chip keeps its version`).toEqual({
-				label: !state.steps.includes("version"),
-				value: "abc1234",
-				shown: true,
-			});
+			// With no updates, the version step takes the chip away.
+			const chipShown = await page.locator(".version-chip-btn").evaluate((el) => el.checkVisibility());
+			expect(chipShown, `at ${width}px the version chip shows until its step`).toBe(
+				!state.steps.includes("version"),
+			);
+			if (state.steps.length === 0) {
+				const head = await page
+					.locator(".branch-head")
+					.evaluate((el) => ({ shown: el.clientWidth, full: el.scrollWidth }));
+				expect(head.shown, `at ${width}px the head branch shows in full`).toBe(head.full);
+			}
 		}
 		expect(seen, "every step was needed somewhere between 2400px and 280px").toEqual(SQUEEZE_STEPS);
 
@@ -110,6 +111,53 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await expect(popover.getByRole("button", { name: "Unified", exact: true })).toHaveClass(/active/);
 		await expect(page.locator(".file-section td.diff-line-new-num")).toHaveCount(0);
 		await expect(popover).toBeVisible();
+	} finally {
+		await meerkat.kill();
+		rmSync(releaseRoot, { recursive: true, force: true });
+	}
+});
+
+test("at its step the version chip shows only its count of updates, and its drop-down names the version", async ({
+	page,
+}) => {
+	const releaseRoot = manifestRoot([
+		...MANIFEST,
+		"Live-restart a review onto a newly-installed version (#11)",
+		"Install versioned releases (#10)",
+	]);
+	const meerkat = await startMeerkat({
+		fixture: makeFixture({ commitMsg: "Retire local review tooling\n", files: { "a.txt": "one\n" } }),
+		env: { RELEASE_ROOT: releaseRoot },
+	});
+	try {
+		await page.setViewportSize({ width: 2400, height: 800 });
+		await page.goto(meerkat.url);
+		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
+		await page.reload();
+		const wrap = page.locator(".version-chip-wrap");
+		const chip = page.locator(".version-chip-btn");
+		const popover = page.locator(".version-popover");
+		const named = popover.locator(".version-popover-version");
+		await expect(chip.locator(".version-badge")).toHaveText("1");
+
+		let width = 2400;
+		// Past the version step, so the chip losing its badge cannot give it back.
+		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
+		expect(await chip.evaluate((el) => el.innerText.trim())).toBe("1");
+
+		// Opening it marks the update seen, so the chip goes; its drop-down stays.
+		await chip.click();
+		await expect(popover).toBeVisible();
+		await expect(named).toHaveText(/^\s*meerkat\s+abc1234\s*$/);
+		await expect(chip).toBeHidden();
+		await page.keyboard.press("Escape");
+		await expect(wrap).toBeHidden();
+
+		await at(page, 2400);
+		await expect(chip).toContainText("abc1234");
+		await chip.click();
+		await expect(popover).toBeVisible();
+		await expect(named, "with room, the chip itself names the version").toBeHidden();
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });

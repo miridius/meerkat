@@ -1280,6 +1280,10 @@ defmodule MeerkatWeb.ReviewLive do
         <span class="version-badge" hidden></span>
       </button>
       <div class="version-popover" hidden role="menu">
+        <%!-- Shown when the toolbar, short of room, cuts the chip to its count. --%>
+        <div class="version-popover-version">
+          meerkat <code class="chip-value">{@version.label}</code>
+        </div>
         <div class="version-popover-title">recent changes</div>
         <ul class="version-changelog">
           <li :for={entry <- @version.changelog}>
