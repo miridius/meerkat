@@ -80,23 +80,41 @@ defmodule Meerkat.CljHoverTest do
                 [dep.lib :as lib]
                 [dep.shared :as sh]
                 [vend.tool :as t]
-                [vend.locked :as l] [ext.lib :as x]))
+                [vend.locked :as l] [ext.lib :as x] [app.plat :as p]))
 
     (defn run [y]
       (lib/dep-fn (u/helper (o/thing y))))
 
     (defn more []
-      (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra) (x/ext-fn))
+      (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra) (x/ext-fn) (p/now))
+    """,
+    "shared/app/both.cljc" => """
+    (ns app.both (:require [dep.lib :as lib]))
+
+    (lib/dep-fn 1)
+    #?(:cljs (lib/dep-fn 2))
+    """,
+    # One namespace per platform, both in the diff.
+    "src/app/plat.clj" => """
+    (ns app.plat)
+
+    (defn now "Clj now." [] 1)
+    """,
+    "web/app/plat.cljs" => """
+    (ns app.plat)
+
+    (defn now "Cljs now." [] 1)
     """,
     "web/app/ui.cljs" => """
     (ns app.ui
       (:require [app.view :as v]
                 [dep.lib :as lib]
                 [dep.shared :as sh])
-      (:require-macros [dep.mac :as m]))
+      (:require-macros [dep.mac :as m])
+      (:require [app.plat :as p]))
 
     (defn render []
-      (v/view-fn) (lib/dep-fn 1) (sh/shared-fn 1) (m/mac 1))
+      (v/view-fn) (lib/dep-fn 1) (sh/shared-fn 1) (m/mac 1) (p/now))
     """
   }
 
@@ -214,6 +232,21 @@ defmodule Meerkat.CljHoverTest do
     assert %{doc: "Draft doc."} = hover_on(ctx, "src/app/core.clj", :new, "d/draft-fn")
   end
 
+  test "a diff file answers in the hovering file's language", ctx do
+    assert %{doc: "Clj now.", where: "src/app/plat.clj"} =
+             hover_on(ctx, "src/app/core.clj", :new, "p/now")
+
+    assert %{doc: "Cljs now.", where: "web/app/plat.cljs"} =
+             hover_on(ctx, "web/app/ui.cljs", :new, "p/now")
+  end
+
+  test "a .cljc file's :cljs branch answers as ClojureScript", ctx do
+    assert %{doc: "Dep doc."} = hover_on(ctx, "shared/app/both.cljc", :new, "lib/dep-fn")
+
+    assert %{doc: "Dep cljs doc."} =
+             hover_on(ctx, "shared/app/both.cljc", :new, "lib/dep-fn", 2)
+  end
+
   test "a plain def has no arglists", ctx do
     assert %{name: "app.other/limit", doc: "Limit doc.", arglists: []} =
              hover_on(ctx, "src/app/core.clj", :new, "o/limit")
@@ -258,6 +291,17 @@ defmodule Meerkat.CljHoverTest do
 
     assert %{doc: "Vendor doc.", where: "vendor/vend/tool.clj"} =
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
+  end
+
+  test "the classpath is read on the first lookup that needs it, then kept", ctx do
+    cp = Path.join(ctx.dir, ".cpcache/1.cp")
+    # Opening the review and hovering a diff file's var leave it unread.
+    assert %{name: "app.util/helper"} = hover_on(ctx, "src/app/core.clj", :new, "u/helper")
+    File.write!(cp, "vendor\n")
+    refute hover_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
+
+    File.rm!(cp)
+    assert %{doc: "Vendor doc."} = hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
   end
 
   test "a var is the repo's own only when its file is inside the repo", ctx do

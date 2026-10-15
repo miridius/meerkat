@@ -1,6 +1,6 @@
 <script context="module" lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
-  import { getDiffViewHighlighter } from "@git-diff-view/shiki";
+  import { getDiffViewHighlighter, highlighterReady } from "@git-diff-view/shiki";
 
   // Eagerly create ONE shiki engine with the languages we expect to
   // hit in a typical review. shiki warns at 10 instances and a
@@ -46,9 +46,15 @@
   // against generated monsters but never bites on code a human wrote.
   const MAX_SYNTAX_LINES = 20_000;
 
-  const sharedHighlighter: Promise<DiffHighlighter | null> = getDiffViewHighlighter(
-    PRELOAD_LANGS as never[],
-  )
+  // Importing @git-diff-view/shiki also builds its default engine, which
+  // lacks languages above such as clojure and elixir, and whichever
+  // engine finishes last is the one it highlights with. Once both are
+  // built, asking for ours again selects it.
+  const sharedHighlighter: Promise<DiffHighlighter | null> = Promise.all([
+    highlighterReady,
+    getDiffViewHighlighter(PRELOAD_LANGS as never[]),
+  ])
+    .then(() => getDiffViewHighlighter(PRELOAD_LANGS as never[]))
     .then((h) => {
       // Guarded separately from the engine-init catch below: a setter
       // failure (adapter shape drift on a dependency bump) must not
@@ -90,7 +96,7 @@
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import CljHoverPopup from "./CljHoverPopup.svelte";
-  import { type CljHover, HOVER_DELAY_MS, spotAt } from "../ts/cljHover";
+  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, spotAt } from "../ts/cljHover";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground } from "../ts/rulers";
   import { unifiedDiff } from "../ts/unifiedDiff";
@@ -996,8 +1002,9 @@
   const HOVER_CLOSE_MS = 300;
   let hoverTimer = 0;
   let hoverCloseTimer = 0;
-  let hoverRequest: { id: number; rect: DOMRect } | null = null;
-  let shownHover = $state<{ hover: CljHover; rect: DOMRect } | null>(null);
+  // `row` names the side and line hovered.
+  let hoverRequest: { id: number; anchor: HoverAnchor; row: string } | null = null;
+  let shownHover = $state<{ hover: CljHover; anchor: HoverAnchor; row: string } | null>(null);
 
   function restartHoverTimer(x: number, y: number) {
     clearTimeout(hoverTimer);
@@ -1013,7 +1020,11 @@
       return;
     }
     lastHoverId += 1;
-    hoverRequest = { id: lastHoverId, rect: spot.rect };
+    hoverRequest = {
+      id: lastHoverId,
+      anchor: { rect: spot.rect, scrollX: window.scrollX, scrollY: window.scrollY },
+      row: `${spot.side}:${spot.line}`,
+    };
     live.pushEvent("clj.hover", {
       id: lastHoverId,
       file_index,
@@ -1042,9 +1053,11 @@
     const onAnswer = (e: Event) => {
       const { id, hover } = (e as CustomEvent<{ id: number; hover: CljHover | null }>).detail;
       if (id !== hoverRequest?.id) return;
-      // The same var hovered again keeps its popup where it is.
-      if (hover && shownHover && sameVar(hover, shownHover.hover)) return;
-      shownHover = hover ? { hover, rect: hoverRequest.rect } : null;
+      // The same var hovered again on its row keeps its popup where it
+      // is; another occurrence, or the other side's, moves it there.
+      const { anchor, row } = hoverRequest;
+      if (hover && shownHover?.row === row && sameVar(hover, shownHover.hover)) return;
+      shownHover = hover ? { hover, anchor, row } : null;
     };
     window.addEventListener("phx:clj:hover", onAnswer);
     return () => {
@@ -1246,7 +1259,7 @@
     {#key shownHover}
       <CljHoverPopup
         hover={shownHover.hover}
-        rect={shownHover.rect}
+        anchor={shownHover.anchor}
         {highlighter}
         theme={DIFF_THEME}
         {font_size_px}

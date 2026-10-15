@@ -49,20 +49,42 @@ defmodule Meerkat.CljHover.ClasspathTest do
     jar = Path.join(dir, "x.jar")
     {:ok, _} = :zip.create(~c"#{jar}", [{~c"my_lib/core.clj", "(ns my-lib.core)"}])
     entries = [jar, Path.join(dir, "first"), Path.join(dir, "second")]
-    listing = &Classpath.jar_entries/1
 
-    assert Classpath.find(entries, "my-lib.core", [".clj"], listing) ==
-             {:jar, jar, "my_lib/core.clj"}
+    assert {{:jar, ^jar, "my_lib/core.clj"}, _} =
+             Classpath.find(entries, "my-lib.core", [".clj"], %{})
 
     # Classpath order comes before extension order: "first" holds only the .cljc.
-    assert Classpath.find(tl(entries), "my-lib.core", [".clj", ".cljc"], listing) ==
-             {:dir, Path.join(dir, "first"), "my_lib/core.cljc"}
+    assert {{:dir, first, "my_lib/core.cljc"}, %{}} =
+             Classpath.find(tl(entries), "my-lib.core", [".clj", ".cljc"], %{})
 
-    assert Classpath.find(entries, "absent.ns", [".clj"], listing) == nil
+    assert first == Path.join(dir, "first")
+    assert {nil, _} = Classpath.find(entries, "absent.ns", [".clj"], %{})
     assert Classpath.read_file({:jar, jar, "my_lib/core.clj"}) == {:ok, "(ns my-lib.core)"}
 
     assert Classpath.read_file({:dir, Path.join(dir, "second"), "my_lib/core.clj"}) ==
              {:ok, "(ns my-lib.core)"}
+  end
+
+  test "a jar is listed once, for its Clojure sources, and only when a lookup reaches it",
+       %{dir: dir} do
+    write(dir, "src/a/core.clj", "(ns a.core)")
+    first = Path.join(dir, "first.jar")
+    {:ok, _} = :zip.create(~c"#{first}", [{~c"b/core.cljs", ""}, {~c"B.class", ""}])
+    later = Path.join(dir, "later.jar")
+    {:ok, _} = :zip.create(~c"#{later}", [{~c"c/core.cljc", ""}])
+    entries = [first, Path.join(dir, "src"), later]
+
+    assert {{:dir, _, "a/core.clj"}, jars} = Classpath.find(entries, "a.core", [".clj"], %{})
+    assert jars == %{first => MapSet.new(["b/core.cljs"])}
+
+    # The kept listing answers, though the jar is gone.
+    File.rm!(first)
+
+    assert {{:jar, ^first, "b/core.cljs"}, ^jars} =
+             Classpath.find(entries, "b.core", [".cljs"], jars)
+
+    assert {{:jar, ^later, "c/core.cljc"}, %{^later => _}} =
+             Classpath.find(entries, "c.core", [".cljc"], jars)
   end
 
   test "an unreadable jar or file reads as nothing", %{dir: dir} do

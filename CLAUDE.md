@@ -19,7 +19,8 @@ remove commits a merged PR still references). Before committing:
 ## Rules
 
 - **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
-  `pnpm install --frozen-lockfile`. `mix …` for backend. JS dependencies are
+  `pnpm install --frozen-lockfile`. The tests also need `clj-kondo` on
+  PATH. `mix …` for backend. JS dependencies are
   installed ONLY with `pnpm install` (the workspace root covers
   `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
   age as a supply-chain guard). `bun run` / `bunx` for

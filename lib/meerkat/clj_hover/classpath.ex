@@ -6,6 +6,11 @@ defmodule Meerkat.CljHover.Classpath do
 
   @type location :: {:dir, String.t(), String.t()} | {:jar, String.t(), String.t()}
 
+  @typedoc "The jars listed so far, each to its Clojure source entries."
+  @type jars :: %{optional(String.t()) => MapSet.t(String.t())}
+
+  @sources ~w(.clj .cljc .cljs)
+
   @doc """
   The classpath entries, absolute: the newest `.cpcache/*.cp` in
   `root`, else the `:classpath` clojure-lsp stored in its
@@ -43,23 +48,34 @@ defmodule Meerkat.CljHover.Classpath do
 
   @doc """
   Where on `entries` the namespace `ns` lives, trying `exts` in order
-  for each entry in classpath order. `listing` returns a jar's entry
-  names.
+  for each entry in classpath order, and `jars` with each jar the
+  search reached listed. A jar already in `jars` is not read again,
+  and no jar past the one found is read.
   """
-  @spec find([String.t()], String.t(), [String.t()], (String.t() -> MapSet.t(String.t()))) ::
-          location | nil
-  def find(entries, ns, exts, listing) do
+  @spec find([String.t()], String.t(), [String.t()], jars) :: {location | nil, jars}
+  def find(entries, ns, exts, jars) do
     base = ns |> String.replace("-", "_") |> String.replace(".", "/")
 
-    Enum.find_value(entries, fn entry ->
-      Enum.find_value(exts, &holding(entry, base <> &1, listing))
+    Enum.reduce_while(entries, {nil, jars}, fn entry, {nil, jars} ->
+      jars = listed(jars, entry)
+
+      case Enum.find_value(exts, &holding(entry, base <> &1, jars)) do
+        nil -> {:cont, {nil, jars}}
+        location -> {:halt, {location, jars}}
+      end
     end)
   end
 
-  defp holding(entry, rel, listing) do
+  defp listed(jars, entry) do
+    if jar?(entry), do: Map.put_new_lazy(jars, entry, fn -> jar_entries(entry) end), else: jars
+  end
+
+  defp jar?(entry), do: String.ends_with?(entry, ".jar")
+
+  defp holding(entry, rel, jars) do
     cond do
-      String.ends_with?(entry, ".jar") ->
-        if MapSet.member?(listing.(entry), rel), do: {:jar, entry, rel}
+      jar?(entry) ->
+        if MapSet.member?(jars[entry], rel), do: {:jar, entry, rel}
 
       File.regular?(Path.join(entry, rel)) ->
         {:dir, entry, rel}
@@ -69,15 +85,23 @@ defmodule Meerkat.CljHover.Classpath do
     end
   end
 
-  @doc "A jar's entry names; empty when it can't be read."
+  @doc """
+  A jar's Clojure source entry names; empty when it can't be read.
+  Only those are kept: they are all a lookup asks for, and a Java
+  jar holds thousands of others.
+  """
   @spec jar_entries(String.t()) :: MapSet.t(String.t())
   def jar_entries(jar) do
-    case :zip.list_dir(String.to_charlist(jar)) do
-      {:ok, entries} ->
-        for {:zip_file, name, _, _, _, _} <- entries, into: MapSet.new(), do: List.to_string(name)
-
-      {:error, _} ->
-        MapSet.new()
+    # Read whole first: `:zip` reading a jar from disk is many times slower.
+    with {:ok, bytes} <- File.read(jar),
+         {:ok, entries} <- :zip.list_dir(bytes) do
+      for {:zip_file, name, _, _, _, _} <- entries,
+          name = List.to_string(name),
+          Path.extname(name) in @sources,
+          into: MapSet.new(),
+          do: name
+    else
+      _ -> MapSet.new()
     end
   end
 
@@ -91,11 +115,11 @@ defmodule Meerkat.CljHover.Classpath do
   end
 
   def read_file({:jar, jar, rel}) do
-    case :zip.extract(String.to_charlist(jar), [
-           {:file_list, [String.to_charlist(rel)]},
-           :memory
-         ]) do
-      {:ok, [{_, text}]} -> {:ok, text}
+    with {:ok, bytes} <- File.read(jar),
+         {:ok, [{_, text}]} <-
+           :zip.extract(bytes, [{:file_list, [String.to_charlist(rel)]}, :memory]) do
+      {:ok, text}
+    else
       _ -> :error
     end
   end

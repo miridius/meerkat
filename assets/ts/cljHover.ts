@@ -33,6 +33,11 @@ export type HoverSpot = {
 	rect: DOMRect;
 };
 
+/** A symbol's box, in the window, and the page's scroll when it was
+ *  measured: together they place the popup on the page, however far
+ *  the page has scrolled since. */
+export type HoverAnchor = { rect: DOMRect; scrollX: number; scrollY: number };
+
 /** A docstring without the indent its later lines carry in the source
  *  (the first line has none). */
 export function dedentDoc(doc: string): string {

@@ -57,8 +57,8 @@ applies.
   that side's text. Nothing on disk holds this: kondo's cache records
   no usages, so not which var a symbol names, and the old side was
   never linted.
-- **Other namespaces.** On the first hover of a var from a namespace
-  no diff file defines, meerkat finds the namespace's file, analyses
+- **Other namespaces.** On the first hover of a var the side's diff
+  files don't define, meerkat finds the namespace's file, analyses
   that one file, and keeps the result for the rest of the review.
   Docs and source come from that file. A file in the diff is answered
   from the side's text, never from disk.
@@ -72,10 +72,14 @@ applies.
   computed: the newest `.cpcache/*.cp` in the repo root, else the
   `:classpath` in clojure-lsp's `.lsp/.cache/db.transit.json`. It runs
   no classpath command. With neither, only namespaces kondo's cache
-  names answer.
+  names answer. The classpath is read on the first lookup that needs
+  it, and a jar is listed only when a lookup reaches it; both are kept
+  for the rest of the review.
 - **Language.** A `.clj` or `.cljc` file looks for `clj` then `cljc`
   namespaces; a `.cljs` file for `cljs`, `cljc`, then `clj`, for
-  macros.
+  macros. A `.cljc` file's `:cljs` reader branch looks as a `.cljs`
+  file does. This holds for diff files too, so a namespace's `.clj`
+  and `.cljs` files in one diff each answer their own language.
 
 ## Indexing
 

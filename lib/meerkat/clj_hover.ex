@@ -83,7 +83,7 @@ defmodule Meerkat.CljHover do
       files: files,
       sides: nil,
       classpath: nil,
-      jars: nil,
+      jars: %{},
       located: %{},
       outside: %{}
     }
@@ -102,8 +102,6 @@ defmodule Meerkat.CljHover do
         {side, Task.async(fn -> Kondo.analyse_texts(root, t) end)}
       end)
 
-    classpath = Classpath.read(root)
-
     sides =
       Map.new(tasks, fn {side, task} ->
         analysis = Task.await(task, :infinity)
@@ -118,15 +116,15 @@ defmodule Meerkat.CljHover do
         {side, %{spans: analysis.spans, defs: defs}}
       end)
 
-    {:noreply, %{state | sides: sides, classpath: classpath}}
+    {:noreply, %{state | sides: sides}}
   end
 
   @impl true
   def handle_call({:hover, file_index, side, line, col}, _from, state) do
     with %{} = file <- Enum.at(state.files, file_index),
          path = side_path(file, side),
-         %{ns: ns, name: name} <- span_at(state.sides[side].spans, path, line, col),
-         {d, state} when d != nil <- definition(state, side, ns, name, path) do
+         %{} = span <- span_at(state.sides[side].spans, path, line, col),
+         {d, state} when d != nil <- definition(state, side, span, path) do
       {:reply, render(d), state}
     else
       {nil, state} -> {:reply, nil, state}
@@ -153,25 +151,32 @@ defmodule Meerkat.CljHover do
     |> Enum.find(&(&1.col <= col and col < &1.end_col))
   end
 
-  defp definition(state, side, ns, name, path) do
-    case Map.get(state.sides[side].defs, {ns, name}) do
-      nil -> outside_definition(state, ns, name, path)
+  defp definition(state, side, %{ns: ns, name: name, lang: lang}, path) do
+    # A `.cljc` file's reader branch names its language.
+    cljs? = (lang || String.trim_leading(Path.extname(path), ".")) == "cljs"
+    # ClojureScript also reaches Clojure namespaces, for macros.
+    exts = if cljs?, do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
+
+    case defined(state.sides[side].defs, ns, name, exts) do
+      nil -> outside_definition(state, ns, name, exts)
       d -> {d, state}
     end
   end
 
-  # A namespace no diff file defines: the one file holding it, analysed
-  # on first hover. A diff file answers only from the side's text.
-  defp outside_definition(state, ns, name, path) do
-    # ClojureScript also reaches Clojure namespaces, for macros.
-    exts = if Path.extname(path) == ".cljs", do: ~w(.cljs .cljc .clj), else: ~w(.clj .cljc)
+  # The var's definition in the first of `exts` that defines it.
+  defp defined(defs, ns, name, exts), do: Enum.find_value(exts, &defs[{ns, name, &1}])
+
+  # A var the side's diff files don't define: the one file holding its
+  # namespace, analysed on first hover. A diff file answers only from
+  # the side's text.
+  defp outside_definition(state, ns, name, exts) do
     {location, state} = located(state, ns, exts)
 
     if location == nil or diff_file?(state, location) do
       {nil, state}
     else
       {defs, state} = analysed(state, location)
-      {Map.get(defs, {ns, name}), state}
+      {defined(defs, ns, name, exts), state}
     end
   end
 
@@ -197,8 +202,9 @@ defmodule Meerkat.CljHover do
 
     case Kondo.cached_file(state.root, ns, langs) do
       nil ->
-        state = list_jars(state)
-        {Classpath.find(state.classpath, ns, exts, &Map.fetch!(state.jars, &1)), state}
+        state = read_classpath(state)
+        {location, jars} = Classpath.find(state.classpath, ns, exts, state.jars)
+        {location, %{state | jars: jars}}
 
       file ->
         {{:dir, Path.dirname(file), Path.basename(file)}, state}
@@ -210,12 +216,13 @@ defmodule Meerkat.CljHover do
     do:
       where(location, state.root) in Enum.flat_map(state.files, &[&1.file_name, &1.old_file_name])
 
-  # Listed on the first classpath lookup: reading a jar's directory is
-  # cheap, and jars don't change.
-  defp list_jars(%{jars: nil, classpath: classpath} = state),
-    do: %{state | jars: Map.new(classpath, &{&1, Classpath.jar_entries(&1)})}
+  # Read on the first classpath lookup, so a review hovering only what
+  # its diff and kondo's cache answer never reads it: clojure-lsp's db
+  # can be tens of MB.
+  defp read_classpath(%{classpath: nil, root: root} = state),
+    do: %{state | classpath: Classpath.read(root)}
 
-  defp list_jars(state), do: state
+  defp read_classpath(state), do: state
 
   defp analysed(state, location) do
     case Map.fetch(state.outside, location) do

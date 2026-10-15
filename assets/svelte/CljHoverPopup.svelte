@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
-  import { type CljHover, dedentDoc, openingTab, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
+  import { type CljHover, dedentDoc, type HoverAnchor, openingTab, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
 
   // The Clojure hover popup (docs/features/clojure-hover.md): two tabs,
   // a var's signature and docstring under its name, and its source,
@@ -9,7 +9,7 @@
 
   let {
     hover,
-    rect,
+    anchor,
     highlighter,
     theme,
     font_size_px,
@@ -17,7 +17,7 @@
     onpointerleave,
   }: {
     hover: CljHover;
-    rect: DOMRect;
+    anchor: HoverAnchor;
     highlighter: DiffHighlighter | null;
     theme: "light" | "dark";
     font_size_px: number;
@@ -31,8 +31,7 @@
   // The diff highlighter's own AST, so the colours follow the diff's
   // theme through the same CSS variables.
   const sourceHtml = $derived.by(() => {
-    const ast = highlighter?.getAST(hover.source, "hover.clj", "clojure");
-    return ast ? hastToHtml(ast) : null;
+    const ast = highlighter?.getAST(hover.source, "hover.clj", "clojure");    return ast ? hastToHtml(ast) : null;
   });
 
   // On <body>, so the diff's horizontal scroller doesn't clip it, and
@@ -46,6 +45,7 @@
   // taller or wider tab scrolls rather than leaving the window. Above,
   // its bottom stays at the symbol. Once the reviewer resizes it, which
   // sets an inline size, it stays put.
+  const rect = $derived(anchor.rect);
   const place = $derived(popupSide(rect.top, rect.bottom, window.innerHeight));
   let popup: HTMLDivElement;
   let height = $state(0);
@@ -55,8 +55,8 @@
   $effect(() => {
     if (popup.style.height || popup.style.width) return;
     const y = place.above ? rect.top - Math.min(height, place.cap) - POPUP_GAP : rect.bottom + POPUP_GAP;
-    top = y + window.scrollY;
-    left = popupLeft(rect.left, width, document.documentElement.clientWidth) + window.scrollX;
+    top = y + anchor.scrollY;
+    left = popupLeft(rect.left, width, document.documentElement.clientWidth) + anchor.scrollX;
   });
 </script>
 
@@ -146,7 +146,7 @@
   }
   /* Once resized the browser sets an inline size: let it grow to the
      window rather than the opening cap. No other inline style names a
-     height. */
+     height or width. */
   .clj-hover-popup[style*="height"],
   .clj-hover-popup[style*="width"] {
     max-width: calc(100vw - 16px);

@@ -46,7 +46,7 @@ function stagedReview(base: Record<string, string>, files: Record<string, string
 }
 
 // Rests the pointer on the first character of `word` in a code cell of
-// `side`, the way a reviewer does.
+// `side`, the way a reviewer does, and returns that character's box.
 async function restOn(page: Page, side: "old" | "new", word: string) {
 	// Unified view's rows show a side by the line numbers they carry.
 	const cells =
@@ -66,7 +66,7 @@ async function restOn(page: Page, side: "old" | "new", word: string) {
 					range.setStart(node, at);
 					range.setEnd(node, at + 1);
 					const r = range.getBoundingClientRect();
-					return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+					return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, bottom: r.bottom };
 				}
 			}
 			return null;
@@ -75,6 +75,7 @@ async function restOn(page: Page, side: "old" | "new", word: string) {
 	);
 	if (!point) throw new Error(`no ${word} on the ${side} side`);
 	await page.mouse.move(point.x, point.y);
+	return point;
 }
 
 test("resting on a symbol shows its docs and source for that row's side", async ({ page }) => {
@@ -86,8 +87,12 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 	try {
 		await page.goto(meerkat.url);
 		const popup = page.locator('[data-test="clj-hover"]');
+		// Room below the diff, so the page can scroll.
+		await page.evaluate(() => {
+			document.body.style.paddingBottom = "100vh";
+		});
 
-		await restOn(page, "new", "u/helper");
+		const symbol = await restOn(page, "new", "u/helper");
 		// The repo's own var opens on its source, highlighted by the
 		// diff's own highlighter.
 		const sourceTab = popup.getByRole("tab", { name: "src/app/util.clj:3" });
@@ -97,16 +102,45 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 		await expect(popup.locator(".clj-hover-source")).toContainText('"New doc."');
 
 		// The pointer can move onto the popup and switch to the docs tab.
+		// Its new height re-places it, at its symbol though the page has
+		// scrolled since it opened.
+		const scrolled = await page.evaluate(() => {
+			window.scrollBy(0, 40);
+			return window.scrollY;
+		});
+		expect(scrolled).toBeGreaterThan(0);
 		await popup.getByRole("tab", { name: "app.util/helper" }).click();
 		await expect(popup.locator(".clj-hover-source")).toHaveCount(0);
 		await expect(popup.locator(".clj-hover-doc")).toHaveText("New doc.");
+		// Below the symbol its top is just under it; above, its bottom just
+		// over it. A resize observer re-places it, so this retries.
+		await expect
+			.poll(async () => {
+				const box = await popup.boundingBox();
+				if (!box) return Number.POSITIVE_INFINITY;
+				return Math.min(
+					Math.abs(box.y - (symbol.bottom - scrolled)),
+					Math.abs(symbol.top - scrolled - (box.y + box.height)),
+				);
+			})
+			.toBeLessThanOrEqual(5);
+
+		// Resting on the same var on the other side, straight from the
+		// popup, moves it there with that side's answer.
+		await restOn(page, "old", "u/helper");
+		await expect(popup).toContainText('"Old doc."');
+		await expect(popup).toHaveCount(1);
+
+		// A symbol nothing answers for closes it.
+		await restOn(page, "new", "inc");
+		await expect(popup).toHaveCount(0);
+
+		await restOn(page, "new", "u/helper");
+		await expect(popup).toBeVisible();
 
 		// Leaving the diff closes it.
 		await page.mouse.move(5, 5);
 		await expect(popup).toHaveCount(0);
-
-		await restOn(page, "old", "u/helper");
-		await expect(popup).toContainText("Old doc.");
 	} finally {
 		await meerkat.kill();
 	}

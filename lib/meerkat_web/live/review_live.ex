@@ -736,7 +736,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     {:noreply,
      start_async(socket, :clj_hover, fn ->
-       %{id: id, hover: CljHover.hover(rid, idx, side, line, col)}
+       %{id: id, hover: hover(rid, idx, side, line, col)}
      end)}
   end
 
@@ -1023,10 +1023,15 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, push_event(socket, "clj:hover", reply)}
   end
 
-  def handle_async(:clj_hover, {:exit, reason}, socket) do
-    # muex:ignore observability: log text only
-    IO.puts(:stderr, "meerkat: Clojure hover failed: #{inspect(reason)}")
-    {:noreply, socket}
+  # A failed hover answers nothing, so the popup of the last var closes
+  # rather than standing in for the symbol now under the pointer.
+  defp hover(rid, idx, side, line, col) do
+    CljHover.hover(rid, idx, side, line, col)
+  catch
+    :exit, reason ->
+      # muex:ignore observability: log text only
+      IO.puts(:stderr, "meerkat: Clojure hover failed: #{inspect(reason)}")
+      nil
   end
 
   ## --- Render ---

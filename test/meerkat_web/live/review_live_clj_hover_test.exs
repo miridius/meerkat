@@ -99,13 +99,11 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
 
     params = %{"id" => 1, "file_index" => 0, "side" => "new", "line" => 1, "col" => 1}
 
-    # The task's own crash report goes to the logger.
-    {stderr, _log} =
-      ExUnit.CaptureLog.with_log(fn ->
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          render_hook(view, "clj.hover", params)
-          refute_push_event(view, "clj:hover", %{}, 500)
-        end)
+    # Answering nothing closes the popup of the var hovered before.
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        render_hook(view, "clj.hover", params)
+        assert_push_event(view, "clj:hover", %{id: 1, hover: nil}, 5_000)
       end)
 
     assert stderr =~ "Clojure hover failed"

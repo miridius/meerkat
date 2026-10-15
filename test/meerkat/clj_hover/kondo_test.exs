@@ -33,7 +33,7 @@ defmodule Meerkat.CljHover.KondoTest do
     text = "(ns a)\n\n(defn f\n  \"Doc.\"\n  [x]\n  x)\n\n(defmacro m [] 1)\n"
     analysis = Kondo.analyse_texts(dir, %{"src/a.clj" => text})
 
-    assert analysis.defs[{"a", "f"}] == %{
+    assert analysis.defs[{"a", "f", ".clj"}] == %{
              ns: "a",
              name: "f",
              file: "src/a.clj",
@@ -44,15 +44,16 @@ defmodule Meerkat.CljHover.KondoTest do
              macro: false
            }
 
-    assert %{macro: true, arglists: ["[]"]} = analysis.defs[{"a", "m"}]
-    assert %{col: 7, end_col: 8, ns: "a", name: "f"} in analysis.spans[{"src/a.clj", 3}]
+    assert %{macro: true, arglists: ["[]"]} = analysis.defs[{"a", "m", ".clj"}]
+    span = %{col: 7, end_col: 8, ns: "a", name: "f", lang: nil}
+    assert span in analysis.spans[{"src/a.clj", 3}]
     assert File.ls!(tmp) == []
   end
 
   test "writes no cache into the repo's .clj-kondo", %{dir: dir} do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
 
-    assert %{defs: %{{"a", "x"} => _}} =
+    assert %{defs: %{{"a", "x", ".clj"} => _}} =
              Kondo.analyse_texts(dir, %{"a.clj" => "(ns a)\n(def x 1)\n"})
 
     assert File.ls!(Path.join(dir, ".clj-kondo")) == []
@@ -61,8 +62,21 @@ defmodule Meerkat.CljHover.KondoTest do
   test "a var's last definition wins", %{dir: dir} do
     text = "(ns a)\n(declare f)\n(defn f \"Doc.\" [] 1)\n"
 
-    assert %{defs: %{{"a", "f"} => %{doc: "Doc.", row: 3}}} =
+    assert %{defs: %{{"a", "f", ".clj"} => %{doc: "Doc.", row: 3}}} =
              Kondo.analyse_texts(dir, %{"a.clj" => text})
+  end
+
+  test "a namespace's files in each language keep their own definitions", %{dir: dir} do
+    texts = %{"a.clj" => "(ns a)\n(def x 1)\n", "a.cljs" => "(ns a)\n\n(def x 2)\n"}
+
+    assert %{defs: %{{"a", "x", ".clj"} => %{row: 2}, {"a", "x", ".cljs"} => %{row: 3}}} =
+             Kondo.analyse_texts(dir, texts)
+  end
+
+  test "a .cljc file's spans name each reader branch's language", %{dir: dir} do
+    text = "(ns a)\n(def x 1)\n#?(:cljs x)\n"
+    %{spans: spans} = Kondo.analyse_texts(dir, %{"a.cljc" => text})
+    assert [%{name: "x", lang: "cljs"}] = spans[{"a.cljc", 3}]
   end
 
   test "output that isn't an analysis analyses to nothing", %{dir: dir} do
@@ -71,7 +85,7 @@ defmodule Meerkat.CljHover.KondoTest do
     assert capture_io(:stderr, fn ->
              assert Kondo.analyse_texts(dir, %{"a.clj" => ""}) == @empty
            end) =~
-             "clj-kondo gave no analysis"
+             "clj-kondo exited 0 with no analysis in #{dir}"
   end
 
   test "an analysis missing its var lists analyses to nothing", %{dir: dir} do

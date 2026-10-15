@@ -8,16 +8,18 @@ defmodule Meerkat.CljHover.Kondo do
   applies, with `--cache false`, so it writes nothing there.
   """
 
-  # muex:ignore equivalent: kondo reads the config's first form, so a character after it changes nothing
+  # muex:ignore equivalent: only an appended char survives; kondo reads the config's first form
   @config "{:output {:format :json} :analysis {:arglists true} :linters ^:replace {}}"
-  # muex:ignore equivalent: it changes only speed, and kondo ignores the unknown flag a mutant makes
+  # muex:ignore equivalent: only an appended char survives; kondo ignores that unknown flag
   @parallel "--parallel"
 
   @type span :: %{
           col: pos_integer(),
           end_col: pos_integer(),
           ns: String.t(),
-          name: String.t()
+          name: String.t(),
+          # In a `.cljc` file, the reader branch's language; nil elsewhere.
+          lang: String.t() | nil
         }
 
   @type definition :: %{
@@ -33,7 +35,9 @@ defmodule Meerkat.CljHover.Kondo do
 
   @type analysis :: %{
           spans: %{optional({String.t(), pos_integer()}) => [span]},
-          defs: %{optional({String.t(), String.t()}) => definition}
+          defs: %{
+            optional({ns :: String.t(), name :: String.t(), ext :: String.t()}) => definition
+          }
         }
 
   @empty %{spans: %{}, defs: %{}}
@@ -69,7 +73,8 @@ defmodule Meerkat.CljHover.Kondo do
   defp run(root, path) do
     args = ["--cache", "false", @parallel, "--config", @config, "--lint", path]
     # Kondo exits non-zero when it reports findings; the JSON is what counts.
-    {output, _status} = System.cmd("clj-kondo", args, cd: root)
+    # Its stderr passes through to meerkat's.
+    {output, status} = System.cmd("clj-kondo", args, cd: root)
 
     case Jason.decode(output) do
       {:ok, %{"analysis" => analysis}} ->
@@ -77,7 +82,7 @@ defmodule Meerkat.CljHover.Kondo do
 
       _ ->
         # muex:ignore observability: log text only
-        IO.puts(:stderr, "meerkat: clj-kondo gave no analysis")
+        IO.puts(:stderr, "meerkat: clj-kondo exited #{status} with no analysis in #{root}")
         @empty
     end
   end
@@ -96,14 +101,22 @@ defmodule Meerkat.CljHover.Kondo do
         named,
         fn {v, _ns} -> {v["filename"], v["name-row"]} end,
         fn {v, ns} ->
-          %{col: v["name-col"], end_col: v["name-end-col"], ns: ns, name: v["name"]}
+          %{
+            col: v["name-col"],
+            end_col: v["name-end-col"],
+            ns: ns,
+            name: v["name"],
+            lang: v["lang"]
+          }
         end
       )
 
-    # The last definition of a var wins, as in Clojure: `declare`, then `defn`.
+    # The last definition of a var wins, as in Clojure: `declare`, then
+    # `defn`. A namespace's `.clj` and `.cljs` files are separate, so the
+    # file's extension is in the key.
     defs =
       Map.new(definitions, fn d ->
-        {{d["ns"], d["name"]},
+        {{d["ns"], d["name"], Path.extname(d["filename"])},
          %{
            ns: d["ns"],
            name: d["name"],
@@ -132,8 +145,8 @@ defmodule Meerkat.CljHover.Kondo do
   @doc """
   The absolute path of the file that the user's own clj-kondo runs
   recorded for namespace `ns` in `root`'s `.clj-kondo/.cache`, trying
-  the cache's `langs` (`"clj"`, `"cljs"`, `"cljc"`) in order; nil when
-  none records a file that is still there.
+  the cache languages in `langs` (of `"clj"`, `"cljs"`, `"cljc"`) in
+  the order given; nil when none records a file that is still there.
 
   Each cached namespace is a transit map whose `:filename` is the path
   kondo linted, relative to where it ran or absolute, or `jar:entry`,
