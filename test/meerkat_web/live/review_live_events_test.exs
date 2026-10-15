@@ -213,6 +213,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute has_element?(view, ".version-chip-btn[disabled]")
     # The VersionChip hook reveals the popover on click.
     assert has_element?(view, ".version-popover[hidden]")
+    # Shown when the toolbar is short of room and cuts the chip to its count.
+    assert has_element?(view, ".version-popover-version", ~r/^\s*meerkat\s+abc1234\s*$/)
 
     assert has_element?(
              view,

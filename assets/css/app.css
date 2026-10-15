@@ -272,7 +272,6 @@ a.chip-link:hover {
 }
 
 .branch-chip .chip-value {
-  max-width: 22ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -336,6 +335,15 @@ a.chip-link:hover .chip-value {
 }
 .version-popover[hidden] {
   display: none;
+}
+
+.version-popover-version {
+  display: none;
+  padding: 2px 6px 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--chip-border);
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .version-popover-title {
@@ -816,7 +824,9 @@ a.chip-link:hover .chip-value {
 }
 .counts-slash,
 .toolbar-settings-popover .view-controls,
-.diff-toolbar[data-squeeze~="version"] .version-chip-btn > .chip-label,
+.diff-toolbar[data-squeeze~="version"] .version-chip-btn > :not(.version-badge),
+.diff-toolbar[data-squeeze~="version"] .version-chip-btn:has(> .version-badge[hidden]),
+.diff-toolbar[data-squeeze~="version"] .version-chip-wrap:has(.version-badge[hidden]):has(.version-popover[hidden]),
 .diff-toolbar[data-squeeze~="files"] .files-label,
 .diff-toolbar[data-squeeze~="counts"] .counts-showing,
 .diff-toolbar[data-squeeze~="counts"] .counts-of,
@@ -825,6 +835,12 @@ a.chip-link:hover .chip-value {
 }
 .diff-toolbar[data-squeeze~="counts"] .counts-slash {
   display: inline;
+}
+/* The version chip shows only its count of updates, and is gone when there
+   are none. Opening its drop-down, which then names the version, marks them
+   seen, so the drop-down stays open where the chip was. */
+.diff-toolbar[data-squeeze~="version"] .version-popover-version {
+  display: block;
 }
 .diff-toolbar[data-squeeze~="conn"] .conn-indicator {
   padding: 0;

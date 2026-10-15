@@ -13,9 +13,8 @@ const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
 // It wraps only below about 230px, too narrow for the file header.
 const NARROW_WIDTHS = [900, 600];
 
-const SHORT_BRANCH = "fix/typo";
-// A branch name long enough that its chip clips it, with the toolbar
-// still taking no squeeze step at 1500px.
+// A long branch name, with the toolbar still taking no squeeze step at
+// 1500px.
 const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
 
 function stickyFixture() {
@@ -26,22 +25,6 @@ function stickyFixture() {
 	});
 	fixture.git("branch", "-m", LONG_BRANCH);
 	return fixture;
-}
-
-function branchChip(page: Page) {
-	return page.evaluate(() => {
-		const value = document.querySelector(".branch-chip .chip-value") as HTMLElement;
-		return {
-			title: value.getAttribute("title"),
-			clipped: value.offsetWidth < value.scrollWidth,
-		};
-	});
-}
-
-function setBranchChipText(page: Page, name: string) {
-	return page.evaluate((text) => {
-		(document.querySelector(".branch-chip .chip-value") as HTMLElement).textContent = text;
-	}, name);
 }
 
 type Probe = {
@@ -91,7 +74,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	});
 	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
 
-	test(`the header is pinned on the first paint, the review spans the window, a long branch name is clipped, and narrowing it from ${ONE_ROW_WIDTH}px to ${NARROW_WIDTHS.join("px and ")}px re-pins the header below the toolbar's new height`, async ({
+	test(`the header is pinned on the first paint, the review spans the window, and narrowing it from ${ONE_ROW_WIDTH}px to ${NARROW_WIDTHS.join("px and ")}px re-pins the header below the toolbar's new height`, async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
@@ -143,22 +126,6 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 			expect(main.clientWidth).toBeGreaterThan(main.viewportWidth * 0.95);
 
 			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
-
-			// The chip's text is the branch name, which the LiveView tests
-			// cover; only its fit is a browser question, so the short name is
-			// put in the same chip rather than a second review.
-			const chip = await branchChip(page);
-			expect(chip.clipped, "the chip renders less of the branch name than the name holds").toBe(true);
-			expect(
-				chip.title,
-				"the whole branch name is on the tooltip, so hovering recovers what the chip cut",
-			).toBe(LONG_BRANCH);
-			await setBranchChipText(page, SHORT_BRANCH);
-			expect(
-				(await branchChip(page)).clipped,
-				"the cap is wide enough to leave an ordinary branch name intact",
-			).toBe(false);
-			await setBranchChipText(page, LONG_BRANCH);
 
 			await scrollDeepIntoTheFirstFile(page);
 
