@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
-  import { type CljHover, dedentDoc, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
+  import { type CljHover, dedentDoc, openingTab, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
 
   // The Clojure hover popup (docs/features/clojure-hover.md): two tabs,
   // a var's signature and docstring under its name, and its source,
@@ -25,7 +25,8 @@
     onpointerleave: () => void;
   } = $props();
 
-  let tab = $state<"doc" | "source">("doc");
+  // A tab click overrides it.
+  let tab = $derived(openingTab(hover));
 
   // The diff highlighter's own AST, so the colours follow the diff's
   // theme through the same CSS variables.
@@ -163,6 +164,20 @@
     gap: 8px;
     padding: 2px 8px;
     white-space: nowrap;
+    /* Quieter than the accent fill of the app's other active buttons. */
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+  }
+  .clj-hover-tab:hover {
+    background: var(--panel-2);
+    border-color: transparent;
+    color: var(--text);
+  }
+  .clj-hover-tab.active {
+    background: var(--chip-bg);
+    border-color: var(--border);
+    color: var(--text);
   }
   .clj-hover-name {
     font-weight: 600;
@@ -170,9 +185,6 @@
   .clj-hover-tag,
   .clj-hover-none {
     color: var(--muted);
-  }
-  .clj-hover-tab.active .clj-hover-tag {
-    color: inherit;
   }
   .clj-hover-where {
     margin-left: auto;

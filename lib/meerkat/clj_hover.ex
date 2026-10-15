@@ -25,6 +25,7 @@ defmodule Meerkat.CljHover do
           name: String.t(),
           macro: boolean(),
           where: String.t(),
+          in_repo: boolean(),
           line: pos_integer(),
           arglists: [String.t()],
           doc: String.t() | nil,
@@ -107,10 +108,11 @@ defmodule Meerkat.CljHover do
       Map.new(tasks, fn {side, task} ->
         analysis = Task.await(task, :infinity)
 
+        # A diff file is the repo's own.
         defs =
           Map.new(analysis.defs, fn {k, d} ->
-            # muex:ignore equivalent: kondo's definitions never hold :text, so put and put_new agree
-            {k, Map.put(d, :text, texts[side][d.file])}
+            # muex:ignore equivalent: kondo's definitions hold neither :text nor :in_repo, so merge order doesn't matter
+            {k, Map.merge(d, %{text: texts[side][d.file], in_repo: true})}
           end)
 
         {side, %{spans: analysis.spans, defs: defs}}
@@ -235,10 +237,15 @@ defmodule Meerkat.CljHover do
       {:ok, text} ->
         where = where(location, root)
 
+        # A jar, or a directory outside the repo, is a dependency's.
+        in_repo = elem(location, 0) == :dir and Path.type(where) == :relative
+
         root
         |> Kondo.analyse_texts(%{rel => text})
         |> Map.fetch!(:defs)
-        |> Map.new(fn {k, d} -> {k, Map.merge(d, %{text: text, file: where})} end)
+        |> Map.new(fn {k, d} ->
+          {k, Map.merge(d, %{text: text, file: where, in_repo: in_repo})}
+        end)
 
       :error ->
         # muex:ignore observability: log text only
@@ -255,6 +262,7 @@ defmodule Meerkat.CljHover do
       name: "#{d.ns}/#{d.name}",
       macro: d.macro,
       where: d.file,
+      in_repo: d.in_repo,
       line: d.row,
       arglists: d.arglists,
       doc: d.doc,

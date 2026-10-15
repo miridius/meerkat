@@ -1,5 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { dedentDoc, popupLeft, popupSide } from "./cljHover";
+import { type CljHover, dedentDoc, openingTab, popupLeft, popupSide } from "./cljHover";
+
+describe("openingTab", () => {
+	const hover = (in_repo: boolean): CljHover => ({
+		name: "a/f",
+		macro: false,
+		where: "src/a.clj",
+		in_repo,
+		line: 1,
+		arglists: [],
+		doc: null,
+		source: "(defn f [])",
+	});
+
+	test("opens the repo's own code on its source, a dependency's on its docs", () => {
+		expect(openingTab(hover(true))).toBe("source");
+		expect(openingTab(hover(false))).toBe("doc");
+	});
+});
 
 describe("dedentDoc", () => {
 	test("removes the indent the later lines share, keeping deeper indents", () => {

@@ -80,13 +80,13 @@ defmodule Meerkat.CljHoverTest do
                 [dep.lib :as lib]
                 [dep.shared :as sh]
                 [vend.tool :as t]
-                [vend.locked :as l]))
+                [vend.locked :as l] [ext.lib :as x]))
 
     (defn run [y]
       (lib/dep-fn (u/helper (o/thing y))))
 
     (defn more []
-      (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra))
+      (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra) (x/ext-fn))
     """,
     "web/app/ui.cljs" => """
     (ns app.ui
@@ -134,7 +134,11 @@ defmodule Meerkat.CljHoverTest do
     write(dir, "vendor/vend/tool.clj", "(ns vend.tool)\n\n(defn tool-fn \"Vendor doc.\" [] 1)\n")
     locked = write(dir, "vendor/vend/locked.clj", "(ns vend.locked)\n\n(defn locked-fn [] 1)\n")
     File.chmod!(locked, 0)
-    write(dir, ".cpcache/1.cp", "libs/dep.jar:vendor\n")
+    # A dependency's directory outside the repo, as a git dep's is.
+    ext = Meerkat.TestHelpers.tmp_path("meerkat-clj-hover-ext")
+    on_exit(fn -> File.rm_rf!(ext) end)
+    write(ext, "ext/lib.clj", "(ns ext.lib)\n\n(defn ext-fn \"Ext doc.\" [] 1)\n")
+    write(dir, ".cpcache/1.cp", "libs/dep.jar:vendor:#{ext}\n")
 
     # The user's kondo run, as a hook or editor runs it, from the repo
     # root with the default cache. `app.util` is linted last in the
@@ -254,6 +258,18 @@ defmodule Meerkat.CljHoverTest do
 
     assert %{doc: "Vendor doc.", where: "vendor/vend/tool.clj"} =
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
+  end
+
+  test "a var is the repo's own only when its file is inside the repo", ctx do
+    # A diff file, a file kondo's cache names, and a classpath directory in the repo.
+    for needle <- ["u/helper", "o/thing", "t/tool-fn"],
+        do: assert(%{in_repo: true} = hover_on(ctx, "src/app/core.clj", :new, needle))
+
+    # A jar, and a classpath directory outside the repo.
+    assert %{in_repo: false} = hover_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
+
+    assert %{in_repo: false, doc: "Ext doc.", where: "/" <> _} =
+             hover_on(ctx, "src/app/core.clj", :new, "x/ext-fn")
   end
 
   test "an unreadable dependency file answers nothing", ctx do

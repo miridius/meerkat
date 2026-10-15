@@ -26,7 +26,10 @@ not necessarily the worktree.
 
 ## Popup
 
-The header is two tabs, and the popup opens on the left one.
+The header is two tabs. The popup opens on Source for a var defined
+in a file inside the repo, and on Docs for one from a dependency: a
+jar, or a directory outside the repo. The selected tab is marked by a
+subtle background, not the accent colour.
 
 - **Docs**, labelled with the var's qualified name (`ns/name`), marked
   `macro` for a macro: its signature, one line per arglist, then its

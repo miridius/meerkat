@@ -88,18 +88,18 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 		const popup = page.locator('[data-test="clj-hover"]');
 
 		await restOn(page, "new", "u/helper");
-		// It opens on the docs tab.
-		const docTab = popup.getByRole("tab", { name: "app.util/helper" });
-		await expect(docTab).toHaveAttribute("aria-selected", "true");
-		await expect(popup).toContainText("New doc.");
-		await expect(popup.locator(".clj-hover-source")).toHaveCount(0);
-
-		// The pointer can move onto the popup and switch to the source tab,
-		// highlighted by the diff's own highlighter.
-		await popup.getByRole("tab", { name: "src/app/util.clj:3" }).click();
+		// The repo's own var opens on its source, highlighted by the
+		// diff's own highlighter.
+		const sourceTab = popup.getByRole("tab", { name: "src/app/util.clj:3" });
+		await expect(sourceTab).toHaveAttribute("aria-selected", "true");
 		await expect(popup.locator(".clj-hover-doc")).toHaveCount(0);
 		await expect(popup.locator('.clj-hover-source span[style*="--diff-view-"]').first()).toBeAttached();
 		await expect(popup.locator(".clj-hover-source")).toContainText('"New doc."');
+
+		// The pointer can move onto the popup and switch to the docs tab.
+		await popup.getByRole("tab", { name: "app.util/helper" }).click();
+		await expect(popup.locator(".clj-hover-source")).toHaveCount(0);
+		await expect(popup.locator(".clj-hover-doc")).toHaveText("New doc.");
 
 		// Leaving the diff closes it.
 		await page.mouse.move(5, 5);
@@ -128,7 +128,6 @@ test("a long source scrolls in a popup the reviewer can resize, in unified view"
 		const popup = page.locator('[data-test="clj-hover"]');
 
 		await restOn(page, "new", "u/helper");
-		await popup.getByRole("tab", { name: "src/app/util.clj:3" }).click();
 		const panel = popup.getByRole("tabpanel");
 		const last = panel.getByText("(+ x 79)");
 		await expect(last).toBeAttached();

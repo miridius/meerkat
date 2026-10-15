@@ -10,11 +10,19 @@ export type CljHover = {
 	name: string;
 	macro: boolean;
 	where: string;
+	/** Defined in a file inside the repo, not a dependency's. */
+	in_repo: boolean;
 	line: number;
 	arglists: string[];
 	doc: string | null;
 	source: string;
 };
+
+/** The tab the popup opens on: the source of the repo's own code, the
+ *  docs of a dependency's. */
+export function openingTab(hover: CljHover): "doc" | "source" {
+	return hover.in_repo ? "source" : "doc";
+}
 
 export type HoverSpot = {
 	side: "old" | "new";
