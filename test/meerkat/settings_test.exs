@@ -149,6 +149,7 @@ defmodule Meerkat.SettingsTest do
       end)
 
     assert_receive :subscribed
+    ref = Process.monitor(other)
     Phoenix.PubSub.subscribe(Meerkat.PubSub, Settings.topic())
 
     Settings.put(:tab_size, 8)
@@ -163,7 +164,7 @@ defmodule Meerkat.SettingsTest do
            }
 
     assert %{wrap_lines: false, tab_size: 8} = Settings.load()
-    refute Process.alive?(other)
+    assert_receive {:DOWN, ^ref, :process, ^other, :normal}
   end
 
   test "concurrent puts of different settings all land", %{path: path} do
@@ -190,7 +191,8 @@ defmodule Meerkat.SettingsTest do
 
       for %Task{pid: pid} <- tasks, do: assert_receive({:ready, ^pid})
       for %Task{pid: pid} <- tasks, do: send(pid, :go)
-      Task.await_many(tasks)
+      # :global.trans backs off for a random while when the lock is taken.
+      Task.await_many(tasks, :infinity)
 
       assert Settings.load() == Map.new(changes), "round #{round}"
     end

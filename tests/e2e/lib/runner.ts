@@ -64,7 +64,7 @@ process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
 // The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
 // toolbar settings and runs reattaching to it share its settings. Named like
 // a runs dir, so the reaper removes it too.
-function configHome(runsDir: string): string {
+export function configHome(runsDir: string): string {
 	return `${runsDir}cfg`;
 }
 

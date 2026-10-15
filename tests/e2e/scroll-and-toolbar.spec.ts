@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import type { BrowserContext, Page } from "@playwright/test";
 import { makeFixture, manifestRoot } from "./lib/fixture";
-import { startMeerkat } from "./lib/runner";
+import { configHome, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 const PROD_MANIFEST = [
@@ -151,7 +151,7 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await theirs.columns.fill("60");
 		await expect(mine.columns).toHaveValue("60");
 
-		second = await startMeerkat({ env: { XDG_CONFIG_HOME: `${meerkat.runsDir}cfg` } });
+		second = await startMeerkat({ env: { XDG_CONFIG_HOME: configHome(meerkat.runsDir) } });
 		const elsewhere = toolbar(await openJoined(elsewhereContext, second.url));
 		await expect(elsewhere.wrap).not.toBeChecked();
 		await expect(elsewhere.tab8).toHaveClass(/active/);
@@ -179,6 +179,7 @@ test("a dismissed line-comment hint stays hidden after a reload", async ({ page 
 	const meerkat = await startMeerkat();
 	try {
 		await page.goto(meerkat.url);
+		await expect(page.locator("[data-phx-main]")).toHaveClass(/phx-connected/);
 		const hint = page.locator("#meerkat-hint");
 		await expect(hint).toBeVisible();
 		await hint.locator(".hint-dismiss").click();
