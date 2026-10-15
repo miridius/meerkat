@@ -62,7 +62,7 @@ run_checks() {
 
   step mix deps.get
   step bun scripts/hex-audit.ts
-  step pnpm audit --prod
+  step pnpm audit
   step pnpm install --frozen-lockfile --ignore-scripts --prefer-offline
   step mix compile --warnings-as-errors
   step mix format --check-formatted
