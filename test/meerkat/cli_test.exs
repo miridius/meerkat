@@ -680,11 +680,22 @@ defmodule Meerkat.CLITest do
     end
 
     test "is read from the build's priv/static by default" do
-      path = Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
-      keys = [:vite_manifest, :cache_static_manifest_latest]
+      assert Application.fetch_env(:meerkat, :vite_manifest_path) == :error
 
-      assert Keyword.take(CLI.endpoint_config_for_test(0), keys) ==
-               Keyword.take(CLI.endpoint_config_for_test(0, path), keys)
+      assert CLI.vite_manifest_path_for_test() ==
+               Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
+    end
+
+    test "is read from :vite_manifest_path when it is set" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-manifest")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      path = Path.join(dir, "manifest.json")
+      json = ~s({"js/app.js": {"file": "assets/app-A1.js", "isEntry": true}})
+      File.write!(path, json)
+      Application.put_env(:meerkat, :vite_manifest_path, path)
+      on_exit(fn -> Application.delete_env(:meerkat, :vite_manifest_path) end)
+
+      assert CLI.endpoint_config_for_test(0)[:vite_manifest] == PhoenixVite.Manifest.parse(json)
     end
   end
 
