@@ -329,10 +329,14 @@ defmodule Meerkat.ShepherdTest do
       backend = await_backend_pid(runs)
 
       # The shepherd's EXIT trap writes `exit` into its run dir after the
-      # TERM; deleting the dir before then races that write.
+      # TERM; deleting the dir before then races that write. Not every run
+      # dir gets an `exit`, so each wait gets 5 s, not @timeout_ms: several
+      # full waits would outlast ExUnit's 180 s on_exit limit.
       on_exit(fn ->
         System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
-        for run <- Path.wildcard(Path.join(runs, "*")), do: await_file(Path.join(run, "exit"))
+
+        for run <- Path.wildcard(Path.join(runs, "*")),
+            do: await_file(Path.join(run, "exit"), 100)
       end)
 
       {:os_pid, caller} = Port.info(port, :os_pid)
