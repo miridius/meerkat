@@ -58,6 +58,9 @@ remove commits a merged PR still references). Before committing:
   as `scripts/gate-lock.sh`, stays bash with it.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
+- **Headless browsers only.** Every browser an agent runs is headless:
+  Playwright in headless mode, real Chrome with `--headless=new`. Never
+  open a visible browser window on the user's screen.
 
 ## Workflow
 
