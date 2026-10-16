@@ -218,10 +218,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
 // live owners, including concurrent runs, and dirs without a PID are left alone.
 export async function reapOrphanedBackends(): Promise<void> {
-	for (const name of readdirSync(tmpdir())) {
-		const owner = name.match(OWNED_RUNS_DIR_RE);
-		if (!owner || alive(Number(owner[1]))) continue;
-		const dir = join(tmpdir(), name);
+	for (const dir of orphanedTmpDirs(OWNED_RUNS_DIR_RE)) {
 		await stopBackends(dir);
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -232,10 +229,15 @@ export async function reapOrphanedBackends(): Promise<void> {
 // concurrent runs, and dirs without a PID are left alone. Run it after
 // `reapOrphanedBackends`, so no backend is left serving a removed fixture.
 export function reapOrphanedFixtures(): void {
+	for (const dir of orphanedTmpDirs(OWNED_TMP_DIR_RE)) rmSync(dir, { recursive: true, force: true });
+}
+
+// The OS temp dir entries whose name `ownerPid` matches, capturing the PID of
+// the process that made them, and whose owner is no longer alive.
+function* orphanedTmpDirs(ownerPid: RegExp): Generator<string> {
 	for (const name of readdirSync(tmpdir())) {
-		const owner = name.match(OWNED_TMP_DIR_RE);
-		if (!owner || alive(Number(owner[1]))) continue;
-		rmSync(join(tmpdir(), name), { recursive: true, force: true });
+		const owner = name.match(ownerPid);
+		if (owner && !alive(Number(owner[1]))) yield join(tmpdir(), name);
 	}
 }
 
