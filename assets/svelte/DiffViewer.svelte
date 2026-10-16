@@ -412,7 +412,7 @@
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
         // The library reuses row elements for other lines, so the moved
-        // tint and links must be placed again by line number.
+        // tint and arrows must be placed again by line number.
         applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
         drawRulers();
       });
@@ -1070,15 +1070,16 @@
   // gets a coloured background (4 colors cycled by pairId) on the
   // covered rows, and an arrow in place of each line's +/− mark: → on
   // the new side, ← on the old. Each arrow is a button titled with
-  // where the code moved. A click asks the server to show the
-  // counterpart's file; app.js then dispatches a document-level
+  // where the code moved. A click dispatches a document-level
   // `meerkat-move-jump` event the DiffViewers listen for, so the target
-  // lines scroll into view and flash.
+  // lines scroll into view and flash. When no viewer has them on the
+  // page, it asks the server to show the counterpart's file, and app.js
+  // dispatches the event again once that file renders.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
     // A split/unified toggle, or a wrap toggle in split view, replaces
-    // the rows, dropping the moved tint and links.
+    // the rows, dropping the moved tint and arrows.
     void diffViewMode;
     void wrap_lines;
     return afterTwoFrames(() => applyMovedHighlights(blocks));
@@ -1136,6 +1137,14 @@
     arrow.setAttribute("aria-label", arrow.title);
     arrow.addEventListener("click", (e) => {
       e.stopPropagation();
+      const detail = {
+        fileName: block.to_file,
+        side: block.to_side,
+        lineStart: block.to_line_start,
+        lineEnd: block.to_line_end,
+      };
+      // A counterpart already on the page takes the jump at once.
+      if (!document.dispatchEvent(new CustomEvent("meerkat-move-jump", { detail, cancelable: true }))) return;
       live.pushEvent("moved.jump", {
         file_name: block.to_file,
         side: block.to_side,
@@ -1166,7 +1175,7 @@
   // Listen for jump events to a moved block's counterpart. If the
   // event's fileName matches THIS file and its lines are rendered,
   // scroll them into view, flash a temporary highlight so the reviewer
-  // can spot them, and cancel the event to tell app.js it landed.
+  // can spot them, and cancel the event to tell its sender it landed.
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {

@@ -9,16 +9,16 @@ defmodule Meerkat.Moves do
   shorter one, such as a blank or `}`, is short.
 
   - A block is a run of identical consecutive removed and added lines
-    that starts at a substantial line. Short lines inside it must
-    match too, and do not break it.
+    that starts at a substantial line. Short lines inside it or at its
+    end must match too, and do not break it.
   - It needs `@min_substantial_lines` substantial lines.
   - On each side, the changed blank lines directly before and after
-    it join the block, unless a longer block has taken them. git
-    often puts a moved block's blank line after it on one side and
+    it join the block, unless a block found earlier has taken them.
+    git often puts a moved block's blank line after it on one side and
     before it on the other.
   - It counts as moved when, with those blank lines, it spans
     `@min_block_size` lines on either side, and its lines hold
-    `@min_alnum_chars` letters and digits, as in git's
+    `@min_alnum_chars` letters and digits, git's threshold for
     `--color-moved`: so `end` / `end` / blank is not a move. Each
     side's block covers its own lines, so the two can differ in length.
 
@@ -63,18 +63,7 @@ defmodule Meerkat.Moves do
       |> Enum.flat_map(&candidates_from(&1, added_index, removed_arr, added_arr))
       |> Enum.sort_by(&elem(&1, 2), :desc)
 
-    {moves, _, _} =
-      Enum.reduce(candidates, {[], MapSet.new(), MapSet.new()}, fn {r_start, a_start, len},
-                                                                   {acc, r_taken, a_taken} ->
-        r = extend(removed_arr, r_start, len, r_taken)
-        a = extend(added_arr, a_start, len, a_taken)
-
-        if taken?(r_taken, r) or taken?(a_taken, a) or not qualifies?(removed_arr, r, a) do
-          {acc, r_taken, a_taken}
-        else
-          {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
-        end
-      end)
+    moves = pick(candidates, removed_arr, added_arr, {[], MapSet.new(), MapSet.new()})
 
     # Build moved-line entries indexed by file_idx in O(M) total, then
     # do one pass over `files` to merge them in.
@@ -106,10 +95,46 @@ defmodule Meerkat.Moves do
     end
   end
 
+  # The blocks taken from the candidate runs, longest first, returned
+  # newest first. A run whose trailing blanks an earlier block took goes
+  # back in line at its shorter length.
+  defp pick([], _removed_arr, _added_arr, {acc, _r_taken, _a_taken}), do: acc
+
+  defp pick([{r_start, a_start, len} | rest], removed_arr, added_arr, {acc, r_taken, a_taken}) do
+    case drop_taken_blanks(removed_arr, r_start, a_start, len, r_taken, a_taken) do
+      ^len ->
+        r = extend(removed_arr, r_start, len, r_taken)
+        a = extend(added_arr, a_start, len, a_taken)
+
+        state =
+          if taken?(r_taken, r) or taken?(a_taken, a) or not qualifies?(removed_arr, r, a),
+            do: {acc, r_taken, a_taken},
+            else: {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
+
+        pick(rest, removed_arr, added_arr, state)
+
+      shorter ->
+        {longer, others} = Enum.split_while(rest, &(elem(&1, 2) >= shorter))
+        queue = longer ++ [{r_start, a_start, shorter} | others]
+        pick(queue, removed_arr, added_arr, {acc, r_taken, a_taken})
+    end
+  end
+
+  # The run's length without the blank lines at its end that a block
+  # found earlier has taken in: they are that block's, not a clash with it.
+  defp drop_taken_blanks(removed_arr, r_start, a_start, len, r_taken, a_taken) do
+    last = len - 1
+
+    if elem(removed_arr, r_start + last).content == "" and
+         (MapSet.member?(r_taken, r_start + last) or MapSet.member?(a_taken, a_start + last)),
+       do: drop_taken_blanks(removed_arr, r_start, a_start, last, r_taken, a_taken),
+       else: len
+  end
+
   # The block's index range on one side: the run, widened over the
   # changed blank lines directly before and after it that no block has
-  # taken yet. A short line such as `}` or `end` would let unrelated
-  # code that shares one count as moved.
+  # taken yet. Widening over a line such as `}` would let unrelated code
+  # that shares one count as moved.
   defp extend(arr, start, len, taken) do
     widen_back(arr, start, taken)..widen_forward(arr, start + len - 1, taken)
   end

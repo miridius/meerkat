@@ -158,7 +158,7 @@ function misplacedArrows(file: Locator) {
 	});
 }
 
-test("moved lines keep their tint and arrows when a collapsed section expands or the view changes, and a link flashes its counterpart", async ({
+test("moved lines keep their tint and arrows when a collapsed section expands or the view changes, and an arrow flashes its counterpart", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
@@ -191,6 +191,13 @@ test("moved lines keep their tint and arrows when a collapsed section expands or
 		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
 		await expand.first().click();
 		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+		expect(await flashOnClick(file)).toContain(FLASH);
+
+		// A counterpart already on the page needs no round trip to the server.
+		const flashing = () =>
+			file.evaluate((root) => Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0));
+		await expect.poll(flashing).toBe(false);
+		await page.evaluate(() => (window as unknown as { liveSocket: { disconnect(): void } }).liveSocket.disconnect());
 		expect(await flashOnClick(file)).toContain(FLASH);
 	} finally {
 		await meerkat.kill();
@@ -228,26 +235,34 @@ test("each moved line's arrow sits in the +/− column on screen, clear of code,
 	}
 });
 
-test("every moved line's arrow is a button that says where the code went and jumps to it by mouse or keyboard", async ({
+test("every moved line's arrow is a button that says where the code went and jumps to it by mouse or keyboard, opening its file if collapsed", async ({
 	page,
 }) => {
-	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
+	// helper2 moves from a.ts to the end of b.ts, as old lines 6-10 and
+	// new lines 5-9 with the blank first.
+	const fixture = makeFixture({ files: { "a.ts": [1, 2, 3].map(helper).join("\n"), "b.ts": helper(4) } });
+	fixture.git("commit", "-q", "-m", "base");
+	writeFileSync(join(fixture.dir, "a.ts"), [1, 3].map(helper).join("\n"));
+	writeFileSync(join(fixture.dir, "b.ts"), [4, 2].map(helper).join("\n"));
+	fixture.git("add", "a.ts", "b.ts");
+	const meerkat = await startMeerkat({ fixture });
 	try {
 		// Short: the counterpart starts out of view.
 		await page.setViewportSize({ width: 1000, height: 400 });
 		await page.goto(meerkat.url);
-		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
-		const oldArrows = file.getByRole("button", { name: "Moved to util.ts lines 55-59", exact: true });
+		const file = page.locator(".file-section").filter({ hasText: "a.ts" });
+		const target = page.locator(".file-section").filter({ hasText: "b.ts" });
+		const oldArrows = file.getByRole("button", { name: "Moved to b.ts lines 5-9", exact: true });
 		await expect(oldArrows).toHaveCount(5);
 		await expect(oldArrows).toHaveText(Array(5).fill("←"));
-		await expect(oldArrows.nth(2)).toHaveAttribute("title", "Moved to util.ts lines 55-59");
-		await expect(file.getByRole("button", { name: "Moved from util.ts lines 6-10", exact: true })).toHaveText(
+		await expect(oldArrows.nth(2)).toHaveAttribute("title", "Moved to b.ts lines 5-9");
+		await expect(target.getByRole("button", { name: "Moved from a.ts lines 6-10", exact: true })).toHaveText(
 			Array(5).fill("→"),
 		);
 		await oldArrows.nth(2).hover();
 		await expect(oldArrows.nth(2)).toHaveCSS("background-color", "rgb(48, 54, 61)");
 
-		const counterpart = file.locator("td.diff-line-new-num:has(span[data-line-num='55'])");
+		const counterpart = target.locator("td.diff-line-new-num:has(span[data-line-num='5'])");
 		const scrollToTop = () => page.evaluate(() => window.scrollTo(0, 0));
 		await expect(counterpart).not.toBeInViewport();
 		await oldArrows.last().click();
@@ -279,31 +294,11 @@ test("every moved line's arrow is a button that says where the code went and jum
 		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
 		expect(copied).toContain("helper2(input");
 		expect(copied).not.toMatch(/[←→]/);
-	} finally {
-		await meerkat.kill();
-	}
-});
 
-test("an arrow whose counterpart's file is collapsed opens that file and jumps to the lines", async ({ page }) => {
-	// helper2 moves from a.ts to the end of b.ts, as old lines 6-10 and
-	// new lines 5-9 with the blank first.
-	const fixture = makeFixture({ files: { "a.ts": [1, 2, 3].map(helper).join("\n"), "b.ts": helper(4) } });
-	fixture.git("commit", "-q", "-m", "base");
-	writeFileSync(join(fixture.dir, "a.ts"), [1, 3].map(helper).join("\n"));
-	writeFileSync(join(fixture.dir, "b.ts"), [4, 2].map(helper).join("\n"));
-	fixture.git("add", "a.ts", "b.ts");
-	const meerkat = await startMeerkat({ fixture });
-	try {
-		await page.goto(meerkat.url);
-		const target = page.locator(".file-section").filter({ hasText: "b.ts" });
-		const counterpart = target.locator("td.diff-line-new-num:has(span[data-line-num='5'])");
-		await expect(counterpart).toBeVisible();
+		// A collapsed counterpart's file opens, and all its lines flash.
 		await target.locator("button.file-row").click();
 		await expect(counterpart).toHaveCount(0);
-
-		const arrows = page.getByRole("button", { name: "Moved to b.ts lines 5-9", exact: true });
-		await expect(arrows).toHaveCount(5);
-		await arrows.nth(2).click();
+		await oldArrows.nth(2).click();
 		await expect(counterpart).toBeInViewport();
 		const flashingRows = () =>
 			target.evaluate(

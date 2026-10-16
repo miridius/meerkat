@@ -138,6 +138,15 @@ defmodule Meerkat.MovesTest do
       assert [%{line_start: 1, line_end: 3}] = a.moved_lines
     end
 
+    test "a short line that differs between the sides splits a block" do
+      files = [
+        file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "}", "beta line two"]))]),
+        file("b.txt", [hunk(1, 1, lines("+", ["alpha line one", ")", "beta line two"]))])
+      ]
+
+      assert moved(files) == [[], []]
+    end
+
     test "a changed short line next to a block stays out of it" do
       files = [
         file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two", ""]))]),
@@ -226,6 +235,34 @@ defmodule Meerkat.MovesTest do
       [a, b] = Moves.detect(files)
       assert a.moved_lines == []
       assert b.moved_lines == []
+    end
+
+    test "a changed blank away from two lines, or in another file, does not join them" do
+      two = lines("+", ["alpha line one", "beta line two"])
+
+      for removed <- [
+            [
+              file("a.txt", [
+                hunk(1, 1, [
+                  {"-", "alpha line one"},
+                  {"-", "beta line two"},
+                  {" ", "unchanged"},
+                  {"-", ""}
+                ])
+              ])
+            ],
+            [
+              file("z.txt", [hunk(5, 5, [{"-", ""}])]),
+              file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two"]))])
+            ],
+            [
+              file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two"]))]),
+              file("z.txt", [hunk(3, 3, [{"-", ""}])])
+            ]
+          ] do
+        files = removed ++ [file("b.txt", [hunk(1, 1, two)])]
+        assert Enum.all?(moved(files), &(&1 == []))
+      end
     end
 
     test "intra-file move within the same file" do
@@ -374,6 +411,99 @@ defmodule Meerkat.MovesTest do
                src.moved_lines
                |> Enum.map(&{&1.to_file, &1.line_start, &1.line_end})
                |> Enum.sort()
+    end
+
+    test "a blank that a longer block takes in still leaves a shorter block that ends in it" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("src.txt", [hunk(1, 1, lines("-", short ++ [""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", [""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ [""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 4..9, 0, "one.txt", 1..6), block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:new, 1..6, 0, "src.txt", 4..9)],
+               [block(:new, 1..4, 1, "src.txt", 1..3)]
+             ]
+    end
+
+    test "a blank that a longer block takes in on the added side still leaves the shorter block" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("one.txt", [hunk(1, 1, lines("-", short ++ [""]))]),
+        file("two.txt", [hunk(1, 1, lines("-", long))]),
+        file("dst.txt", [hunk(1, 1, lines("+", short ++ [""] ++ long))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..4, 1, "dst.txt", 1..3)],
+               [block(:old, 1..5, 0, "dst.txt", 4..9)],
+               [block(:new, 4..9, 0, "two.txt", 1..5), block(:new, 1..3, 1, "one.txt", 1..4)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks to a longer block waits behind longer runs" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six"]
+
+      files = [
+        file("copy.txt", [hunk(1, 1, lines("-", short ++ ["", "unrelated line"]))]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ ["", ""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:old, 3..9, 0, "one.txt", 1..7)],
+               [block(:new, 1..7, 0, "src.txt", 3..9)],
+               [block(:new, 1..4, 1, "copy.txt", 1..3)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks queues behind runs of its new length" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six"]
+
+      files = [
+        file("copy.txt", [hunk(1, 1, lines("-", short ++ ["unrelated line"]))]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ ["", ""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..2, 1, "two.txt", 1..4)],
+               [block(:old, 3..9, 0, "one.txt", 1..7)],
+               [block(:new, 1..7, 0, "src.txt", 3..9)],
+               [block(:new, 1..4, 1, "copy.txt", 1..2)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks still goes ahead of shorter runs" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("copy.txt", [
+          hunk(1, 1, lines("-", ["" | Enum.take(short, 2)] ++ ["unrelated line"]))
+        ]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ [""]))])
+      ]
+
+      assert moved(files) == [
+               [],
+               [block(:old, 4..10, 0, "one.txt", 1..7), block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:new, 1..7, 0, "src.txt", 4..10)],
+               [block(:new, 1..4, 1, "src.txt", 1..3)]
+             ]
     end
 
     test "a longer run of substantial lines wins over one padded out by a blank" do
