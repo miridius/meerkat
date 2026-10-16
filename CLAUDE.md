@@ -20,25 +20,24 @@ remove commits a merged PR still references). Before committing:
 
 - **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
   `pnpm install --frozen-lockfile`. The tests also need `clj-kondo` on
-  PATH. `mix …` for backend. JS dependencies are
-  installed ONLY with `pnpm install` (the workspace root covers
-  `assets/`; `pnpm-workspace.yaml` enforces a 24h minimum release
-  age as a supply-chain guard). `bun run` / `bunx` for
+  PATH. `mix …` for backend. As a supply-chain guard, Hex and pnpm
+  resolve no release under 24h old: `mix.exs` sets Hex's `cooldown`,
+  and `pnpm-workspace.yaml` sets `minimumReleaseAge`. JS dependencies
+  are installed ONLY with `pnpm install` (the workspace root covers
+  `assets/`). `bun run` / `bunx` for
   running scripts and the Playwright e2e suite. Never npm/npx/node
   directly, and never `bun install` — there must be no `bun.lock`.
 - **Keep dependencies current — enforced.** `scripts/outdated.sh` fails
   when a direct JS or Hex dependency trails its latest release unless
   that release is exempt. A JS release isn't required while it, or a
   package version it requires, is under the 24h minimum release age. A
-  Hex release in cooldown is not required only when all requirements in
-  `mix.exs` and other dependencies admit it; otherwise, it is treated as
-  outdated and blocks the gate unless exempted. In either ecosystem, an
-  exemption is stale if the package is no longer behind or its named
+  Hex release isn't required while it is under 24h old. In either
+  ecosystem, an exemption is stale if the package is no longer behind or its named
   version does not match the latest reported version (the JS registry's
   latest or `Latest` in `mix hex.outdated` for Hex), even if that latest
   release is not yet required.
-  A git dependency counts as its latest stable Hex release when its
-  pinned GitHub commit contains that release's tag. The gate fails for
+  A git dependency counts as current when its pinned GitHub commit
+  contains the tag of its newest stable Hex release at least 24h old. The gate fails for
   all other git dependencies. None is exempt. The pre-commit
   hook bumps registry packages; do not bump them by hand. It never
   moves git dependencies, so maintain
@@ -117,7 +116,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Gate slots:** At most two gates in all worktrees of the repo run their checks at once. `check.sh`, in either mode, and `mutate.sh staged` or `changed` each take one of two slots from `scripts/gate-lock.sh` before their checks and free it when they end. A gate that finds both slots taken prints that it is waiting. Waiting gates queue: the one at the head takes the next freed slot, so a newcomer never jumps ahead of it, but which waiter moves to the head next is not ordered. A waiting gate tries the locks once a second rather than blocking, since `lockf` blocked on an fd spins a core, and gives up, failing the gate, after `MEERKAT_GATE_LOCK_TIMEOUT` seconds (default 3600). Each slot is a `lockf` lock on a file in `meerkat-gate-lock` in the git common dir, held on the gate's fd 9, which the kernel frees when the gate exits, however it exits. The gate runs its checks in a subshell that closes fd 9 first, so a command that outlives it does not hold the slot.
 
-`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a Hex release under 24h old and a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, once it holds a gate slot, it runs these steps in order:
 

@@ -14,6 +14,8 @@ defmodule Meerkat.OutdatedGateTest do
   }
   """
 
+  @old "2020-01-01T00:00:00.000000Z"
+
   @git_lock """
   %{
     "mdex": {:hex, :mdex, "0.14.1", "abc", [:mix], [], "hexpm", "def"},
@@ -59,6 +61,7 @@ defmodule Meerkat.OutdatedGateTest do
 
     File.mkdir_p!(stubs)
     File.mkdir_p!(hex_api)
+    File.write!(Path.join(hex_api, "plug.json"), releases([{"2.1.1", @old}, {"2.1.0", @old}]))
 
     # Like real deps/ and node_modules/ after a rebase changes the
     # lockfiles, hex.outdated aborts until deps.get has fetched the locked
@@ -371,7 +374,7 @@ defmodule Meerkat.OutdatedGateTest do
       exempt(ctx, %{})
 
       assert {out, 0} = run(ctx)
-      assert out =~ "cooldown: plug@2.1.1 is in the configured Hex cooldown window"
+      assert out =~ "too young: plug@2.1.1 is under the 24h Hex cooldown"
     end
 
     test "makes an exemption for an older release stale", ctx do
@@ -387,6 +390,34 @@ defmodule Meerkat.OutdatedGateTest do
 
       assert {out, 0} = run(ctx)
       assert out =~ "exempt: plug@2.1.1"
+    end
+  end
+
+  # Hex marks the cooldown only on a release the requirements admit.
+  describe "a Hex release the requirements exclude" do
+    setup ctx do
+      exempt(ctx, %{})
+      File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.1  Update not possible\n")
+    end
+
+    test "passes the gate while hex.pm published it under 24h ago", ctx do
+      hex_release(ctx, "plug", releases([{"2.1.1", young()}, {"2.1.0", @old}]))
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "too young: plug@2.1.1 is under the 24h Hex cooldown"
+    end
+
+    test "blocks the push once it is 24h old", ctx do
+      assert {out, 1} = run(ctx)
+      assert out =~ "BLOCKED: plug is outdated (latest: 2.1.1)"
+    end
+
+    test "fails closed when hex.pm's record of it is unreadable", ctx do
+      for report <- ["", "{}", "not json", releases([{"2.1.0", @old}])] do
+        hex_release(ctx, "plug", report)
+        assert {out, 1} = run(ctx)
+        assert out =~ "could not read when hex.pm published plug 2.1.1 — cannot check Hex deps"
+      end
     end
   end
 
@@ -448,6 +479,22 @@ defmodule Meerkat.OutdatedGateTest do
         refute out =~ "exempt: muex"
         refute out =~ "stale exemption"
       end
+    end
+
+    test "counts as the newest stable Hex release at least 24h old", ctx do
+      exempt(ctx, %{})
+
+      hex_release(
+        ctx,
+        "muex",
+        git_release(
+          [{"0.12.0", young()}, {"0.12.0-rc.0", @old}, {"0.11.2", @old}],
+          "upstream/muex.git"
+        )
+      )
+
+      assert {out, 0} = run(ctx)
+      assert out =~ "current: muex is pinned to a628d48, which contains upstream/muex v0.11.2"
     end
 
     test "finds a release tag without a v prefix", ctx do
@@ -521,7 +568,7 @@ defmodule Meerkat.OutdatedGateTest do
 
     test "fails closed when Hex links no GitHub repo", ctx do
       exempt(ctx, %{})
-      hex_release(ctx, "muex", ~s({"latest_stable_version": "0.11.2"}))
+      hex_release(ctx, "muex", releases([{"0.11.2", @old}]))
 
       assert {out, 1} = run(ctx)
       assert out =~ "BLOCKED: muex — Hex links no GitHub repo to find release 0.11.2 in"
@@ -542,10 +589,10 @@ defmodule Meerkat.OutdatedGateTest do
     test "fails closed when Hex reports no release", ctx do
       exempt(ctx, %{"muex" => entry("0.11.2")})
 
-      for report <- ["", "{}", "not json"] do
+      for report <- ["", "{}", "not json", releases([{"0.11.2", young()}, {"0.11.1-rc.0", @old}])] do
         hex_release(ctx, "muex", report)
         assert {out, 1} = run(ctx)
-        assert out =~ "BLOCKED: muex — no latest Hex release found"
+        assert out =~ "BLOCKED: muex — no stable Hex release at least 24h old found"
         refute out =~ "stale exemption"
       end
     end
@@ -567,11 +614,32 @@ defmodule Meerkat.OutdatedGateTest do
   defp hex_release(ctx, name, report),
     do: File.write!(Path.join(ctx.hex_api, name <> ".json"), report)
 
-  # The Funding link sorts first, so the gate must prefer the GitHub key.
-  defp git_release(version, repo),
+  # hex.pm's package record, listing RELEASES, {version, inserted_at}
+  # pairs, newest version first as hex.pm does.
+  defp releases(releases, fields \\ %{}),
     do:
-      Jason.encode!(%{
-        "latest_stable_version" => version,
+      fields
+      |> Map.put(
+        "releases",
+        Enum.map(releases, fn {v, at} -> %{"version" => v, "inserted_at" => at} end)
+      )
+      |> Jason.encode!()
+
+  # Twelve hours ago, without the microseconds hex.pm sends for some.
+  defp young,
+    do:
+      DateTime.utc_now()
+      |> DateTime.add(-12, :hour)
+      |> DateTime.truncate(:second)
+      |> DateTime.to_iso8601()
+
+  # The Funding link sorts first, so the gate must prefer the GitHub key.
+  defp git_release(version, repo) when is_binary(version),
+    do: git_release([{version, @old}], repo)
+
+  defp git_release(releases, repo),
+    do:
+      releases(releases, %{
         "meta" => %{
           "links" => %{
             "Funding" => "https://github.com/sponsors/upstream",

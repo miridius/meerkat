@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Dependency gate: pre-push fails while any JS or Hex dependency is
 # behind its latest release, except exempted releases and releases too
-# young to install, so not yet actionable: JS releases that are, or
-# require a package version that is, younger than the 24h supply-chain
-# floor (minimumReleaseAge in pnpm-workspace.yaml), and
-# Hex releases in the configured cooldown window that the requirements
-# admit. Hex does not mark a cooldown release the requirements exclude,
-# so that one blocks. A too-young release still makes an exemption for
-# an older one stale. A git dependency whose pinned GitHub commit
-# contains its latest stable Hex release's tag, in the GitHub repo Hex
-# links, counts as that release; the gate fails on every other git
-# dependency, exempt or not. It also fails on a missing or malformed
+# young to install under the 24h supply-chain floor, so not yet
+# actionable: JS releases that are, or require a package version that
+# is, younger than minimumReleaseAge in pnpm-workspace.yaml, and Hex
+# releases younger than the cooldown in mix.exs. A too-young release
+# still makes an exemption for an older one stale. A git dependency
+# whose pinned GitHub commit contains the tag of its newest stable Hex
+# release at least 24h old, in the GitHub repo Hex links, counts as that
+# release; the gate fails on every other git dependency, exempt or not.
+# It also fails on a missing or malformed
 # scripts/dep-exemptions.json or a stale entry there, and when installing
 # the locked dependencies would change mix.lock or pnpm-lock.yaml. It
 # fails CLOSED on its own breakage: missing tools, unreachable
@@ -97,7 +96,7 @@ echo "$HEX_OUT"
 while read -r name latest status; do
   exempt "$name" "$latest" && continue
   if [[ "$status" == cooldown ]]; then
-    echo "cooldown: $name@$latest is in the configured Hex cooldown window"
+    echo "too young: $name@$latest is under the 24h Hex cooldown"
     continue
   fi
   echo "BLOCKED: $name is outdated (latest: $latest)"
@@ -106,8 +105,8 @@ done < <(grep . <<<"$HEX_ROWS")
 
 # A git dependency is absent from hex.outdated's table, so nothing above
 # would notice the Hex release that makes its pin unnecessary. A pin
-# that contains the latest Hex release (pin_contains) is current; any
-# other blocks, exempt or not. scripts/bump-deps.sh never moves a git
+# that contains the newest stable Hex release at least 24h old
+# (pin_contains) is current; any other blocks, exempt or not. scripts/bump-deps.sh never moves a git
 # dependency, so its pin is moved by hand.
 echo
 echo "=== git dependencies ==="
@@ -174,9 +173,12 @@ pin_contains() {
 }
 
 while read -r name; do
+  # hex.pm lists releases newest version first.
   if ! hex_json=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$name") ||
-    ! latest=$(jq -er '.latest_stable_version' <<<"$hex_json"); then
-    echo "BLOCKED: $name — no latest Hex release found for this git dependency; failing closed"
+    ! latest=$(jq -er --argjson now "$(date +%s)" \
+      "first(.releases[] | select((.version | contains(\"-\") | not) and ($HEX_MATURE))).version" \
+      <<<"$hex_json" 2>/dev/null); then
+    echo "BLOCKED: $name — no stable Hex release at least 24h old found for this git dependency; failing closed"
     # Its entry was not checked, so it is not stale.
     matched+=("$name")
     fail=1
