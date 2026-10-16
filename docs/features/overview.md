@@ -108,6 +108,12 @@ When the UI does open, the reviewer sees, top-to-bottom:
    Send Feedback, Approve, plus a "N comments" running counter
    (see [decision-flow.md](decision-flow.md)).
 
+The page paints before it connects to the review server. Until it
+first connects, its controls take no clicks, focus or typing, the
+pointer shows progress over the page, and the connection pill says
+`connecting…`, or `disconnected` once a connection attempt fails, so
+no action is lost to the server not listening yet.
+
 ## Line counts
 
 Like GitHub, the toolbar and each file header show `+x -y`: the
