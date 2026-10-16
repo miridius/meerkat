@@ -413,6 +413,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     assert has_element?(view, ~s(a.chip-link[href="#{url}"] .chip-value), ~r/^#77$/)
     assert has_element?(view, ~s(.branch-chip .chip-value[title="main"]), ~r/^main$/)
+    # Its full text stays on the tooltip when the toolbar truncates it.
+    assert has_element?(view, ~s(.toolbar-title[title="PR 77"]), ~r/^\s*PR 77\s*$/)
 
     assert has_element?(
              view,

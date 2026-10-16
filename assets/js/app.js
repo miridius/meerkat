@@ -72,9 +72,9 @@ const hooks = {
     },
   },
   // Takes the fewest steps that fit the toolbar's content on one row
-  // (see toolbarSqueeze.ts), whenever its width or content changes. The
-  // last step wraps it onto more rows, so `.file-section-header` cannot
-  // pin itself below it at a fixed offset: this publishes its height.
+  // (see toolbarSqueeze.ts), whenever its width or content changes. Its
+  // steps change its height, so `.file-section-header` cannot pin itself
+  // below it at a fixed offset: this publishes its height.
   Toolbar: {
     mounted() {
       this._fit = () => {
@@ -88,19 +88,29 @@ const hooks = {
         const h = Math.round(this.el.getBoundingClientRect().height);
         document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
       };
-      // Its items too, as one can change size without the toolbar
-      // changing size, such as the version chip gaining its badge.
-      this._observe = () => {
-        for (const el of [this.el, ...this.el.children]) this._observer.observe(el);
-      };
-      this._observer = new ResizeObserver(this._fit);
-      this._observe();
-    },
-    updated() {
-      this._observe();
+      // A fit resizes the toolbar and its items, so a ResizeObserver on them
+      // would be notified from inside its own callback, which the browser
+      // reports as an error. Instead it watches only the zero-height
+      // `.toolbar-width` for width, and content changes, such as the
+      // version chip gaining its badge or a reconnect relabelling the
+      // connection pill through an ancestor's class, through a
+      // MutationObserver. Neither sees what a fit changes.
+      this._resize = new ResizeObserver(this._fit);
+      this._resize.observe(this.el.querySelector(".toolbar-width"));
+      this._mutation = new MutationObserver(this._fit);
+      this._mutation.observe(this.el, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributeFilter: ["class", "hidden"],
+      });
+      for (let el = this.el.parentElement; el; el = el.parentElement) {
+        this._mutation.observe(el, { attributeFilter: ["class"] });
+      }
     },
     destroyed() {
-      this._observer?.disconnect();
+      this._resize?.disconnect();
+      this._mutation?.disconnect();
       document.documentElement.style.removeProperty("--toolbar-h");
     },
   },

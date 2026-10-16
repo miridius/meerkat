@@ -14,7 +14,7 @@ import { afterNextFrame, expect, test } from "./lib/test";
 // wraps onto a second row.
 function toolbarState(page: Page) {
 	return page.locator(".diff-toolbar").evaluate((el) => {
-		const items = [...el.children].filter((c) => c.getClientRects().length > 0);
+		const items = [...el.children].filter((c) => !c.matches(".toolbar-width") && c.getClientRects().length > 0);
 		const firstBottom = Math.min(...items.map((c) => c.getBoundingClientRect().bottom));
 		const outside = (inner: DOMRect, outer: DOMRect) => inner.left < outer.left - 1 || inner.right > outer.right + 1;
 		const runsOut = items.some((item) => {
@@ -84,16 +84,34 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 			);
 			for (const step of state.steps) if (!seen.includes(step)) seen.push(step);
 
-			if (state.steps.length === SQUEEZE_STEPS.indexOf("title") + 1) {
-				const title = await page
-					.locator(".toolbar-title")
+			// Each part shows in full until its step, and is cut short by it.
+			for (const [part, step] of [
+				[".toolbar-title", "title"],
+				[".branch-base", "base"],
+				[".branch-head", "head"],
+			]) {
+				const text = await page
+					.locator(part)
 					.evaluate((el) => ({ shown: el.clientWidth, full: el.scrollWidth }));
-				expect(title.full, `at ${width}px the title is cut short`).toBeGreaterThan(title.shown);
+				expect(text.shown, `at ${width}px some of ${part} shows`).toBeGreaterThan(30);
+				if (!state.steps.includes(step)) {
+					expect(text.shown, `at ${width}px ${part} shows in full before its step`).toBe(text.full);
+				}
+				if (state.steps.at(-1) === step) {
+					expect(text.full, `at ${width}px its step cuts ${part} short`).toBeGreaterThan(text.shown);
+				}
 			}
-			for (const part of [".toolbar-title", ".branch-base", ".branch-head"]) {
-				const shown = await page.locator(part).evaluate((el) => el.clientWidth);
-				expect(shown, `at ${width}px some of ${part} shows`).toBeGreaterThan(30);
-			}
+			// The steps' other cuts: `☰ Files` to `☰`, and the connection
+			// pill to its dot, its label kept for screen readers.
+			const onScreen = (selector: string) =>
+				page.locator(selector).evaluate((el) => el.checkVisibility() && el.getBoundingClientRect().width > 1);
+			expect(await onScreen(".files-label"), `at ${width}px Files shows until its step`).toBe(
+				!state.steps.includes("files"),
+			);
+			expect(await onScreen(".conn-label-connected"), `at ${width}px "connected" shows until its step`).toBe(
+				!state.steps.includes("conn"),
+			);
+			await expect(page.locator(".conn-label-connected"), "screen readers still hear it").toBeVisible();
 			// With no updates, the version step takes the chip away.
 			const chipShown = await page.locator(".version-chip-btn").evaluate((el) => el.checkVisibility());
 			expect(chipShown, `at ${width}px the version chip shows until its step`).toBe(
@@ -116,10 +134,19 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await page.locator(".toolbar-settings > summary").click();
 		await oneViewControl();
 		const popover = page.locator(".toolbar-settings-popover");
+		// The re-render this click causes keeps the steps.
+		await page.locator(".diff-toolbar").evaluate((el) => {
+			const w = window as unknown as { squeezeDropped: boolean };
+			w.squeezeDropped = false;
+			new MutationObserver(() => {
+				if (!el.hasAttribute("data-squeeze")) w.squeezeDropped = true;
+			}).observe(el, { attributeFilter: ["data-squeeze"] });
+		});
 		await popover.getByRole("button", { name: "Unified", exact: true }).click();
 		await expect(popover.getByRole("button", { name: "Unified", exact: true })).toHaveClass(/active/);
 		await expect(page.locator(".file-section td.diff-line-new-num")).toHaveCount(0);
 		await expect(popover).toBeVisible();
+		expect(await page.evaluate(() => (window as unknown as { squeezeDropped: boolean }).squeezeDropped)).toBe(false);
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
@@ -152,7 +179,11 @@ test("at its step the version chip shows only its count of updates, and its drop
 		let width = 2400;
 		// Past the version step, so the chip losing its badge cannot give it back.
 		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
-		expect(await chip.evaluate((el) => el.innerText.trim())).toBe("1");
+		const onScreen = await chip.evaluate((el) =>
+			[...el.children].filter((c) => c.getBoundingClientRect().width > 1).map((c) => c.textContent),
+		);
+		expect(onScreen).toEqual(["1"]);
+		await expect(chip, "the version stays in the chip's name").toHaveAccessibleName(/abc1234/);
 
 		// Opening it marks the update seen, so the chip goes, keeping its box
 		// so the drop-down stays where it opened.
@@ -160,9 +191,11 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await chip.click();
 		await expect(popover).toBeVisible();
 		await expect(named).toHaveText(/^\s*meerkat\s+abc1234\s*$/);
-		await expect(chip).toBeHidden();
+		await expect(chip).toHaveCSS("opacity", "0");
 		expect(await wrap.boundingBox()).toEqual(box);
-		await page.keyboard.press("Escape");
+		// Clicking it again closes the drop-down, and the chip goes.
+		await chip.click();
+		await expect(popover).toBeHidden();
 		await expect(wrap).toBeHidden();
 
 		// Wrapped, the chip can sit near the window's left edge; the
@@ -171,8 +204,11 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await page.setViewportSize({ width: 300, height: 800 });
 		await page.reload();
 		await expect(chip.locator(".version-badge")).toHaveText("1");
-		await chip.click();
+		// Opened from the keyboard, it keeps focus.
+		await chip.focus();
+		await page.keyboard.press("Enter");
 		await expect(named).toBeVisible();
+		await expect(chip).toBeFocused();
 		const drop = await popover.evaluate((el) => el.getBoundingClientRect().toJSON());
 		expect(drop.left).toBeGreaterThanOrEqual(0);
 		expect(drop.right).toBeLessThanOrEqual(300);
@@ -240,6 +276,19 @@ test("the steps follow the toolbar's content at a fixed width: collapsing a file
 		await expect(page.locator(".toolbar-line-counts")).toContainText("showing");
 		await expect.poll(async () => (await toolbarState(page)).steps.length).toBeGreaterThan(0);
 		expect((await toolbarState(page)).overflows).toBe(false);
+
+		// The counts' step drops `showing` and writes `/` for `of`.
+		const counts = page.locator(".toolbar-line-counts");
+		await expect(counts.locator(".counts-showing")).toBeVisible();
+		let narrower = width;
+		while (!(await at(page, narrower)).steps.includes("counts")) narrower -= 10;
+		await expect(counts.locator(".counts-showing")).toBeHidden();
+		await expect(counts.locator(".counts-of")).toBeHidden();
+		await expect(counts.locator(".counts-slash")).toBeVisible();
+		expect(await counts.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim())).toMatch(
+			/^\+\d+ -\d+ \/ \+\d+ -\d+$/,
+		);
+		await at(page, width);
 
 		await page.getByRole("button", { name: /b\.txt/ }).click();
 		await expect(page.locator(".toolbar-line-counts")).not.toContainText("showing");

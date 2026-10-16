@@ -9,12 +9,11 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
 // Narrow enough that the toolbar has moved Split / Unified and Wrap into
-// the ⚙ popover, which changes its height (see toolbar-squeeze.spec.ts).
-// It wraps only below about 230px, too narrow for the file header.
-const NARROW_WIDTHS = [900, 600];
+// the ⚙ popover, which changes its height (see toolbar-squeeze.spec.ts),
+// and then that it wraps.
+const NARROW_WIDTHS = [900, 600, 320];
 
-// A long branch name, with the toolbar still taking no squeeze step at
-// 1500px.
+// A long branch name, with the toolbar still on one row at 1500px.
 const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
 
 function stickyFixture() {
@@ -103,8 +102,9 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 				);
 				expect(
 					published.toolbarH,
-					"the width under test is one where the CSS fallback would be wrong",
-				).toBeGreaterThan(ONE_ROW_H);
+					"before the hook runs the toolbar keeps to one row, the height the hook gives it at most widths",
+				).toBe(ONE_ROW_H);
+				expect(published.toolbarH, "the CSS fallback would be wrong").not.toBe(40);
 				expect(published.published, "--toolbar-h already carries the toolbar's real height").toBe(
 					`${published.toolbarH}px`,
 				);
