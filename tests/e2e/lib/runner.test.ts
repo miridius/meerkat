@@ -2,9 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-import { makeFixture } from "./fixture.js";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { makeFixture, OWNED_TMP_PARENT } from "./fixture.js";
 import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat } from "./runner.js";
+
+// These tests start processes, which on a loaded machine can take longer
+// than bun's 5 s default; a timed-out test also has bun kill them mid-run.
+setDefaultTimeout(30_000);
 
 // spawnSync rather than awaiting spawn's "exit": under load bun sometimes
 // sets exitCode on a child without ever emitting "exit".
@@ -35,8 +39,8 @@ function alive(pid: number): boolean {
 // another is still arranging its runs dirs.
 describe("orphaned backend reaper", () => {
 	test("stops backends whose owning test process has exited and keeps those of a live one", async () => {
-		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`));
-		const owned = mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
+		const orphaned = mkdtempSync(join(OWNED_TMP_PARENT, `meerkat-runs-${exitedPid()}-`));
+		const owned = mkdtempSync(join(OWNED_TMP_PARENT, `meerkat-runs-${process.pid}-`));
 		const orphan = backend(orphaned);
 		const kept = backend(owned);
 		try {
@@ -58,7 +62,7 @@ describe("orphaned backend reaper", () => {
 	});
 
 	test("leaves alone a process that took over a dead backend's pid", async () => {
-		const orphaned = mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`));
+		const orphaned = mkdtempSync(join(OWNED_TMP_PARENT, `meerkat-runs-${exitedPid()}-`));
 		const bystander = backend(orphaned);
 		// The pid file predates the process now holding its pid, as when the
 		// backend exited long ago and the OS reused its pid.
@@ -79,7 +83,7 @@ describe("orphaned backend reaper", () => {
 
 	test("leaves alone runs dirs whose name carries no owner pid", async () => {
 		// Named like the runs dirs of older test runs.
-		const unowned = mkdtempSync(join(tmpdir(), "meerkat-runs-"));
+		const unowned = mkdtempSync(join(OWNED_TMP_PARENT, "meerkat-runs-"));
 		const kept = backend(unowned);
 		try {
 			await reapOrphanedBackends();
@@ -117,7 +121,7 @@ describe("orphaned fixture reaper", () => {
 
 			for (const dir of orphaned) expect(existsSync(dir), `${dir} of a killed owner is removed`).toBe(false);
 			expect(
-				readdirSync(tmpdir()).filter((name) =>
+				readdirSync(OWNED_TMP_PARENT).filter((name) =>
 					new RegExp(`^meerkat-(?:e2e|rr)[a-z-]*-${killed.pid}-[A-Za-z0-9]{6}$`).test(name),
 				),
 				"no dir of the killed owner is left",
@@ -132,13 +136,30 @@ describe("orphaned fixture reaper", () => {
 	test("leaves alone fixture dirs whose name carries no owner pid", () => {
 		// Named like the fixtures of older test runs, which a concurrent run
 		// on an older checkout may still be using.
-		const unowned = mkdtempSync(join(tmpdir(), "meerkat-e2e-"));
+		const unowned = mkdtempSync(join(OWNED_TMP_PARENT, "meerkat-e2e-"));
 		try {
 			reapOrphanedFixtures();
 
 			expect(existsSync(unowned), "fixture dir without an owner pid is kept").toBe(true);
 		} finally {
 			rmSync(unowned, { recursive: true, force: true });
+		}
+	});
+
+	test("lists only its own parent dir, not the whole OS temp dir", async () => {
+		// Named like an orphaned fixture and runs dir, but where listing would
+		// mean reading every entry of the OS temp dir.
+		const outside = [
+			mkdtempSync(join(tmpdir(), `meerkat-e2e-${exitedPid()}-`)),
+			mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`)),
+		];
+		try {
+			await reapOrphanedBackends();
+			reapOrphanedFixtures();
+
+			for (const dir of outside) expect(existsSync(dir), `${dir} outside the parent is not listed`).toBe(true);
+		} finally {
+			for (const dir of outside) rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
