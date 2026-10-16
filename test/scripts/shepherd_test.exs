@@ -584,6 +584,37 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted)."
     end
 
+    test "a caller that cannot remove a finished run exits 2 at once" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      # A finished run whose caller is gone; its own dir stays writable, so
+      # removing it empties it but cannot delete it.
+      finished = Path.join(runs, run_key(dir) <> ".finished")
+      File.mkdir_p!(finished)
+
+      for {name, body} <- [{"exit", "143"}, {"caller", "999999"}, {"token", "t"}],
+          do: File.write!(Path.join(finished, name), body <> "\n")
+
+      File.chmod!(runs, 0o555)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"MEERKAT_PWD", dir},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      assert {2, output} = await_result(port, dir)
+
+      assert output ==
+               "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted).\n"
+    end
+
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
       {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
 

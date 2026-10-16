@@ -237,7 +237,7 @@ _ma_find_server() {
 # newer link has already taken its place.
 _ma_retire() {
   if [[ "$1" == "$_MA_LINK" ]]; then
-    rm -rf "$1"
+    rm -rf "$1" 2>/dev/null
     return
   fi
   local name="${1##*/}" held="$_MA_LINK.retiring.$_MA_RUN" target
@@ -260,13 +260,14 @@ _ma_retire() {
 # the run dir itself.
 _ma_remove_run() {
   _ma_retire "$_MA_DIR"
-  rm -rf "$_MA_DIR" && [[ ! -e "$_MA_DIR" ]]
+  rm -rf "$_MA_DIR" 2>/dev/null && [[ ! -e "$_MA_DIR" ]]
 }
 
 # Run a change to the runs dir, failing closed if it cannot be made:
-# retrying it would spin.
+# retrying it would spin, and going on with a run half removed would
+# misread it. Its own errors are dropped for this one message.
 _ma_must() {
-  "$@" && return
+  "$@" 2>/dev/null && return
   echo "meerkat: could not update ${_MA_LINK%/*} — defaulting to REJECT (commit aborted)." >&2
   exit 2
 }
@@ -296,7 +297,7 @@ _ma_reap_finished() {
     dir="${dir%/}"
     [[ -L "$dir" || ! -f "$dir/exit" ]] && continue
     if ! _ma_caller_alive "$dir" || _ma_exit_stale "$dir"; then
-      rm -rf "$dir"
+      _ma_must rm -rf "$dir"
     fi
   done
 }
