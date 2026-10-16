@@ -99,22 +99,24 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(newCell)).toEqual([]);
 
-		// Unified view's one code column fits 80 but not 110, with wrap on
-		// or off; with wrap off the long lines widen the cell past the view.
+		// At 950px, Unified view's one code column fits 80 but not 110, with
+		// wrap on or off; with wrap off the long lines widen the cell past
+		// the view.
+		await page.setViewportSize({ width: 950, height: 800 });
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		const unifiedCell = file.locator("td.diff-line-content").first();
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		// Around the width where 110 starts to fit, it is never drawn in
 		// the cell's right padding.
 		let crossed = false;
-		for (let width = 1005; width <= 1050; width += 1) {
+		for (let width = 955; width <= 1010; width += 1) {
 			await page.setViewportSize({ width, height: 800 });
 			await afterNextFrame(page);
 			expect(await rulersPastText(unifiedCell), `at ${width}px`).toEqual([]);
 			crossed ||= (await rulersOn(unifiedCell)).includes("110");
 		}
 		expect(crossed, "the sweep reaches the width where 110 fits").toBe(true);
-		await page.setViewportSize({ width: 1000, height: 800 });
+		await page.setViewportSize({ width: 950, height: 800 });
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		await page.getByLabel("Wrap").click();
