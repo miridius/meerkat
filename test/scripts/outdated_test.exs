@@ -110,11 +110,13 @@ defmodule Meerkat.OutdatedGateTest do
         if [[ -e "$f" ]]; then cat "$f"; printf '\\n%s' "$(cat "$f.code" 2>/dev/null || echo 200)"
         else printf '\\n404'; fi ;;
       "gh auth token") cat '#{base}/gh-token' 2>/dev/null ;;
+      "bun scripts/toolchain.ts check")
+        echo "toolchain checked"; exit "$(cat '#{base}/toolchain-code' 2>/dev/null || echo 0)" ;;
     esac
     """)
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
-    for tool <- ~w(mix pnpm curl gh), do: File.ln_s!("stub", Path.join(stubs, tool))
+    for tool <- ~w(mix pnpm curl gh bun), do: File.ln_s!("stub", Path.join(stubs, tool))
 
     {:ok,
      base: base,
@@ -152,7 +154,24 @@ defmodule Meerkat.OutdatedGateTest do
     exempt(ctx, %{})
 
     assert {out, 0} = run(ctx)
+    assert out =~ "=== toolchain ===\ntoolchain checked"
     assert out =~ "all dependencies current."
+  end
+
+  test "a CI toolchain pin off its target blocks the push", ctx do
+    exempt(ctx, %{})
+    File.write!(Path.join(ctx.base, "toolchain-code"), "1")
+
+    assert {out, 1} = run(ctx)
+    assert out =~ "dependencies are behind latest"
+  end
+
+  test "a CI toolchain it cannot check blocks the push at once", ctx do
+    exempt(ctx, %{"jason" => entry("1.4.5")})
+    File.write!(Path.join(ctx.base, "toolchain-code"), "2")
+
+    assert {out, 1} = run(ctx)
+    refute out =~ "stale exemption"
   end
 
   test "an unreadable report blocks the push", ctx do

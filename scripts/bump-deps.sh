@@ -14,6 +14,12 @@
 #   and keeps pnpm-workspace.yaml's minimumReleaseAge, so no release
 #   younger than 24h enters the lockfile. A release that requires a
 #   package version younger than that is skipped, since pnpm refuses it.
+# - Advisories: scripts/advisory-fixes.ts then takes the release that fixes
+#   an advisory an audit finds on a locked Hex or JS dependency, under 24h
+#   old or not.
+# - CI toolchain: scripts/toolchain.ts moves the pins in
+#   .tool-versions, .github/toolchain.env, package.json's packageManager and the
+#   workflows' actions onto their targets.
 #
 # A package whose latest release is the one its scripts/dep-exemptions.json
 # entry names is left where it is; for JS, that is either the latest
@@ -39,10 +45,12 @@ esac
 prefix="pre-commit:"
 source scripts/deps-common.sh
 
-require_tools jq mix elixir pnpm curl
+require_tools jq mix elixir pnpm curl bun
 load_exemptions
 
-files=(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json)
+files=(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json
+  .tool-versions .github/toolchain.env .github/workflows/ci.yml
+  .github/workflows/audit.yml)
 before=()
 for file in "${files[@]}"; do
   before+=("$(git hash-object -- "$file" 2>/dev/null || true)")
@@ -97,6 +105,9 @@ done < <(grep . <<<"$PNPM_ROWS")
 if [[ ${#js_names[@]} -gt 0 ]]; then
   pnpm -r update --latest --ignore-scripts "${js_names[@]}"
 fi
+
+bun scripts/advisory-fixes.ts
+bun scripts/toolchain.ts bump
 
 bumped=()
 for i in "${!files[@]}"; do

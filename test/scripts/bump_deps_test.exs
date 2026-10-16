@@ -90,7 +90,8 @@ defmodule Meerkat.BumpDepsHookTest do
     File.write!(Path.join(work, "mix.exs"), @mix_exs)
 
     for file <-
-          ~w(mix.lock package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json code.txt) do
+          ~w(mix.lock package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json code.txt
+             .tool-versions .github/toolchain.env) do
       File.mkdir_p!(Path.dirname(Path.join(work, file)))
       File.write!(Path.join(work, file), "base\n")
     end
@@ -140,6 +141,11 @@ defmodule Meerkat.BumpDepsHookTest do
         echo "updated $names" >> assets/package.json
         echo "updated $names" >> pnpm-lock.yaml ;;
       "mix compile --warnings-as-errors") cp mix.lock '#{seen}' ;;
+      "bun scripts/advisory-fixes.ts" | "bun scripts/toolchain.ts bump")
+        if [[ -e '#{base}/fail-'"${1#scripts/}" ]]; then echo "$1 failed"; exit 1; fi
+        if [[ "$1" == scripts/toolchain.ts && -e '#{base}/toolchain-behind' ]]; then
+          echo "bun 9.9.9" >> .tool-versions
+        fi ;;
     esac
     """)
 
@@ -405,6 +411,34 @@ defmodule Meerkat.BumpDepsHookTest do
     File.write!(Path.join(ctx.hex_api, "plug.json"), "")
     File.write!(ctx.hex_out, @hex_behind)
     assert_refused(ctx, "could not read when hex.pm published plug 2.1.0")
+  end
+
+  test "the advisory fixes and CI toolchain bump run after the dependency bump", ctx do
+    File.write!(ctx.pnpm_out, @pnpm_behind)
+    File.touch!(Path.join(Path.dirname(ctx.work), "toolchain-behind"))
+    stage(ctx.work, "code.txt", "change\n")
+
+    assert {_, 0} = commit(ctx, ["-m", "change code"])
+
+    assert [
+             "pnpm -r update --latest --ignore-scripts vite",
+             "bun scripts/advisory-fixes.ts",
+             "bun scripts/toolchain.ts bump"
+           ] ==
+             Enum.filter(
+               run(ctx),
+               &(&1 =~
+                   ~r/^(pnpm -r update --latest --ignore|bun scripts\/(advisory-fixes|toolchain))/)
+             )
+
+    assert committed(ctx, ".tool-versions") == "base\nbun 9.9.9\n"
+  end
+
+  for script <- ~w(advisory-fixes.ts toolchain.ts) do
+    test "a failing #{script} refuses the commit", ctx do
+      File.touch!(Path.join(Path.dirname(ctx.work), "fail-#{unquote(script)}"))
+      assert_refused(ctx, "scripts/#{unquote(script)} failed")
+    end
   end
 
   test "a path commit defers the bump and leaves the index matching HEAD", ctx do

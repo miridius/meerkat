@@ -56,7 +56,9 @@ Known issues:
 
 macOS. Requires [Elixir](https://elixir-lang.org) 1.18+, Erlang/OTP 28+,
 [`pnpm`](https://pnpm.io) 10.16+ (installs JS dependencies), and
-[`bun`](https://bun.sh) (runs the asset build).
+[`bun`](https://bun.sh) (runs the asset build). With
+[`mise`](https://mise.jdx.dev) on `PATH`, the install builds on the
+exact Erlang, Elixir and Bun that `.tool-versions` pins.
 
 ```bash
 git clone https://github.com/miridius/meerkat

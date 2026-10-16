@@ -34,6 +34,8 @@ defmodule Meerkat.InstallScriptTest do
     executable(Path.join(share, "meerkat-shepherd"), "#!/bin/sh\n")
     File.write!(Path.join(share, "meerkat-attach"), "")
     executable(Path.join(shim, "mix"), "#!/bin/sh\ntouch '#{marker}'\nexit 99\n")
+    # The toolchain setup ahead of the build.
+    for tool <- ~w(mise bun), do: executable(Path.join(shim, tool), "#!/bin/sh\n")
 
     env = [
       {"PATH", shim <> ":" <> System.get_env("PATH")},
