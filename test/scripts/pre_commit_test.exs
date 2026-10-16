@@ -361,6 +361,7 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-filter" in args
     assert "--no-optimize" in args
     assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
+    assert ["--timeout", "300000"] in Enum.chunk_every(args, 2, 1)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
 
     # The test files that drive scripts in subprocesses are left out.
@@ -430,9 +431,25 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
-  test "killed, timed-out, invalid, equivalent and ignored mutants pass", ctx do
+  # A test BEAM on a loaded machine can print nothing for most of a minute,
+  # so a timed-out mutant tells nothing about the tests.
+  test "a timed-out mutant blocks the commit apart from untested behaviour", ctx do
+    head = git(ctx.work, ["rev-parse", "HEAD"])
     stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-    statuses = ~w(killed timeout invalid equivalent ignored)
+    report = write_report(ctx.base, "timeout", [mutant("killed"), mutant("timeout")])
+
+    assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
+    assert code != 0
+    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
+    assert out =~ "no test judged these mutants"
+    assert out =~ "lib/meerkat/one.ex:2  timeout  Comparison: == to !="
+    assert out =~ "Rerun once the machine is less loaded."
+    refute out =~ "untested behaviour"
+  end
+
+  test "killed, invalid, equivalent and ignored mutants pass", ctx do
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+    statuses = ~w(killed invalid equivalent ignored)
     report = write_report(ctx.base, "passing", Enum.map(statuses, &mutant/1))
 
     assert {_, 0} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
