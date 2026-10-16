@@ -36,7 +36,11 @@ defmodule MeerkatWeb.ConnCase do
   synchronous test may call it.
   """
   def put_endpoint_config(changes) do
-    old = Keyword.delete(:ets.tab2list(MeerkatWeb.Endpoint), :__config__)
+    # Phoenix also caches values in this table as 3-tuples; only the
+    # 2-tuples are config.
+    old =
+      for {key, _} = entry <- :ets.tab2list(MeerkatWeb.Endpoint), key != :__config__, do: entry
+
     new = Enum.reject(old, fn {key, _} -> List.keymember?(changes, key, 0) end) ++ changes
     MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, new}], [])
     on_exit(fn -> MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, old}], []) end)

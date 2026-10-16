@@ -2,6 +2,8 @@ defmodule MeerkatWeb.LiveSocketTest do
   # async: false: these tests change the endpoint's global config.
   use MeerkatWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias MeerkatWeb.Endpoint
 
   # The LiveView socket reads no session cookie, so these guards are what
@@ -21,13 +23,23 @@ defmodule MeerkatWeb.LiveSocketTest do
   end
 
   test "a socket opened from a non-loopback origin is refused", %{port: port} do
-    assert {"403", _socket} = upgrade(port, "http://evil.example")
+    log =
+      capture_log(fn ->
+        assert {"403", _socket} = upgrade(port, "http://evil.example")
+      end)
+
+    assert log =~ "Origin of the request: http://evil.example"
     assert {"101", _socket} = upgrade(port, "http://127.0.0.1:#{port}")
   end
 
   # Long polling answers 200 and puts its status in the body.
   test "a long poll from a non-loopback origin is refused", %{port: port} do
-    assert %{"status" => 403} = long_poll(port, "http://evil.example")
+    log =
+      capture_log(fn ->
+        assert %{"status" => 403} = long_poll(port, "http://evil.example")
+      end)
+
+    assert log =~ "Origin of the request: http://evil.example"
     assert %{"status" => 410} = long_poll(port, "http://127.0.0.1:#{port}")
   end
 
@@ -42,6 +54,11 @@ defmodule MeerkatWeb.LiveSocketTest do
 
     {"101", signed} = upgrade(port, "http://127.0.0.1:#{port}")
     assert %{"status" => "ok"} = join(signed, port, session, static, id)
+
+    # The page's token only verifies under the secret that signed it.
+    put_endpoint_config(secret_key_base: String.duplicate("x", 64))
+    {"101", resigned} = upgrade(port, "http://127.0.0.1:#{port}")
+    assert %{"status" => "error"} = join(resigned, port, session, static, id)
   end
 
   defp long_poll(port, origin) do
