@@ -18,16 +18,22 @@ defmodule Meerkat.FeedbackTest do
     }
   end
 
-  test "rejection framing leads with reviewer wants changes" do
+  @framing_tail " They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.\n\n"
+
+  test "rejection framing leads with reviewer rejected and commented" do
     out = Feedback.format(state_with_global_comment(), :rejection)
-    assert out =~ "user reviewed your commit and wants changes before it lands"
-    assert out =~ "needs work"
+
+    assert out ==
+             "The user rejected the commit and left the comments below." <>
+               @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
-  test "approval-with-feedback framing leads with reviewer approved but commented" do
+  test "approval-with-feedback framing leads with reviewer approved and commented" do
     out = Feedback.format(state_with_global_comment(), :approval_with_feedback)
-    assert out =~ "user approved the commit but also left comments"
-    assert out =~ "needs work"
+
+    assert out ==
+             "The user approved the commit and left the comments below." <>
+               @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
   test "approval-with-feedback with no comments returns empty" do
@@ -44,7 +50,7 @@ defmodule Meerkat.FeedbackTest do
   test "auto mode has no framing header" do
     out = Feedback.format(state_with_global_comment(), :auto)
     assert out == "\nGlobal comments:\n  > **issue:** needs work\n\n"
-    refute out =~ "user reviewed your commit"
+    refute out =~ "user rejected the commit"
     refute out =~ "user approved the commit"
     assert out =~ "needs work"
   end
@@ -88,7 +94,20 @@ defmodule Meerkat.FeedbackTest do
 
       out = Feedback.format(state, :rejection)
       assert out =~ "Answer 1 question"
-      assert out =~ "Address 1 feedback comment"
+      assert out =~ "  2. Address 1 feedback comment below (1 issue).\n\n\n⚠"
+    end
+
+    test "mixed — several feedback comments read as plural" do
+      state = %ReviewState{
+        global_comments: [
+          comment(body: "fix", finding_type: :issue),
+          comment(body: "fix too", finding_type: :issue),
+          comment(body: "why?", finding_type: :question)
+        ]
+      }
+
+      out = Feedback.format(state, :rejection)
+      assert out =~ "  2. Address 2 feedback comments below (2 issue).\n\n\n⚠"
     end
 
     test "pluralisation: 1 question vs N questions" do
@@ -205,7 +224,7 @@ defmodule Meerkat.FeedbackTest do
              out,
              "meerkat: review refused because these questions are unanswered:\n\n" <>
                "  file: src/x.rs\n    First question?\n\n" <>
-               "  global\n    Second question?\n\n⚠ Answer the reviewer's **question**"
+               "  global\n    Second question?\n\n⚠ Answer the reviewer's **question**-type comments with analysis — do NOT modify code in response.\n\n"
            )
 
     assert String.ends_with?(out, "\nThen re-run the command that was refused.\n")

@@ -130,8 +130,9 @@ the snapshot.
 A review's deadline is 90 minutes by default. `MEERKAT_REVIEW_TIMEOUT`
 sets it in whole seconds; `0` removes the deadline and countdown.
 Unparseable values are ignored, leaving the 90-minute default. The
-footer countdown shows `mm:ss left` before the deadline, then
-`mm:ss over`.
+footer countdown shows `h:mm:ss left` before the deadline, then
+`h:mm:ss over`, in that shape at every length: `0:04:17`, `1:08:17`,
+and past a day the hours keep counting (`68:28:17`).
 
 `MEERKAT_AUTO_APPROVE_ON_TIMEOUT` is off by default. Values `1`,
 `true`, or `yes` turn it on, ignoring case and surrounding whitespace.

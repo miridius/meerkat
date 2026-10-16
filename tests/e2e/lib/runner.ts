@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { type Fixture, makeFixture, sanitisedGitEnv } from "./fixture.js";
+import { type Fixture, makeFixture, OWNED_TMP_DIR_RE, sanitisedGitEnv } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
 
@@ -56,14 +56,14 @@ const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 
 // Specs that spawn meerkat directly, without `startMeerkat`, would otherwise start
 // their backends in the user's own runs dir, and save toolbar settings in the
-// user's own config dir, which the reaper leaves alone.
+// user's own config dir, which `reapOrphanedBackends` leaves alone.
 // meerkat creates the dirs on first use.
 process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
 process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
 
 // The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
 // toolbar settings and runs reattaching to it share its settings. Named like
-// a runs dir, so the reaper removes it too.
+// a runs dir, so `reapOrphanedBackends` removes it too.
 export function configHome(runsDir: string): string {
 	return `${runsDir}cfg`;
 }
@@ -218,12 +218,26 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
 // live owners, including concurrent runs, and dirs without a PID are left alone.
 export async function reapOrphanedBackends(): Promise<void> {
-	for (const name of readdirSync(tmpdir())) {
-		const owner = name.match(OWNED_RUNS_DIR_RE);
-		if (!owner || alive(Number(owner[1]))) continue;
-		const dir = join(tmpdir(), name);
+	for (const dir of orphanedTmpDirs(OWNED_RUNS_DIR_RE)) {
 		await stopBackends(dir);
 		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Removes the `ownedTmpDir` dirs of test processes no longer alive, which
+// exited before their cleanup ran. Those of live processes, including
+// concurrent runs, and dirs without a PID are left alone. Run it after
+// `reapOrphanedBackends`, so no backend is left serving a removed fixture.
+export function reapOrphanedFixtures(): void {
+	for (const dir of orphanedTmpDirs(OWNED_TMP_DIR_RE)) rmSync(dir, { recursive: true, force: true });
+}
+
+// The OS temp dir entries whose name `ownerPid` matches, capturing the PID of
+// the process that made them, and whose owner is no longer alive.
+function* orphanedTmpDirs(ownerPid: RegExp): Generator<string> {
+	for (const name of readdirSync(tmpdir())) {
+		const owner = name.match(ownerPid);
+		if (owner && !alive(Number(owner[1]))) yield join(tmpdir(), name);
 	}
 }
 

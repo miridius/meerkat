@@ -2,16 +2,14 @@ import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	copyFileSync,
-	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
+import { makeFixture, ownedTmpDir, sanitisedGitEnv } from "./lib/fixture";
 import { type Runner, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -52,9 +50,9 @@ function temporaryIndex(dir: string, name: string): string {
 }
 
 function secondsLeft(text: string | null): number {
-	const match = /^(\d{2}):(\d{2}) left$/.exec(text ?? "");
-	if (!match) throw new Error(`countdown text is not mm:ss left: ${text}`);
-	return Number(match[1]) * 60 + Number(match[2]);
+	const match = /^(\d+):(\d{2}):(\d{2}) left$/.exec(text ?? "");
+	if (!match) throw new Error(`countdown text is not h:mm:ss left: ${text}`);
+	return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
 
 // The process lifecycle seam: the launcher's caller, the detached backend
@@ -72,7 +70,7 @@ test.describe("a review outlives the process that invoked it", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
-		const ghStubDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
+		const ghStubDir = ownedTmpDir("meerkat-e2e-gh");
 		writeFileSync(join(ghStubDir, "gh"), "#!/bin/sh\necho 'gh stub failure' >&2\nexit 1\n");
 		chmodSync(join(ghStubDir, "gh"), 0o755);
 		const opts = { fixture, keepFixture: true, pathPrefixes: [ghStubDir] };
@@ -122,7 +120,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun exits with the decision's code").toBe(1);
-			expect(stderr).toContain("User requested changes");
+			expect(stderr).toContain("User rejected the commit");
 			expect(stderr).toContain("typed after the caller died");
 
 			// The warning from resolving the review reaches the rerun through
@@ -193,7 +191,7 @@ test.describe("a review outlives the process that invoked it", () => {
 				"Paused for human review",
 			);
 
-			const banner = /── (User requested changes — 1 comment — full feedback saved to (\S+) in case truncated) ──/.exec(
+			const banner = /── (User rejected the commit — 1 comment — full feedback saved to (\S+) in case truncated) ──/.exec(
 				stderr,
 			);
 			expect(banner, "the replayed outcome names the saved feedback file").not.toBeNull();
@@ -226,7 +224,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await expect(
 				countdown,
 				"the footer shows the time left before the review times out",
-			).toHaveText(/^\d{2}:\d{2} left$/);
+			).toHaveText(/^\d+:\d{2}:\d{2} left$/);
 			const start = secondsLeft(await countdown.textContent());
 			expect(start, "a 59 second limit starts the clock just under 59 seconds").toBeGreaterThan(44);
 			expect(start, "the clock never starts above the limit").toBeLessThanOrEqual(59);
