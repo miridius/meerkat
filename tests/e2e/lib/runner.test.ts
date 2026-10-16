@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -116,6 +116,12 @@ describe("orphaned fixture reaper", () => {
 			reapOrphanedFixtures();
 
 			for (const dir of orphaned) expect(existsSync(dir), `${dir} of a killed owner is removed`).toBe(false);
+			expect(
+				readdirSync(tmpdir()).filter((name) =>
+					new RegExp(`^meerkat-(?:e2e|rr)[a-z-]*-${killed.pid}-[A-Za-z0-9]{6}$`).test(name),
+				),
+				"no dir of the killed owner is left",
+			).toEqual([]);
 			expect(existsSync(owned.dir), "fixture of a live owner is kept").toBe(true);
 		} finally {
 			for (const dir of orphaned) rmSync(dir, { recursive: true, force: true });

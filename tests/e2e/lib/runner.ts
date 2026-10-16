@@ -56,14 +56,14 @@ const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 
 // Specs that spawn meerkat directly, without `startMeerkat`, would otherwise start
 // their backends in the user's own runs dir, and save toolbar settings in the
-// user's own config dir, which the reaper leaves alone.
+// user's own config dir, which `reapOrphanedBackends` leaves alone.
 // meerkat creates the dirs on first use.
 process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
 process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
 
 // The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
 // toolbar settings and runs reattaching to it share its settings. Named like
-// a runs dir, so the reaper removes it too.
+// a runs dir, so `reapOrphanedBackends` removes it too.
 export function configHome(runsDir: string): string {
 	return `${runsDir}cfg`;
 }

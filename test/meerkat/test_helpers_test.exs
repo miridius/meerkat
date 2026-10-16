@@ -4,7 +4,7 @@ defmodule Meerkat.TestHelpersTest do
   alias Meerkat.TestHelpers
 
   test "the suite's temp dir is named after this BEAM, so a later run can reap it" do
-    assert Path.basename(System.tmp_dir!()) =~ ~r/^meerkat-exunit-#{System.pid()}-\d+$/
+    assert System.tmp_dir!() =~ ~r"/meerkat-exunit/#{System.pid()}-\d+$"
   end
 
   describe "reap_orphaned_tmp_dirs/1" do
@@ -18,10 +18,9 @@ defmodule Meerkat.TestHelpersTest do
     test "removes the dirs of exited BEAMs and keeps those of live ones and unowned dirs",
          %{parent: parent} do
       {exited, 0} = System.cmd("sh", ["-c", "echo $$"])
-      orphaned = Path.join(parent, "meerkat-exunit-#{String.trim(exited)}-1")
-      owned = Path.join(parent, "meerkat-exunit-#{System.pid()}-1")
-      # Named like the temp dirs tests made before suites had their own.
-      unowned = Path.join(parent, "meerkat-lv-1-2-3")
+      orphaned = Path.join(parent, "#{String.trim(exited)}-1")
+      owned = Path.join(parent, "#{System.pid()}-1")
+      unowned = Path.join(parent, "1-2-3")
       for dir <- [orphaned, owned, unowned], do: File.mkdir_p!(Path.join(dir, "repo"))
 
       TestHelpers.reap_orphaned_tmp_dirs(parent)

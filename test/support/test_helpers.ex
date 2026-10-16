@@ -44,21 +44,23 @@ defmodule Meerkat.TestHelpers do
     end)
   end
 
-  @owned_tmp_dir_re ~r/^meerkat-exunit-(\d+)-\d+$/
+  @owned_tmp_dir_re ~r/^(\d+)-\d+$/
 
   @doc """
   Points TMPDIR, and so `System.tmp_dir!/0` and every child process, at a
-  new `meerkat-exunit-<OS pid>-<n>` dir under the system temp dir, removed
+  new `meerkat-exunit/<OS pid>-<n>` dir under the system temp dir, removed
   after the suite. Called once from `test_helper.exs`.
 
   First runs `reap_orphaned_tmp_dirs/1`, so the dirs of BEAMs killed before
-  their suite finished go with the next run.
+  their suite finished go with the next run. It lists only `meerkat-exunit`,
+  as the system temp dir can hold far more entries than is quick to list.
   """
   @spec isolate_tmp_dir() :: :ok
   def isolate_tmp_dir do
-    parent = System.tmp_dir!()
+    parent = Path.join(System.tmp_dir!(), "meerkat-exunit")
+    File.mkdir_p!(parent)
     reap_orphaned_tmp_dirs(parent)
-    dir = Path.join(parent, "meerkat-exunit-#{System.pid()}-#{System.os_time(:nanosecond)}")
+    dir = Path.join(parent, "#{System.pid()}-#{System.os_time(:nanosecond)}")
     File.mkdir_p!(dir)
     System.put_env("TMPDIR", dir)
     ExUnit.after_suite(fn _ -> File.rm_rf(dir) end)
@@ -133,10 +135,9 @@ defmodule Meerkat.TestHelpers do
   A path `<tmpdir>/<prefix>-<unique>-<os_time>-<rand>` that no other test
   run uses, without creating it.
 
-  `unique_integer/1` is unique only *within* a BEAM, and test runs in
-  other checkouts share the tmp dir, so a bare `unique_integer/1` suffix
-  can land on a dir another run is using or left behind. Stamping with
-  `os_time` and a random suffix avoids aliasing one.
+  `unique_integer/1` is unique only *within* a BEAM. Each test BEAM has its
+  own TMPDIR, but the `os_time` and random parts keep the path unique when
+  something points TMPDIR at a dir other BEAMs share.
   """
   @spec tmp_path(String.t()) :: String.t()
   def tmp_path(prefix) do
