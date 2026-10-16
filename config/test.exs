@@ -10,6 +10,11 @@ config :meerkat, MeerkatWeb.Endpoint,
   cache_static_manifest_latest: %{"assets/app-current.js" => "assets/app-current.js"},
   server: false
 
+# Tests share the machine with other test BEAMs and gates, which can slow
+# a real plantuml render or a ReviewServer reply well past what a user's
+# machine needs; these bound only a hang.
+config :meerkat, plantuml_timeout_ms: 120_000, review_server_call_timeout_ms: 30_000
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

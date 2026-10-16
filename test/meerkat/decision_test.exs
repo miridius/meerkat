@@ -238,11 +238,10 @@ defmodule Meerkat.DecisionTest do
       File.touch!(run_dir, backdated_s)
 
       Decision.reset()
-      Process.sleep(100)
-      :sys.get_state(Decision)
 
-      %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
-      assert mtime > backdated_s
+      assert Meerkat.TestHelpers.eventually(fn ->
+               File.stat!(run_dir, time: :posix).mtime > backdated_s
+             end)
     end
 
     test "an overdue review's deadline checks start no subprocess" do
@@ -485,12 +484,7 @@ defmodule Meerkat.DecisionTest do
 
       Process.exit(pid, :kill)
 
-      Enum.find_value(1..100, fn _ ->
-        Process.sleep(10)
-        is_nil(Application.get_env(:meerkat, :review_deadline_ms))
-      end)
-
-      assert Application.get_env(:meerkat, :review_deadline_ms) == nil,
+      assert eventually(fn -> is_nil(Application.get_env(:meerkat, :review_deadline_ms)) end),
              "the last caller leaving disarms the deadline"
     end
 
@@ -513,11 +507,7 @@ defmodule Meerkat.DecisionTest do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
       {first, _} = spawn_caller("run-i")
       Process.exit(first, :kill)
-
-      Enum.find_value(1..100, fn _ ->
-        Process.sleep(2)
-        is_nil(Application.get_env(:meerkat, :review_deadline_ms))
-      end)
+      assert eventually(fn -> is_nil(Application.get_env(:meerkat, :review_deadline_ms)) end)
 
       {_again, _} = spawn_caller("run-j")
       decision = Process.whereis(Decision)
@@ -557,11 +547,7 @@ defmodule Meerkat.DecisionTest do
       backdated_s = System.system_time(:second) - 3600
       File.touch!(run_dir, backdated_s)
 
-      Process.sleep(1200)
-      :sys.get_state(Decision)
-
-      %File.Stat{mtime: mtime} = File.stat!(run_dir, time: :posix)
-      assert mtime > backdated_s
+      assert eventually(fn -> File.stat!(run_dir, time: :posix).mtime > backdated_s end)
     end
 
     test "a review whose caller has left does not time out" do

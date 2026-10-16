@@ -646,7 +646,8 @@ defmodule Meerkat.CLITest do
       {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
       :ok = :gen_tcp.send(socket, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
 
-      assert {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)
+      assert {:error, :closed} =
+               :gen_tcp.recv(socket, 0, ExUnit.configuration()[:assert_receive_timeout])
     end
   end
 

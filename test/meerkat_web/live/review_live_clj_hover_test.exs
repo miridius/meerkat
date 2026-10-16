@@ -76,16 +76,15 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     assert_push_event(
       view,
       "clj:hover",
-      %{id: 7, hover: %{name: "app.core/f", doc: "Doc f."}},
-      10_000
+      %{id: 7, hover: %{name: "app.core/f", doc: "Doc f."}}
     )
 
     render_hook(view, "clj.hover", %{params | "id" => 8, "col" => 1})
-    assert_push_event(view, "clj:hover", %{id: 8, hover: nil}, 10_000)
+    assert_push_event(view, "clj:hover", %{id: 8, hover: nil})
 
     # An old row reads the base, where `(f)` doesn't exist.
     render_hook(view, "clj.hover", %{params | "id" => 9, "side" => "old"})
-    assert_push_event(view, "clj:hover", %{id: 9, hover: nil}, 10_000)
+    assert_push_event(view, "clj:hover", %{id: 9, hover: nil})
 
     # Its `(defn f` on old line 3: f at col 7.
     render_hook(view, "clj.hover", %{
@@ -96,7 +95,7 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
         "col" => 7
     })
 
-    assert_push_event(view, "clj:hover", %{id: 10, hover: %{name: "app.core/f"}}, 10_000)
+    assert_push_event(view, "clj:hover", %{id: 10, hover: %{name: "app.core/f"}})
   end
 
   test "a hover whose server is gone is logged and answers nothing", %{conn: conn} = ctx do
@@ -113,7 +112,7 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     stderr =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         render_hook(view, "clj.hover", params)
-        assert_push_event(view, "clj:hover", %{id: 1, hover: nil}, 5_000)
+        assert_push_event(view, "clj:hover", %{id: 1, hover: nil})
       end)
 
     assert stderr =~ "Clojure hover failed"

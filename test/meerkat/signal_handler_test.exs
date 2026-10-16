@@ -37,9 +37,10 @@ defmodule Meerkat.SignalHandlerTest do
           "--no-compile",
           "-e",
           # As `Meerkat.CLI.main/1` sets it up.
+          # Waits out a slow SIGTERM, below the 180 s test timeout.
           ~s|:io.setopts(:standard_error, encoding: :unicode); | <>
             ~s|Meerkat.SignalHandler.install(); System.cmd("kill", ["-TERM", System.pid()]); | <>
-            "Process.sleep(10_000); System.halt(0)"
+            "Process.sleep(150_000); System.halt(0)"
         ],
         env: [{"MIX_ENV", to_string(Mix.env())}],
         stderr_to_stdout: true

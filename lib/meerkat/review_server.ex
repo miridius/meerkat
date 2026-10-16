@@ -52,7 +52,7 @@ defmodule Meerkat.ReviewServer do
   @doc "Current canonical `%ReviewState{}`."
   @spec get_state(review_id) :: ReviewState.t()
   def get_state(review_id) do
-    GenServer.call(via(review_id), :get_state)
+    call(review_id, :get_state)
   end
 
   @doc "PubSub topic LiveViews subscribe to for `{:state_changed, state}` broadcasts."
@@ -70,7 +70,7 @@ defmodule Meerkat.ReviewServer do
   """
   @spec get_file_at(review_id, non_neg_integer()) :: {:ok, map()} | :not_found
   def get_file_at(review_id, idx) when is_integer(idx) and idx >= 0 do
-    GenServer.call(via(review_id), {:get_file_at, idx})
+    call(review_id, {:get_file_at, idx})
   end
 
   @doc """
@@ -81,7 +81,7 @@ defmodule Meerkat.ReviewServer do
   @spec add_comment(review_id, surface, map()) :: ReviewState.t()
   def add_comment(review_id, surface, comment)
       when surface in [:inline, :file, :global, :commit_msg] do
-    GenServer.call(via(review_id), {:add_comment, surface, comment})
+    call(review_id, {:add_comment, surface, comment})
   end
 
   @doc """
@@ -92,7 +92,7 @@ defmodule Meerkat.ReviewServer do
   """
   @spec clear_all_comments(review_id) :: ReviewState.t()
   def clear_all_comments(review_id) do
-    GenServer.call(via(review_id), :clear_all_comments)
+    call(review_id, :clear_all_comments)
   end
 
   @doc """
@@ -105,7 +105,7 @@ defmodule Meerkat.ReviewServer do
           ReviewState.t()
   def remove_comment(review_id, surface, id)
       when surface in [:inline, :file, :global, :commit_msg] and is_binary(id) do
-    GenServer.call(via(review_id), {:remove_comment, surface, id})
+    call(review_id, {:remove_comment, surface, id})
   end
 
   @doc """
@@ -123,19 +123,19 @@ defmodule Meerkat.ReviewServer do
   def set_flag(review_id, surface, id, flag, value)
       when surface in [:inline, :file, :global, :commit_msg] and is_binary(id) and
              flag in [:correct_instructions, :lint_rule] and is_boolean(value) do
-    GenServer.call(via(review_id), {:set_flag, surface, id, flag, value})
+    call(review_id, {:set_flag, surface, id, flag, value})
   end
 
   @doc "Mark/unmark a file as reviewed (file_name granularity)."
   @spec set_approved(review_id, String.t(), boolean()) :: ReviewState.t()
   def set_approved(review_id, file_name, approved?) when is_boolean(approved?) do
-    GenServer.call(via(review_id), {:set_approved, file_name, approved?})
+    call(review_id, {:set_approved, file_name, approved?})
   end
 
   @doc "Hide / unhide a file extension from the file-filter list."
   @spec set_extension_hidden(review_id, String.t(), boolean()) :: ReviewState.t()
   def set_extension_hidden(review_id, ext, hidden?) when is_boolean(hidden?) do
-    GenServer.call(via(review_id), {:set_extension_hidden, ext, hidden?})
+    call(review_id, {:set_extension_hidden, ext, hidden?})
   end
 
   @doc """
@@ -148,19 +148,19 @@ defmodule Meerkat.ReviewServer do
   @spec set_file_override(review_id, String.t(), :show | :hide | :default) :: ReviewState.t()
   def set_file_override(review_id, file_name, decision)
       when is_binary(file_name) and decision in [:show, :hide, :default] do
-    GenServer.call(via(review_id), {:set_file_override, file_name, decision})
+    call(review_id, {:set_file_override, file_name, decision})
   end
 
   @doc "Replace the entire file_overrides map. Used by bulk actions."
   @spec set_file_overrides(review_id, %{String.t() => :show | :hide}) :: ReviewState.t()
   def set_file_overrides(review_id, overrides) when is_map(overrides) do
-    GenServer.call(via(review_id), {:set_file_overrides, overrides})
+    call(review_id, {:set_file_overrides, overrides})
   end
 
   @doc "Toggle the `show generated files` flag. Broadcast so other tabs converge."
   @spec set_show_generated(review_id, boolean()) :: ReviewState.t()
   def set_show_generated(review_id, show?) when is_boolean(show?) do
-    GenServer.call(via(review_id), {:set_show_generated, show?})
+    call(review_id, {:set_show_generated, show?})
   end
 
   @doc """
@@ -172,13 +172,13 @@ defmodule Meerkat.ReviewServer do
   """
   @spec open_form(review_id, Meerkat.OpenForms.form()) :: ReviewState.t()
   def open_form(review_id, form) when is_map(form) do
-    GenServer.call(via(review_id), {:open_form, form})
+    call(review_id, {:open_form, form})
   end
 
   @doc "Close the open comment form whose `Meerkat.OpenForms.key/1` is `key`."
   @spec close_form(review_id, String.t()) :: ReviewState.t()
   def close_form(review_id, key) when is_binary(key) do
-    GenServer.call(via(review_id), {:close_form, key})
+    call(review_id, {:close_form, key})
   end
 
   @doc """
@@ -189,7 +189,7 @@ defmodule Meerkat.ReviewServer do
   @spec delete_snapshot(String.t(), review_id) :: :ok
   def delete_snapshot(repo_path, review_id) do
     case Registry.lookup(Meerkat.ReviewRegistry, review_id) do
-      [{pid, _}] -> GenServer.call(pid, :delete_snapshot)
+      [{pid, _}] -> GenServer.call(pid, :delete_snapshot, call_timeout_ms())
       [] -> Persistence.delete(repo_path, review_id)
     end
   end
@@ -202,6 +202,16 @@ defmodule Meerkat.ReviewServer do
   end
 
   defp via(review_id), do: {:via, Registry, {Meerkat.ReviewRegistry, review_id}}
+
+  defp call(review_id, request), do: GenServer.call(via(review_id), request, call_timeout_ms())
+
+  @doc """
+  How long a caller waits for the server's reply before exiting: 5 s, as
+  `GenServer.call/2`, unless `:review_server_call_timeout_ms` in the app env
+  sets it.
+  """
+  @spec call_timeout_ms() :: timeout()
+  def call_timeout_ms, do: Application.get_env(:meerkat, :review_server_call_timeout_ms, 5_000)
 
   @impl true
   def init(%{review_id: review_id, repo_path: repo_path, initial_state: initial_state}) do

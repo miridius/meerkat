@@ -120,7 +120,7 @@ defmodule Meerkat.VersionWatcherTest do
           do: :ok,
           else: assert_broadcast_target(expected)
     after
-      1000 -> flunk("no broadcast for #{expected}")
+      ExUnit.configuration()[:assert_receive_timeout] -> flunk("no broadcast for #{expected}")
     end
   end
 
