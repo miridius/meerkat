@@ -615,6 +615,35 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted).\n"
     end
 
+    test "a caller that cannot remove the run it found dead says so" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      # What a reap that could not delete a run leaves: the key names an
+      # empty run dir whose backend never writes its pid.
+      emptied = run_key(dir) <> ".emptied"
+      File.mkdir_p!(Path.join(runs, emptied))
+      File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+      File.chmod!(runs, 0o555)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"MEERKAT_PWD", dir},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      # The caller waits 10 s for the backend's pid before burying it.
+      assert {2, output} = await_result(port, dir, "", 20_000)
+
+      assert output =~
+               "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted).\n"
+    end
+
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
       {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
 
@@ -1093,14 +1122,14 @@ defmodule Meerkat.ShepherdTest do
   defp await_exit(port, dir), do: port |> await_result(dir) |> elem(0)
 
   # The launcher's exit code and everything it printed.
-  defp await_result(port, dir, seen \\ "") do
+  defp await_result(port, dir, seen \\ "", timeout_ms \\ @timeout_ms) do
     receive do
-      {^port, {:data, data}} -> await_result(port, dir, seen <> data)
+      {^port, {:data, data}} -> await_result(port, dir, seen <> data, timeout_ms)
       {^port, {:exit_status, code}} -> {code, seen}
     after
-      @timeout_ms ->
+      timeout_ms ->
         kill_launcher(port, dir)
-        flunk("meerkat-shepherd did not exit within #{@timeout_ms} ms:\n#{seen}")
+        flunk("meerkat-shepherd did not exit within #{timeout_ms} ms:\n#{seen}")
     end
   end
 
