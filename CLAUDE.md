@@ -18,7 +18,10 @@ remove commits a merged PR still references). Before committing:
 
 ## Rules
 
-- **Elixir + pnpm + Bun.** Set up a checkout with `mix deps.get`, then
+- **Elixir + pnpm + Bun.** Set up a checkout with `mise install` (the
+  Erlang, Elixir and Bun `.tool-versions` pins), `bun
+  scripts/setup-toolchain.ts` (the Hex and rebar3
+  `.github/toolchain.env` pins), `mix deps.get`, then
   `pnpm install --frozen-lockfile`. The tests also need `clj-kondo` on
   PATH. `mix …` for backend. As a supply-chain guard, Hex and pnpm
   resolve no release under 24h old: `mix.exs` sets Hex's `cooldown`,
@@ -47,6 +50,13 @@ remove commits a merged PR still references). Before committing:
   fail the gate. Before reading their reports, the gate and the bump
   install the locked dependencies, and fail when that would change
   `mix.lock` or `pnpm-lock.yaml`. The gate fails closed.
+  The toolchain is held to the same floor: `scripts/toolchain.ts`
+  fails the gate when a pin in `.tool-versions` or
+  `.github/toolchain.env`, `package.json`'s `packageManager`, or a
+  workflow's action SHA is not the newest release at least 24h old,
+  and the pre-commit hook bumps them. The one exception is a security
+  fix: when a published advisory affects a dependency or tool's
+  current version, the release that fixes it is taken however young.
 - **Script languages.** Write repo scripts (`scripts/`, `bin/`, hooks)
   with any branching, looping or parsing in TypeScript run by Bun.
   Bash only for a few lines of glue that set up and exec. Elixir
@@ -116,7 +126,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Gate slots:** At most two gates in all worktrees of the repo run their checks at once. `check.sh`, in either mode, and `mutate.sh staged` or `changed` each take one of two slots from `scripts/gate-lock.sh` before their checks and free it when they end. A gate that finds both slots taken prints that it is waiting. Waiting gates queue: the one at the head takes the next freed slot, so a newcomer never jumps ahead of it, but which waiter moves to the head next is not ordered. A waiting gate tries the locks once a second rather than blocking, since `lockf` blocked on an fd spins a core, and gives up, failing the gate, after `MEERKAT_GATE_LOCK_TIMEOUT` seconds (default 3600). Each slot is a `lockf` lock on a file in `meerkat-gate-lock` in the git common dir, held on the gate's fd 9, which the kernel frees when the gate exits, however it exits. The gate runs its checks in a subshell that closes fd 9 first, so a command that outlives it does not hold the slot.
 
-`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a Hex release under 24h old and a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, and `assets/package.json` into the commit.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a Hex release under 24h old and a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. Then `scripts/advisory-fixes.ts` updates each Hex or JS package an audit finds an advisory against, with the 24h floor lifted for it, and `scripts/toolchain.ts bump` moves the toolchain pins and action SHAs onto their targets. It never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, `assets/package.json`, `.tool-versions`, `.github/toolchain.env` and workflow files into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, once it holds a gate slot, it runs these steps in order:
 
@@ -141,7 +151,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Pre-push:** `.lefthook/pre-push/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked. If both pass, it runs `scripts/verified-push.sh`. `verified-push.sh` first refuses the push if it brings any merge commit that no remote-tracking ref holds; branches take in `main` by rebasing. It then requires `check.sh` and the mutation gate to have recorded each pushed tip's contents: a rebase or cherry-pick makes commits without the pre-commit hook, and a push is the last point git can refuse them. For each record a tip lacks, it runs `check.sh --head`, then `mutate.sh changed` against `origin/main`, stopping at the first failure. It runs them on an unrecorded HEAD when the worktree holds exactly HEAD, with no untracked file. It refuses the push if that run fails or records nothing. It refuses any other unrecorded HEAD. It runs them on an unrecorded tip other than HEAD in a temporary worktree of that tip. It refuses the push if the run fails or records nothing. It refuses any tip git cannot read. `no-private-refs.sh` reads private patterns, one extended regex per line, from the untracked `info/private-refs` in the git common dir and refuses the push if that file is missing or any pattern fails its self-test. It scans commits not already held by the target remote, plus every pushed tip’s full tree, pushed annotated tags, and pushed ref names, rejecting private-pattern matches, Claude Code session URLs, local absolute paths, and all email addresses except placeholder and no-reply addresses. It refuses the push if the remote cannot be queried.
 
-**CI:** Every PR runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm audit`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bash scripts/mix-test.sh`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
+**CI:** Every PR installs the pinned toolchain: Bun, Erlang and Elixir from `.tool-versions`; Hex, rebar3, clj-kondo, PlantUML's native binary and a GNU bash built by `scripts/build-bash.ts` from `.github/toolchain.env`, checking each of the last four downloads against its pinned SHA-256. It then runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm audit`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bash scripts/mix-test.sh`, `bun test` in `assets/`, `bun test tests/e2e/lib` from the repo root, `bunx playwright install --only-shell chromium`, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
 `scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. `pnpm audit` audits every JS dependency, dev ones included, and fails when it cannot reach the npm registry. `check.sh` runs both audits as CI does, so it fails a commit when either registry is out of reach.
 

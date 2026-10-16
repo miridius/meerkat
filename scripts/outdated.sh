@@ -9,6 +9,7 @@
 # whose pinned GitHub commit contains the tag of its newest stable Hex
 # release at least 24h old, in the GitHub repo Hex links, counts as that
 # release; the gate fails on every other git dependency, exempt or not.
+# scripts/toolchain.ts holds the CI toolchain's pins to the same floor.
 # It also fails on a missing or malformed
 # scripts/dep-exemptions.json or a stale entry there, and when installing
 # the locked dependencies would change mix.lock or pnpm-lock.yaml. It
@@ -23,7 +24,7 @@ cd "$(dirname "$0")/.."
 prefix="scripts/outdated.sh:"
 source scripts/deps-common.sh
 
-require_tools pnpm jq mix curl || exit 1
+require_tools pnpm jq mix curl bun || exit 1
 
 # An entry applies to both ecosystems, and scripts/bump-deps.sh skips
 # the same releases. Once a newer release is out, or the package is
@@ -189,6 +190,13 @@ while read -r name; do
   matched+=("$name")
   fail=1
 done < <(grep . <<<"$git_deps")
+
+# The toolchain is pinned outside the lockfiles, to the same floor.
+echo
+echo "=== toolchain ==="
+bun scripts/toolchain.ts check && rc=0 || rc=$?
+((rc > 1)) && exit 1
+((rc == 0)) || fail=1
 
 while IFS= read -r name; do
   if [[ " ${matched[*]-} " != *" $name "* ]]; then
