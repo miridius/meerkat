@@ -81,7 +81,14 @@ const hooks = {
         // The branch chip can shrink past the part that may truncate, and
         // then its other part runs out of it.
         const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
+        // Opening the version drop-down marks its updates seen, which
+        // narrows the full chip; it keeps its step while open, so the chip
+        // stays gone and the drop-down where it opened.
+        const keep =
+          /\bversion\b/.test(this.el.dataset.squeeze ?? "") &&
+          this.el.querySelector(".version-popover:not([hidden])") !== null;
         this.el.dataset.squeeze = squeeze((taken) => {
+          if (keep && taken.length === 0) return false;
           this.el.dataset.squeeze = taken.join(" ");
           return boxes.every((box) => box.scrollWidth <= box.clientWidth);
         }).join(" ");

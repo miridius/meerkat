@@ -57,6 +57,11 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		env: { RELEASE_ROOT: releaseRoot },
 	});
 	try {
+		await page.addInitScript(() => {
+			const w = window as unknown as { pageErrors: string[] };
+			w.pageErrors = [];
+			window.addEventListener("error", (e) => w.pageErrors.push(e.message));
+		});
 		await page.setViewportSize({ width: 2400, height: 800 });
 		await page.goto(meerkat.url);
 		await expect(page.locator(".diff-toolbar")).toHaveAttribute("data-squeeze", "");
@@ -138,15 +143,36 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await page.locator(".diff-toolbar").evaluate((el) => {
 			const w = window as unknown as { squeezeDropped: boolean };
 			w.squeezeDropped = false;
-			new MutationObserver(() => {
-				if (!el.hasAttribute("data-squeeze")) w.squeezeDropped = true;
-			}).observe(el, { attributeFilter: ["data-squeeze"] });
+			// The hook never removes it, so a record of it being set where it
+			// was absent means the patch dropped it.
+			new MutationObserver((records) => {
+				if (records.some((r) => r.oldValue === null)) w.squeezeDropped = true;
+			}).observe(el, { attributeFilter: ["data-squeeze"], attributeOldValue: true });
 		});
 		await popover.getByRole("button", { name: "Unified", exact: true }).click();
 		await expect(popover.getByRole("button", { name: "Unified", exact: true })).toHaveClass(/active/);
 		await expect(page.locator(".file-section td.diff-line-new-num")).toHaveCount(0);
 		await expect(popover).toBeVisible();
 		expect(await page.evaluate(() => (window as unknown as { squeezeDropped: boolean }).squeezeDropped)).toBe(false);
+		await page.locator(".toolbar-settings > summary").click();
+		await expect(popover).toBeHidden();
+
+		// A disconnect relabels the connection pill through a class on an
+		// ancestor; at the narrowest width that does not yet take its step,
+		// the longer label takes it.
+		let width = 2400;
+		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
+		while ((await at(page, width)).steps.includes("conn")) width += 1;
+		expect((await toolbarState(page)).steps).toEqual(["version", "files"]);
+		await page.evaluate(() => (window as unknown as { liveSocket: { disconnect(): void } }).liveSocket.disconnect());
+		await expect(page.locator(".conn-label-error")).toBeVisible();
+		await expect.poll(async () => (await toolbarState(page)).steps).toContain("conn");
+		expect((await toolbarState(page)).overflows).toBe(false);
+
+		expect(
+			await page.evaluate(() => (window as unknown as { pageErrors: string[] }).pageErrors),
+			"fitting the toolbar raises no errors, such as a ResizeObserver loop",
+		).toEqual([]);
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
@@ -176,7 +202,22 @@ test("at its step the version chip shows only its count of updates, and its drop
 		const named = popover.locator(".version-popover-version");
 		await expect(chip.locator(".version-badge")).toHaveText("1");
 
+		// With only its own step taken, the chip without its badge would fit
+		// in full; while the drop-down is open it keeps its step all the same.
 		let width = 2400;
+		while (!(await at(page, width)).steps.includes("version")) width -= 5;
+		expect((await toolbarState(page)).steps).toEqual(["version"]);
+		await chip.click();
+		await expect(popover).toBeVisible();
+		await afterNextFrame(page);
+		expect((await toolbarState(page)).steps).toEqual(["version"]);
+		await expect(chip).toHaveCSS("opacity", "0");
+		await chip.click();
+		await expect(popover).toBeHidden();
+
+		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
+		await page.reload();
+		await expect(chip.locator(".version-badge")).toHaveText("1");
 		// Past the version step, so the chip losing its badge cannot give it back.
 		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
 		const onScreen = await chip.evaluate((el) =>
