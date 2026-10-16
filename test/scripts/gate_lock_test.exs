@@ -18,9 +18,9 @@ defmodule Meerkat.GateLockTest do
   test "a gate takes a free slot at once, saying nothing", ctx do
     gate = gate_lock_port(ctx.repo, "echo ran")
 
-    assert_receive {^gate, {:data, {:eol, line}}}, 5_000
+    assert_receive {^gate, {:data, {:eol, line}}}
     assert line == "ran"
-    assert_receive {^gate, {:exit_status, 0}}, 5_000
+    assert_receive {^gate, {:exit_status, 0}}
   end
 
   test "two gates run at once and a third waits, saying so, until one ends", ctx do
@@ -28,13 +28,13 @@ defmodule Meerkat.GateLockTest do
     _second = hold_gate_slot(ctx.repo)
 
     third = gate_lock_port(ctx.repo, "echo third ran")
-    assert_receive {^third, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^third, {:data, {:eol, @waiting}}}
     refute_receive {^third, {:data, {:eol, "third ran"}}}, 1_500
 
     Port.close(first)
-    assert_receive {^third, {:data, {:eol, "gate-lock: got a slot after " <> _}}}, 5_000
-    assert_receive {^third, {:data, {:eol, "third ran"}}}, 5_000
-    assert_receive {^third, {:exit_status, 0}}, 5_000
+    assert_receive {^third, {:data, {:eol, "gate-lock: got a slot after " <> _}}}
+    assert_receive {^third, {:data, {:eol, "third ran"}}}
+    assert_receive {^third, {:exit_status, 0}}
   end
 
   test "gates in all worktrees of a repo share the slots", ctx do
@@ -46,7 +46,7 @@ defmodule Meerkat.GateLockTest do
     _second = hold_gate_slot(ctx.repo)
 
     gate = gate_lock_port(linked, "echo linked ran")
-    assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^gate, {:data, {:eol, @waiting}}}
   end
 
   test "the waiting gate at the head of the queue takes the next free slot", ctx do
@@ -54,20 +54,20 @@ defmodule Meerkat.GateLockTest do
     second = hold_gate_slot(ctx.repo)
 
     earlier = gate_lock_port(ctx.repo, "echo earlier ran; read -r _")
-    assert_receive {^earlier, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^earlier, {:data, {:eol, @waiting}}}
     # Which waiter polls first after a slot frees is down to timing, so
     # check that the one waiting holds the queue newcomers wait on.
     queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
     assert {_, 75} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
     later = gate_lock_port(ctx.repo, "echo later ran")
-    assert_receive {^later, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^later, {:data, {:eol, @waiting}}}
 
     Port.close(first)
-    assert_receive {^earlier, {:data, {:eol, "earlier ran"}}}, 5_000
+    assert_receive {^earlier, {:data, {:eol, "earlier ran"}}}
     refute_receive {^later, {:data, {:eol, "later ran"}}}, 1_500
 
     Port.close(second)
-    assert_receive {^later, {:data, {:eol, "later ran"}}}, 5_000
+    assert_receive {^later, {:data, {:eol, "later ran"}}}
   end
 
   # A gate behind the head of the queue waits for the queue lock, and one at
@@ -76,9 +76,9 @@ defmodule Meerkat.GateLockTest do
     _first = hold_gate_slot(ctx.repo)
     _second = hold_gate_slot(ctx.repo)
     head = gate_lock_port(ctx.repo, "echo head ran")
-    assert_receive {^head, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^head, {:data, {:eol, @waiting}}}
     behind = gate_lock_port(ctx.repo, "echo behind ran")
-    assert_receive {^behind, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^behind, {:data, {:eol, @waiting}}}
 
     Process.sleep(2_000)
     assert cpu_seconds(head) < 0.5
@@ -90,15 +90,14 @@ defmodule Meerkat.GateLockTest do
     _second = hold_gate_slot(ctx.repo)
 
     gate = gate_lock_port(ctx.repo, "echo ran", 1)
-    assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^gate, {:data, {:eol, @waiting}}}
 
     assert_receive {^gate,
                     {:data,
                      {:eol,
-                      "gate-lock: no slot came free in 1s; giving up. Set MEERKAT_GATE_LOCK_TIMEOUT to wait longer."}}},
-                   5_000
+                      "gate-lock: no slot came free in 1s; giving up. Set MEERKAT_GATE_LOCK_TIMEOUT to wait longer."}}}
 
-    assert_receive {^gate, {:exit_status, 1}}, 5_000
+    assert_receive {^gate, {:exit_status, 1}}
     queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
     assert {_, 0} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
   end
@@ -107,13 +106,13 @@ defmodule Meerkat.GateLockTest do
   # slot's fd closed as the gates start theirs, never held it.
   test "a gate killed by SIGKILL frees its slot, even while its child runs on", ctx do
     killed = gate_lock_port(ctx.repo, "sleep 10 9>&- & echo held; wait")
-    assert_receive {^killed, {:data, {:eol, "held"}}}, 5_000
+    assert_receive {^killed, {:data, {:eol, "held"}}}
     _other = hold_gate_slot(ctx.repo)
 
     kill(killed)
 
     next = gate_lock_port(ctx.repo, "echo next ran")
-    assert_receive {^next, {:data, {:eol, "next ran"}}}, 5_000
+    assert_receive {^next, {:data, {:eol, "next ran"}}}
   end
 
   test "a waiting gate killed by SIGKILL leaves the queue to the next", ctx do
@@ -121,13 +120,13 @@ defmodule Meerkat.GateLockTest do
     _second = hold_gate_slot(ctx.repo)
 
     killed = gate_lock_port(ctx.repo, "echo killed ran")
-    assert_receive {^killed, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^killed, {:data, {:eol, @waiting}}}
     later = gate_lock_port(ctx.repo, "echo later ran")
-    assert_receive {^later, {:data, {:eol, @waiting}}}, 5_000
+    assert_receive {^later, {:data, {:eol, @waiting}}}
 
     kill(killed)
     Port.close(first)
-    assert_receive {^later, {:data, {:eol, "later ran"}}}, 5_000
+    assert_receive {^later, {:data, {:eol, "later ran"}}}
   end
 
   defp kill(port) do

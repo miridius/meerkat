@@ -40,11 +40,34 @@ defmodule Meerkat.BumpDepsHookTest do
 
   @dep_files ~w(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json)
 
-  setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-bump-deps")
-    on_exit(fn -> File.rm_rf!(base) end)
-    File.rm_rf!(Path.join(base, ".git"))
+  # Built once, then copied for each test.
+  setup_all do
+    template = Meerkat.TestHelpers.make_tmp_repo("meerkat-bump-deps-template")
+    on_exit(fn -> File.rm_rf!(template) end)
+    File.rm_rf!(Path.join(template, ".git"))
+    build_fixture(template)
+    {:ok, template: template}
+  end
 
+  setup %{template: template} do
+    base = Meerkat.TestHelpers.copy_fixture(template, "meerkat-bump-deps")
+
+    {:ok,
+     work: Path.join(base, "work"),
+     stubs: Path.join(base, "stubs"),
+     log: Path.join(base, "log"),
+     hex_out: Path.join(base, "hex.out"),
+     pnpm_out: Path.join(base, "pnpm.json"),
+     seen: Path.join(base, "seen"),
+     fail_update: Path.join(base, "fail-update"),
+     npm_latest: Path.join(base, "npm-latest"),
+     refuse: Path.join(base, "refuse"),
+     fail_get: Path.join(base, "fail-deps-get"),
+     fail_install: Path.join(base, "fail-pnpm-install"),
+     git_env: Path.join(base, "git-env")}
+  end
+
+  defp build_fixture(base) do
     work = Path.join(base, "work")
     stubs = Path.join(base, "stubs")
     log = Path.join(base, "log")
@@ -141,20 +164,6 @@ defmodule Meerkat.BumpDepsHookTest do
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm bun bunx), do: File.ln_s!("stub", Path.join(stubs, tool))
-
-    {:ok,
-     work: work,
-     stubs: stubs,
-     log: log,
-     hex_out: hex_out,
-     pnpm_out: pnpm_out,
-     seen: seen,
-     fail_update: fail_update,
-     npm_latest: npm_latest,
-     refuse: refuse,
-     fail_get: fail_get,
-     fail_install: fail_install,
-     git_env: git_env}
   end
 
   test "a commit while dependencies are behind carries their bump", ctx do

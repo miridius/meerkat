@@ -36,11 +36,30 @@ defmodule Meerkat.PreCommitHookTest do
     "mix muex"
   ]
 
-  setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-pre-commit")
-    on_exit(fn -> File.rm_rf!(base) end)
-    File.rm_rf!(Path.join(base, ".git"))
+  # Built once, then copied for each test.
+  setup_all do
+    template = Meerkat.TestHelpers.make_tmp_repo("meerkat-pre-commit-template")
+    on_exit(fn -> File.rm_rf!(template) end)
+    File.rm_rf!(Path.join(template, ".git"))
+    build_fixture(template)
+    {:ok, template: template}
+  end
 
+  setup %{template: template} do
+    base = Meerkat.TestHelpers.copy_fixture(template, "meerkat-pre-commit")
+
+    {:ok,
+     base: base,
+     work: Path.join(base, "work"),
+     stubs: Path.join(base, "stubs"),
+     log: Path.join(base, "log"),
+     seen: Path.join(base, "seen"),
+     places: Path.join(base, "places"),
+     muex: Path.join(base, "muex"),
+     slot_fd: Path.join(base, "slot_fd")}
+  end
+
+  defp build_fixture(base) do
     work = Path.join(base, "work")
     stubs = Path.join(base, "stubs")
     log = Path.join(base, "log")
@@ -144,16 +163,6 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm bun bunx mix-test.sh), do: File.ln_s!("stub", Path.join(stubs, tool))
-
-    {:ok,
-     base: base,
-     work: work,
-     stubs: stubs,
-     log: log,
-     seen: seen,
-     places: places,
-     muex: muex,
-     slot_fd: slot_fd}
   end
 
   test "a commit runs every gate in the checkout", ctx do
@@ -783,7 +792,7 @@ defmodule Meerkat.PreCommitHookTest do
       {^port, {:exit_status, status}} ->
         flunk("exited #{status} before printing #{inspect(text)}")
     after
-      10_000 -> flunk("no line containing #{inspect(text)}")
+      30_000 -> flunk("no line containing #{inspect(text)}")
     end
   end
 

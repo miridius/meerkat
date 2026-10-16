@@ -200,7 +200,9 @@ defmodule Meerkat.CLIMainTest do
   # OTP's own SIGTERM handling would exit 0 here, which means approved.
   test "a SIGTERM while the review target resolves exits 143 with a REJECT message",
        %{repo: repo} do
-    stub_gh(repo, ~s(kill -TERM "$MEERKAT_TEST_BEAM"; sleep 10))
+    # gh does not return before the SIGTERM ends the review. Its sleep keeps
+    # no stream of the BEAM open, which would hold the test until it ends.
+    stub_gh(repo, ~s(kill -TERM "$MEERKAT_TEST_BEAM"; exec sleep 150 >/dev/null 2>&1))
 
     {output, code} =
       System.cmd(
@@ -271,7 +273,8 @@ defmodule Meerkat.CLIMainTest do
   # Runs `main/1` in a fresh BEAM after `setup`, with `open` and `xdg-open`
   # stubbed to record the URL they get and its HTTP status, then end the
   # review with a SIGTERM. A review that waited would halt with 124 after
-  # 10 s. Returns the output, exit code and the `File.read/1` of the record.
+  # 150 s, below the 180 s test timeout. Returns the output, exit code and
+  # the `File.read/1` of the record.
   defp run_review_with_stub_opener(repo, setup, argv) do
     opened = Path.join(repo, "opened")
     bin = Path.join(repo, "open-stub")
@@ -296,7 +299,7 @@ defmodule Meerkat.CLIMainTest do
           "--no-start",
           "--no-compile",
           "-e",
-          "{:ok, _} = :timer.apply_after(10_000, System, :halt, [124]); " <>
+          "{:ok, _} = :timer.apply_after(150_000, System, :halt, [124]); " <>
             ~s|System.put_env("MEERKAT_TEST_BEAM", System.pid()); | <>
             setup <> "System.halt(Meerkat.CLI.main(System.argv()))",
           "--" | argv
@@ -320,9 +323,11 @@ defmodule Meerkat.CLIMainTest do
         ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.main(argv) end)
       end)
 
-    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
+    # A bound on a hang, below the 180 s test timeout; under load a passing
+    # run can take tens of seconds.
+    case Task.yield(task, 150_000) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
-      _ -> flunk("CLI.main(#{inspect(argv)}) did not return within 10 s")
+      _ -> flunk("CLI.main(#{inspect(argv)}) did not return within 150 s")
     end
   end
 

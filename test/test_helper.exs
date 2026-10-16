@@ -1,8 +1,10 @@
-# ExUnit's 100 ms default for assert_receive can run out on a loaded CI
-# runner, and 1 s ran out while other gates shared the machine. A message
-# that arrives ends the wait, so a passing test is no slower; set no
-# shorter wait on an assert_receive.
-ExUnit.start(assert_receive_timeout: 5_000)
+# Both bounds catch only a hang; a passing test is no slower for them.
+# While other gates load the machine, a test that starts gits, hooks or
+# BEAMs can run past ExUnit's 60 s default, and an assert_receive past
+# 1 s, then 5 s. Set no shorter wait on an assert_receive. It stays well
+# below the test timeout, so a message that never comes fails at its
+# assert_receive.
+ExUnit.start(timeout: 180_000, assert_receive_timeout: 30_000)
 Meerkat.TestHelpers.isolate_tmp_dir()
 
 Meerkat.TestHelpers.put_git_config_env()

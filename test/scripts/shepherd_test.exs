@@ -7,7 +7,13 @@ defmodule Meerkat.ShepherdTest do
   use ExUnit.Case, async: true
 
   @shepherd Path.join(File.cwd!(), "bin/meerkat-shepherd")
-  @timeout_ms 10_000
+  # How long any wait here lasts before the test fails. It bounds only a
+  # hang: a passing test stops waiting as soon as what it waits for
+  # happens, which under load can take tens of seconds. It stays below
+  # the 180 s test timeout, so a hang fails with this file's message.
+  @timeout_ms 150_000
+  # The polling waits look every 50 ms until @timeout_ms runs out.
+  @attempts div(@timeout_ms, 50)
 
   test "restarts on exit 75, then propagates a clean decision" do
     assert run_shepherd([75, 75, 0]) == %{code: 0, iterations: 3}
@@ -323,10 +329,14 @@ defmodule Meerkat.ShepherdTest do
       backend = await_backend_pid(runs)
 
       # The shepherd's EXIT trap writes `exit` into its run dir after the
-      # TERM; deleting the dir before then races that write.
+      # TERM; deleting the dir before then races that write. Not every run
+      # dir gets an `exit`, so each wait gets 5 s, not @timeout_ms: several
+      # full waits would outlast ExUnit's 180 s on_exit limit.
       on_exit(fn ->
         System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
-        for run <- Path.wildcard(Path.join(runs, "*")), do: await_file(Path.join(run, "exit"))
+
+        for run <- Path.wildcard(Path.join(runs, "*")),
+            do: await_file(Path.join(run, "exit"), 100)
       end)
 
       {:os_pid, caller} = Port.info(port, :os_pid)
@@ -402,7 +412,7 @@ defmodule Meerkat.ShepherdTest do
           review.env
         )
 
-      await_backend_pid(review.runs, 100, [review.backend])
+      await_backend_pid(review.runs, @attempts, [review.backend])
       System.cmd("kill", ["-CONT", review.first_pid])
       File.write!(review.go, "")
 
@@ -432,7 +442,7 @@ defmodule Meerkat.ShepherdTest do
       assert await_content(Path.join(run, "caller"), to_string(second_pid))
 
       System.cmd("kill", ["-TERM", review.backend])
-      await_backend_pid(review.runs, 100, [review.backend])
+      await_backend_pid(review.runs, @attempts, [review.backend])
       File.write!(review.go, "")
 
       assert await_exit(second, review.dir) == 7
@@ -655,7 +665,7 @@ defmodule Meerkat.ShepherdTest do
         ])
 
       # The caller waits 10 s for the backend's pid before burying it.
-      assert {2, output} = await_result(port, dir, "", 20_000)
+      assert {2, output} = await_result(port, dir)
 
       assert output =~
                "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted).\n"
@@ -1001,13 +1011,13 @@ defmodule Meerkat.ShepherdTest do
     second =
       open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], review.dir, review.env)
 
-    await_backend_pid(review.runs, 100, [review.backend])
+    await_backend_pid(review.runs, @attempts, [review.backend])
     second
   end
 
   # The pid of a detached shepherd not in `known`, once a caller has
   # started it.
-  defp await_backend_pid(runs, attempts \\ 100, known \\ []) do
+  defp await_backend_pid(runs, attempts \\ @attempts, known \\ []) do
     pids =
       Path.join([runs, "*", "pid"])
       |> Path.wildcard()
@@ -1033,7 +1043,7 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # The BEAM pid from the port file the backend's BEAM records.
-  defp await_beam_pid(runs, attempts \\ 100) do
+  defp await_beam_pid(runs, attempts \\ @attempts) do
     beam =
       case Path.wildcard(Path.join([runs, "*", "port"])) do
         # Read between the BEAM's truncate and write, it is empty.
@@ -1054,8 +1064,8 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  # Whether process `pid` exits within a second.
-  defp await_gone(pid, attempts \\ 20) do
+  # Whether process `pid` exits within @timeout_ms.
+  defp await_gone(pid, attempts \\ @attempts) do
     case System.cmd("ps", ["-p", pid], stderr_to_stdout: true) do
       {_, 1} ->
         true
@@ -1155,14 +1165,14 @@ defmodule Meerkat.ShepherdTest do
   defp await_exit(port, dir), do: port |> await_result(dir) |> elem(0)
 
   # The launcher's exit code and everything it printed.
-  defp await_result(port, dir, seen \\ "", timeout_ms \\ @timeout_ms) do
+  defp await_result(port, dir, seen \\ "") do
     receive do
-      {^port, {:data, data}} -> await_result(port, dir, seen <> data, timeout_ms)
+      {^port, {:data, data}} -> await_result(port, dir, seen <> data)
       {^port, {:exit_status, code}} -> {code, seen}
     after
-      timeout_ms ->
+      @timeout_ms ->
         kill_launcher(port, dir)
-        flunk("meerkat-shepherd did not exit within #{timeout_ms} ms:\n#{seen}")
+        flunk("meerkat-shepherd did not exit within #{@timeout_ms} ms:\n#{seen}")
     end
   end
 
@@ -1189,8 +1199,8 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  # The trimmed contents of `path` once it exists, or nil after 5 s.
-  defp await_file(path, attempts \\ 100) do
+  # The trimmed contents of `path` once it exists, or nil after @timeout_ms.
+  defp await_file(path, attempts \\ @attempts) do
     case File.read(path) do
       {:ok, contents} ->
         String.trim(contents)
@@ -1212,8 +1222,8 @@ defmodule Meerkat.ShepherdTest do
     |> binary_part(0, 16)
   end
 
-  # Whether `path` holds `text` within 5 s.
-  defp await_content(path, text, attempts \\ 100) do
+  # Whether `path` holds `text` within @timeout_ms.
+  defp await_content(path, text, attempts \\ @attempts) do
     case File.read(path) do
       {:ok, contents} when contents == text <> "\n" ->
         true
@@ -1237,8 +1247,8 @@ defmodule Meerkat.ShepherdTest do
     fake_bin <> ":" <> System.get_env("PATH")
   end
 
-  # Waits up to 5 s for `pattern` to match a path.
-  defp await_match(pattern, attempts \\ 100) do
+  # Waits up to @timeout_ms for `pattern` to match a path.
+  defp await_match(pattern, attempts \\ @attempts) do
     cond do
       Path.wildcard(pattern) != [] ->
         :ok

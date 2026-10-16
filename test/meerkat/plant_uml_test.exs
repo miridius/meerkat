@@ -53,7 +53,34 @@ defmodule Meerkat.PlantUMLTest do
     assert runs(ctx) == 1
   end
 
+  # Puts the render time budget back as it was when the test ends.
+  defp keep_timeout_env(_ctx) do
+    previous = Application.fetch_env(:meerkat, :plantuml_timeout_ms)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:meerkat, :plantuml_timeout_ms, value)
+        :error -> Application.delete_env(:meerkat, :plantuml_timeout_ms)
+      end
+    end)
+  end
+
+  describe "timeout_ms/0" do
+    setup :keep_timeout_env
+
+    test "is 30 s unless the app env sets it" do
+      Application.delete_env(:meerkat, :plantuml_timeout_ms)
+      assert PlantUML.timeout_ms() == 30_000
+
+      Application.put_env(:meerkat, :plantuml_timeout_ms, 5)
+      assert PlantUML.timeout_ms() == 5
+    end
+  end
+
   describe "a render that runs out of time" do
+    setup :keep_timeout_env
+    setup do: Application.put_env(:meerkat, :plantuml_timeout_ms, 30_000)
+
     # A real child that outlives the time budget; 0ms makes it time out at once.
     defp stuck_port do
       Port.open(
