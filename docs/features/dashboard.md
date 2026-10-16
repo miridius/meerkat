@@ -136,16 +136,6 @@ How an answerable item without a fork id, such as a confirmation or
 request not posted through `AskUserQuestion`, reaches the session is
 not yet designed.
 
-The `decisions` plugin must change to support this. Today its
-`nudge-on-stop` hook blocks a stop once while a question is open,
-telling Claude to ask it, and its `block-on-open` hook gates tools
-while a question is open. Both hooks must treat a fork whose latest
-asking was posted to the dashboard and is unanswered as waiting on
-the user, like an entry set aside with `wait`. Until the answer
-arrives, such a fork blocks no stop, prompts no re-asking and gates
-no tool. A session with nothing left to do can then end its turn,
-and the answer starts a new one.
-
 ## Commit reviews
 
 This section lists every open meerkat review whose decision is still waiting, across all repositories. Each row shows:
@@ -310,12 +300,12 @@ local probes.
   - The `decisions` plugin's `log` hook must record that asking as
     posted to the dashboard. Recorded as a typed reply, it would leave
     the fork open for re-asking.
-  - Probed in Claude Code 2.1.289 in an interactive session started
-    with `claude --bg` in `dontAsk` mode; other permission modes
-    were not probed. The call completed about 0.3 s after Claude
-    made it. The tool result began `The user answered:`, followed by
-    the question and the hook's text. Claude picked neither option
-    and carried on.
+  - Probed in Claude Code 2.1.289 in `claude --bg` sessions in every
+    permission mode: `bypassPermissions`, `default`, `acceptEdits`,
+    `plan`, `auto` and `dontAsk`. In each, the hook ran, the call
+    completed within a second with no prompt, and the tool result
+    began `The user answered:`, followed by the question and the
+    hook's text. Claude read that text as no choice made.
 - **Deny.** The hook could instead deny the call with a reason. Claude
   reads the reason and the call never runs. The documentation does
   not say how repeated denials change later tool use, but Claude
