@@ -41,9 +41,10 @@ Use `makeFixture` or `makePrFixture` from
 Run every script that uses `tests/e2e/lib` with `TMPDIR` set to your
 run directory, so its fixtures and runs dirs land there, out of reach
 of other e2e runs' orphan reapers.
-Never run anything that reaps orphans with that `TMPDIR`: not
-`playwright test`, whose global setup and teardown reap, and not
-`bun test tests/e2e/lib`.
+Until the final cleanup, never run anything that reaps orphans with
+that `TMPDIR`, such as `playwright test`, `bun run test`,
+`bun run test:e2e`, `bun test tests/e2e/lib` or the cleanup's
+`tests/e2e/lib/reap.ts`.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
 Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
 Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
@@ -51,8 +52,10 @@ Before the first browser check, run
 `bunx playwright install --only-shell chromium`.
 End each `startMeerkat` run with its `kill()` in a `finally`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
-For direct CLI checks, set `MEERKAT_RUNS_DIR` and `XDG_CONFIG_HOME`
-each to a new directory in your run directory.
+For direct CLI checks, in the same Bash call that starts meerkat, set
+`MEERKAT_RUNS_DIR` to `<run>/meerkat-runs-$$-cli` and
+`XDG_CONFIG_HOME` to `<run>/meerkat-runs-$$-clicfg`, where `<run>` is
+your run directory.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
 gutter.
@@ -69,11 +72,13 @@ Open the review URL in the browser.
 Never use the user's real repositories.
 Never modify meerkat.
 Kill every meerkat process you start, and no other.
-When done, send SIGTERM to the process in each `pid` file anywhere
-under your run directory, only while that process still runs
-`bin/meerkat-beam`, and wait for it to exit.
-Then remove everything in your run directory except logs, captured
-output, and evidence cited in the report.
+When done, once every script and meerkat command you ran has exited,
+run `bun -e 'await (await import("./tests/e2e/lib/reap.ts")).default()'`
+from this checkout with `TMPDIR` set to your run directory.
+It stops the meerkat backends recorded there and removes their runs
+dirs and fixtures.
+Then remove everything left in your run directory except captured
+output and evidence cited in the report.
 Delete nothing outside it, the caller's scratch directory included.
 Name in the report any process you could not stop and anything you
 could not remove.
