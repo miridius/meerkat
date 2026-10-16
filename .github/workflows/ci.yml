@@ -22,11 +22,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Load toolchain pins
+        run: grep -v '^#' .github/toolchain.env >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .tool-versions
+
       - id: beam
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
-          otp-version: "29"
-          elixir-version: "1.20"
+          version-file: .tool-versions
+          version-type: strict
+          install-hex: false
+          install-rebar: false
+
+      - run: bun scripts/setup-toolchain.ts
 
       # meerkat's own build is left out: checkout leaves lib/ newer than a
       # restored build, and bin/meerkat-beam then recompiles on every launch.
@@ -44,28 +55,52 @@ jobs:
         with:
           cache: true
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # bin/meerkat-attach opens a named fd (`exec {fd}<`), which the
+      # image's bash 3.2 lacks. The build is cached per pin.
+      - id: gnu-bash
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          bun-version: latest
+          path: ~/.local/gnu-bash
+          key: gnu-bash-${{ runner.os }}-${{ runner.arch }}-${{ env.GNU_BASH_VERSION }}-${{ env.GNU_BASH_SHA256 }}
 
-      # bin/meerkat-beam uses mapfile, which the image's bash 3.2 lacks.
+      - if: steps.gnu-bash.outputs.cache-hit != 'true'
+        run: bun scripts/build-tool.ts bash ~/.local/gnu-bash
+
+      - name: Put GNU bash on PATH
+        run: |
+          echo "$HOME/.local/gnu-bash/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/gnu-bash/bin/bash" -c '[[ "$BASH_VERSION" == "${GNU_BASH_VERSION%.*}".* ]]'
+
+      # PlantUML lays diagrams out with Graphviz's dot, which the image
+      # lacks. The build is cached per pin.
+      - id: graphviz
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/graphviz
+          key: graphviz-${{ runner.os }}-${{ runner.arch }}-${{ env.GRAPHVIZ_VERSION }}-${{ env.GRAPHVIZ_SHA256 }}
+
+      - if: steps.graphviz.outputs.cache-hit != 'true'
+        run: bun scripts/build-tool.ts graphviz ~/.local/graphviz
+
+      - name: Put Graphviz on PATH
+        run: |
+          echo "$HOME/.local/graphviz/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/graphviz/bin/dot" -V 2>&1 | grep -F "graphviz version $GRAPHVIZ_VERSION "
+
       # The PlantUML unit and e2e tests render with the real plantuml.
-      - name: Install bash and plantuml
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
+      - name: Install PlantUML
         run: |
-          brew install bash plantuml
-          [[ "$(bash -c 'echo "${BASH_VERSINFO[0]}"')" -ge 4 ]]
+          curl -fsSLo plantuml.zip "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/native-plantuml-macos-arm64-$PLANTUML_VERSION.zip"
+          echo "$PLANTUML_SHA256  plantuml.zip" | shasum -a 256 -c
+          unzip -q plantuml.zip -d "$RUNNER_TEMP/plantuml"
+          rm plantuml.zip
+          echo "$RUNNER_TEMP/plantuml" >> "$GITHUB_PATH"
 
-      # Clojure hover's unit and e2e tests analyse with the real clj-kondo,
-      # which Homebrew core doesn't carry.
+      # Clojure hover's unit and e2e tests analyse with the real clj-kondo.
       - name: Install clj-kondo
-        env:
-          VERSION: "2026.08.04"
-          SHA256: 8fe3a57820890a35d843599097276f56ce483a1501abd7f68edd1897770f1559
         run: |
-          curl -fsSLo kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$VERSION/clj-kondo-$VERSION-macos-aarch64.zip"
-          echo "$SHA256  kondo.zip" | shasum -a 256 -c
+          curl -fsSLo kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$CLJ_KONDO_VERSION/clj-kondo-$CLJ_KONDO_VERSION-macos-aarch64.zip"
+          echo "$CLJ_KONDO_SHA256  kondo.zip" | shasum -a 256 -c
           unzip -q kondo.zip -d "$RUNNER_TEMP/clj-kondo"
           rm kondo.zip
           echo "$RUNNER_TEMP/clj-kondo" >> "$GITHUB_PATH"
@@ -91,7 +126,7 @@ jobs:
       - run: bun run test:e2e
 
       - if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-test-results
           path: test-results/

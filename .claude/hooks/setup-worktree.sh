@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart, SubagentStart and PostToolUse(EnterWorktree) hook:
-# installs any missing Hex or JS dependencies in the checkout Claude
+# installs any missing toolchain, Hex or JS dependencies in the checkout Claude
 # starts in or enters, before Claude works there, so a fresh worktree can
 # build and test and its git hooks find lefthook (`pnpm install` installs
 # it). The hook input's `cwd` is that checkout; CLAUDE_PROJECT_DIR stays
@@ -57,6 +57,14 @@ run() {
   fi
 }
 
+# The tools .tool-versions pins come from mise, then Hex and rebar3 for
+# that Elixir from scripts/setup-toolchain.ts, which is quick when they
+# are in place.
+if [ -f .tool-versions ] && command -v mise >/dev/null &&
+  [ -n "$(mise ls --current --missing 2>/dev/null)" ]; then
+  run mise install
+fi
+if [ -f scripts/setup-toolchain.ts ]; then run bun scripts/setup-toolchain.ts; fi
 if mix_deps_missing; then run mix deps.get; fi
 if [ ! -f node_modules/.modules.yaml ]; then
   run pnpm install --frozen-lockfile --prefer-offline
