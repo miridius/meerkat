@@ -1280,6 +1280,10 @@ defmodule MeerkatWeb.ReviewLive do
         <span class="version-badge" hidden></span>
       </button>
       <div class="version-popover" hidden role="menu">
+        <%!-- Shown when the toolbar, short of room, cuts the chip to its count. --%>
+        <div class="version-popover-version">
+          meerkat <code class="chip-value">{@version.label}</code>
+        </div>
         <div class="version-popover-title">recent changes</div>
         <ul class="version-changelog">
           <li :for={entry <- @version.changelog}>
@@ -1908,7 +1912,16 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp diff_toolbar(assigns) do
     ~H"""
-    <div class="diff-toolbar" id="diff-toolbar" phx-hook="ToolbarHeight">
+    <%!-- The Toolbar hook sets `data-squeeze` to the steps the toolbar
+      takes to fit one row; without ignoring it, a re-render would undo them. --%>
+    <div
+      class="diff-toolbar"
+      id="diff-toolbar"
+      phx-hook="Toolbar"
+      phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["data-squeeze"])}
+    >
+      <%!-- The toolbar's width, which the Toolbar hook watches. --%>
+      <span class="toolbar-width" aria-hidden="true"></span>
       <button
         type="button"
         class="toolbar-icon-btn"
@@ -1916,7 +1929,7 @@ defmodule MeerkatWeb.ReviewLive do
         title="Toggle file list / filter sidebar"
         aria-label="Toggle file list"
       >
-        ☰ Files
+        ☰ <span class="files-label">Files</span>
       </button>
 
       <a
@@ -1940,9 +1953,9 @@ defmodule MeerkatWeb.ReviewLive do
         class="chip branch-chip"
         title={@repo_path}
       >
-        <code class="chip-value" title={@state.base_branch}>{@state.base_branch}</code>
+        <code class="chip-value branch-base" title={@state.base_branch}>{@state.base_branch}</code>
         <span class="chip-arrow">←</span>
-        <code class="chip-value" title={@state.head_branch}>{@state.head_branch}</code>
+        <code class="chip-value branch-head" title={@state.head_branch}>{@state.head_branch}</code>
       </span>
 
       <span
@@ -1950,7 +1963,7 @@ defmodule MeerkatWeb.ReviewLive do
         class="chip branch-chip"
         title={@repo_path}
       >
-        <code class="chip-value" title={@state.head_branch}>{@state.head_branch}</code>
+        <code class="chip-value branch-head" title={@state.head_branch}>{@state.head_branch}</code>
       </span>
 
       <.version_chip version={@version} />
@@ -1965,11 +1978,13 @@ defmodule MeerkatWeb.ReviewLive do
 
       <span class="toolbar-line-counts">
         <%= if length(@expanded_files) < length(@state.files) do %>
-          showing
+          <span class="counts-showing">showing</span>
           <.line_counts
             additions={Enum.sum_by(@expanded_files, & &1.additions)}
             deletions={Enum.sum_by(@expanded_files, & &1.deletions)}
-          /> of
+          />
+          <span class="counts-of">of</span>
+          <span class="counts-slash">/</span>
         <% end %>
         <.line_counts
           additions={Enum.sum_by(@state.files, & &1.additions)}
@@ -1979,33 +1994,7 @@ defmodule MeerkatWeb.ReviewLive do
 
       <.connection_indicator />
 
-      <div class="toolbar-group">
-        <button
-          type="button"
-          phx-click="set_diff_mode"
-          phx-value-mode="split"
-          class={if @mode == "split", do: "active", else: ""}
-        >
-          Split
-        </button>
-        <button
-          type="button"
-          phx-click="set_diff_mode"
-          phx-value-mode="unified"
-          class={if @mode == "unified", do: "active", else: ""}
-        >
-          Unified
-        </button>
-      </div>
-
-      <label class="toolbar-group wrap-toggle">
-        <input
-          type="checkbox"
-          phx-click="toolbar.toggle_wrap"
-          checked={@wrap_lines}
-        />
-        <span>Wrap</span>
-      </label>
+      <.view_controls mode={@mode} wrap_lines={@wrap_lines} />
 
       <%!-- The browser sets `open`; without ignoring it, the re-render
         a setting change causes would close the popover. --%>
@@ -2015,6 +2004,8 @@ defmodule MeerkatWeb.ReviewLive do
       >
         <summary title="Display settings">⚙</summary>
         <div class="toolbar-settings-popover">
+          <.view_controls mode={@mode} wrap_lines={@wrap_lines} />
+
           <div class="toolbar-group">
             <span class="toolbar-label">Font</span>
             <button
@@ -2078,6 +2069,48 @@ defmodule MeerkatWeb.ReviewLive do
           </div>
         </div>
       </details>
+    </div>
+    """
+  end
+
+  # Split / Unified and Wrap, in the toolbar and again in the ⚙ popover,
+  # where they move when the toolbar is short of room; CSS shows one.
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  attr :mode, :string, required: true
+
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and both call sites pass it
+  attr :wrap_lines, :boolean, required: true
+
+  defp view_controls(assigns) do
+    ~H"""
+    <div class="view-controls">
+      <div class="toolbar-group">
+        <button
+          type="button"
+          phx-click="set_diff_mode"
+          phx-value-mode="split"
+          class={if @mode == "split", do: "active", else: ""}
+        >
+          Split
+        </button>
+        <button
+          type="button"
+          phx-click="set_diff_mode"
+          phx-value-mode="unified"
+          class={if @mode == "unified", do: "active", else: ""}
+        >
+          Unified
+        </button>
+      </div>
+
+      <label class="toolbar-group wrap-toggle">
+        <input
+          type="checkbox"
+          phx-click="toolbar.toggle_wrap"
+          checked={@wrap_lines}
+        />
+        <span>Wrap</span>
+      </label>
     </div>
     """
   end

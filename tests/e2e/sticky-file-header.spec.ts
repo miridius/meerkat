@@ -8,11 +8,12 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 
 const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
-const WRAPPED_WIDTHS = [1150, 900, 600];
+// Narrow enough that the toolbar has moved Split / Unified and Wrap into
+// the ⚙ popover, which changes its height (see toolbar-squeeze.spec.ts),
+// and then that it wraps.
+const NARROW_WIDTHS = [900, 600, 320];
 
-const SHORT_BRANCH = "fix/typo";
-// A branch name and commit subject long enough that the toolbar wraps
-// at 1400px, and short enough that it still fits one row at 1500px.
+// A long branch name, with the toolbar still on one row at 1500px.
 const LONG_BRANCH = "feature/request-timing-instrumentation-with-slow-route-alerts";
 
 function stickyFixture() {
@@ -23,22 +24,6 @@ function stickyFixture() {
 	});
 	fixture.git("branch", "-m", LONG_BRANCH);
 	return fixture;
-}
-
-function branchChip(page: Page) {
-	return page.evaluate(() => {
-		const value = document.querySelector(".branch-chip .chip-value") as HTMLElement;
-		return {
-			title: value.getAttribute("title"),
-			clipped: value.offsetWidth < value.scrollWidth,
-		};
-	});
-}
-
-function setBranchChipText(page: Page, name: string) {
-	return page.evaluate((text) => {
-		(document.querySelector(".branch-chip .chip-value") as HTMLElement).textContent = text;
-	}, name);
 }
 
 type Probe = {
@@ -88,7 +73,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 	});
 	test.afterAll(() => rmSync(releaseRoot, { recursive: true, force: true }));
 
-	test(`the header is pinned on the first paint, the review spans the window, a long branch name is clipped, and narrowing it from ${ONE_ROW_WIDTH}px to ${WRAPPED_WIDTHS.join("px and ")}px re-pins the header below the wrapped toolbar`, async ({
+	test(`the header is pinned on the first paint, the review spans the window, and narrowing it from ${ONE_ROW_WIDTH}px to ${NARROW_WIDTHS.join("px and ")}px re-pins the header below the toolbar's new height`, async ({
 		page,
 	}) => {
 		const meerkat = await startMeerkat({ fixture: stickyFixture(), env: { RELEASE_ROOT: releaseRoot } });
@@ -112,13 +97,14 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 					};
 				});
 
-				expect(published.hookMounted, "the bundle that carries the ToolbarHeight hook never loaded").toBe(
+				expect(published.hookMounted, "the bundle that carries the Toolbar hook never loaded").toBe(
 					false,
 				);
 				expect(
 					published.toolbarH,
-					"the width under test is one where the CSS fallback would be wrong",
-				).toBeGreaterThan(ONE_ROW_H);
+					"before the hook runs the toolbar keeps to one row, the height the hook gives it at most widths",
+				).toBe(ONE_ROW_H);
+				expect(published.toolbarH, "the CSS fallback would be wrong").not.toBe(40);
 				expect(published.published, "--toolbar-h already carries the toolbar's real height").toBe(
 					`${published.toolbarH}px`,
 				);
@@ -141,22 +127,6 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 
 			await page.setViewportSize({ width: ONE_ROW_WIDTH, height: 800 });
 
-			// The chip's text is the branch name, which the LiveView tests
-			// cover; only its fit is a browser question, so the short name is
-			// put in the same chip rather than a second review.
-			const chip = await branchChip(page);
-			expect(chip.clipped, "the chip renders less of the branch name than the name holds").toBe(true);
-			expect(
-				chip.title,
-				"the whole branch name is on the tooltip, so hovering recovers what the chip cut",
-			).toBe(LONG_BRANCH);
-			await setBranchChipText(page, SHORT_BRANCH);
-			expect(
-				(await branchChip(page)).clipped,
-				"the cap is wide enough to leave an ordinary branch name intact",
-			).toBe(false);
-			await setBranchChipText(page, LONG_BRANCH);
-
 			await scrollDeepIntoTheFirstFile(page);
 
 			const wide = await probe(page);
@@ -172,13 +142,13 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 				wide.toolbarH,
 			);
 
-			for (const width of WRAPPED_WIDTHS) {
+			for (const width of NARROW_WIDTHS) {
 				await page.setViewportSize({ width, height: 800 });
 				await expect
 					.poll(async () => (await probe(page)).toolbarH, {
-						message: `the toolbar wrapped onto more rows at ${width}px`,
+						message: `the toolbar's height changed at ${width}px`,
 					})
-					.toBeGreaterThan(ONE_ROW_H);
+					.not.toBe(ONE_ROW_H);
 
 				await afterNextFrame(page);
 				const narrow = await probe(page);

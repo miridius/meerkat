@@ -52,8 +52,17 @@ test("with Wrap off, inline forms and comments stay in view beside a long line i
 		await page.setViewportSize({ width: 450, height: 900 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
-		const wrap = page.getByRole("checkbox", { name: "Wrap" });
-		await wrap.click();
+		// This narrow, the toolbar has moved Split / Unified and Wrap into the ⚙ popover.
+		const settings = page.locator(".toolbar-settings > summary");
+		const viewControls = page.locator(".toolbar-settings-popover .view-controls");
+		const inSettings = async (control: Locator) => {
+			await settings.click();
+			await control.click();
+			await settings.click();
+		};
+		// Located by CSS, as it is hidden once the popover closes.
+		const wrap = viewControls.locator(".wrap-toggle input");
+		await inSettings(wrap);
 		await expect(wrap).not.toBeChecked();
 
 		const views = [
@@ -61,7 +70,7 @@ test("with Wrap off, inline forms and comments stay in view beside a long line i
 			{ name: "Unified", line: file.locator('td.diff-line-num span[data-line-new-num="3"]') },
 		];
 		for (const [i, { name, line }] of views.entries()) {
-			await page.getByRole("button", { name, exact: true }).click();
+			await inSettings(viewControls.getByRole("button", { name, exact: true }));
 			await line.click();
 			const formRow = file.locator("tr.meerkat-form-row");
 			const form = formRow.locator(".comment-form");

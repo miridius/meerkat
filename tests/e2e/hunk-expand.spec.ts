@@ -85,7 +85,7 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 	try {
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "a.txt" });
-		const wrapToggle = page.locator(".diff-toolbar .wrap-toggle input[type=checkbox]");
+		const wrapToggle = page.locator(".diff-toolbar > .view-controls .wrap-toggle input[type=checkbox]");
 
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		await expect(file.locator("td.diff-line-new-num")).toHaveCount(0);

@@ -11,6 +11,7 @@ import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
+import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -70,20 +71,53 @@ const hooks = {
       document.removeEventListener("keydown", this._onKey);
     },
   },
-  // The toolbar wraps onto more rows as the window narrows, so
-  // `.file-section-header` cannot pin itself below it at a fixed offset.
-  ToolbarHeight: {
+  // Takes the fewest steps that fit the toolbar's content on one row
+  // (see toolbarSqueeze.ts), whenever its width or content changes. Its
+  // steps change its height, so `.file-section-header` cannot pin itself
+  // below it at a fixed offset: this publishes its height.
+  Toolbar: {
     mounted() {
-      this._publish = () => {
+      this._fit = () => {
+        // The branch chip can shrink past the part that may truncate, and
+        // then its other part runs out of it.
+        const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
+        // Opening the version drop-down marks its updates seen, which
+        // narrows the full chip; it keeps its step while open, so the chip
+        // stays gone and the drop-down where it opened.
+        const keep =
+          /\bversion\b/.test(this.el.dataset.squeeze ?? "") &&
+          this.el.querySelector(".version-popover:not([hidden])") !== null;
+        this.el.dataset.squeeze = squeeze((taken) => {
+          if (keep && taken.length === 0) return false;
+          this.el.dataset.squeeze = taken.join(" ");
+          return boxes.every((box) => box.scrollWidth <= box.clientWidth);
+        }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
         document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
       };
-      this._observer = new ResizeObserver(this._publish);
-      this._observer.observe(this.el);
-      this._publish();
+      // A fit resizes the toolbar and its items, so a ResizeObserver on them
+      // would be notified from inside its own callback, which the browser
+      // reports as an error. Instead it watches only the zero-height
+      // `.toolbar-width` for width, and content changes, such as the
+      // version chip gaining its badge or a reconnect relabelling the
+      // connection pill through an ancestor's class, through a
+      // MutationObserver. Neither sees what a fit changes.
+      this._resize = new ResizeObserver(this._fit);
+      this._resize.observe(this.el.querySelector(".toolbar-width"));
+      this._mutation = new MutationObserver(this._fit);
+      this._mutation.observe(this.el, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributeFilter: ["class", "hidden"],
+      });
+      for (let el = this.el.parentElement; el; el = el.parentElement) {
+        this._mutation.observe(el, { attributeFilter: ["class"] });
+      }
     },
     destroyed() {
-      this._observer?.disconnect();
+      this._resize?.disconnect();
+      this._mutation?.disconnect();
       document.documentElement.style.removeProperty("--toolbar-h");
     },
   },
@@ -364,6 +398,11 @@ const hooks = {
         if (opening) {
           setSeen(maxPr());
           this._refreshBadge();
+          // It hangs left from the chip's right edge; a chip near the
+          // window's left edge shifts it right, back into view.
+          popover.style.right = "";
+          const left = popover.getBoundingClientRect().left;
+          if (left < 8) popover.style.right = `${left - 8}px`;
         }
       };
       btn.addEventListener("click", this._onClick);
