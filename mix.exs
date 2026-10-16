@@ -85,11 +85,13 @@ defmodule Meerkat.MixProject do
       # of map literals, `%` structs or `::` in interpolation and
       # bitstring segments, runs of mutants whose compiled code
       # differs only as 4 vs 4.0, which were wrongly called equivalent,
-      # `--staged` refusing a file with an unstaged deletion, and git
-      # diffs that ignore textconv drivers and diff prefix config.
+      # `--staged` refusing a file with an unstaged deletion, git
+      # diffs that ignore textconv drivers and diff prefix config, and
+      # selecting tests that name a module only as a value, such as
+      # `live_isolated(conn, MeerkatWeb.ReviewLive)`.
       {:muex,
        github: "agent-for-miridius/muex",
-       ref: "e6a0cbc0cb23b49f39ffedce4a50ad9c48b7a2c6",
+       ref: "09560dc884b0dff97da545c95ec171c2f727deb1",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
