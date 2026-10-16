@@ -696,17 +696,16 @@ defmodule Meerkat.PrePushHookTest do
     no_hooks(ctx.work, ["push", "-q", "origin", "HEAD:refs/heads/main"])
     # Below the hits, so the pull-request refs do not make them public.
     sha = git(ctx.work, ["rev-parse", "HEAD~1"])
-
-    # Written straight into the remote: pushing 3000 refs is far slower.
     remote = git(ctx.work, ["remote", "get-url", "origin"])
-    refs = Path.join(Path.dirname(ctx.work), "pull-refs")
-    File.write!(refs, Enum.map(1..3000, &"create refs/pull/#{&1}/head #{sha}\n"))
 
-    {_, 0} =
-      System.cmd("bash", ["-c", ~s(git update-ref --stdin < "$0"), refs],
-        cd: remote,
-        env: hook_env()
-      )
+    # Written straight into the remote's packed-refs: pushing 3000 refs is
+    # far slower, and as loose refs each would have its own file and
+    # directory, 6000 entries in all.
+    File.write!(
+      Path.join(remote, "packed-refs"),
+      Enum.map(1..3000, &"#{sha} refs/pull/#{&1}/head\n"),
+      [:append]
+    )
 
     remote_ahead(ctx.work)
     commit(ctx.work, "b.txt", "b\n", "add b")
