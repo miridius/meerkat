@@ -465,8 +465,8 @@ defmodule Meerkat.CLITest do
   describe "feedback_banner/3" do
     @path "/repo/.git/meerkat-precommit/reviews/20260601-main-files3.txt"
 
-    test "states the verdict — approved vs requested changes" do
-      assert CLI.feedback_banner_for_test(:reject, 2, {:ok, @path}) =~ "User requested changes"
+    test "states the verdict — approved vs rejected" do
+      assert CLI.feedback_banner_for_test(:reject, 2, {:ok, @path}) =~ "User rejected the commit"
 
       assert CLI.feedback_banner_for_test(:approve_with_feedback, 2, {:ok, @path}) =~
                "User approved your commit"
@@ -497,7 +497,7 @@ defmodule Meerkat.CLITest do
     test "nil or zero count drops the number rather than printing a wrong 0" do
       for count <- [nil, 0] do
         banner = CLI.feedback_banner_for_test(:reject, count, {:ok, @path})
-        assert banner =~ "User requested changes"
+        assert banner =~ "User rejected the commit"
         refute banner =~ ~r/\d+ comment/
       end
     end
@@ -514,7 +514,7 @@ defmodule Meerkat.CLITest do
 
     test "no recovery file (empty payload) still states the verdict, omits the file clause" do
       banner = CLI.feedback_banner_for_test(:reject, 0, :none)
-      assert banner =~ "User requested changes"
+      assert banner =~ "User rejected the commit"
       refute banner =~ "feedback"
     end
 
@@ -573,7 +573,7 @@ defmodule Meerkat.CLITest do
         flat = String.replace(banner, ~r/\s+/, " ")
         assert flat =~ "If you remind the user to review, give them the URL"
         assert flat =~ "do NOT poll, sleep, or schedule wake-ups"
-        assert flat =~ "approved or requested changes"
+        assert flat =~ "approved or rejected, and carries any comments they left."
         assert flat =~ "not a `tail`/`head` of it"
       end
     end
@@ -863,7 +863,7 @@ defmodule Meerkat.CLITest do
     test "reject exits 1 and carries the comments", %{path: path} do
       {code, err} = exit_code({:reject, "PAYLOAD-BODY"}, path)
       assert code == 1
-      assert err =~ "User requested changes"
+      assert err =~ "User rejected the commit"
       assert err =~ "PAYLOAD-BODY"
     end
 
@@ -915,7 +915,7 @@ defmodule Meerkat.CLITest do
 
       out = CLI.write_feedback_for_test(:reject, "", "no-live-review", unwritten)
 
-      assert out =~ "User requested changes"
+      assert out =~ "User rejected the commit"
       refute out =~ "saved to"
       refute File.exists?(unwritten)
     end
@@ -928,7 +928,7 @@ defmodule Meerkat.CLITest do
       assert File.read!(path) == "PAYLOAD-BODY"
       assert out =~ "PAYLOAD-BODY"
       # Verdict + path appear top and bottom so they survive a head/tail truncation.
-      assert length(Regex.scan(~r/User requested changes/, out)) == 2
+      assert length(Regex.scan(~r/User rejected the commit/, out)) == 2
       assert length(Regex.scan(~r/full feedback saved to/, out)) == 2
     end
 
@@ -977,7 +977,7 @@ defmodule Meerkat.CLITest do
       payload = Feedback.format(ReviewServer.get_state(id))
       out = CLI.write_feedback_for_test(:reject, payload, id, path)
 
-      assert length(Regex.scan(~r/User requested changes — 2 comments —/, out)) == 2
+      assert length(Regex.scan(~r/User rejected the commit — 2 comments —/, out)) == 2
       assert out =~ "full feedback saved to #{path} in case truncated"
       assert File.read!(path) =~ "first finding here"
       assert File.read!(path) =~ "second finding here"

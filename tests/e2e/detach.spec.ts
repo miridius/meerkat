@@ -122,7 +122,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun exits with the decision's code").toBe(1);
-			expect(stderr).toContain("User requested changes");
+			expect(stderr).toContain("User rejected the commit");
 			expect(stderr).toContain("typed after the caller died");
 
 			// The warning from resolving the review reaches the rerun through
@@ -193,7 +193,7 @@ test.describe("a review outlives the process that invoked it", () => {
 				"Paused for human review",
 			);
 
-			const banner = /── (User requested changes — 1 comment — full feedback saved to (\S+) in case truncated) ──/.exec(
+			const banner = /── (User rejected the commit — 1 comment — full feedback saved to (\S+) in case truncated) ──/.exec(
 				stderr,
 			);
 			expect(banner, "the replayed outcome names the saved feedback file").not.toBeNull();
