@@ -358,7 +358,8 @@ defmodule Meerkat.CljHoverTest do
     Process.exit(ctx.pid, :kill)
     assert_receive {:DOWN, ^ref, :process, _, :killed}
     _ = :sys.get_state(Meerkat.ReviewServerSup)
-    assert Registry.lookup(Meerkat.ReviewRegistry, {CljHover, ctx.rid}) == []
+    # The registry drops the dead pid in its own time; whereis skips it.
+    refute GenServer.whereis({:via, Registry, {Meerkat.ReviewRegistry, {CljHover, ctx.rid}}})
   end
 
   test "outside a git repo, hover answers nothing" do
