@@ -32,7 +32,8 @@ defmodule MeerkatWeb.ReviewLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    # phx-track-static only reports asset changes; it does not reload the page.
+    # phx-track-static only sends the page's asset URLs on join; LiveView
+    # never reloads the page on a mismatch by itself.
     # Redirect a connected tab with outdated assets to "/" for a full page load
     # of the current build instead of leaving it running old JS/CSS.
     if connected?(socket) and static_changed?(socket) do

@@ -15,7 +15,7 @@
           and the page loads with no JS. --%>
     <PhoenixVite.Components.assets
       names={["js/app.js"]}
-      manifest={{:meerkat, "priv/static/.vite/manifest.json"}}
+      manifest={MeerkatWeb.Endpoint.config(:vite_manifest)}
       dev_server={PhoenixVite.Components.has_vite_watcher?(MeerkatWeb.Endpoint)}
     />
     <%!-- Imported CSS (live_svelte component imports of

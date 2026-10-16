@@ -44,10 +44,13 @@ Two halves:
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
 exit 75. The tab stays put because the dev shepherd keeps one
-secret across BEAMs, so its LiveView session token remains valid.
-If the restart rebuilt the assets, `ReviewLive.mount/3` instead
-redirects the reconnecting tab to "/" for a full page load of the
-new build. State survives either way because:
+secret across BEAMs, and each review names its session cookie for
+its port, so another review's cookie never replaces it. Its LiveView
+session therefore remains valid. If a rebuild changed the assets'
+hashed names, `ReviewLive.mount/3` instead redirects the
+reconnecting tab to "/" for a full page load of the new build. The
+page's asset tags and that check both use the manifest the BEAM read
+at boot. State survives either way because:
 
 - Comments + approvals are persisted to
   `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` and

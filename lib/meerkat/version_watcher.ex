@@ -5,8 +5,8 @@ defmodule Meerkat.VersionWatcher do
   other than the one this BEAM booted from, a newer release is live.
 
   It broadcasts `{:meerkat_version_available, target}` on `topic/0` so
-  connected review LiveViews reload at a safe point (no open comment
-  form). With no LiveView connected it calls `Meerkat.Restart.request/0`
+  connected review LiveViews request the restart at a safe point (no
+  open comment form). With no LiveView connected it calls `Meerkat.Restart.request/0`
   itself. Either way the shepherd respawns onto the new version and
   `ReviewServer` reloads the in-progress snapshot.
 
@@ -82,9 +82,9 @@ defmodule Meerkat.VersionWatcher do
     %{state | notified: target}
   end
 
-  # Connected LiveViews reload themselves once they're at a safe point;
+  # Connected LiveViews request the restart once they're at a safe point;
   # only restart from here when none are connected (or once they've all
-  # disconnected without reloading), so a reviewer mid-comment is never
+  # disconnected without requesting it), so a reviewer mid-comment is never
   # interrupted. Skip it too once a decision is in flight: the CLI is about
   # to halt with the decision's exit code and a restart (75) would preempt
   # and lose it.

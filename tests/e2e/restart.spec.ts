@@ -30,6 +30,7 @@ test.describe("a review that restarts onto a new version", () => {
 			keepFixture: true,
 		});
 		let rerun: Runner | undefined;
+		let other: Runner | undefined;
 		try {
 			await page.goto(meerkat.url);
 			await page.getByRole("button", { name: "+ Add global comment" }).click();
@@ -41,8 +42,16 @@ test.describe("a review that restarts onto a new version", () => {
 			const approved = page.getByRole("checkbox", { name: "Approved" });
 			await approved.check();
 
-			await page.evaluate(() => {
-				(window as unknown as { notReloaded: boolean }).notReloaded = true;
+			// Another review loaded in the same browser sets its own cookie,
+			// which must not keep this tab from rejoining in place.
+			other = await startMeerkat({ fixture: makeFixture({ files: { "b.txt": "two\n" } }) });
+			const otherPage = await page.context().newPage();
+			await otherPage.goto(other.url);
+			await expect(otherPage.locator("[data-phx-main].phx-connected")).toBeVisible();
+
+			let reloads = 0;
+			page.on("framenavigated", (frame) => {
+				if (frame === page.mainFrame()) reloads++;
 			});
 			const before = servingPid(meerkat);
 			// Repoint `current` the way an install does, atomically.
@@ -64,14 +73,13 @@ test.describe("a review that restarts onto a new version", () => {
 				)
 				.toBe("restarted");
 
-			// The open page reconnects by itself, in place: the build's assets
-			// are unchanged, so it does not reload.
+			// The open page reconnects by itself, in place: the new BEAM verifies
+			// its session with the shepherd's secret and its own cookie, and the
+			// build's assets are unchanged, so it does not reload.
 			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 30_000 });
-			expect(
-				await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded),
-			).toBe(true);
 			await expect(page.getByText("kept across the restart")).toBeVisible();
 			await expect(approved).toBeChecked();
+			expect(reloads).toBe(0);
 
 			await page.getByRole("button", { name: /^Approve with feedback$/ }).click();
 			const { code, stderr } = await meerkat.awaitExit();
@@ -89,6 +97,7 @@ test.describe("a review that restarts onto a new version", () => {
 			expect(again.stderr).toContain("auto-approving");
 		} finally {
 			await rerun?.kill();
+			await other?.kill();
 			await meerkat.kill();
 			meerkat.fixture.cleanup?.();
 			rmSync(versions, { recursive: true, force: true });

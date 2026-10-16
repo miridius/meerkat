@@ -650,18 +650,23 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  describe "static_manifest_latest/1" do
-    test "maps every script and stylesheet the Vite build emitted to itself" do
+  describe "endpoint_config/2's Vite manifest" do
+    test "serves the parse the layout uses, and maps every file it names to itself" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-manifest")
       on_exit(fn -> File.rm_rf!(dir) end)
       path = Path.join(dir, "manifest.json")
 
-      File.write!(path, ~s({
+      json = ~s({
         "js/app.js": {"file": "assets/app-A1.js", "css": ["assets/app-B2.css"], "isEntry": true},
         "_dist-C3.js": {"file": "assets/dist-C3.js"}
-      }))
+      })
 
-      assert CLI.static_manifest_latest_for_test(path) == %{
+      File.write!(path, json)
+      config = CLI.endpoint_config_for_test(0, path)
+
+      assert config[:vite_manifest] == PhoenixVite.Manifest.parse(json)
+
+      assert config[:cache_static_manifest_latest] == %{
                "assets/app-A1.js" => "assets/app-A1.js",
                "assets/app-B2.css" => "assets/app-B2.css",
                "assets/dist-C3.js" => "assets/dist-C3.js"
@@ -669,7 +674,17 @@ defmodule Meerkat.CLITest do
     end
 
     test "is nil without a build, so no tab is told its assets changed" do
-      assert CLI.static_manifest_latest_for_test("/nonexistent/manifest.json") == nil
+      config = CLI.endpoint_config_for_test(0, "/nonexistent/manifest.json")
+      assert config[:vite_manifest] == nil
+      assert config[:cache_static_manifest_latest] == nil
+    end
+
+    test "is read from the build's priv/static by default" do
+      path = Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
+      keys = [:vite_manifest, :cache_static_manifest_latest]
+
+      assert Keyword.take(CLI.endpoint_config_for_test(0), keys) ==
+               Keyword.take(CLI.endpoint_config_for_test(0, path), keys)
     end
   end
 

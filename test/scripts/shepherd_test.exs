@@ -569,7 +569,8 @@ defmodule Meerkat.ShepherdTest do
 
   # Runs `launcher` with a fake BEAM at `beam_path` under a temp dir. The
   # BEAM records the preferred port it saw as `beam: <port>` (`beam: none`
-  # if unset), writes its port file and exits 75, then 0. `stubs` shadow
+  # if unset) and its SECRET_KEY_BASE as `secret: <value>`, writes its
+  # port file and exits 75, then 0. `stubs` shadow
   # commands the launcher runs between BEAMs: each records what
   # `record_port_file/1` does, then execs its real command, or exits 0
   # without one. `env` gets the temp dir. Returns what was recorded, in
