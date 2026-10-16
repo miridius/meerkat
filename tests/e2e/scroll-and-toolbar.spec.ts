@@ -14,17 +14,16 @@ const PROD_MANIFEST = [
 const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
 
 // Browser seams of a long review's page: the scroll position a reload
-// keeps, the file-filter panel scrolled into view when it opens, and the
-// version chip's popover and localStorage-backed badge. What the filter
-// hides, pins and restores, and what a dev and a prod build's chip
-// render, are covered by the LiveView tests.
+// keeps, and the version chip's popover and localStorage-backed badge.
+// What the filter hides, pins and restores, and what a dev and a prod
+// build's chip render, are covered by the LiveView tests.
 //
 // A live-restart onto a version with changed assets makes
 // ReviewLive.mount/3 redirect on reconnect for a full page load. A plain
 // page.reload() reproduces that full reload (same origin, so
 // sessionStorage survives), which is the behaviour the
 // scroll-preservation code in app.js has to handle.
-test("a fresh review starts at the top and a reload keeps its scroll, the file panel scrolls into view, and the version chip's badge counts unseen changes", async ({
+test("a fresh review starts at the top and a reload keeps its scroll, and the version chip's badge counts unseen changes", async ({
 	page,
 }) => {
 	const releaseRoot = manifestRoot(PROD_MANIFEST);
@@ -55,29 +54,6 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		await page.reload();
 		await expect.poll(scrollY).toBeGreaterThan(before - 100);
 
-		// Opening the file panel from the sticky toolbar while scrolled to
-		// the bottom brings it into view; without the scroll-into-view push
-		// it stays off-screen at the top. The button's accessible name is
-		// its aria-label, not its visible "☰ Files" content.
-		await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-		await expect.poll(scrollY).toBeGreaterThan(before);
-		await page.getByRole("button", { name: /^Toggle file list$/ }).click();
-		await expect(page.locator(".file-filter-header")).toBeVisible();
-		// toBeInViewport only tests the viewport rectangle, so it passes
-		// even when the sticky toolbar paints over the header. Compare
-		// bounding boxes so the header must clear the toolbar's bottom.
-		// Poll to ride out the smooth scroll.
-		await expect
-			.poll(() =>
-				page.evaluate(() => {
-					const header = document.querySelector(".file-filter-header")?.getBoundingClientRect();
-					const toolbar = document.querySelector(".diff-toolbar")?.getBoundingClientRect();
-					if (!header || !toolbar) return false;
-					return header.top >= toolbar.bottom - 1 && header.top >= 0 && header.bottom <= window.innerHeight;
-				}),
-			)
-			.toBe(true);
-
 		// A prod build's chip opens a changelog popover, and its badge
 		// counts entries newer than the last seen until opened.
 		const chip = page.locator(".version-chip-btn");
@@ -106,6 +82,90 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
+	}
+});
+
+// The files dropdown's browser seams: it opens over the review from the
+// sticky toolbar, below the toolbar even when it wraps, without moving the
+// page, and takes focus; Escape, an outside click and a pick close it; a
+// pick scrolls to the file without adding a history entry, which would
+// stop window.close() closing the tab after a decision; and picking a
+// hidden file leaves focus on the button. Its tree, filters and events are
+// covered by the LiveView tests.
+test("the files dropdown opens over the review, closes on Escape, an outside click and a pick, and a pick adds no history entry", async ({
+	page,
+}) => {
+	const meerkat = await startMeerkat({
+		fixture: makeFixture({ files: { "a/tall.txt": TALL_FILE, "b/z.txt": TALL_FILE } }),
+	});
+	try {
+		// Narrow enough that the toolbar wraps onto a second row.
+		await page.setViewportSize({ width: 700, height: 720 });
+		await page.goto(meerkat.url);
+		await expect
+			.poll(() => page.evaluate(() => document.querySelector(".diff-toolbar")?.getBoundingClientRect().height))
+			.toBeGreaterThan(60);
+		const toggle = page.getByRole("button", { name: /^Toggle file list$/ });
+		const dropdown = page.getByRole("dialog", { name: "Files" });
+		const scrollY = () => page.evaluate(() => Math.round(window.scrollY));
+		const historyLength = await page.evaluate(() => history.length);
+		// Where `selector`'s top sits relative to the toolbar's bottom, and
+		// whether its bottom and right edge are inside the viewport.
+		const placement = (selector: string) =>
+			page.evaluate((sel) => {
+				const el = document.querySelector(sel)?.getBoundingClientRect();
+				const bar = document.querySelector(".diff-toolbar")?.getBoundingClientRect();
+				if (!el || !bar) return null;
+				return {
+					below: Math.round(el.top - bar.bottom),
+					fits: el.bottom <= window.innerHeight && el.right <= window.innerWidth,
+				};
+			}, selector);
+
+		await page.evaluate(() => window.scrollTo(0, 1500));
+		await expect.poll(scrollY).toBeGreaterThan(1000);
+		const scrolled = await scrollY();
+		await toggle.click();
+		await expect(dropdown).toBeVisible();
+		await expect(page.getByRole("textbox", { name: "Filter files" })).toBeFocused();
+		const opened = await placement("#file-filter");
+		expect(opened?.below).toBeGreaterThanOrEqual(0);
+		expect(opened?.fits).toBe(true);
+		expect(await scrollY(), "opening does not scroll the page").toBe(scrolled);
+
+		await page.keyboard.press("Escape");
+		await expect(dropdown).toBeHidden();
+		await expect(toggle).toBeFocused();
+
+		await toggle.click();
+		await expect(dropdown).toBeVisible();
+		// The page's left margin, clear of the dropdown and of anything a
+		// click there would act on.
+		await page.mouse.click(2, 400);
+		await expect(dropdown).toBeHidden();
+
+		await toggle.click();
+		await dropdown.getByRole("button", { name: "z.txt", exact: true }).click();
+		await expect(dropdown).toBeHidden();
+		await expect(page.locator("#file-1 .file-row")).toBeFocused();
+		// Ride out the smooth scroll: the section ends up just below the
+		// sticky toolbar.
+		await expect
+			.poll(async () => {
+				const p = await placement("#file-1");
+				return p !== null && p.below >= 0 && p.below <= 16;
+			})
+			.toBe(true);
+		expect(await page.evaluate(() => history.length)).toBe(historyLength);
+
+		await toggle.click();
+		await dropdown.getByRole("checkbox", { name: /b\/z\.txt/ }).click();
+		await expect(page.locator("#file-1")).toHaveCount(0);
+		await dropdown.getByRole("button", { name: "z.txt", exact: true }).click();
+		await expect(dropdown).toBeHidden();
+		await expect(toggle).toBeFocused();
+	} finally {
+		await meerkat.kill();
 	}
 });
 

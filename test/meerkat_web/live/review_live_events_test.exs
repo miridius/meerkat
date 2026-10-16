@@ -1795,18 +1795,131 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(view, ".file-list .file-name", "src.ts")
   end
 
-  test "toolbar.toggle_files_panel opens the sidebar with a scroll nudge and closes it", %{
+  test "the Files button opens and closes the dropdown without scrolling the page", %{
     conn: conn
   } do
     view = mount_unbound(conn)
+    refute has_element?(view, "#file-filter")
+    assert has_element?(view, "#files-toggle[aria-expanded=false]")
+    refute has_element?(view, "#files-toggle[aria-controls]")
+    refute has_element?(view, ".files-dropdown[phx-click-away]")
 
-    html = render_click(view, "toolbar.toggle_files_panel", %{})
-    assert html =~ "file-filter"
-    assert_push_event(view, "scroll-into-view", %{})
+    open_files_panel(view)
+    assert has_element?(view, "#file-filter")
+    assert has_element?(view, "#files-toggle[aria-expanded=true][aria-controls=file-filter]")
+    # Clicking outside the button and dropdown closes it.
+    assert has_element?(view, ".files-dropdown[phx-click-away='files.close']")
+    no_push_event(view, "scroll-into-view")
 
-    # Closing does not nudge the scroll.
-    html = render_click(view, "toolbar.toggle_files_panel", %{})
-    refute html =~ "file-filter"
+    open_files_panel(view)
+    refute has_element?(view, "#file-filter")
+    assert has_element?(view, "#files-toggle[aria-expanded=false]")
+  end
+
+  test "Escape and files.close close the dropdown", %{conn: conn} do
+    view = mount_unbound(conn)
+
+    open_files_panel(view)
+    view |> element("#file-filter") |> render_keydown(%{"key" => "Escape"})
+    refute has_element?(view, "#file-filter")
+
+    open_files_panel(view)
+    render_hook(view, "files.close", %{})
+    refute has_element?(view, "#file-filter")
+  end
+
+  test "the dropdown shows a folder tree of base names that folders collapse", %{conn: conn} do
+    files = [
+      @plain_file,
+      %{@plain_file | file_name: "src/a/deep/x.rs"},
+      %{@plain_file | file_name: "README.md"}
+    ]
+
+    view = mount_unbound(conn, %ReviewState{files: files})
+    open_files_panel(view)
+
+    assert has_element?(view, ".tree-dir[aria-expanded=true]", "src")
+    # A folder whose only child is a folder shares its row.
+    assert has_element?(view, ".tree-dir[phx-value-path='src/a/deep']", "a/deep")
+    assert has_element?(view, ".file-entry .base-name", "widget.rs")
+    refute has_element?(view, ".file-entry .base-name", "src/widget.rs")
+    assert has_element?(view, ".file-entry .base-name", "README.md")
+
+    view |> element(".tree-dir[phx-value-path=src]") |> render_click()
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+    refute has_element?(view, ".file-entry .base-name", "widget.rs")
+    refute has_element?(view, ".tree-dir[phx-value-path='src/a/deep']")
+    assert has_element?(view, ".file-entry .base-name", "README.md")
+
+    # Filtering shows every match, even in a collapsed folder; clearing
+    # the filter collapses it again.
+    view |> element(".file-filter form") |> render_change(%{"value" => "widget"})
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=true]")
+    assert has_element?(view, ".file-entry .base-name", "widget.rs")
+    refute has_element?(view, ".file-entry .base-name", "x.rs")
+
+    # While filtering, a folder click collapses it for this filter text only.
+    view |> element(".tree-dir[phx-value-path=src]") |> render_click()
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+    refute has_element?(view, ".file-entry .base-name", "widget.rs")
+    view |> element(".file-filter form") |> render_change(%{"value" => "widget"})
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+    view |> element(".file-filter form") |> render_change(%{"value" => "widge"})
+    assert has_element?(view, ".file-entry .base-name", "widget.rs")
+
+    # Enter applies the text rather than submitting the form natively.
+    view |> element(".file-filter form") |> render_submit(%{"value" => "x.rs"})
+    assert has_element?(view, ".file-entry .base-name", "x.rs")
+    refute has_element?(view, ".file-entry .base-name", "widget.rs")
+
+    view |> element(".file-filter form") |> render_change(%{"value" => ""})
+    refute has_element?(view, ".file-entry .base-name", "widget.rs")
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+
+    # Collapsed folders stay collapsed when the dropdown reopens.
+    open_files_panel(view)
+    open_files_panel(view)
+    assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+
+    view |> element(".tree-dir[phx-value-path=src]") |> render_click()
+    assert has_element?(view, ".file-entry .base-name", "widget.rs")
+  end
+
+  test "picking a file closes the dropdown and scrolls to and focuses its section",
+       %{conn: conn} do
+    view =
+      mount_unbound(conn, %ReviewState{files: [@plain_file, %{@plain_file | file_name: "b.ex"}]})
+
+    open_files_panel(view)
+
+    view |> element(".file-entry .file-path", "b.ex") |> render_click()
+    refute has_element?(view, "#file-filter")
+    assert_push_event(view, "scroll-into-view", %{id: "file-1", focus: true})
+  end
+
+  test "picking a file the main list hides closes the dropdown without scrolling",
+       %{conn: conn} do
+    files = [@plain_file, %{@plain_file | file_name: "b.ex"}]
+    view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"b.ex" => :hide}})
+    open_files_panel(view)
+
+    view |> element(".file-entry .file-path", "b.ex") |> render_click()
+    refute has_element?(view, "#file-filter")
+    no_push_event(view, "scroll-into-view")
+    assert_push_event(view, "focus", %{id: "files-toggle"})
+  end
+
+  test "files.pick ignores a non-integer index", %{conn: conn} do
+    view = mount_unbound(conn)
+    open_files_panel(view)
+
+    stderr =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        render_hook(view, "files.pick", %{"file_index" => "x"})
+      end)
+
+    assert stderr =~ ~s(files.pick ignored — non-integer file_index: "x")
+    assert has_element?(view, "#file-filter")
     no_push_event(view, "scroll-into-view")
   end
 

@@ -421,17 +421,27 @@ window.addEventListener("phx:open-url", (e) => {
   }
 });
 
-// Server-driven scroll for file approval and file-filter panel opening.
-// After approval, it re-anchors the collapsed file header at the top of
-// the viewport; otherwise the next file leaps up by about a viewport height.
-// On every panel open, it scrolls the panel to the top of the viewport,
-// regardless of the current scroll position. The handler scrolls the element
-// with the given id to the top of the viewport.
+// Server-driven scroll for file approval and for picking a file in the
+// files dropdown. After approval, it re-anchors the collapsed file header at
+// the top of the viewport; otherwise the next file leaps up by about a
+// viewport height. The handler scrolls the element with the given id to the
+// top of the viewport. With `focus`, it also focuses the file's header row,
+// so a keyboard pick carries on from the file it jumped to; the dropdown that
+// held focus is gone by then.
 window.addEventListener("phx:scroll-into-view", (e) => {
   const id = e.detail?.id;
   if (typeof id !== "string") return;
   const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (!el) return;
+  el.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (e.detail.focus) el.querySelector(".file-row")?.focus({ preventScroll: true });
+});
+
+// Server-driven focus, such as back to the `☰ Files` button when a pick
+// closes the files dropdown without scrolling to a file.
+window.addEventListener("phx:focus", (e) => {
+  const id = e.detail?.id;
+  if (typeof id === "string") document.getElementById(id)?.focus();
 });
 
 // A footer open-form link: the server has just expanded / unhidden the
