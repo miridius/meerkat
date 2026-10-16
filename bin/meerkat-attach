@@ -15,8 +15,9 @@
 # belongs to an older meerkat; callers still attach to it because an
 # orphaned review lives until reattached and can outlast an upgrade.
 #
-# A backend's run dir holds `pid` (its shepherd), `caller` (the latest
-# attached caller's pid, overwritten on takeover), `token`, `log` (its
+# A backend's run dir holds `pid` (its shepherd), `caller` (the pid of
+# the caller waiting on it: a takeover overwrites it, and a refused one
+# restores it), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
 # (once a BEAM has announced the review), `opened` (the browser-open
 # marker), `index` (a held temporary index, if any) and, once it has
@@ -58,6 +59,18 @@ meerkat_attach() {
     ((_MA_OWNED)) || _ma_find_server || continue
 
     if [[ -f "$_MA_DIR/exit" ]]; then
+      if ((_MA_OWNED && !_MA_HELD)); then
+        # A reattach whose server exited before it heard from it: that
+        # exit code was not this invocation's. Hand the run back to the
+        # caller it replaced, or remove it if none, and start afresh, as a
+        # new invocation would.
+        _ma_restore_caller
+        if [[ "$(cat "$_MA_DIR/caller" 2>/dev/null)" == "$$" ]]; then
+          _ma_must _ma_remove_run
+        fi
+        _MA_OWNED=0
+        continue
+      fi
       if ((_MA_OWNED)); then
         _ma_relay_log
         local code
@@ -79,8 +92,9 @@ meerkat_attach() {
 
     if [[ ! -d "$_MA_DIR" ]]; then
       if ((_MA_OWNED && !_MA_HELD)); then
-        # A reattach that never heard from its server, which has since
-        # finished for the caller before it: start afresh, as a new
+        # A reattach that never heard from its server, whose run another
+        # invocation has since removed (the caller before it, done with
+        # it, or one that found the server dead): start afresh, as a new
         # invocation would.
         _MA_OWNED=0
         continue
@@ -263,8 +277,10 @@ _ma_write_caller() {
   echo "${1:-$$}" >"$_MA_DIR/caller.$$" && mv -f "$_MA_DIR/caller.$$" "$_MA_DIR/caller"
 }
 
-# A reattach the server refused records again the caller it would have
-# replaced, which still waits on the run.
+# A reattach the server refused, or whose server exited before it heard
+# from it, records again the caller it would have replaced, which may
+# still wait on the run. A caller displaced by a later one does nothing:
+# the file no longer names it.
 _ma_restore_caller() {
   [[ -n "$_MA_PREV_CALLER" && "$(cat "$_MA_DIR/caller" 2>/dev/null)" == "$$" ]] || return 0
   _ma_write_caller "$_MA_PREV_CALLER"

@@ -142,8 +142,9 @@ see [pending-answers.md](pending-answers.md).
   server dead with no exit code recorded or after finding the run
   finished with an exit file over a minute old or no recorded caller
   pid that ps shows is a live meerkat process, or the runs dir itself
-  was deleted; a reattaching caller that has not yet heard from its
-  server starts a new review instead. A caller that cannot change the
+  was deleted. A reattaching caller that has not yet heard from its
+  server starts a new review instead, whether its run dir is gone or
+  its server has exited. A caller that cannot change the
   runs dir exits 2 with a REJECT message (`could not update <runs
   dir>`). A staged review that cannot keep a
   copy of the commit's temporary index exits 2 with a REJECT message;

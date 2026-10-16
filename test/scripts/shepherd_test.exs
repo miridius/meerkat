@@ -395,6 +395,34 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  describe "a reattach whose server exits before it hears from it" do
+    test "starts a new review instead of taking that exit code" do
+      review = open_killable_review()
+      System.cmd("kill", ["-KILL", review.first_pid])
+      await_exit(review.first, review.dir)
+
+      # Reattaches while the first BEAM, which never binds, runs.
+      second =
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          review.dir,
+          review.env
+        )
+
+      {:os_pid, second_pid} = Port.info(second, :os_pid)
+      [run] = Path.wildcard(Path.join(review.runs, "*.*"))
+      assert await_content(Path.join(run, "caller"), to_string(second_pid))
+
+      System.cmd("kill", ["-TERM", review.backend])
+      await_backend_pid(review.runs, 100, [review.backend])
+      File.write!(review.go, "")
+
+      assert await_exit(second, review.dir) == 7
+      assert File.ls!(review.runs) == []
+    end
+  end
+
   describe "an older meerkat's run dir at the review's key" do
     test "is removed once finished, and the caller starts a new run" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
@@ -1089,6 +1117,21 @@ defmodule Meerkat.ShepherdTest do
     :crypto.hash(:sha256, "#{dir}:--commit-msg /tmp/msg --no-open")
     |> Base.encode16(case: :lower)
     |> binary_part(0, 16)
+  end
+
+  # Whether `path` holds `text` within 5 s.
+  defp await_content(path, text, attempts \\ 100) do
+    case File.read(path) do
+      {:ok, contents} when contents == text <> "\n" ->
+        true
+
+      _ when attempts > 0 ->
+        Process.sleep(50)
+        await_content(path, text, attempts - 1)
+
+      _ ->
+        false
+    end
   end
 
   # A PATH whose ps fails as Claude Code's sandbox makes it.
