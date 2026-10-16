@@ -84,7 +84,8 @@ run_checks() {
   echo "=== $label: all checks passed ==="
 }
 
-# At most two gates in all of this repo's worktrees run the checks at once.
+# At most MEERKAT_GATE_SLOTS gates (see gate-lock.sh) in all of this repo's
+# worktrees run the checks at once.
 # This shell holds the slot until it exits. The checks run in a subshell
 # that closes the slot's fd first, so nothing they start can keep the slot
 # once this shell is gone; `run_checks 9>&-` would not do, as bash keeps a

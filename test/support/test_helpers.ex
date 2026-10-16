@@ -295,16 +295,24 @@ defmodule Meerkat.TestHelpers do
   repo's scripts/gate-lock.sh, then runs the bash `command`. The port
   delivers its output, stderr included, line by line, and its exit status.
   Closing the port closes the gate's stdin. A gate that gets no slot gives
-  up after `timeout` seconds.
+  up after the `:timeout` option's seconds (default 60). The gate has two
+  slots unless the `:env` option, `{name, value}` pairs where a nil value
+  unsets the variable, sets MEERKAT_GATE_SLOTS or unsets it.
   """
-  @spec gate_lock_port(String.t(), String.t(), pos_integer()) :: port()
-  def gate_lock_port(repo, command, timeout \\ 60) do
+  @spec gate_lock_port(String.t(), String.t(), keyword()) :: port()
+  def gate_lock_port(repo, command, opts \\ []) do
     lib = Path.expand("../../scripts/gate-lock.sh", __DIR__)
 
-    env = [
-      {~c"MEERKAT_GATE_LOCK_TIMEOUT", ~c"#{timeout}"}
-      | for({name, nil} <- @git_discovery_overrides, do: {String.to_charlist(name), false})
-    ]
+    env =
+      for {name, value} <-
+            [
+              {"MEERKAT_GATE_LOCK_TIMEOUT", "#{Keyword.get(opts, :timeout, 60)}"},
+              {"MEERKAT_GATE_SLOTS", "2"}
+              | for({name, nil} <- @git_discovery_overrides, do: {name, nil})
+            ]
+            |> Map.new()
+            |> Map.merge(Map.new(Keyword.get(opts, :env, []))),
+          do: {String.to_charlist(name), if(value, do: String.to_charlist(value), else: false)}
 
     Port.open({:spawn_executable, System.find_executable("bash")}, [
       :binary,
@@ -319,11 +327,12 @@ defmodule Meerkat.TestHelpers do
 
   @doc """
   Takes a gate slot in the git repo `repo` and returns once it holds it.
-  The slot stays taken until the returned port is closed.
+  The slot stays taken until the returned port is closed. `env` is
+  `gate_lock_port/3`'s `:env` option.
   """
-  @spec hold_gate_slot(String.t()) :: port()
-  def hold_gate_slot(repo) do
-    port = gate_lock_port(repo, "echo held; read -r _")
+  @spec hold_gate_slot(String.t(), [{String.t(), String.t() | nil}]) :: port()
+  def hold_gate_slot(repo, env \\ []) do
+    port = gate_lock_port(repo, "echo held; read -r _", env: env)
 
     receive do
       {^port, {:data, {:eol, "held"}}} -> port
@@ -362,7 +371,8 @@ defmodule Meerkat.TestHelpers do
     [
       {"LEFTHOOK_BIN", nil},
       {"LEFTHOOK", nil},
-      {"MEERKAT_GATE_LOCK_TIMEOUT", "60"}
+      {"MEERKAT_GATE_LOCK_TIMEOUT", "60"},
+      {"MEERKAT_GATE_SLOTS", "2"}
       | @git_discovery_overrides
     ]
   end

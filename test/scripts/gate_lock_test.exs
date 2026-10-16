@@ -5,8 +5,9 @@ defmodule Meerkat.GateLockTest do
   use ExUnit.Case, async: true
 
   import Meerkat.TestHelpers,
-    only: [git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1]
+    only: [git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1, hold_gate_slot: 2]
 
+  # What a gate with two slots, the test default, prints when it waits.
   @waiting "gate-lock: 2 gates are already running checks in this repo; waiting for one to finish."
 
   setup do
@@ -35,6 +36,44 @@ defmodule Meerkat.GateLockTest do
     assert_receive {^third, {:data, {:eol, "gate-lock: got a slot after " <> _}}}
     assert_receive {^third, {:data, {:eol, "third ran"}}}
     assert_receive {^third, {:exit_status, 0}}
+  end
+
+  test "MEERKAT_GATE_SLOTS sets how many gates run at once", ctx do
+    env = [{"MEERKAT_GATE_SLOTS", "3"}]
+    for _ <- 1..3, do: hold_gate_slot(ctx.repo, env)
+
+    fourth = gate_lock_port(ctx.repo, "echo fourth ran", env: env)
+    waiting = waiting(3)
+    assert_receive {^fourth, {:data, {:eol, ^waiting}}}
+  end
+
+  # The getconf stub reports the online cores.
+  for {cores, slots} <- [{9, 2}, {3, 1}] do
+    test "without MEERKAT_GATE_SLOTS, #{cores} online cores give #{slots} slots", ctx do
+      stubs = Path.join(ctx.repo, "stubs")
+      File.mkdir_p!(stubs)
+      getconf = Path.join(stubs, "getconf")
+      File.write!(getconf, "#!/usr/bin/env bash\necho #{unquote(cores)}\n")
+      File.chmod!(getconf, 0o755)
+      env = [{"MEERKAT_GATE_SLOTS", nil}, {"PATH", stubs <> ":" <> System.fetch_env!("PATH")}]
+      for _ <- 1..unquote(slots), do: hold_gate_slot(ctx.repo, env)
+
+      next = gate_lock_port(ctx.repo, "echo next ran", env: env)
+      waiting = waiting(unquote(slots))
+      assert_receive {^next, {:data, {:eol, ^waiting}}}
+    end
+  end
+
+  for value <- ["0", "two"] do
+    test "a gate refuses MEERKAT_GATE_SLOTS=#{inspect(value)}, saying so", ctx do
+      gate = gate_lock_port(ctx.repo, "echo ran", env: [{"MEERKAT_GATE_SLOTS", unquote(value)}])
+
+      refusal =
+        "gate-lock: MEERKAT_GATE_SLOTS must be a whole number of at least 1, not '#{unquote(value)}'."
+
+      assert_receive {^gate, {:data, {:eol, ^refusal}}}
+      assert_receive {^gate, {:exit_status, 1}}
+    end
   end
 
   test "gates in all worktrees of a repo share the slots", ctx do
@@ -89,7 +128,7 @@ defmodule Meerkat.GateLockTest do
     _first = hold_gate_slot(ctx.repo)
     _second = hold_gate_slot(ctx.repo)
 
-    gate = gate_lock_port(ctx.repo, "echo ran", 1)
+    gate = gate_lock_port(ctx.repo, "echo ran", timeout: 1)
     assert_receive {^gate, {:data, {:eol, @waiting}}}
 
     assert_receive {^gate,
@@ -128,6 +167,11 @@ defmodule Meerkat.GateLockTest do
     Port.close(first)
     assert_receive {^later, {:data, {:eol, "later ran"}}}
   end
+
+  # What a gate with `slots` slots prints when it waits.
+  defp waiting(slots),
+    do:
+      "gate-lock: #{slots} gates are already running checks in this repo; waiting for one to finish."
 
   defp kill(port) do
     {:os_pid, pid} = Port.info(port, :os_pid)

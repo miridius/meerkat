@@ -1,7 +1,12 @@
-# Sourced by scripts/check.sh and scripts/mutate.sh, so at most two gates in
-# all worktrees of a repo run their heavy checks at once.
+# Sourced by scripts/check.sh and scripts/mutate.sh, so at most
+# MEERKAT_GATE_SLOTS gates in all worktrees of a repo run their heavy checks
+# at once. It defaults to a quarter of the online cores, minimum one. A gate
+# spends most of its time waiting rather than computing: on an 18-core Mac,
+# scripts/mix-test.sh used about 140 CPU seconds over 23 minutes. Its bursts
+# run half the cores' worth of BEAMs, so a quarter keeps two gates' bursts
+# at once within the cores.
 #
-# gate_lock: returns once this shell holds one of the gate's two slots, an
+# gate_lock: returns once this shell holds one of the gate's slots, an
 # flock(2) taken with macOS lockf(1) on a file in meerkat-gate-lock in the
 # git common dir. The slot stays open on fd 9 until the shell exits, and the
 # kernel frees it then, however the shell exits, once no other process has
@@ -18,8 +23,9 @@
 # while it blocks. Each waiting gate prints that it is waiting, and gives up
 # after MEERKAT_GATE_LOCK_TIMEOUT seconds (default an hour).
 gate_lock() {
-  local dir slot status queued=false waited=false start=$SECONDS
+  local dir slot slots status queued=false waited=false start=$SECONDS
   local timeout=${MEERKAT_GATE_LOCK_TIMEOUT:-3600}
+  slots=$(gate_lock_slots) || return 1
   dir="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
   mkdir -p "$dir"
   exec 8>>"$dir/queue"
@@ -32,7 +38,7 @@ gate_lock() {
       ((status != 0)) || queued=true
     fi
     if [[ "$queued" == true ]]; then
-      for slot in 1 2; do
+      for ((slot = 1; slot <= slots; slot++)); do
         exec 9>>"$dir/slot$slot"
         status=0
         gate_lock_try 9 "$dir/slot$slot" || status=$?
@@ -55,6 +61,20 @@ gate_lock() {
   done
 }
 
+# Prints how many gates may run at once: MEERKAT_GATE_SLOTS when set, which
+# must be a positive integer, else a quarter of the online cores, minimum one.
+gate_lock_slots() {
+  local slots=${MEERKAT_GATE_SLOTS:-}
+  if [[ -z "$slots" ]]; then
+    slots=$(($(getconf _NPROCESSORS_ONLN) / 4))
+    ((slots >= 1)) || slots=1
+  elif [[ ! "$slots" =~ ^[0-9]+$ ]] || ((10#$slots < 1)); then
+    echo "gate-lock: MEERKAT_GATE_SLOTS must be a whole number of at least 1, not '$slots'." >&2
+    return 1
+  fi
+  echo $((10#$slots))
+}
+
 # Tries once to lock the file open on fd $1, named $2. Returns 0 once it is
 # locked, 75 (lockf's EX_TEMPFAIL) while another process holds it, and 1,
 # saying why, when it cannot be locked.
@@ -69,5 +89,5 @@ gate_lock_try() {
 gate_lock_waiting() {
   [[ "$waited" == false ]] || return 0
   waited=true
-  echo "gate-lock: 2 gates are already running checks in this repo; waiting for one to finish." >&2
+  echo "gate-lock: $slots gates are already running checks in this repo; waiting for one to finish." >&2
 }
