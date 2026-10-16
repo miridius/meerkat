@@ -22,6 +22,8 @@ defmodule Meerkat.ToolchainTest do
   PLANTUML_SHA256=ccc
   GNU_BASH_VERSION=5.3.2
   GNU_BASH_SHA256=ddd
+  GRAPHVIZ_VERSION=16.1.0
+  GRAPHVIZ_SHA256=eee
   """
 
   @checkout_sha String.duplicate("a", 40)
@@ -90,6 +92,7 @@ defmodule Meerkat.ToolchainTest do
     github(ctx, "clj-kondo/clj-kondo", [{"v2026.08.04", @old}])
     github(ctx, "plantuml/plantuml", [{"v1.2026.8", @old}, {"snapshot", @old, true}])
     bash(ctx, "5.3", [{1, @old}, {2, @old}])
+    graphviz(ctx, [{"16.1.0", @old}, {"16.0.0", @old}])
 
     serve(
       ctx,
@@ -232,6 +235,23 @@ defmodule Meerkat.ToolchainTest do
     assert env(ctx) =~ "\nGNU_BASH_VERSION=5.3.3\nGNU_BASH_SHA256=#{sha}\n"
   end
 
+  test "Graphviz follows its GitLab releases and checksums the source tarball", ctx do
+    graphviz(ctx, [{"16.2.0", hours_ago(2)}, {"16.1.1", @old}, {"16.1.0", @old}])
+
+    serve(
+      ctx,
+      "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/16.1.1/graphviz-16.1.1.tar.xz",
+      "source"
+    )
+
+    assert {out, 1} = toolchain(ctx, "check")
+    assert out =~ "BLOCKED: Graphviz is pinned to 16.1.0; the target is 16.1.1"
+
+    assert {_, 0} = toolchain(ctx, "bump")
+    sha = :crypto.hash(:sha256, "source") |> Base.encode16(case: :lower)
+    assert env(ctx) =~ "\nGRAPHVIZ_VERSION=16.1.1\nGRAPHVIZ_SHA256=#{sha}\n"
+  end
+
   test "OTP counts a release once both runners' builds are 24h old", ctx do
     otp(ctx, [{"29.1.2", @old}, {"29.1.3", @old}], [{"29.1.2", @old}, {"29.1.3", hours_ago(2)}])
     assert {_, 0} = toolchain(ctx, "check")
@@ -368,6 +388,17 @@ defmodule Meerkat.ToolchainTest do
       ctx,
       "https://builds.hex.pm/builds/otp/ubuntu-24.04/builds.txt",
       Enum.map_join(ubuntu || mac, &"OTP-#{elem(&1, 0)} abc #{elem(&1, 1)} def\n")
+    )
+  end
+
+  defp graphviz(ctx, releases) do
+    serve(
+      ctx,
+      "https://gitlab.com/api/v4/projects/4207231/releases?per_page=100",
+      Jason.encode!(
+        for {tag, at} <- releases,
+            do: %{"tag_name" => tag, "released_at" => at, "upcoming_release" => false}
+      )
     )
   end
 

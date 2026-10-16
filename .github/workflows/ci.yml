@@ -64,12 +64,28 @@ jobs:
           key: gnu-bash-${{ runner.os }}-${{ runner.arch }}-${{ env.GNU_BASH_VERSION }}-${{ env.GNU_BASH_SHA256 }}
 
       - if: steps.gnu-bash.outputs.cache-hit != 'true'
-        run: bun scripts/build-bash.ts ~/.local/gnu-bash
+        run: bun scripts/build-tool.ts bash ~/.local/gnu-bash
 
       - name: Put GNU bash on PATH
         run: |
           echo "$HOME/.local/gnu-bash/bin" >> "$GITHUB_PATH"
           "$HOME/.local/gnu-bash/bin/bash" -c '[[ "$BASH_VERSION" == "${GNU_BASH_VERSION%.*}".* ]]'
+
+      # PlantUML lays diagrams out with Graphviz's dot, which the image
+      # lacks. The build is cached per pin.
+      - id: graphviz
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/graphviz
+          key: graphviz-${{ runner.os }}-${{ runner.arch }}-${{ env.GRAPHVIZ_VERSION }}-${{ env.GRAPHVIZ_SHA256 }}
+
+      - if: steps.graphviz.outputs.cache-hit != 'true'
+        run: bun scripts/build-tool.ts graphviz ~/.local/graphviz
+
+      - name: Put Graphviz on PATH
+        run: |
+          echo "$HOME/.local/graphviz/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/graphviz/bin/dot" -V 2>&1 | grep -F "graphviz version $GRAPHVIZ_VERSION "
 
       # The PlantUML unit and e2e tests render with the real plantuml.
       - name: Install PlantUML
