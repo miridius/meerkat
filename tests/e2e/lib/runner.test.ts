@@ -238,7 +238,9 @@ test("meerkat's git reads no config but the tests' global config", async () => {
 	Object.assign(process.env, injected);
 	try {
 		await expect(startMeerkat({ bin, args: [], fixture: { dir }, env: { SEEN: seen } })).rejects.toThrow();
-		expect(readFileSync(seen, "utf8")).toBe("global\tmaintenance.auto=false\n");
+		expect(readFileSync(seen, "utf8")).toBe(
+			"global\tmaintenance.auto=false\nglobal\tcore.logallrefupdates=false\nglobal\tinit.templatedir=\nglobal\ttransfer.unpacklimit=1\n",
+		);
 	} finally {
 		for (const [key, value] of Object.entries(previous)) {
 			if (value === undefined) delete process.env[key];

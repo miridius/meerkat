@@ -30,9 +30,9 @@ defmodule Meerkat.TestGitEnvTest do
 
     events = trace |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
     started = for %{"event" => "child_start", "argv" => argv} <- events, do: argv
-    # Here only receive-pack starts unpack-objects (the push is under
-    # receive.unpackLimit), so its children are traced.
-    assert Enum.any?(started, &match?(["git", "unpack-objects" | _], &1))
+    # Here only receive-pack starts index-pack (the push is over
+    # transfer.unpackLimit), so its children are traced.
+    assert Enum.any?(started, &match?(["git", "index-pack" | _], &1))
     assert Enum.filter(started, &("maintenance" in &1 or "gc" in &1)) == []
   end
 
@@ -44,6 +44,7 @@ defmodule Meerkat.TestGitEnvTest do
     Meerkat.TestHelpers.put_env("GIT_CONFIG_VALUE_0", "1")
     Meerkat.TestHelpers.put_git_config_env()
 
-    assert git(base, ["config", "--list", "--show-scope"]) == "global\tmaintenance.auto=false"
+    assert git(base, ["config", "--list", "--show-scope"]) ==
+             "global\tmaintenance.auto=false\nglobal\tcore.logallrefupdates=false\nglobal\tinit.templatedir=\nglobal\ttransfer.unpacklimit=1"
   end
 end
