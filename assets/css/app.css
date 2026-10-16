@@ -28,7 +28,7 @@
   --radius: 6px;
   --radius-sm: 4px;
   /* Overwritten with the .diff-toolbar's measured height by the script
-     at the end of <body> and by the ToolbarHeight hook. The literal
+     at the end of <body> and by the Toolbar hook. The literal
      applies only where neither ran. */
   --toolbar-h: 40px;
   /* Gap left above a scroll target so the sticky .diff-toolbar does not
@@ -810,13 +810,29 @@ a.chip-link:hover .chip-value {
 /* --- Toolbar squeeze steps ---
    The Toolbar hook (app.js) sets `data-squeeze` to the steps, from
    toolbarSqueeze.ts, that fit the toolbar's content on one row. Until
-   it runs, the toolbar wraps. Once it has, nothing shrinks or wraps
-   until a step lets it, so overflow tells the hook a step is needed. */
-.diff-toolbar[data-squeeze]:not([data-squeeze~="wrap"]) {
+   it runs, the toolbar keeps to one row and clips what does not fit, so
+   the height the page published before it ran rarely changes when it
+   does. Once it has, nothing shrinks or wraps until a step lets it, so
+   overflow tells the hook a step is needed. */
+.diff-toolbar:not([data-squeeze~="wrap"]) {
   flex-wrap: nowrap;
 }
-.diff-toolbar[data-squeeze]:not([data-squeeze~="wrap"]) > * {
+.diff-toolbar:not([data-squeeze~="wrap"]) > * {
   flex-shrink: 0;
+}
+.diff-toolbar:not([data-squeeze]) {
+  overflow: hidden;
+}
+/* The toolbar's width, at no height, for the hook to watch: no step
+   changes it. */
+.toolbar-width {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 /* Split / Unified and Wrap are rendered in both places; one shows. */
 .diff-toolbar > .view-controls {
@@ -824,7 +840,6 @@ a.chip-link:hover .chip-value {
 }
 .counts-slash,
 .toolbar-settings-popover .view-controls,
-.diff-toolbar[data-squeeze~="version"] .version-chip-btn > :not(.version-badge),
 .diff-toolbar[data-squeeze~="version"] .version-chip-wrap:has(.version-badge[hidden]):has(.version-popover[hidden]),
 .diff-toolbar[data-squeeze~="files"] .files-label,
 .diff-toolbar[data-squeeze~="counts"] .counts-showing,
@@ -845,16 +860,26 @@ a.chip-link:hover .chip-value {
 .diff-toolbar[data-squeeze~="version"] .version-badge[hidden] {
   display: inline-flex;
 }
+/* Unseen, but still there to click again, which closes the drop-down,
+   and to keep focus. */
 .diff-toolbar[data-squeeze~="version"] .version-chip-btn:has(> .version-badge[hidden]) {
-  visibility: hidden;
+  opacity: 0;
 }
 .diff-toolbar[data-squeeze~="conn"] .conn-indicator {
   padding: 0;
   border: none;
   background: none;
 }
+/* Text a step takes off the screen stays in the chip's and the pill's
+   accessible names, and in the pill's live announcements. */
+.diff-toolbar[data-squeeze~="version"] .version-chip-btn > :not(.version-badge),
 .diff-toolbar[data-squeeze~="conn"] .conn-indicator > :not(.conn-dot) {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .diff-toolbar[data-squeeze~="view"] .toolbar-settings-popover .view-controls {
   display: flex;

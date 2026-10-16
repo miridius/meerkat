@@ -1950,6 +1950,8 @@ defmodule MeerkatWeb.ReviewLive do
       phx-hook="Toolbar"
       phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["data-squeeze"])}
     >
+      <%!-- The toolbar's width, which the Toolbar hook watches. --%>
+      <span class="toolbar-width" aria-hidden="true"></span>
       <button
         type="button"
         class="toolbar-icon-btn"

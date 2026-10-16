@@ -66,8 +66,11 @@ When the UI does open, the reviewer sees, top-to-bottom:
    At the version chip's step, opening its drop-down marks the
    updates seen, so the chip is gone and the drop-down stays open
    where it was; a dev build's chip, with no updates or drop-down, is
-   gone too. The drop-down opens within the window at any width. Branch names show in full until their step truncates
-   them.
+   gone too; clicking where it was closes the drop-down. The
+   drop-down opens within the window at any width. Branch names show
+   in full until their step truncates them. Text a step takes off the
+   screen stays readable to screen readers. While the page loads, the
+   toolbar keeps to one row, cutting off what does not fit.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup
