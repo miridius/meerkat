@@ -31,6 +31,21 @@ defmodule Meerkat.ReviewIdTest do
       assert length(Enum.uniq(ids)) == length(ids)
     end
 
+    # The id names a review's persistence file, so a release that derived
+    # it differently would lose every review in progress. Each is the first
+    # 16 hex chars of the SHA-256 of the repo path and the target's parts,
+    # joined by NUL bytes.
+    test "ids stay the same across releases" do
+      for {target, id} <- [
+            {{:staged, "/tmp/MSG"}, "d535c3fccda6db28"},
+            {{:single_ref, "HEAD"}, "f32d180e2ac80921"},
+            {{:range, "main", "feat", :two_dot}, "55eeccd43f59f678"},
+            {{:pr, "123"}, "b401ae354af9f441"}
+          ] do
+        assert ReviewId.derive("/repo", target) == id
+      end
+    end
+
     test "16-hex-char output" do
       id = ReviewId.derive("/repo", {:staged, nil})
       assert String.length(id) == 16
