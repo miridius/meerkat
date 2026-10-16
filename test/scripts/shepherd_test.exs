@@ -246,6 +246,86 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  # A caller exits once a process above it has gone, and must not take a
+  # live one it may not signal, such as root-owned launchd, for gone.
+  test "a caller's liveness check tells a gone process from a live one, signalable or not" do
+    script = ~S"""
+    source "$1"
+    sleep 0 &
+    gone=$!
+    wait "$gone"
+    for pid in "$gone" $$ 1; do
+      if _ma_alive "$pid"; then echo live; else echo gone; fi
+    done
+    """
+
+    assert {"gone\nlive\nlive\n", 0} =
+             System.cmd("bash", ["-c", script, "alive", Path.expand("bin/meerkat-attach")])
+  end
+
+  # A waiting caller checks every second that the process that ran it
+  # lives. Forking ps for that cost about 0.06 CPU-s a second.
+  test "a caller waiting on a decision watches the process that ran it without running ps" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    stubs = Path.join(dir, "stubs")
+    File.mkdir_p!(stubs)
+    File.write!(Path.join(stubs, "ps"), ~s(#!/bin/sh\necho ps >> "$CALLS"\nexec /bin/ps "$@"\n))
+    File.chmod!(Path.join(stubs, "ps"), 0o755)
+
+    fake_release(dir, ~S"""
+    echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+    for _ in {1..600}; do
+      [[ -f "$DELIVERED" ]] && exit 0
+      sleep 0.1
+    done
+    exit 1
+    """)
+
+    # The attach stream sends only heartbeats for 3 s, then an approval.
+    curl = ~S"""
+    #!/usr/bin/env bash
+    case "$*" in
+      *attach/delivered*) touch "$DELIVERED"; exit 0 ;;
+    esac
+    echo start >> "$CALLS"
+    for _ in 1 2 3 4 5 6; do
+      printf 'k\n'
+      sleep 0.5
+    done
+    echo end >> "$CALLS"
+    printf 'x 0\ns 200\n'
+    """
+
+    calls = Path.join(dir, "calls")
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"},
+          {"CALLS", calls},
+          {"DELIVERED", Path.join(dir, "delivered")},
+          {"PATH", stubs <> ":" <> System.get_env("PATH")}
+        ],
+        curl: curl
+      )
+
+    assert await_exit(port, dir) == 0
+
+    idle =
+      calls
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.drop_while(&(&1 != "start"))
+      |> Enum.take_while(&(&1 != "end"))
+
+    assert idle == ["start"]
+  end
+
   # macOS deletes files in $TMPDIR more than three days old, and the
   # shepherd writes `token` and `pid` only once. A caller reattaching after
   # a restart then could not authenticate, took the backend for dead,
@@ -1076,7 +1156,8 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Starts a launcher as `run_launcher/4` does and returns its port;
-  # `opts[:cd]` sets its working directory.
+  # `opts[:cd]` sets its working directory, and `opts[:curl]` replaces the
+  # refusing curl below with a script of its own.
   defp open_launcher(launcher, args, dir, env, opts \\ []) do
     base = [
       {"MEERKAT_PORT", "44444"},
@@ -1111,14 +1192,17 @@ defmodule Meerkat.ShepherdTest do
     http = Path.join(dir, "http")
     File.mkdir_p!(http)
 
-    File.write!(Path.join(http, "curl"), ~S"""
-    #!/usr/bin/env bash
-    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
-      printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
-    fi
-    printf 's 000\n'
-    exit 7
-    """)
+    File.write!(
+      Path.join(http, "curl"),
+      Keyword.get(opts, :curl, ~S"""
+      #!/usr/bin/env bash
+      if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+        printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+      fi
+      printf 's 000\n'
+      exit 7
+      """)
+    )
 
     File.chmod!(Path.join(http, "curl"), 0o755)
     env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))

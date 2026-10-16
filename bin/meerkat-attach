@@ -140,9 +140,7 @@ meerkat_attach() {
 }
 
 # Record every process above the caller, from its parent up to pid 1, so
-# _ma_exit_if_orphaned can detect when one exits. Use ps rather than kill -0:
-# kill -0 reports "operation not permitted" for live root-owned processes such
-# as launchd or a terminal's login process, making them look dead.
+# _ma_exit_if_orphaned can detect when one exits.
 _ma_record_ancestors() {
   local pid=$PPID
   _MA_ANCESTORS=()
@@ -156,21 +154,27 @@ _ma_record_ancestors() {
 # A killed git commit can leave its hook (and this caller) running and attached.
 # It would then receive the decision and print it where nobody can read it, so
 # exit once any recorded ancestor exits and leave the decision held for the next
-# invocation. Check at most once a second (every fifth 0.2 s tick). Where ps
-# cannot tell (a sandbox denies it), assume the ancestors live: taking them
-# for dead would end every review the moment it started.
+# invocation. Check at most once a second (every fifth 0.2 s tick).
 _ma_exit_if_orphaned() {
   ((_MA_TICK++ % 5 == 0)) || return 0
-  ((${#_MA_ANCESTORS[@]})) || return 0
-  _ma_ps_works || return 0
-  local joined live
-  joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
-  live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
-  if ((live < ${#_MA_ANCESTORS[@]})); then
+  local pid
+  for pid in ${_MA_ANCESTORS[@]+"${_MA_ANCESTORS[@]}"}; do
+    _ma_alive "$pid" && continue
     _ma_still_open "the process that ran meerkat exited"
     exit 1
-  fi
+  done
   return 0
+}
+
+# Whether process $1 exists. kill -0 is a shell builtin: forking ps for
+# this every second cost a waiting caller about 0.06 CPU-s a second. It
+# fails with "Operation not permitted" for a live process this caller may
+# not signal, such as launchd or a terminal's root-owned login process, or
+# any process when a sandbox denies signals; only those fork, to read the
+# error. Any other error means the process is gone.
+_ma_alive() {
+  kill -0 "$1" 2>/dev/null && return 0
+  [[ "$(LC_ALL=C kill -0 "$1" 2>&1)" == *"Operation not permitted"* ]]
 }
 
 # Whether ps can see processes at all: it lists this caller.
