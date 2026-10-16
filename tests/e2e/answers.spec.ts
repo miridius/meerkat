@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
 import { MEERKAT_BIN, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -36,6 +36,7 @@ test.describe("meerkat --answers", () => {
 			await first.awaitClose();
 
 			const hook = join(fixture.dir, ".git", "hooks", "pre-commit");
+			mkdirSync(dirname(hook), { recursive: true });
 			const quotedBin = `'${MEERKAT_BIN.replaceAll("'", "'\"'\"'")}'`;
 			writeFileSync(hook, `#!/bin/sh\nexec ${quotedBin} --no-open\n`);
 			chmodSync(hook, 0o755);
