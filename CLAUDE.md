@@ -145,6 +145,8 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 `scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The pre-commit gate and CI enforce the same limit.
 
+Each BEAM the Playwright suite starts gets two schedulers of each kind that do not busy-wait (`+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none +sbwtdcpu none +sbwtdio none`, set in `tests/e2e/lib/runner.ts`) ahead of any `ELIXIR_ERL_OPTIONS` already set. The suite's time budgets (test, expect and action timeouts, and the specs' own that use `budget`) are what each wait needs on an idle machine, multiplied by the one-minute load average per core when the run starts, clamped to 1-4 (`tests/e2e/lib/budget.ts`), so a loaded machine slows tests without failing them and a hang still fails.
+
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
 When behaviour changes, choose the lowest layer that exercises it:
