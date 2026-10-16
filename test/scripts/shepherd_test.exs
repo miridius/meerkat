@@ -263,18 +263,61 @@ defmodule Meerkat.ShepherdTest do
              System.cmd("bash", ["-c", script, "alive", Path.expand("bin/meerkat-attach")])
   end
 
+  # A caller relays its backend's log as it grows: from the start for a run
+  # it started, even one with no log yet, and from the end on reattach.
+  test "a caller relays each part of its backend's log once" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    script = ~S"""
+    source "$1"
+    exec 2>&1
+    _MA_LOG_FD=""
+    _MA_DIR="$2/started"
+    mkdir "$_MA_DIR"
+    _ma_open_log || echo "no log yet"
+    _ma_relay_log
+    printf 'a\npart' >"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'ial\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    _ma_relay_log
+    _MA_DIR="$2/reattached"
+    mkdir "$_MA_DIR"
+    printf 'seen\n' >"$_MA_DIR/log"
+    _ma_open_log && _ma_read_log >/dev/null
+    printf 'b\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'a\npartial\n' >>"$2/started/log"
+    _ma_relay_log
+    """
+
+    assert {"no log yet\na\npartial\nb\n", 0} =
+             System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
+  end
+
   # A waiting caller checks every second that the process that ran it
-  # lives. Forking ps for that cost about 0.06 CPU-s a second.
-  test "a caller waiting on a decision watches the process that ran it without running ps" do
+  # lives, and relays its backend's log every 0.2 s. Forking ps for the
+  # one, and wc, tail and head for the other, cost about 0.1 CPU-s a second.
+  test "a caller waiting on a decision runs no process while it relays the backend's log" do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
     stubs = Path.join(dir, "stubs")
     File.mkdir_p!(stubs)
-    File.write!(Path.join(stubs, "ps"), ~s(#!/bin/sh\necho ps >> "$CALLS"\nexec /bin/ps "$@"\n))
-    File.chmod!(Path.join(stubs, "ps"), 0o755)
+
+    for tool <- ~w(ps wc tr tail head) do
+      real = System.find_executable(tool)
+      stub = Path.join(stubs, tool)
+      File.write!(stub, ~s(#!/bin/sh\necho #{tool} >> "$CALLS"\nexec #{real} "$@"\n))
+      File.chmod!(stub, 0o755)
+    end
 
     fake_release(dir, ~S"""
     echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+    sleep 0.5
+    printf 'warn' >&2
+    sleep 0.5
+    printf 'ing\n' >&2
     for _ in {1..600}; do
       [[ -f "$DELIVERED" ]] && exit 0
       sleep 0.1
@@ -314,7 +357,8 @@ defmodule Meerkat.ShepherdTest do
         curl: curl
       )
 
-    assert await_exit(port, dir) == 0
+    assert {0, output} = await_result(port, dir)
+    assert output =~ "warning\n"
 
     idle =
       calls
