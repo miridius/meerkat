@@ -1322,6 +1322,16 @@
     user-select: none;
     cursor: pointer;
   }
+  /* The library pads Unified's gutter only 5px on the left, which puts
+     the inline-comment bar (below) against the numbers. Pad it 10px, as
+     Split is, and widen the column by the extra 5px: the <col> sets it
+     for Wrap's fixed table layout, the padding for the auto one. */
+  :global(.diff-content td.diff-line-num) {
+    padding-left: 10px;
+  }
+  :global(.diff-content col.unified-diff-table-num-col) {
+    width: calc(var(--diff-aside-width--) * 2 + 13px);
+  }
   /* The library draws each hunk row's expand buttons and header text on
      both sides. Hide the old-side (left) copies so both appear once, on
      the new side.

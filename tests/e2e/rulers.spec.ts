@@ -15,17 +15,40 @@ const LONG = `${"x".repeat(130)}\n`;
 const BLOCK = "moved one\nmoved two\nmoved three\n";
 const STAYS = "stays one\nstays two\nstays three\nstays four\nstays five\n";
 
-// A modified file, so the diff can show Split view, and a file whose
-// block moves, so its lines get the moved-line tint.
+const TWELVE = Array.from({ length: 12 }, (_, i) => `line ${i + 1}\n`).join("");
+
+// A modified file, so the diff can show Split view, a file whose block
+// moves, so its lines get the moved-line tint, and a file with two-digit
+// line numbers, the narrowest gutter for its digits.
 function wideFixture() {
 	const fixture = makeFixture({
-		files: { "wide.txt": `short\n${LONG}`, "moved.txt": `${BLOCK}${STAYS}` },
+		files: { "wide.txt": `short\n${LONG}`, "moved.txt": `${BLOCK}${STAYS}`, "twelve.txt": TWELVE },
 	});
 	fixture.git("commit", "-q", "-m", "base");
 	writeFileSync(join(fixture.dir, "wide.txt"), `shorter\n${LONG}${LONG}`);
 	writeFileSync(join(fixture.dir, "moved.txt"), `${STAYS}${BLOCK}`);
-	fixture.git("add", "wide.txt", "moved.txt");
+	writeFileSync(join(fixture.dir, "twelve.txt"), `${TWELVE}line 13\n`);
+	fixture.git("add", "wide.txt", "moved.txt", "twelve.txt");
 	return fixture;
+}
+
+// How far a gutter cell's numbers sit from the inline-comment bar, its
+// first 3px, and from its right padding.
+async function numberInsets(cell: Locator): Promise<{ fromBar: number; fromPadding: number }> {
+	return cell.evaluate((td) => {
+		const range = document.createRange();
+		const digits = [...td.querySelectorAll("span[data-line-old-num], span[data-line-new-num]")]
+			.filter((span) => span.textContent?.trim())
+			.map((span) => {
+				range.selectNodeContents(span);
+				return range.getBoundingClientRect();
+			});
+		const box = td.getBoundingClientRect();
+		return {
+			fromBar: Math.min(...digits.map((r) => r.left)) - box.left - 3,
+			fromPadding: box.right - Number.parseFloat(getComputedStyle(td).paddingRight) - Math.max(...digits.map((r) => r.right)),
+		};
+	});
 }
 
 // The rulers a code cell draws: the columns in its ruler variable.
@@ -99,28 +122,40 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(newCell)).toEqual([]);
 
-		// Unified view's one code column fits 80 but not 110, with wrap on
-		// or off; with wrap off the long lines widen the cell past the view.
+		// At 950px, Unified view's one code column fits 80 but not 110, with
+		// wrap on or off; with wrap off the long lines widen the cell past
+		// the view.
+		await page.setViewportSize({ width: 950, height: 800 });
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		const unifiedCell = file.locator("td.diff-line-content").first();
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		// Around the width where 110 starts to fit, it is never drawn in
 		// the cell's right padding.
 		let crossed = false;
-		for (let width = 1005; width <= 1050; width += 1) {
+		for (let width = 951; width <= 1010; width += 1) {
 			await page.setViewportSize({ width, height: 800 });
 			await afterNextFrame(page);
 			expect(await rulersPastText(unifiedCell), `at ${width}px`).toEqual([]);
 			crossed ||= (await rulersOn(unifiedCell)).includes("110");
 		}
 		expect(crossed, "the sweep reaches the width where 110 fits").toBe(true);
-		await page.setViewportSize({ width: 1000, height: 800 });
+		await page.setViewportSize({ width: 950, height: 800 });
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
+		// With wrap on or off, Unified's numbers keep clear of the
+		// inline-comment bar and of the code.
+		const twelve = page.locator(".file-section").filter({ hasText: "twelve.txt" });
+		const gutter = twelve.locator('td.diff-line-num:has(span[data-line-new-num="12"])');
+		const expectNumbersClear = async () => {
+			await expect.poll(async () => (await numberInsets(gutter)).fromBar).toBeGreaterThanOrEqual(6);
+			expect((await numberInsets(gutter)).fromPadding).toBeGreaterThanOrEqual(0);
+		};
+		await expectNumbersClear();
 		await page.getByLabel("Wrap").click();
 		await expect(page.getByLabel("Wrap")).not.toBeChecked();
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["80"]);
+		await expectNumbersClear();
 
 		// The ⚙ popover hides them, and sets their columns.
 		await openSettings(page);

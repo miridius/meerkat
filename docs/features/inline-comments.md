@@ -144,7 +144,8 @@ Each rendered comment shows:
 Every diff row covered by an inline comment range gets the
 `has-inline-comment` class, which shows:
 
-- A 3px blue bar on the left edge of the line-num cell.
+- A 3px blue bar on the left edge of the line-num cell, at least
+  about 7px clear of the line numbers in Split and Unified views.
 - A faint blue tint on the row background.
 
 The marker is reactive: removing the comment removes the marker;
