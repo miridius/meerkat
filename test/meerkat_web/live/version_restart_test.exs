@@ -6,6 +6,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   import Phoenix.LiveViewTest
 
   alias Meerkat.ReviewState
+  alias MeerkatWeb.ReviewLive
 
   @rs_file %{
     status: :modified,
@@ -44,7 +45,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "live-restarts immediately when no comment form is open", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     send(view.pid, {:meerkat_version_available, "versions/v2"})
 
@@ -52,7 +53,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "defers the restart while a comment form is open, applies on close", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     send(view.pid, {:meerkat_version_available, "versions/v2"})
@@ -65,7 +66,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "with two forms open, the restart waits for the last one to close", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     render_hook(view, "comment_form.show_global", %{})
@@ -80,7 +81,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "does not live-restart once a decision has been submitted", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     # Reviewer approves; the CLI is now in its post-decision halt window
     # (Decision.current() is set, the BEAM about to exit 0). A version
@@ -93,7 +94,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "applies a deferred update when a state push clears the open form", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     send(view.pid, {:meerkat_version_available, "versions/v2"})
@@ -107,7 +108,7 @@ defmodule MeerkatWeb.VersionRestartTest do
   end
 
   test "a connected mount registers the LiveView as a viewer", %{conn: conn} do
-    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    {:ok, view, _html} = live_isolated(conn, ReviewLive)
     assert Registry.keys(Meerkat.ViewerRegistry, view.pid) == [:viewer]
   end
 
@@ -117,14 +118,14 @@ defmodule MeerkatWeb.VersionRestartTest do
         "_track_static" => ["http://127.0.0.1:4002/assets/app-current.js"]
       })
 
-    assert {:ok, _view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    assert {:ok, _view, _html} = live_isolated(conn, ReviewLive)
   end
 
   test "a tab reconnecting with assets the server no longer serves reloads", %{conn: conn} do
     conn =
       put_connect_params(conn, %{"_track_static" => ["http://127.0.0.1:4002/assets/app-old.js"]})
 
-    assert {:error, {:redirect, %{to: "/"}}} = live_isolated(conn, MeerkatWeb.ReviewLive)
+    assert {:error, {:redirect, %{to: "/"}}} = live_isolated(conn, ReviewLive)
   end
 
   # A build replaced after boot must not change the page's tags, or they
