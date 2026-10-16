@@ -3,6 +3,7 @@
 # that arrives ends the wait, so a passing test is no slower; set no
 # shorter wait on an assert_receive.
 ExUnit.start(assert_receive_timeout: 5_000)
+Meerkat.TestHelpers.isolate_tmp_dir()
 
 Meerkat.TestHelpers.put_git_config_env()
 

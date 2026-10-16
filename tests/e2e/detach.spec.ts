@@ -2,16 +2,14 @@ import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	copyFileSync,
-	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
+import { makeFixture, ownedTmpDir, sanitisedGitEnv } from "./lib/fixture";
 import { type Runner, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -72,7 +70,7 @@ test.describe("a review outlives the process that invoked it", () => {
 		page,
 	}) => {
 		const fixture = makeFixture();
-		const ghStubDir = mkdtempSync(join(tmpdir(), "meerkat-e2e-gh-"));
+		const ghStubDir = ownedTmpDir("meerkat-e2e-gh");
 		writeFileSync(join(ghStubDir, "gh"), "#!/bin/sh\necho 'gh stub failure' >&2\nexit 1\n");
 		chmodSync(join(ghStubDir, "gh"), 0o755);
 		const opts = { fixture, keepFixture: true, pathPrefixes: [ghStubDir] };
