@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import type { BrowserContext, Page } from "@playwright/test";
-import { makeFixture, manifestRoot } from "./lib/fixture";
-import { configHome, startMeerkat } from "./lib/runner";
+import { makeFixture, manifestRoot, ownedTmpDir } from "./lib/fixture";
+import { startMeerkat, startMeerkats } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 const PROD_MANIFEST = [
@@ -50,8 +50,10 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		await page.evaluate(() => window.scrollTo(0, 1500));
 		await expect.poll(scrollY).toBeGreaterThan(1000);
 		const before = await scrollY();
-		// Let the 200ms stash debounce write to sessionStorage.
-		await page.waitForTimeout(350);
+		// Wait for the 200ms stash debounce to write to sessionStorage.
+		await expect
+			.poll(() => page.evaluate(() => Number(sessionStorage.getItem("meerkat:scrollY"))))
+			.toBeGreaterThanOrEqual(before);
 		await page.reload();
 		await expect.poll(scrollY).toBeGreaterThan(before - 100);
 
@@ -119,8 +121,10 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 	page,
 	context,
 }) => {
-	const meerkat = await startMeerkat();
-	let second: Awaited<ReturnType<typeof startMeerkat>> | undefined;
+	// The two reviews share a config dir. The second's tabs read the
+	// settings when they load, so it can boot alongside the first.
+	const config = { env: { XDG_CONFIG_HOME: ownedTmpDir("meerkat-e2e-config") } };
+	const [meerkat, second] = await startMeerkats(config, config);
 	try {
 		await page.goto(meerkat.url);
 		const other = await openJoined(context, meerkat.url);
@@ -148,7 +152,6 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await expect(mine.columns).toBeFocused();
 		await expect(mine.columns).toHaveValue("60");
 
-		second = await startMeerkat({ env: { XDG_CONFIG_HOME: configHome(meerkat.runsDir) } });
 		const elsewhere = toolbar(await openJoined(context, second.url));
 		await expect(elsewhere.wrap).not.toBeChecked();
 		await expect(elsewhere.tab8).toHaveClass(/active/);
@@ -165,8 +168,9 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		const reopened = toolbar(await openJoined(context, second.url));
 		await expect(reopened.columns).toHaveValue("70");
 	} finally {
-		await second?.kill();
+		await second.kill();
 		await meerkat.kill();
+		rmSync(config.env.XDG_CONFIG_HOME, { recursive: true, force: true });
 	}
 });
 

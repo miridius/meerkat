@@ -2,6 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { budget } from "./budget.js";
 import { type Fixture, makeFixture, OWNED_TMP_DIR_RE, sanitisedGitEnv } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
@@ -60,15 +61,37 @@ const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 // meerkat creates the dirs on first use.
 process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
 process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
+// Every BEAM a test starts runs two schedulers of each kind that do not
+// busy-wait; options already set come after, so they win. With the
+// defaults, a scheduler per core that busy-waits, a BEAM on a machine
+// loaded to 70 by other work took 5-9 s to serve a review, against 2-3 s
+// with these. Workers inherit the setup process's env, so each process
+// adds the options only once.
+const BEAM_OPTIONS = "+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none +sbwtdcpu none +sbwtdio none";
+if (!process.env.ELIXIR_ERL_OPTIONS?.startsWith(BEAM_OPTIONS)) {
+	process.env.ELIXIR_ERL_OPTIONS = `${BEAM_OPTIONS} ${process.env.ELIXIR_ERL_OPTIONS ?? ""}`;
+}
 
 // The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
 // toolbar settings and runs reattaching to it share its settings. Named like
 // a runs dir, so `reapOrphanedBackends` removes it too.
-export function configHome(runsDir: string): string {
+function configHome(runsDir: string): string {
 	return `${runsDir}cfg`;
 }
 
 const URL_RE = /Paused for human review at (https?:\/\/[^\s]+)/;
+
+// Stops a `startMeerkat` call still waiting for its review URL, and
+// resolves with all the stderr its meerkat wrote.
+type PendingBoot = () => Promise<string>;
+
+const pendingBoots = new Set<PendingBoot>();
+
+// Stops every meerkat still booting, as when its test timed out, and
+// resolves with each one's stderr, for the test's report.
+export function stopPendingBoots(): Promise<string[]> {
+	return Promise.all([...pendingBoots].map((stop) => stop()));
+}
 
 // Spawn meerkat against a fixture, parse the URL from stderr, hand back
 // a runner the test can drive. Tests should `await runner.awaitExit()`
@@ -105,24 +128,20 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 
 	const closePromise = new Promise<void>((resolve) => proc.once("close", () => resolve()));
 	let stderrBuf = "";
-	const url = await new Promise<string>((resolve, reject) => {
+	let abandon: (e: Error) => void = () => {};
+	// No deadline of its own: the boot is bounded by the test's timeout,
+	// which scales with the machine's load, and `stopPendingBoots` stops it
+	// if the test ends first.
+	const urlPromise = new Promise<string>((resolve, reject) => {
+		abandon = reject;
 		if (opts.awaitUrl === false) {
 			resolve("");
 			return;
 		}
-		// Generous; --pr mode does a `gh pr view` + `git fetch` round
-		// trip before the server binds, and parallel BEAM cold-starts
-		// across the worker pool can stretch wall-clock past 20s on
-		// loaded machines.
-		const timeoutHandle = setTimeout(
-			() => reject(new Error(`timed out waiting for meerkat URL\nstderr so far:\n${stderrBuf}`)),
-			40_000,
-		);
 		const onErr = (chunk: Buffer) => {
 			stderrBuf += chunk.toString("utf8");
 			const m = stderrBuf.match(URL_RE);
 			if (m) {
-				clearTimeout(timeoutHandle);
 				proc.stderr?.off("data", onErr);
 				resolve(m[1]);
 			}
@@ -131,7 +150,6 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		// "close" rather than "exit": "exit" can fire before the last of
 		// stderr has been read, which would drop why meerkat exited.
 		proc.once("close", (code) => {
-			clearTimeout(timeoutHandle);
 			reject(
 				new Error(
 					`meerkat exited (code=${code}) before printing review URL\nstderr:\n${stderrBuf}`,
@@ -164,6 +182,14 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 		rmSync(configHome(runsDir), { recursive: true, force: true });
 		throw e;
 	});
+	const boot: PendingBoot = async () => {
+		abandon(new Error("the test ended before meerkat printed its review URL"));
+		await urlPromise.catch(() => {});
+		await closePromise;
+		return stderrBuf;
+	};
+	pendingBoots.add(boot);
+	const url = await urlPromise.finally(() => pendingBoots.delete(boot));
 
 	// Once the URL is captured, keep buffering stderr so the test can
 	// inspect feedback after decision.
@@ -213,6 +239,16 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	};
 }
 
+// Starts independent reviews at once, so their boots overlap rather than
+// add up. If any fails to start, stops those that started and throws.
+export async function startMeerkats(...opts: RunnerOpts[]): Promise<Runner[]> {
+	const started = await Promise.allSettled(opts.map((o) => startMeerkat(o)));
+	const failed = started.find((s) => s.status === "rejected");
+	if (!failed) return started.map((s) => (s as PromiseFulfilledResult<Runner>).value);
+	for (const s of started) if (s.status === "fulfilled") await s.value.kill();
+	throw failed.reason;
+}
+
 // Each `startMeerkat` call without `runsDir` creates `meerkat-runs-<worker pid>-<random>`
 // in the OS temp dir, and its run saves settings in that name with `cfg` appended.
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
@@ -246,7 +282,7 @@ async function stopBackends(runsDir: string, awaitPidFiles = false): Promise<voi
 	const pidFiles = readdirSync(runsDir, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => join(runsDir, entry.name, "pid"));
-	const pidDeadline = awaitPidFiles ? Date.now() + 5_000 : 0;
+	const pidDeadline = awaitPidFiles ? Date.now() + budget(5_000) : 0;
 	// A backend started just before meerkat was stopped may have created its
 	// run directory but not yet written its pid file; missed, it keeps running.
 	while (Date.now() < pidDeadline && !pidFiles.every((path) => existsSync(path))) {
@@ -264,7 +300,7 @@ async function stopBackends(runsDir: string, awaitPidFiles = false): Promise<voi
 		} catch {}
 	}
 
-	const deadline = Date.now() + 10_000;
+	const deadline = Date.now() + budget(10_000);
 	while (Date.now() < deadline && pids.some(alive)) {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
