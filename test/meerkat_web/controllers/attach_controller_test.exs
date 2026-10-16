@@ -95,18 +95,9 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   # An attach made after a decision arms no deadline, so poll Decision instead.
-  defp await_callers(n, tries \\ 500) do
-    cond do
-      map_size(:sys.get_state(Decision).callers) == n ->
-        :ok
-
-      tries == 0 ->
-        flunk("expected #{n} attached caller(s)")
-
-      true ->
-        Process.sleep(10)
-        await_callers(n, tries - 1)
-    end
+  defp await_callers(n) do
+    assert eventually(fn -> map_size(:sys.get_state(Decision).callers) == n end),
+           "expected #{n} attached caller(s)"
   end
 
   defp delivered(conn, run) do
@@ -342,7 +333,7 @@ defmodule MeerkatWeb.AttachControllerTest do
       conn = attach_from_index(conn, "later-run", ".git/index")
 
       assert conn.status == 409
-      assert_receive {:halted, 1}, 1000
+      assert_receive {:halted, 1}
     end
 
     test "a later invocation given another index file with the same content replays the held outcome",
@@ -367,7 +358,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
       assert conn.status == 409
       refute conn.resp_body =~ "approved"
-      assert_receive {:halted, 1}, 1000
+      assert_receive {:halted, 1}
     end
 
     test "a later invocation given no index file reads the repo's own index",
@@ -379,7 +370,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
       stage(repo, "a.txt", "two\n")
       assert attach(conn, "later-run").status == 409
-      assert_receive {:halted, 1}, 1000
+      assert_receive {:halted, 1}
     end
 
     test "a later invocation whose index file git has removed is refused and keeps the review",

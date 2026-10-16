@@ -44,6 +44,34 @@ defmodule Meerkat.TestHelpers do
     end)
   end
 
+  @doc """
+  Calls `fun` every 10 ms until it returns a truthy value, and returns that
+  value, or `nil` once an `assert_receive` would have given up. Waits for
+  what a test needs to happen rather than a fixed time, which a loaded
+  machine can overrun; the caller asserts on the result.
+  """
+  @spec eventually((-> result)) :: result | nil when result: term()
+  def eventually(fun) do
+    deadline =
+      System.monotonic_time(:millisecond) + ExUnit.configuration()[:assert_receive_timeout]
+
+    poll_until(fun, deadline)
+  end
+
+  defp poll_until(fun, deadline) do
+    cond do
+      result = fun.() ->
+        result
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        nil
+
+      true ->
+        Process.sleep(10)
+        poll_until(fun, deadline)
+    end
+  end
+
   @owned_tmp_dir_re ~r/^(\d+)-\d+$/
 
   @doc """
@@ -163,6 +191,35 @@ defmodule Meerkat.TestHelpers do
     dir
   end
 
+  @doc """
+  Copies the fixture tree `template` to a new `tmp_path/1` dir named with
+  `prefix`, removed when the test exits, and returns the copy. Each file
+  outside git's object stores that names `template`, such as a remote's
+  URL in a git config, a hook or a stub script, names the copy instead.
+  Commits keep naming `template`, so a fixture whose tracked files name it
+  cannot be copied this way.
+
+  A module that builds the same fixture for every test builds it once in
+  `setup_all` and copies it per test: under load, each git or lefthook
+  process that builds it costs a test seconds.
+  """
+  @spec copy_fixture(String.t(), String.t()) :: String.t()
+  def copy_fixture(template, prefix) do
+    dir = tmp_path(prefix)
+    File.cp_r!(template, dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    for path <- Path.wildcard(Path.join(dir, "**"), match_dot: true),
+        "objects" not in Path.split(Path.relative_to(path, dir)),
+        File.lstat!(path).type == :regular,
+        content = File.read!(path),
+        String.contains?(content, template) do
+      File.write!(path, String.replace(content, template, dir))
+    end
+
+    dir
+  end
+
   # Any test run inside a git hook has GIT_DIR exported by git, pointing at
   # meerkat's own gitdir, which overrides `cd: dir` and would build the
   # fixture repo in the wrong place. The set `Meerkat.Git` strips, plus
@@ -274,7 +331,7 @@ defmodule Meerkat.TestHelpers do
     receive do
       {^port, {:data, {:eol, "held"}}} -> port
     after
-      10_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{repo}")
+      30_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{repo}")
     end
   end
 
