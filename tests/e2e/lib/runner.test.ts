@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { makeFixture } from "./fixture.js";
-import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat } from "./runner.js";
+import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat, startMeerkats, stopPendingBoots } from "./runner.js";
 
 // spawnSync rather than awaiting spawn's "exit": under load bun sometimes
 // sets exitCode on a child without ever emitting "exit".
@@ -196,6 +196,57 @@ test("a meerkat that exits before printing its URL reports stderr read after it 
 			/exited \(code=1\) before printing review URL[\s\S]*boom/,
 		);
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("starting reviews together stops those that started when another fails", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	const seen = join(dir, "seen");
+	const serving = join(dir, "serving");
+	writeFileSync(
+		serving,
+		`#!/bin/sh\necho $$ > "$SEEN"\necho "Paused for human review at http://127.0.0.1:1/" >&2\nexec sleep 60\n`,
+		{ mode: 0o755 },
+	);
+	const failing = join(dir, "failing");
+	writeFileSync(failing, "#!/bin/sh\necho boom >&2\nexit 1\n", { mode: 0o755 });
+	let pid = 0;
+	try {
+		await expect(
+			startMeerkats(
+				{ bin: serving, args: [], fixture: { dir }, env: { SEEN: seen } },
+				{ bin: failing, args: [], fixture: { dir } },
+			),
+		).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
+		pid = Number(readFileSync(seen, "utf8").trim());
+		expect(alive(pid), "the review that started is stopped").toBe(false);
+	} finally {
+		if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a boot still waiting for its URL when its test ends is stopped, and its stderr kept", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
+	const seen = join(dir, "seen");
+	const bin = join(dir, "meerkat");
+	writeFileSync(bin, `#!/bin/sh\necho "still booting" >&2\necho $$ > "$SEEN"\nexec sleep 60\n`, { mode: 0o755 });
+	let pid = 0;
+	try {
+		const start = startMeerkat({ bin, args: [], fixture: { dir }, env: { SEEN: seen } });
+		const outcome = start.then(
+			() => "resolved",
+			(e) => String(e),
+		);
+		while (!existsSync(seen) || readFileSync(seen, "utf8") === "") await new Promise((r) => setTimeout(r, 50));
+		pid = Number(readFileSync(seen, "utf8").trim());
+		expect(await stopPendingBoots()).toEqual(["still booting\n"]);
+		expect(await outcome).toContain("the test ended before meerkat printed its review URL");
+		expect(alive(pid), "the boot is stopped").toBe(false);
+		expect(await stopPendingBoots(), "no boot is left pending").toEqual([]);
+	} finally {
+		if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
