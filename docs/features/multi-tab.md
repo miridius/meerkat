@@ -87,6 +87,12 @@ start. A later invocation that reattaches to a review with no tab
 connected opens it again, unless `--no-open` was passed. An
 invocation collecting a decision already made opens no tab.
 
+Half a second after a tab shows the done view, it calls
+`window.close()`. Chrome lets a page close its own tab only while the
+tab has a single history entry, so the review page adds none: in-page
+links scroll without navigating. Where the browser still refuses, the
+done view's "You can close this tab." stays up.
+
 If the user closes the tab before submitting a decision, meerkat
 does not reopen it for the invocation that is already waiting — the
 server keeps waiting on the same URL, printed on stderr. The user
