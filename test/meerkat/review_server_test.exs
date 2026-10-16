@@ -139,6 +139,45 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
+  describe "the reply wait" do
+    setup do
+      previous = Application.fetch_env(:meerkat, :review_server_call_timeout_ms)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:meerkat, :review_server_call_timeout_ms, value)
+          :error -> Application.delete_env(:meerkat, :review_server_call_timeout_ms)
+        end
+      end)
+    end
+
+    test "is 5 s unless the app env sets it" do
+      Application.delete_env(:meerkat, :review_server_call_timeout_ms)
+      assert ReviewServer.call_timeout_ms() == 5_000
+
+      Application.put_env(:meerkat, :review_server_call_timeout_ms, 7)
+      assert ReviewServer.call_timeout_ms() == 7
+    end
+
+    test "bounds every call to a server that does not answer", %{repo: repo, review_id: id} do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      Application.put_env(:meerkat, :review_server_call_timeout_ms, 50)
+      :sys.suspend(pid)
+
+      try do
+        assert {:timeout, {GenServer, :call, [_, :get_state, 50]}} =
+                 catch_exit(ReviewServer.get_state(id))
+
+        assert {:timeout, {GenServer, :call, [^pid, :delete_snapshot, 50]}} =
+                 catch_exit(ReviewServer.delete_snapshot(repo, id))
+      after
+        :sys.resume(pid)
+      end
+    end
+  end
+
   describe "argument guards" do
     test "reject a negative file index, a non-binary comment id and an unknown or non-boolean flag",
          %{review_id: id} do

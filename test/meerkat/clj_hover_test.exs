@@ -1,6 +1,6 @@
 defmodule Meerkat.CljHoverTest do
-  # Hover answers on a real staged review, analysed by the real clj-kondo.
-  # async: false — each setup runs clj-kondo twice, so tests take turns.
+  # Hover answers on a real staged review, analysed by the real clj-kondo,
+  # which runs once for the module; each test reviews a copy of its output.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3]
@@ -130,9 +130,31 @@ defmodule Meerkat.CljHoverTest do
      "(ns dep.shared)\n\n#?(:clj (defn shared-fn \"Shared clj doc.\" [a] a)\n   :cljs (defn shared-fn \"Shared cljs doc.\" [a] a))\n"}
   ]
 
-  setup do
-    dir = Meerkat.TestHelpers.make_git_repo("meerkat-clj-hover")
-    on_exit(fn -> File.rm_rf!(dir) end)
+  # The repo and the dependency directory outside it, built and linted
+  # once, then copied for each test.
+  setup_all do
+    template = Meerkat.TestHelpers.tmp_path("meerkat-clj-hover-template")
+    on_exit(fn -> File.rm_rf!(template) end)
+    build_fixture(Path.join(template, "repo"), Path.join(template, "ext"))
+    {:ok, template: template}
+  end
+
+  setup %{template: template} do
+    dir = Path.join(Meerkat.TestHelpers.copy_fixture(template, "meerkat-clj-hover"), "repo")
+    # Set here: a file no one can read cannot be copied.
+    File.chmod!(Path.join(dir, "vendor/vend/locked.clj"), 0)
+
+    {:ok, files} = Git.staged_file_diffs(dir)
+    rid = "clj-hover-#{System.unique_integer([:positive])}"
+    {:ok, pid} = CljHover.ensure_started(rid, dir, files)
+    # Stopped before the repo goes: it waits out indexing, which reads the repo.
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    %{dir: dir, rid: rid, pid: pid, files: files}
+  end
+
+  defp build_fixture(dir, ext) do
+    File.mkdir_p!(dir)
+    git(dir, ["init", "-q"])
     git(dir, ["config", "user.email", "t@t.t"])
     git(dir, ["config", "user.name", "t"])
     git(dir, ["config", "core.hooksPath", "/dev/null"])
@@ -152,11 +174,8 @@ defmodule Meerkat.CljHoverTest do
     entries = for {name, text} <- @jar, do: {String.to_charlist(name), text}
     {:ok, _} = :zip.create(String.to_charlist(jar), entries)
     write(dir, "vendor/vend/tool.clj", "(ns vend.tool)\n\n(defn tool-fn \"Vendor doc.\" [] 1)\n")
-    locked = write(dir, "vendor/vend/locked.clj", "(ns vend.locked)\n\n(defn locked-fn [] 1)\n")
-    File.chmod!(locked, 0)
+    write(dir, "vendor/vend/locked.clj", "(ns vend.locked)\n\n(defn locked-fn [] 1)\n")
     # A dependency's directory outside the repo, as a git dep's is.
-    ext = Meerkat.TestHelpers.tmp_path("meerkat-clj-hover-ext")
-    on_exit(fn -> File.rm_rf!(ext) end)
     write(ext, "ext/lib.clj", "(ns ext.lib)\n\n(defn ext-fn \"Ext doc.\" [] 1)\n")
     write(dir, ".cpcache/1.cp", "libs/dep.jar:vendor:#{ext}\n")
 
@@ -166,13 +185,6 @@ defmodule Meerkat.CljHoverTest do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
     {_, _} = System.cmd("clj-kondo", ["--lint", "src", "shared", "web"], cd: dir)
     {_, _} = System.cmd("clj-kondo", ["--lint", "src/app/util.clj"], cd: dir)
-
-    {:ok, files} = Git.staged_file_diffs(dir)
-    rid = "clj-hover-#{System.unique_integer([:positive])}"
-    {:ok, pid} = CljHover.ensure_started(rid, dir, files)
-    # Stopped before the repo goes: it waits out indexing, which reads the repo.
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
-    %{dir: dir, rid: rid, pid: pid, files: files}
   end
 
   defp write(dir, path, text) do

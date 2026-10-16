@@ -112,7 +112,7 @@ defmodule Meerkat.CljHover.ClasspathTest do
 
     parent = self()
     :erlang.spawn_opt(fn -> send(parent, {:grown, task.()}) end, min_heap_size: 50_000_000)
-    assert_receive {:grown, grown}, 10_000
+    assert_receive {:grown, grown}
     # Other tests open files meanwhile; a leak opens 200.
     assert grown < 50
   end

@@ -148,22 +148,29 @@ grep_dir() {
   combine "$rc_c" "$out_c" "$rc_u" "$out_u"
 }
 
-# git grep reads files, never stdin, so each sample goes through a
-# temporary file.
-grep_sample() {
-  local pattern="$1" sample="$2" dir rc=0
-  dir=$(mktemp -d)
-  printf '%s\n' "$sample" > "$dir/sample.txt"
-  grep_dir "$dir" "$pattern" || rc=$?
-  rm -rf "$dir"
-  return "$rc"
+# git grep reads files, never stdin, so the self-test's samples are
+# files in a temporary directory: an empty line in `empty/`, and in
+# `examples/` each generic pattern's example as `match-<n>` and its
+# counter-example as `miss-<n>`. Each pattern searches each directory once,
+# and its hits are told apart by file, since under load every process a
+# push starts costs it time.
+write_samples() {
+  local i=0 entry positive
+  samples=$(mktemp -d)
+  mkdir "$samples/empty" "$samples/examples"
+  printf '\n' > "$samples/empty/sample.txt"
+  for entry in "${PATTERNS[@]}"; do
+    positive="${entry%|*}"
+    printf '%s\n' "${positive##*|}" > "$samples/examples/match-$i"
+    printf '%s\n' "${entry##*|}" > "$samples/examples/miss-$i"
+    i=$((i + 1))
+  done
 }
 
-# True when the sample holds a generic match the scan would report.
+# True when the hits of a search of the examples, given first, hold a
+# generic match the scan would report in the sample file given second.
 reports() {
-  local out
-  out=$(grep_sample "$1" "$2" 2> /dev/null || true)
-  [ -n "$(printf '%s\n' "$out" | drop_allowed)" ]
+  [ -n "$(printf '%s\n' "$1" | { grep -a "^$2:" || [ "$?" -eq 1 ]; } | drop_allowed)" ]
 }
 
 # Prints git grep's error for an invalid pattern, prefixed by where the
@@ -172,7 +179,7 @@ reports() {
 # text refuses the push when the scan meets it.
 valid_regex() {
   local where="$1" pattern="$2" rc=0 err
-  err=$(grep_sample "$pattern" "" 2>&1 > /dev/null) || rc=$?
+  err=$(grep_dir "$samples/empty" "$pattern" 2>&1 > /dev/null) || rc=$?
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
     echo "SELF-TEST: $where matches empty text, so git grep cannot show its matches" >&2
     return 1
@@ -208,9 +215,11 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$PRIVATE_FILE"
 
 self_test() {
-  local failed=0
+  local failed=0 n=0 samples
+  write_samples
   for entry in "${PATTERNS[@]}"; do
-    local label pattern positive negative
+    local label pattern positive negative hits i=$n
+    n=$((n + 1))
     label=$(entry_field "$entry" 1)
     pattern=$(pattern_of "$entry")
     positive="${entry%|*}"
@@ -221,11 +230,12 @@ self_test() {
       failed=1
       continue
     fi
-    if ! reports "$pattern" "$positive"; then
+    hits=$(grep_dir "$samples/examples" "$pattern" 2> /dev/null || true)
+    if ! reports "$hits" "match-$i"; then
       echo "SELF-TEST: '$label' misses its own example: $positive" >&2
       failed=1
     fi
-    if reports "$pattern" "$negative"; then
+    if reports "$hits" "miss-$i"; then
       echo "SELF-TEST: '$label' fires on its counter-example: $negative" >&2
       failed=1
     fi
@@ -258,6 +268,7 @@ self_test() {
     esac
     valid_regex "$where" "$pattern" || failed=1
   done
+  rm -rf "$samples"
 
   if [ "$failed" -eq 0 ]; then
     echo "no-private-refs: ${#PATTERNS[@]} generic and ${#PRIVATE[@]} private patterns pass."
