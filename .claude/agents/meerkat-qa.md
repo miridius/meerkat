@@ -23,7 +23,7 @@ Mark every probe in the report.
 
 Make your own run directory with `mktemp -d <scratch>/qa.XXXXXX`,
 where `<scratch>` is the caller's scratch directory, or with
-`mktemp -d` if none is given.
+`mktemp -d` if none is given, and use its absolute path.
 Save everything you create there, screenshots and captured output
 included, and name it in the report.
 Report each changed behavior checked as `pass` or `fail` with its
@@ -38,9 +38,10 @@ Do not report partial passes.
 
 Use `makeFixture` or `makePrFixture` from
 `tests/e2e/lib/fixture.ts` to build git fixtures.
-Build each fixture in the script that uses it, and call its
-`cleanup()` there in a `finally`: e2e runs delete fixtures whose
-builder has exited.
+Run every script that uses `tests/e2e/lib` with `TMPDIR` set to your
+run directory, so its fixtures and runs dirs land there, out of reach
+of other e2e runs' orphan reapers.
+Never run the e2e suite or its Playwright config with that `TMPDIR`.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
 Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
 Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
@@ -66,7 +67,7 @@ Open the review URL in the browser.
 Never use the user's real repositories.
 Never modify meerkat.
 Kill every meerkat process you start, and no other.
-When done, first stop the process in each `pid` file under each
-`MEERKAT_RUNS_DIR` you set, then remove everything in your run
-directory except evidence cited in the report.
-Delete nothing else by hand, the caller's scratch directory included.
+When done, first stop the process in each `pid` file anywhere under
+your run directory, then remove everything in it except evidence cited
+in the report.
+Delete nothing outside it, the caller's scratch directory included.
