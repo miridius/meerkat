@@ -79,6 +79,7 @@ defmodule Meerkat.GitCommitIndexTest do
 
   defp install_hook(hooks) do
     hook = Path.join(hooks, "commit-msg")
+    File.mkdir_p!(hooks)
 
     File.write!(hook, """
     #!/bin/sh

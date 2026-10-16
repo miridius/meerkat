@@ -4,3 +4,15 @@
 	# in receive-pack; one still writing into a fixture repo makes its
 	# removal fail. receive-pack never sees `git -c`, so it has to be set here.
 	auto = false
+[core]
+	# No reflogs, which no test reads: each repo would otherwise create a
+	# logs/ tree mirroring its refs.
+	logAllRefUpdates = false
+[init]
+	# No template: each init or clone otherwise copies the template's sample
+	# hooks, description and info/exclude, 18 entries no test reads.
+	templateDir =
+[transfer]
+	# A push or fetch keeps what it receives as one pack rather than
+	# unpacking each object into its own file.
+	unpackLimit = 1

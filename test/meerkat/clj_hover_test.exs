@@ -1,6 +1,6 @@
 defmodule Meerkat.CljHoverTest do
   # Hover answers on a real staged review, analysed by the real clj-kondo,
-  # which runs once for the module; each test reviews a copy of its output.
+  # which runs once for the module.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3]
@@ -131,19 +131,17 @@ defmodule Meerkat.CljHoverTest do
   ]
 
   # The repo and the dependency directory outside it, built and linted
-  # once, then copied for each test.
+  # once. Every test that only reads them shares one copy; a test that
+  # changes the repo is tagged `:own_repo` and gets its own.
   setup_all do
     template = Meerkat.TestHelpers.tmp_path("meerkat-clj-hover-template")
     on_exit(fn -> File.rm_rf!(template) end)
     build_fixture(Path.join(template, "repo"), Path.join(template, "ext"))
-    {:ok, template: template}
+    {:ok, template: template, shared_dir: copy(template)}
   end
 
-  setup %{template: template} do
-    dir = Path.join(Meerkat.TestHelpers.copy_fixture(template, "meerkat-clj-hover"), "repo")
-    # Set here: a file no one can read cannot be copied.
-    File.chmod!(Path.join(dir, "vendor/vend/locked.clj"), 0)
-
+  setup ctx do
+    dir = if ctx[:own_repo], do: copy(ctx.template), else: ctx.shared_dir
     {:ok, files} = Git.staged_file_diffs(dir)
     rid = "clj-hover-#{System.unique_integer([:positive])}"
     {:ok, pid} = CljHover.ensure_started(rid, dir, files)
@@ -185,6 +183,14 @@ defmodule Meerkat.CljHoverTest do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
     {_, _} = System.cmd("clj-kondo", ["--lint", "src", "shared", "web"], cd: dir)
     {_, _} = System.cmd("clj-kondo", ["--lint", "src/app/util.clj"], cd: dir)
+  end
+
+  # Removed after the test, or after the module for `setup_all`.
+  defp copy(template) do
+    dir = Path.join(Meerkat.TestHelpers.copy_fixture(template, "meerkat-clj-hover"), "repo")
+    # Set here: a file no one can read cannot be copied.
+    File.chmod!(Path.join(dir, "vendor/vend/locked.clj"), 0)
+    dir
   end
 
   defp write(dir, path, text) do
@@ -270,6 +276,7 @@ defmodule Meerkat.CljHoverTest do
     refute hover_on(ctx, "src/app/core.clj", :new, "u/extra")
   end
 
+  @tag :own_repo
   test "a namespace is analysed once, keeping the source it was read with", ctx do
     assert %{source: "(ns app.top) (defn" <> _} =
              hover = hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
@@ -278,6 +285,7 @@ defmodule Meerkat.CljHoverTest do
     assert hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn") == hover
   end
 
+  @tag :own_repo
   test "a namespace whose cached file is gone, and off the classpath, answers nothing", ctx do
     File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
     refute hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
@@ -314,6 +322,7 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
   end
 
+  @tag :own_repo
   test "the classpath is read on the first lookup that needs it, then kept", ctx do
     cp = Path.join(ctx.dir, ".cpcache/1.cp")
     # Opening the review and hovering a diff file's var leave it unread.
