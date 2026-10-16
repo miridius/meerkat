@@ -1,8 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { type Fixture, makeFixture, OWNED_TMP_DIR_RE, sanitisedGitEnv } from "./fixture.js";
+import { type Fixture, makeFixture, OWNED_TMP_DIR_RE, OWNED_TMP_PARENT, sanitisedGitEnv } from "./fixture.js";
 
 export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
 
@@ -58,7 +57,7 @@ const OWNED_RUNS_DIR_RE = /^meerkat-runs-(\d+)-[A-Za-z0-9]+$/;
 // their backends in the user's own runs dir, and save toolbar settings in the
 // user's own config dir, which `reapOrphanedBackends` leaves alone.
 // meerkat creates the dirs on first use.
-process.env.MEERKAT_RUNS_DIR = join(tmpdir(), `meerkat-runs-${process.pid}-direct`);
+process.env.MEERKAT_RUNS_DIR = join(OWNED_TMP_PARENT, `meerkat-runs-${process.pid}-direct`);
 process.env.XDG_CONFIG_HOME = configHome(process.env.MEERKAT_RUNS_DIR);
 
 // The XDG_CONFIG_HOME of runs in `runsDir`, so a run starts from the default
@@ -86,7 +85,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 					throw new Error("startMeerkat: fixture has no commitMsgPath; pass `args` explicitly");
 				})());
 
-	const runsDir = opts.runsDir ?? mkdtempSync(join(tmpdir(), `meerkat-runs-${process.pid}-`));
+	const runsDir = opts.runsDir ?? mkdtempSync(join(OWNED_TMP_PARENT, `meerkat-runs-${process.pid}-`));
 	const env = { ...sanitisedGitEnv(), MEERKAT_RUNS_DIR: runsDir, XDG_CONFIG_HOME: configHome(runsDir), ...opts.env };
 	if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
 		env.PATH = [...opts.pathPrefixes, env.PATH ?? ""].join(delimiter);
@@ -214,7 +213,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 }
 
 // Each `startMeerkat` call without `runsDir` creates `meerkat-runs-<worker pid>-<random>`
-// in the OS temp dir, and its run saves settings in that name with `cfg` appended.
+// in `OWNED_TMP_PARENT`, and its run saves settings in that name with `cfg` appended.
 // Reap its recorded backends and remove the dir only if that PID is no longer alive;
 // live owners, including concurrent runs, and dirs without a PID are left alone.
 export async function reapOrphanedBackends(): Promise<void> {
@@ -232,12 +231,12 @@ export function reapOrphanedFixtures(): void {
 	for (const dir of orphanedTmpDirs(OWNED_TMP_DIR_RE)) rmSync(dir, { recursive: true, force: true });
 }
 
-// The OS temp dir entries whose name `ownerPid` matches, capturing the PID of
+// The `OWNED_TMP_PARENT` entries whose name `ownerPid` matches, capturing the PID of
 // the process that made them, and whose owner is no longer alive.
 function* orphanedTmpDirs(ownerPid: RegExp): Generator<string> {
-	for (const name of readdirSync(tmpdir())) {
+	for (const name of readdirSync(OWNED_TMP_PARENT)) {
 		const owner = name.match(ownerPid);
-		if (owner && !alive(Number(owner[1]))) yield join(tmpdir(), name);
+		if (owner && !alive(Number(owner[1]))) yield join(OWNED_TMP_PARENT, name);
 	}
 }
 
