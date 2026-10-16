@@ -32,6 +32,18 @@ defmodule MeerkatWeb.ReviewLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    # phx-track-static only sends the page's asset URLs on join; LiveView
+    # never reloads the page on a mismatch by itself.
+    # Redirect a connected tab with outdated assets to "/" for a full page load
+    # of the current build instead of leaving it running old JS/CSS.
+    if connected?(socket) and static_changed?(socket) do
+      {:ok, redirect(socket, to: ~p"/")}
+    else
+      mount_review(socket)
+    end
+  end
+
+  defp mount_review(socket) do
     initial_state = Application.get_env(:meerkat, :review_state) || %ReviewState{}
     repo_path = Application.get_env(:meerkat, :repo_path) || File.cwd!()
     review_id = Application.get_env(:meerkat, :review_id) || "unbound"

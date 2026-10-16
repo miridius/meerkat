@@ -10,9 +10,13 @@ defmodule MeerkatWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+  # The socket reads no session cookie. Each review signs its cookie with
+  # its own secret under the one name, and browsers don't scope cookies by
+  # port, so after another review loads, a tab's rejoin could not verify
+  # the cookie and would fully reload. Meerkat keeps nothing in the session
+  # for the socket to check: check_origin refuses non-loopback origins, and
+  # a join needs the page's signed LiveView token.
+  socket "/live", Phoenix.LiveView.Socket, websocket: true, longpoll: true
 
   plug Plug.Static,
     at: "/",

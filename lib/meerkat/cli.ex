@@ -632,6 +632,9 @@ defmodule Meerkat.CLI do
   def endpoint_config_for_test(port), do: endpoint_config(port)
 
   @doc false
+  def endpoint_config_for_test(port, manifest_path), do: endpoint_config(port, manifest_path)
+
+  @doc false
   def port_in_use_for_test(reason), do: port_in_use?(reason)
 
   @doc false
@@ -802,8 +805,11 @@ defmodule Meerkat.CLI do
     log_path
   end
 
-  defp endpoint_config(requested_port) do
+  defp endpoint_config(requested_port), do: endpoint_config(requested_port, vite_manifest_path())
+
+  defp endpoint_config(requested_port, manifest_path) do
     base = Application.get_env(:meerkat, MeerkatWeb.Endpoint, [])
+    manifest = vite_manifest(manifest_path)
 
     # Prod (mix release): override dev.exs's runtime checks with
     # one-shot CLI flags.
@@ -835,6 +841,8 @@ defmodule Meerkat.CLI do
       ],
       server: true,
       secret_key_base: secret_key_base(),
+      vite_manifest: manifest,
+      cache_static_manifest_latest: static_manifest_latest(manifest),
       check_origin: {MeerkatWeb.Loopback, :origin?, []}
     ]
 
@@ -847,6 +855,29 @@ defmodule Meerkat.CLI do
 
   defp secret_key_base do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
+  end
+
+  defp vite_manifest_path, do: Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
+
+  # The layout's asset tags and static_changed?/1 both use this one parse,
+  # read at boot. Were the layout to read the file itself, a build replaced
+  # between boot and the first page would make them disagree, and every
+  # reconnect would redirect again. Without a build it is nil.
+  defp vite_manifest(path) do
+    case File.read(path) do
+      {:ok, json} -> PhoenixVite.Manifest.parse(json)
+      {:error, _} -> nil
+    end
+  end
+
+  # Supply :cache_static_manifest_latest for LiveView's static_changed?/1.
+  # Tracked URLs are current when they end with a map key or value; Vite
+  # already digests emitted script and stylesheet names, so each maps to itself.
+  # Without a manifest, nil makes static_changed?/1 return false.
+  defp static_manifest_latest(nil), do: nil
+
+  defp static_manifest_latest(manifest) do
+    for {_key, chunk} <- manifest, file <- [chunk.file | chunk.css], into: %{}, do: {file, file}
   end
 
   # Agent-facing banner for the `git commit` / `meerkat` process now

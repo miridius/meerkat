@@ -20,7 +20,7 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 // render, are covered by the LiveView tests.
 //
 // A live-restart onto a version with changed assets makes
-// phx-track-static reload the page on socket reconnect. A plain
+// ReviewLive.mount/3 redirect on reconnect for a full page load. A plain
 // page.reload() reproduces that full reload (same origin, so
 // sessionStorage survives), which is the behaviour the
 // scroll-preservation code in app.js has to handle.
@@ -42,9 +42,9 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		await page.waitForTimeout(350);
 		expect(await scrollY()).toBe(0);
 
-		// The reload the scroll code preserves across is triggered by
-		// phx-track-static (LiveView full-reloads on reconnect when the
-		// version's assets changed), so confirm those tags are present.
+		// ReviewLive.mount/3 uses static_changed?/1 to redirect reconnecting
+		// tabs with outdated assets for a full page load. That check uses
+		// phx-track-static tags, so confirm those tags are present.
 		expect(await page.locator("script[phx-track-static]").count()).toBeGreaterThan(0);
 
 		await page.evaluate(() => window.scrollTo(0, 1500));
@@ -115,19 +115,12 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 // A rejoin without a reload, such as after a dropped socket, would also
 // have LiveView's form recovery resubmit the page's stale ruler columns,
 // saving them over the newer ones.
-//
-// The other review gets its own browser context: each review's BEAM signs
-// its session cookie with its own key, and cookies aren't scoped by port,
-// so loading it in the same context would turn the first page's rejoin
-// into a full reload.
 test("toolbar settings reach the review's other tabs live, and other reviews on load and rejoin", async ({
 	page,
 	context,
-	browser,
 }) => {
 	const meerkat = await startMeerkat();
 	let second: Awaited<ReturnType<typeof startMeerkat>> | undefined;
-	const elsewhereContext = await browser.newContext();
 	try {
 		await page.goto(meerkat.url);
 		const other = await openJoined(context, meerkat.url);
@@ -156,7 +149,7 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await expect(mine.columns).toHaveValue("60");
 
 		second = await startMeerkat({ env: { XDG_CONFIG_HOME: configHome(meerkat.runsDir) } });
-		const elsewhere = toolbar(await openJoined(elsewhereContext, second.url));
+		const elsewhere = toolbar(await openJoined(context, second.url));
 		await expect(elsewhere.wrap).not.toBeChecked();
 		await expect(elsewhere.tab8).toHaveClass(/active/);
 		await expect(elsewhere.columns).toHaveValue("60");
@@ -169,10 +162,9 @@ test("toolbar settings reach the review's other tabs live, and other reviews on 
 		await expect(mine.columns).toHaveValue("70");
 		await expect(mine.wrap).not.toBeChecked();
 		await expect(mine.tab8).toHaveClass(/active/);
-		const reopened = toolbar(await openJoined(elsewhereContext, second.url));
+		const reopened = toolbar(await openJoined(context, second.url));
 		await expect(reopened.columns).toHaveValue("70");
 	} finally {
-		await elsewhereContext.close();
 		await second?.kill();
 		await meerkat.kill();
 	}
