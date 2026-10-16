@@ -303,6 +303,24 @@ async function gnuBashReleases(): Promise<Release[]> {
 	return releases;
 }
 
+// Graphviz releases on GitLab, with the source tarball as a package.
+const GRAPHVIZ = "https://gitlab.com/api/v4/projects/4207231";
+
+export function graphvizFiles(version: string): string[] {
+	return [`${GRAPHVIZ}/packages/generic/graphviz-releases/${version}/graphviz-${version}.tar.xz`];
+}
+
+async function graphvizReleases(): Promise<Release[]> {
+	const list = await json(`${GRAPHVIZ}/releases?per_page=100`);
+	if (!Array.isArray(list)) throw new Unreadable("graphviz releases: not a list");
+	return list.flatMap((r) => {
+		const m = String(r.tag_name).match(/^(\d+\.\d+\.\d+)$/);
+		return m && !r.upcoming_release
+			? [{ version: m[1], date: date(r.released_at, `graphviz ${r.tag_name}`) }]
+			: [];
+	});
+}
+
 // ------------------------------------------------------------------- pins
 
 function readFile(path: string): string {
@@ -449,6 +467,11 @@ function filePins(): Pin[] {
 		filePin(TOOLCHAIN_ENV, "GNU_BASH_VERSION", "GNU bash", gnuBashReleases, none, {
 			shaKey: "GNU_BASH_SHA256",
 			urls: gnuBashFiles,
+		}),
+		// GitHub's advisory database lists nothing for Graphviz.
+		filePin(TOOLCHAIN_ENV, "GRAPHVIZ_VERSION", "Graphviz", graphvizReleases, none, {
+			shaKey: "GRAPHVIZ_SHA256",
+			urls: graphvizFiles,
 		}),
 	];
 }
