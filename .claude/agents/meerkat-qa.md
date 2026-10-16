@@ -21,8 +21,9 @@ of the changed behavior at that same surface.
 Keep probes within the changed behavior.
 Mark every probe in the report.
 
-Make your own run directory with `mktemp -d` inside the caller's
-scratch directory, or in the system temp dir if none is given.
+Make your own run directory with `mktemp -d <scratch>/qa.XXXXXX`,
+where `<scratch>` is the caller's scratch directory, or with
+`mktemp -d` if none is given.
 Save everything you create there, screenshots and captured output
 included, and name it in the report.
 Report each changed behavior checked as `pass` or `fail` with its
@@ -37,14 +38,15 @@ Do not report partial passes.
 
 Use `makeFixture` or `makePrFixture` from
 `tests/e2e/lib/fixture.ts` to build git fixtures.
-Run every script that uses these helpers with `TMPDIR` set to your
-run directory, out of reach of the e2e suite's orphan reaper.
+Build each fixture in the script that uses it, and call its
+`cleanup()` there in a `finally`: e2e runs delete fixtures whose
+builder has exited.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
 Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
 Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
 Before the first browser check, run
 `bunx playwright install --only-shell chromium`.
-End each `startMeerkat` run with its `kill()`.
+End each `startMeerkat` run with its `kill()` in a `finally`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
 For direct CLI checks, set `MEERKAT_RUNS_DIR` and `XDG_CONFIG_HOME`
 each to a new directory in your run directory.
@@ -64,8 +66,7 @@ Open the review URL in the browser.
 Never use the user's real repositories.
 Never modify meerkat.
 Kill every meerkat process you start, and no other.
-This includes the process in each `pid` file under your
-`MEERKAT_RUNS_DIR`.
-When done, remove everything in your run directory except evidence
-cited in the report.
-Delete nothing else, the caller's scratch directory included.
+When done, first stop the process in each `pid` file under each
+`MEERKAT_RUNS_DIR` you set, then remove everything in your run
+directory except evidence cited in the report.
+Delete nothing else by hand, the caller's scratch directory included.
