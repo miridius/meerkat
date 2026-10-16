@@ -245,7 +245,9 @@ test.describe("a review outlives the process that invoked it", () => {
 			process.kill(Number(beam), "SIGTERM");
 
 			const { code, stderr } = await first.awaitExit();
-			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(5_000);
+			// A graceful stop waits 15 s for open connections to close at any
+			// load; a halt takes seconds even on a loaded machine.
+			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(15_000);
 			expect(code).toBe(143);
 			expect(stderr).toContain(
 				"meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted).",
@@ -272,7 +274,9 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code, stderr).toBe(0);
-			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(5_000);
+			// Waiting for the run dir's exit file would take the caller's
+			// 150 polls of 0.2 s, 30 s at any load.
+			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(15_000);
 			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
 		} finally {
 			await meerkat.kill();
@@ -285,15 +289,12 @@ test.describe("a review outlives the process that invoked it", () => {
 
 	// A message-only change keeps the same review_id, so the replacement
 	// would otherwise load the held review's existing snapshot.
-	test("a rerun after a message-only change replaces a held decision without its comments, and one after the staged diff changed replaces the review its attached caller waits on", async ({
-		page,
-	}) => {
-		// Three BEAM boots, each of which can take ~40 s on a loaded machine.
+	test("a rerun after a message-only change replaces a held decision without its comments", async ({ page }) => {
+		// Two BEAM boots, each of which can take ~40 s on a loaded machine.
 		test.slow();
 		const fixture = makeFixture();
 		const first = await startMeerkat({ fixture, keepFixture: true, underParent: true });
 		let second: Runner | undefined;
-		let third: Runner | undefined;
 		try {
 			const heldBackend = backendPid(first);
 			await page.goto(first.url);
@@ -310,26 +311,41 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.goto(second.url);
 			await expect(page.locator("body")).toContainText("A different subject");
 			await expect(page.locator(".global-comments .note"), "the held comments do not carry over").toHaveCount(0);
+		} finally {
+			await second?.kill();
+			await first.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
 
-			const replacedBackend = backendPid(second);
-			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten while the second caller waits\n");
+	test("a rerun after the staged diff changed replaces the review its attached caller waits on", async ({
+		page,
+	}) => {
+		// Two BEAM boots, each of which can take ~40 s on a loaded machine.
+		test.slow();
+		const fixture = makeFixture();
+		const first = await startMeerkat({ fixture, keepFixture: true });
+		let second: Runner | undefined;
+		try {
+			const replacedBackend = backendPid(first);
+			await page.goto(first.url);
+			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten while the first caller waits\n");
 			fixture.git("add", "NOTES.md");
-			third = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
+			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
 			expect(alive(replacedBackend), "the replaced review's backend has exited").toBe(false);
-			const replaced = await second.awaitExit();
+			const replaced = await first.awaitExit();
 			expect(replaced.code, "the attached invocation aborts its commit").toBe(1);
 			expect(replaced.stderr).toContain("this review's diff or commit message changed");
 
-			await page.goto(third.url);
-			await expect(page.locator("body")).toContainText("rewritten while the second caller waits");
+			await page.goto(second.url);
+			await expect(page.locator("body")).toContainText("rewritten while the first caller waits");
 			await page.getByRole("button", { name: /^Approve$/ }).click();
-			const { code, stderr } = await third.awaitExit();
+			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun collects the decision on the new review").toBe(0);
 			expect(stderr, "the new review's approval reaches its caller").toContain(
 				"The user approved your commit. Proceeding.",
 			);
 		} finally {
-			await third?.kill();
 			await second?.kill();
 			await first.kill();
 			rmSync(fixture.dir, { recursive: true, force: true });

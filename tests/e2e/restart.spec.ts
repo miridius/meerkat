@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { makeFixture, ownedTmpDir } from "./lib/fixture";
-import { type Runner, startMeerkat } from "./lib/runner";
+import { type Runner, startMeerkat, startMeerkats } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // The BEAM serving the review, from the "<port> <pid>" its serve dir records.
@@ -25,13 +25,15 @@ test.describe("a review that restarts onto a new version", () => {
 		mkdirSync(join(versions, "v2"));
 		const link = join(versions, "current");
 		symlinkSync(join(versions, "v1"), link);
-		const meerkat = await startMeerkat({
-			fixture: makeFixture({ files: { "a.txt": "one\n" } }),
-			env: { MEERKAT_CURRENT_LINK: link },
-			keepFixture: true,
-		});
+		const [meerkat, other] = await startMeerkats(
+			{
+				fixture: makeFixture({ files: { "a.txt": "one\n" } }),
+				env: { MEERKAT_CURRENT_LINK: link },
+				keepFixture: true,
+			},
+			{ fixture: makeFixture({ files: { "b.txt": "two\n" } }) },
+		);
 		let rerun: Runner | undefined;
-		let other: Runner | undefined;
 		try {
 			await page.goto(meerkat.url);
 			await page.getByRole("button", { name: "+ Add global comment" }).click();
@@ -45,7 +47,6 @@ test.describe("a review that restarts onto a new version", () => {
 
 			// Another review loaded in the same browser replaces the session
 			// cookie, which must not keep this tab from rejoining in place.
-			other = await startMeerkat({ fixture: makeFixture({ files: { "b.txt": "two\n" } }) });
 			const otherPage = await page.context().newPage();
 			await otherPage.goto(other.url);
 			await expect(otherPage.locator("[data-phx-main].phx-connected")).toBeVisible();
@@ -100,7 +101,7 @@ test.describe("a review that restarts onto a new version", () => {
 			expect(again.stderr).toContain("auto-approving");
 		} finally {
 			await rerun?.kill();
-			await other?.kill();
+			await other.kill();
 			await meerkat.kill();
 			meerkat.fixture.cleanup?.();
 			rmSync(versions, { recursive: true, force: true });
