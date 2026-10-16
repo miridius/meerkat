@@ -224,13 +224,14 @@ old server exits and the invocation starts a new one. The
 [`GIT_INDEX_FILE` entry in cli.md](cli.md#env-vars) says which index
 an invocation's staged content is read from.
 
-An invocation exits only with its own server's code: 143 when the
-server is SIGTERMed, or 2 with a REJECT message if the server is
-killed before recording a code. This holds even if a rerun of the
+An invocation exits with its own server's code even when that server
+is killed: 143 when it is SIGTERMed, or 2 with a REJECT message if it
+is killed before recording a code. This holds even if a rerun of the
 same review has already started a new server; the rerun waits on
 that new server. An invocation that returns more than a minute after
-its server finished (for example, after the laptop slept) finds its
-run gone and exits 2 with a REJECT message.
+its server finished (for example, after the laptop slept), when the
+same review was rerun meanwhile, finds its run gone and exits 2 with
+a REJECT message.
 
 Only one invocation of a review waits on it at a time: a later
 invocation takes the review over, and the earlier one prints

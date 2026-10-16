@@ -362,6 +362,76 @@ defmodule Meerkat.ShepherdTest do
       assert await_exit(second, review.dir) == 7
       assert File.ls!(review.runs) == []
     end
+
+    test "a caller back over a minute after its run finished, rerun meanwhile, exits 2" do
+      # With ps denied, only the exit file's age lets the rerun reap the run.
+      review = open_killable_review(true)
+      System.cmd("kill", ["-STOP", review.first_pid])
+
+      on_exit(fn ->
+        System.cmd("kill", ["-CONT", review.first_pid], stderr_to_stdout: true)
+      end)
+
+      System.cmd("kill", ["-TERM", review.backend])
+      await_match(Path.join([review.runs, "*.*", "exit"]))
+      [exit] = Path.wildcard(Path.join([review.runs, "*.*", "exit"]))
+      File.touch!(exit, System.os_time(:second) - 120)
+
+      second =
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          review.dir,
+          review.env
+        )
+
+      await_backend_pid(review.runs, 100, [review.backend])
+      System.cmd("kill", ["-CONT", review.first_pid])
+      File.write!(review.go, "")
+
+      assert {2, output} = await_result(review.first, review.dir)
+      assert output =~ "was removed — defaulting to REJECT (commit aborted)."
+      assert await_exit(second, review.dir) == 7
+    end
+  end
+
+  describe "an older meerkat's run dir at the review's key" do
+    test "is removed once finished, and the caller starts a new run" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      fake_release(dir, "exit 0\n")
+      old = Path.join([dir, "runs", run_key(dir)])
+      File.mkdir_p!(old)
+      File.write!(Path.join(old, "exit"), "5\n")
+
+      env = [
+        {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+        {"MEERKAT_PWD", dir},
+        {"INPUT_FILE", "/dev/null"}
+      ]
+
+      assert run_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], env, dir) == 0
+      assert File.ls!(Path.join(dir, "runs")) == []
+    end
+
+    test "is left in place when a caller drops a run the key no longer names" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      old = Path.join(dir, "key")
+      File.mkdir_p!(old)
+
+      {_, 0} =
+        System.cmd("bash", [
+          "-c",
+          ~S(source "$1"; _MA_LINK="$2"; _MA_RUN=r; _ma_retire "$2.finished"),
+          "retire",
+          Path.expand("bin/meerkat-attach"),
+          old
+        ])
+
+      refute File.exists?(old <> ".retiring.r")
+      assert File.dir?(old) and not match?({:ok, _}, File.read_link(old))
+    end
   end
 
   describe "once the review is removed" do
@@ -458,6 +528,32 @@ defmodule Meerkat.ShepherdTest do
         ])
 
       assert await_exit(port, dir) == 2
+    end
+
+    test "a caller whose runs dir cannot be changed exits 2 instead of spinning" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      runs = Path.join(dir, "runs")
+      File.mkdir_p!(runs)
+      # Names a finished run that is gone.
+      File.ln_s!(run_key(dir) <> ".gone", Path.join(runs, run_key(dir)))
+      File.chmod!(runs, 0o555)
+
+      on_exit(fn ->
+        File.chmod!(runs, 0o755)
+        File.rm_rf!(dir)
+      end)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"MEERKAT_PWD", dir},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      assert {2, output} = await_result(port, dir)
+
+      assert output =~
+               "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted)."
     end
 
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
@@ -727,7 +823,7 @@ defmodule Meerkat.ShepherdTest do
     File.chmod!(beam, 0o755)
   end
 
-  # Starts a caller whose first BEAM never binds and waits to be killed;
+  # Starts a caller whose first BEAM never binds and sleeps a minute;
   # every later BEAM exits 7 once the `go` file exists. With `deny_ps`,
   # the launchers' ps fails as in Claude Code's sandbox.
   defp open_killable_review(deny_ps \\ false) do
@@ -818,15 +914,22 @@ defmodule Meerkat.ShepherdTest do
 
   # The BEAM pid from the port file the backend's BEAM records.
   defp await_beam_pid(runs, attempts \\ 100) do
-    case Path.wildcard(Path.join([runs, "*", "port"])) do
-      [port_file | _] ->
-        port_file |> File.read!() |> String.split() |> List.last()
+    beam =
+      case Path.wildcard(Path.join([runs, "*", "port"])) do
+        # Read between the BEAM's truncate and write, it is empty.
+        [port_file | _] -> port_file |> File.read!() |> String.split() |> List.last()
+        [] -> nil
+      end
 
-      [] when attempts > 0 ->
+    case beam do
+      beam when is_binary(beam) ->
+        beam
+
+      nil when attempts > 0 ->
         Process.sleep(50)
         await_beam_pid(runs, attempts - 1)
 
-      [] ->
+      nil ->
         flunk("no BEAM recorded its port in #{runs}")
     end
   end
@@ -978,6 +1081,14 @@ defmodule Meerkat.ShepherdTest do
       {:error, _} ->
         nil
     end
+  end
+
+  # The key naming the run dir of a review run with MEERKAT_PWD=`dir` and
+  # the arguments every test here passes.
+  defp run_key(dir) do
+    :crypto.hash(:sha256, "#{dir}:--commit-msg /tmp/msg --no-open")
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
   end
 
   # A PATH whose ps fails as Claude Code's sandbox makes it.
