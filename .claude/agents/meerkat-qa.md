@@ -21,9 +21,11 @@ of the changed behavior at that same surface.
 Keep probes within the changed behavior.
 Mark every probe in the report.
 
-Use the caller's scratch directory.
-Create one with `mktemp -d` if none is given.
-Save screenshots and captured output in the scratch directory.
+Make your own run directory with `mktemp -d <scratch>/qa.XXXXXX`,
+where `<scratch>` is the caller's scratch directory, or with
+`mktemp -d` if none is given, and use its absolute path.
+Write every file you create there, screenshots and captured output
+included, and name the run directory in the report.
 Report each changed behavior checked as `pass` or `fail` with its
 evidence.
 Report doubtful results as `fail` and include the raw evidence.
@@ -36,15 +38,24 @@ Do not report partial passes.
 
 Use `makeFixture` or `makePrFixture` from
 `tests/e2e/lib/fixture.ts` to build git fixtures.
+Run every script that uses `tests/e2e/lib` with `TMPDIR` set to your
+run directory, so its fixtures and runs dirs land there, out of reach
+of other e2e runs' orphan reapers.
+Until the final cleanup, never run anything that reaps orphans with
+that `TMPDIR`, such as `playwright test`, `bun run test`,
+`bun run test:e2e`, `bun test tests/e2e/lib` or the cleanup's
+`tests/e2e/lib/reap.ts`.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
 Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
 Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
 Before the first browser check, run
 `bunx playwright install --only-shell chromium`.
-End each `startMeerkat` run with its `kill()`.
+End each `startMeerkat` run with its `kill()` in a `finally`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
-Set `MEERKAT_RUNS_DIR` to a directory in the scratch directory for
-direct CLI checks.
+For direct CLI checks, in the same Bash call that starts meerkat, set
+`MEERKAT_RUNS_DIR` to `<run>/meerkat-runs-$$-cli` and
+`XDG_CONFIG_HOME` to `<run>/meerkat-runs-$$-clicfg`, where `<run>` is
+your run directory.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
 gutter.
@@ -60,8 +71,14 @@ Open the review URL in the browser.
 
 Never use the user's real repositories.
 Never modify meerkat.
-Kill every meerkat process you start.
-This includes the process in each `pid` file under your
-`MEERKAT_RUNS_DIR`.
-Remove fixture, test, and log files when done.
-Keep only evidence cited in the report.
+Kill every meerkat process you start, and no other.
+When done, once every script and meerkat command you ran has exited,
+run `bun -e 'await (await import("./tests/e2e/lib/reap.ts")).default()'`
+from this checkout with `TMPDIR` set to your run directory.
+It stops the meerkat backends recorded there and removes their runs
+dirs and fixtures.
+Then remove everything left in your run directory except captured
+output and evidence cited in the report.
+Delete nothing outside it, the caller's scratch directory included.
+Name in the report any process you could not stop and anything you
+could not remove.
