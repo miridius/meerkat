@@ -230,7 +230,8 @@ If the process that ran meerkat is killed instead—for example,
 running. Meerkat notices an exited ancestor within about a second,
 prints the same line with `the process that ran meerkat exited` in
 place of `stopped waiting (SIGTERM)`, and exits 1. It checks with
-the shell's `kill -0`, so waiting runs no process each second. Where
+the shell's `kill -0`, and relays the server's stderr through a file
+it keeps open, so waiting runs no process. Where
 `ps` is denied, as in Claude Code's sandbox, it knows only its parent
 process and watches that one. A process it may not signal counts as
 live, so where signals are denied too it cannot tell and keeps
