@@ -23,23 +23,17 @@ defmodule Meerkat.FeedbackTest do
   test "rejection framing leads with reviewer rejected and commented" do
     out = Feedback.format(state_with_global_comment(), :rejection)
 
-    assert String.starts_with?(
-             out,
-             "The user rejected the commit and left the comments below." <> @framing_tail
-           )
-
-    assert out =~ "needs work"
+    assert out ==
+             "The user rejected the commit and left the comments below." <>
+               @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
   test "approval-with-feedback framing leads with reviewer approved and commented" do
     out = Feedback.format(state_with_global_comment(), :approval_with_feedback)
 
-    assert String.starts_with?(
-             out,
-             "The user approved the commit and left the comments below." <> @framing_tail
-           )
-
-    assert out =~ "needs work"
+    assert out ==
+             "The user approved the commit and left the comments below." <>
+               @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
   test "approval-with-feedback with no comments returns empty" do
@@ -100,7 +94,7 @@ defmodule Meerkat.FeedbackTest do
 
       out = Feedback.format(state, :rejection)
       assert out =~ "Answer 1 question"
-      assert out =~ "  2. Address 1 feedback comment below (1 issue).\n"
+      assert out =~ "  2. Address 1 feedback comment below (1 issue).\n\n\n⚠"
     end
 
     test "mixed — several feedback comments read as plural" do
@@ -113,7 +107,7 @@ defmodule Meerkat.FeedbackTest do
       }
 
       out = Feedback.format(state, :rejection)
-      assert out =~ "  2. Address 2 feedback comments below (2 issue).\n"
+      assert out =~ "  2. Address 2 feedback comments below (2 issue).\n\n\n⚠"
     end
 
     test "pluralisation: 1 question vs N questions" do
