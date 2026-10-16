@@ -1,23 +1,74 @@
-# File filter panel
+# File filter dropdown
 
-A collapsible panel in normal page flow, rendered above the diff body
-and spanning the width of the page's content area. It lists every
-file in the diff with controls to narrow, hide, or focus the main
-file list.
+A dropdown that opens from the sticky toolbar's `☰ Files` button and
+sits over the review, just below the toolbar's left end. It lists
+every file in the diff as a folder tree, with controls to narrow,
+hide, or focus the main file list, and jumps to a file when its name
+is picked.
 
-## Toggle
+## Open and close
 
-Hidden by default. The toolbar's `☰ Files` button toggles it via
-`toolbar.toggle_files_panel`. State lives on the LV's
-`files_panel_open` socket assign (ephemeral, NOT persisted).
+Closed by default. The `☰ Files` button toggles it via
+`toolbar.toggle_files_panel` and reports its state in
+`aria-expanded`. State lives on the LV's `files_panel_open` socket
+assign (ephemeral, NOT persisted).
 
-The `.review-body` always has one column
-(`grid-template-columns: 1fr`); opening the panel does not change
-the diff body's width. Every time the panel opens, the server pushes
-a `scroll-into-view` event for the element with id `file-filter`,
-and the client smoothly scrolls the panel to the top of the viewport
-(`block: "start"`). The toolbar holding the `☰ Files` button is
-sticky, so the button is reachable from anywhere on the page.
+The dropdown takes no room in the page: the review does not move or
+change width when it opens, and the page does not scroll. It stays
+below the toolbar while the page scrolls, below its last row when a
+narrow window wraps it, and it is drawn over
+everything else on the page, the decision footer included. It is no
+taller than the space between the toolbar and the bottom of the
+viewport; a longer tree scrolls inside it while its title row, filter
+box and chips stay put.
+
+Its width fits its widest row, so the longest file or folder name
+sets it, up to the toolbar's width less its padding; a wider tree
+scrolls sideways inside it. Rows narrower than
+the widest keep their buttons in a column at the dropdown's right.
+
+It closes (`files.close`) on:
+
+- **Escape**, from anywhere on the page. Focus returns to the
+  `☰ Files` button.
+- **A click outside it.** The `☰ Files` button is not outside it, so
+  clicking that button while open just closes it.
+- **Picking a file** (see [File rows](#per-entry-affordances)).
+
+## Keyboard
+
+Opening moves focus to the filter box. Every control in the dropdown
+is a native button, checkbox or text box, so Tab and Shift+Tab move
+through them and Enter or Space works them. Enter in the filter box
+applies its text (`phx-submit="filter.set_input"`) rather than
+submitting the form natively, which would reload the page and add a
+history entry. The `only` and
+`hide *.<ext>` buttons, shown on hover, also show while a control in
+their row has keyboard focus.
+
+## Folder tree
+
+Like GitHub's file tree:
+
+- Rows show only names: a folder row shows the folder's name, a file
+  row the file's base name. Each row's tooltip gives the full path.
+  Rows are indented by depth.
+- In each folder, subfolders come first, then files, each in
+  alphabetical order. The diff below keeps git's order.
+- A folder whose only child is a single folder shares its row with
+  it, named with both: `lib/meerkat_web/live`.
+- Clicking a folder row (`files.toggle_dir`) collapses or expands it;
+  its caret points right when collapsed and down when expanded, and
+  the row reports its state in `aria-expanded`. Every folder starts
+  expanded. Collapsed folders are kept in the LV's `collapsed_dirs`
+  assign (ephemeral, per tab), so they stay collapsed when the
+  dropdown closes and reopens.
+- While the filter box has text, the tree holds only matching files
+  and their folders, and every folder starts expanded, so no match
+  hides in a folder collapsed beforehand. A folder clicked while
+  filtering collapses until the filter text changes; these folders
+  are kept apart, in `filter_collapsed_dirs`. Clearing the filter
+  restores the folders collapsed without one.
 
 ## Panel contents
 
@@ -42,11 +93,12 @@ Top to bottom:
    hide unless the user opts in.
 4. **Hidden-extensions chips**: each hidden extension renders as
    a chip; click to unhide.
-5. **File entries**: one row per file matching the filter.
+5. **Folder tree**: one row per file matching the filter, under its
+   folders (see [Folder tree](#folder-tree)).
 
 ## Per-entry affordances
 
-Each row in the file-entries list shows:
+Each file row in the tree shows:
 
 - A file-visibility checkbox with tooltip `Show / hide <file> in the
   diff list`, checked when the file is visible. Unticking a visible
@@ -59,9 +111,16 @@ Each row in the file-entries list shows:
   approved only with the per-file checkbox in the main file list.
 - The file's status, shown as a coloured dot whose tooltip names
   the status.
-- The file's name is a link showing its full path on one line with no
-  truncation; the directory part is dimmed and the base name has
-  medium weight (`font-weight: 500`), not bold.
+- The file's base name, on one line with no truncation, in medium
+  weight (`font-weight: 500`), not bold. Clicking it, or Enter or
+  Space while it has focus, picks the file (`files.pick`): the
+  dropdown closes, the page smoothly scrolls the file's section to
+  the top of the viewport below the sticky toolbar, and focus moves
+  to that section's header row. Picking adds no browser history
+  entry, since an extra entry would stop the browser closing the
+  review tab after a decision. Picking a file the main list hides
+  closes the dropdown without scrolling and moves focus to the
+  `☰ Files` button.
 - A hover-revealed `only` button (shows ONLY this file in the
   main list via `filter.show_only`).
 - A hover-revealed `hide *.<ext>` button (hides all files of this
