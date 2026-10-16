@@ -287,6 +287,8 @@ test.describe("a review outlives the process that invoked it", () => {
 	test("a rerun after a message-only change replaces a held decision without its comments, and one after the staged diff changed replaces the review its attached caller waits on", async ({
 		page,
 	}) => {
+		// Three BEAM boots, each of which can take ~40 s on a loaded machine.
+		test.setTimeout(180_000);
 		const fixture = makeFixture();
 		const first = await startMeerkat({ fixture, keepFixture: true, underParent: true });
 		let second: Runner | undefined;

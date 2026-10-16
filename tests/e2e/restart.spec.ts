@@ -18,6 +18,8 @@ test.describe("a review that restarts onto a new version", () => {
 	test("resumes with its ticks and comments, and waits for a click even with every file ticked Approved", async ({
 		page,
 	}) => {
+		// Three BEAM boots, one a restart, each of which can take ~40 s on a loaded machine.
+		test.setTimeout(180_000);
 		const versions = ownedTmpDir("meerkat-e2e-versions");
 		mkdirSync(join(versions, "v1"));
 		mkdirSync(join(versions, "v2"));
@@ -68,14 +70,14 @@ test.describe("a review that restarts onto a new version", () => {
 						const pid = servingPid(meerkat);
 						return pid !== undefined && pid !== before ? "restarted" : "waiting";
 					},
-					{ timeout: 30_000 },
+					{ timeout: 90_000 },
 				)
 				.toBe("restarted");
 
 			// The open page reconnects by itself, in place: the new BEAM verifies
 			// its LiveView token with the shepherd's secret, and the build's
 			// assets are unchanged, so it does not reload.
-			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 30_000 });
+			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 90_000 });
 			await expect(page.getByText("kept across the restart")).toBeVisible();
 			await expect(approved).toBeChecked();
 			expect(

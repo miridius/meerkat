@@ -661,6 +661,33 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: could not update #{runs} — defaulting to REJECT (commit aborted).\n"
     end
 
+    test "a caller whose polls run slow, as under load, still waits about 10 s for a missing pid" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      runs = Path.join(dir, "runs")
+      emptied = run_key(dir) <> ".emptied"
+      File.mkdir_p!(Path.join(runs, emptied))
+      File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+      # Every poll's 0.2 s sleep takes a second, so 50 polls take 50 s.
+      stubs = Path.join(dir, "stubs")
+      File.mkdir_p!(stubs)
+      File.write!(Path.join(stubs, "sleep"), "#!/bin/sh\nexec /bin/sleep 1\n")
+      File.chmod!(Path.join(stubs, "sleep"), 0o755)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"MEERKAT_PWD", dir},
+          {"INPUT_FILE", "/dev/null"},
+          {"PATH", stubs <> ":" <> System.fetch_env!("PATH")}
+        ])
+
+      assert {2, output} = await_result(port, dir, "", 20_000)
+
+      assert output =~
+               "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."
+    end
+
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
       {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
 
