@@ -41,6 +41,9 @@ test.describe("a review that restarts onto a new version", () => {
 			const approved = page.getByRole("checkbox", { name: "Approved" });
 			await approved.check();
 
+			await page.evaluate(() => {
+				(window as unknown as { notReloaded: boolean }).notReloaded = true;
+			});
 			const before = servingPid(meerkat);
 			// Repoint `current` the way an install does, atomically.
 			symlinkSync(join(versions, "v2"), `${link}.new`);
@@ -61,8 +64,12 @@ test.describe("a review that restarts onto a new version", () => {
 				)
 				.toBe("restarted");
 
-			// The open page reconnects, and reloads, by itself.
+			// The open page reconnects by itself, in place: the build's assets
+			// are unchanged, so it does not reload.
 			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 30_000 });
+			expect(
+				await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded),
+			).toBe(true);
 			await expect(page.getByText("kept across the restart")).toBeVisible();
 			await expect(approved).toBeChecked();
 

@@ -20,7 +20,7 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 // render, are covered by the LiveView tests.
 //
 // A live-restart onto a version with changed assets makes
-// phx-track-static reload the page on socket reconnect. A plain
+// ReviewLive.mount/3 redirect on reconnect for a full page load. A plain
 // page.reload() reproduces that full reload (same origin, so
 // sessionStorage survives), which is the behaviour the
 // scroll-preservation code in app.js has to handle.
@@ -42,9 +42,9 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		await page.waitForTimeout(350);
 		expect(await scrollY()).toBe(0);
 
-		// The reload the scroll code preserves across is triggered by
-		// phx-track-static (LiveView full-reloads on reconnect when the
-		// version's assets changed), so confirm those tags are present.
+		// ReviewLive.mount/3 uses static_changed?/1 to redirect reconnecting
+		// tabs with outdated assets for a full page load. That check uses
+		// phx-track-static tags, so confirm those tags are present.
 		expect(await page.locator("script[phx-track-static]").count()).toBeGreaterThan(0);
 
 		await page.evaluate(() => window.scrollTo(0, 1500));
