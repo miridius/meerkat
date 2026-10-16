@@ -246,6 +246,130 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  # A caller exits once a process above it has gone, and must not take a
+  # live one it may not signal, such as root-owned launchd, for gone.
+  test "a caller's liveness check tells a gone process from a live one, signalable or not" do
+    script = ~S"""
+    source "$1"
+    sleep 0 &
+    gone=$!
+    wait "$gone"
+    for pid in "$gone" $$ 1; do
+      if _ma_alive "$pid"; then echo live; else echo gone; fi
+    done
+    """
+
+    assert {"gone\nlive\nlive\n", 0} =
+             System.cmd("bash", ["-c", script, "alive", Path.expand("bin/meerkat-attach")])
+  end
+
+  # A caller relays its backend's log as it grows: from the start for a run
+  # it started, even one with no log yet, and from the end on reattach.
+  test "a caller relays each part of its backend's log once" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    script = ~S"""
+    source "$1"
+    exec 2>&1
+    _MA_LOG_FD=""
+    _MA_DIR="$2/started"
+    mkdir "$_MA_DIR"
+    _ma_open_log || echo "no log yet"
+    _ma_relay_log
+    printf 'a\npart' >"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'ial\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    _ma_relay_log
+    _MA_DIR="$2/reattached"
+    mkdir "$_MA_DIR"
+    printf 'seen\n' >"$_MA_DIR/log"
+    _ma_open_log && _ma_read_log >/dev/null
+    printf 'b\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'a\npartial\n' >>"$2/started/log"
+    _ma_relay_log
+    """
+
+    assert {"no log yet\na\npartial\nb\n", 0} =
+             System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
+  end
+
+  # A waiting caller checks every second that the process that ran it
+  # lives, and relays its backend's log every 0.2 s. Forking ps for the
+  # one, and wc, tail and head for the other, cost about 0.1 CPU-s a second.
+  test "a caller waiting on a decision runs no process while it relays the backend's log" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    stubs = Path.join(dir, "stubs")
+    File.mkdir_p!(stubs)
+
+    for tool <- ~w(ps wc tr tail head) do
+      real = System.find_executable(tool)
+      stub = Path.join(stubs, tool)
+      File.write!(stub, ~s(#!/bin/sh\necho #{tool} >> "$CALLS"\nexec #{real} "$@"\n))
+      File.chmod!(stub, 0o755)
+    end
+
+    fake_release(dir, ~S"""
+    echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+    sleep 0.5
+    printf 'warn' >&2
+    sleep 0.5
+    printf 'ing\n' >&2
+    for _ in {1..600}; do
+      [[ -f "$DELIVERED" ]] && exit 0
+      sleep 0.1
+    done
+    exit 1
+    """)
+
+    # The attach stream sends only heartbeats for 3 s, then an approval.
+    curl = ~S"""
+    #!/usr/bin/env bash
+    case "$*" in
+      *attach/delivered*) touch "$DELIVERED"; exit 0 ;;
+    esac
+    echo start >> "$CALLS"
+    for _ in 1 2 3 4 5 6; do
+      printf 'k\n'
+      sleep 0.5
+    done
+    echo end >> "$CALLS"
+    printf 'x 0\ns 200\n'
+    """
+
+    calls = Path.join(dir, "calls")
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"},
+          {"CALLS", calls},
+          {"DELIVERED", Path.join(dir, "delivered")},
+          {"PATH", stubs <> ":" <> System.get_env("PATH")}
+        ],
+        curl: curl
+      )
+
+    assert {0, output} = await_result(port, dir)
+    assert output =~ "warning\n"
+
+    idle =
+      calls
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.drop_while(&(&1 != "start"))
+      |> Enum.take_while(&(&1 != "end"))
+
+    assert idle == ["start"]
+  end
+
   # macOS deletes files in $TMPDIR more than three days old, and the
   # shepherd writes `token` and `pid` only once. A caller reattaching after
   # a restart then could not authenticate, took the backend for dead,
@@ -1076,7 +1200,8 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Starts a launcher as `run_launcher/4` does and returns its port;
-  # `opts[:cd]` sets its working directory.
+  # `opts[:cd]` sets its working directory, and `opts[:curl]` replaces the
+  # refusing curl below with a script of its own.
   defp open_launcher(launcher, args, dir, env, opts \\ []) do
     base = [
       {"MEERKAT_PORT", "44444"},
@@ -1111,14 +1236,17 @@ defmodule Meerkat.ShepherdTest do
     http = Path.join(dir, "http")
     File.mkdir_p!(http)
 
-    File.write!(Path.join(http, "curl"), ~S"""
-    #!/usr/bin/env bash
-    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
-      printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
-    fi
-    printf 's 000\n'
-    exit 7
-    """)
+    File.write!(
+      Path.join(http, "curl"),
+      Keyword.get(opts, :curl, ~S"""
+      #!/usr/bin/env bash
+      if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+        printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+      fi
+      printf 's 000\n'
+      exit 7
+      """)
+    )
 
     File.chmod!(Path.join(http, "curl"), 0o755)
     env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))
