@@ -1638,10 +1638,31 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view |> element(".file-filter .only-btn[phx-value-file_index='1']") |> render_click()
     refute has_element?(view, ".file-list .file-name", "src/widget.rs")
     assert has_element?(view, ".file-list .file-name", "other.ex")
+    assert has_element?(view, ".file-filter-toggle", "Files (1 of 2)")
 
     view |> element(".file-filter button", "Show all") |> render_click()
     assert has_element?(view, ".file-list .file-name", "src/widget.rs")
     refute has_element?(view, ".file-filter button", "Show all")
+  end
+
+  test "the file panel count follows generated files, hidden extensions and overrides",
+       %{conn: conn} do
+    state = %ReviewState{
+      files: [
+        @plain_file,
+        %{@plain_file | file_name: "notes.md"},
+        %{@plain_file | file_name: "gen.lock", is_generated: true}
+      ],
+      hidden_extensions: MapSet.new(["md"])
+    }
+
+    view = mount_unbound(conn, state)
+    open_files_panel(view)
+    assert has_element?(view, ".file-filter-toggle", "Files (1 of 3)")
+
+    view = mount_unbound(conn, %{state | file_overrides: %{"gen.lock" => :show}})
+    open_files_panel(view)
+    assert has_element?(view, ".file-filter-toggle", "Files (2 of 3)")
   end
 
   test "filter.show_only keeps the filter string, so both must match", %{conn: conn} do
