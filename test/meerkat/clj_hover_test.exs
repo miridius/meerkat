@@ -1,6 +1,6 @@
 defmodule Meerkat.CljHoverTest do
   # Hover answers on a real staged review, analysed by the real clj-kondo.
-  # async: false — each setup runs clj-kondo twice, so tests take turns.
+  # async: false — each repo's setup runs clj-kondo twice, so tests take turns.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3]
@@ -130,7 +130,25 @@ defmodule Meerkat.CljHoverTest do
      "(ns dep.shared)\n\n#?(:clj (defn shared-fn \"Shared clj doc.\" [a] a)\n   :cljs (defn shared-fn \"Shared cljs doc.\" [a] a))\n"}
   ]
 
-  setup do
+  # The repo and its kondo cache are built once and shared by every test
+  # that only reads them; a test that changes the repo is tagged
+  # `:own_repo` and gets its own.
+  setup_all do
+    %{shared_dir: repo()}
+  end
+
+  setup ctx do
+    dir = if ctx[:own_repo], do: repo(), else: ctx.shared_dir
+    {:ok, files} = Git.staged_file_diffs(dir)
+    rid = "clj-hover-#{System.unique_integer([:positive])}"
+    {:ok, pid} = CljHover.ensure_started(rid, dir, files)
+    # Stopped before the repo goes: it waits out indexing, which reads the repo.
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    %{dir: dir, rid: rid, pid: pid, files: files}
+  end
+
+  # Removed after the test, or after the module for `setup_all`.
+  defp repo do
     dir = Meerkat.TestHelpers.make_git_repo("meerkat-clj-hover")
     on_exit(fn -> File.rm_rf!(dir) end)
     git(dir, ["config", "user.email", "t@t.t"])
@@ -166,13 +184,7 @@ defmodule Meerkat.CljHoverTest do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
     {_, _} = System.cmd("clj-kondo", ["--lint", "src", "shared", "web"], cd: dir)
     {_, _} = System.cmd("clj-kondo", ["--lint", "src/app/util.clj"], cd: dir)
-
-    {:ok, files} = Git.staged_file_diffs(dir)
-    rid = "clj-hover-#{System.unique_integer([:positive])}"
-    {:ok, pid} = CljHover.ensure_started(rid, dir, files)
-    # Stopped before the repo goes: it waits out indexing, which reads the repo.
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
-    %{dir: dir, rid: rid, pid: pid, files: files}
+    dir
   end
 
   defp write(dir, path, text) do
@@ -258,6 +270,7 @@ defmodule Meerkat.CljHoverTest do
     refute hover_on(ctx, "src/app/core.clj", :new, "u/extra")
   end
 
+  @tag :own_repo
   test "a namespace is analysed once, keeping the source it was read with", ctx do
     assert %{source: "(ns app.top) (defn" <> _} =
              hover = hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
@@ -266,6 +279,7 @@ defmodule Meerkat.CljHoverTest do
     assert hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn") == hover
   end
 
+  @tag :own_repo
   test "a namespace whose cached file is gone, and off the classpath, answers nothing", ctx do
     File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
     refute hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
@@ -302,6 +316,7 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
   end
 
+  @tag :own_repo
   test "the classpath is read on the first lookup that needs it, then kept", ctx do
     cp = Path.join(ctx.dir, ".cpcache/1.cp")
     # Opening the review and hovering a diff file's var leave it unread.
