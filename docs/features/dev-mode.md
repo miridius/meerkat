@@ -44,9 +44,9 @@ Two halves:
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
 exit 75. The tab stays put because the dev shepherd keeps one
-secret across BEAMs, and each review names its session cookie for
-its port, so another review's cookie never replaces it. Its LiveView
-session therefore remains valid. If a rebuild changed the assets'
+secret across BEAMs, so its LiveView session token remains valid. The
+socket reads no session cookie, so another review loaded in the same
+browser, which replaces the cookie, doesn't stop the rejoin. If a rebuild changed the assets'
 hashed names, `ReviewLive.mount/3` instead redirects the
 reconnecting tab to "/" for a full page load of the new build. The
 page's asset tags and that check both use the manifest the BEAM read

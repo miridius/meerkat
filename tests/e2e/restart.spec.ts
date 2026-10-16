@@ -42,16 +42,16 @@ test.describe("a review that restarts onto a new version", () => {
 			const approved = page.getByRole("checkbox", { name: "Approved" });
 			await approved.check();
 
-			// Another review loaded in the same browser sets its own cookie,
-			// which must not keep this tab from rejoining in place.
+			// Another review loaded in the same browser replaces the session
+			// cookie, which must not keep this tab from rejoining in place.
 			other = await startMeerkat({ fixture: makeFixture({ files: { "b.txt": "two\n" } }) });
 			const otherPage = await page.context().newPage();
 			await otherPage.goto(other.url);
 			await expect(otherPage.locator("[data-phx-main].phx-connected")).toBeVisible();
 
-			let reloads = 0;
-			page.on("framenavigated", (frame) => {
-				if (frame === page.mainFrame()) reloads++;
+			// A full reload discards this flag; LiveView's history updates don't.
+			await page.evaluate(() => {
+				(window as unknown as { notReloaded: boolean }).notReloaded = true;
 			});
 			const before = servingPid(meerkat);
 			// Repoint `current` the way an install does, atomically.
@@ -74,12 +74,14 @@ test.describe("a review that restarts onto a new version", () => {
 				.toBe("restarted");
 
 			// The open page reconnects by itself, in place: the new BEAM verifies
-			// its session with the shepherd's secret and its own cookie, and the
-			// build's assets are unchanged, so it does not reload.
+			// its LiveView token with the shepherd's secret, and the build's
+			// assets are unchanged, so it does not reload.
 			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 30_000 });
 			await expect(page.getByText("kept across the restart")).toBeVisible();
 			await expect(approved).toBeChecked();
-			expect(reloads).toBe(0);
+			expect(
+				await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded),
+			).toBe(true);
 
 			await page.getByRole("button", { name: /^Approve with feedback$/ }).click();
 			const { code, stderr } = await meerkat.awaitExit();

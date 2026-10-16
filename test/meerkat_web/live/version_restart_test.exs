@@ -143,43 +143,4 @@ defmodule MeerkatWeb.VersionRestartTest do
     assert html =~ "assets/app-booted.js"
     assert html =~ "assets/app-booted.css"
   end
-
-  # Browsers don't scope cookies by port, so another review's cookie must
-  # not replace the one this review's tab rejoins with.
-  test "a page's session cookie is named for the review's port", %{conn: conn} do
-    put_endpoint_config(
-      vite_manifest: PhoenixVite.Manifest.parse(~s({"js/app.js": {"file": "a.js"}}))
-    )
-
-    conn = conn |> Map.put(:port, 4321) |> get("/")
-
-    assert Map.keys(conn.resp_cookies) == ["_meerkat_key_4321"]
-  end
-
-  test "a tab's socket reads the session cookie named for the port the review bound" do
-    bound = fn :http -> {:ok, {{127, 0, 0, 1}, 4321}} end
-
-    named =
-      for {"/live", Phoenix.LiveView.Socket, opts} <- MeerkatWeb.Endpoint.__sockets__(),
-          transport <- [:websocket, :longpoll] do
-        {m, f, a} = opts[transport][:connect_info][:session]
-        apply(m, f, a ++ [bound])
-      end
-
-    assert named == List.duplicate(MeerkatWeb.Endpoint.session_options(4321), 2)
-
-    assert MeerkatWeb.Endpoint.session_options(4321)[:key] == "_meerkat_key_4321"
-  end
-
-  test "with no server bound, a socket's session options can't be named" do
-    assert_raise MatchError, fn -> MeerkatWeb.Endpoint.socket_session_options() end
-  end
-
-  # Replaces the endpoint's config for this test, merging in `changes`.
-  defp put_endpoint_config(changes) do
-    old = Keyword.delete(:ets.tab2list(MeerkatWeb.Endpoint), :__config__)
-    new = Enum.reject(old, fn {key, _} -> List.keymember?(changes, key, 0) end) ++ changes
-    MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, new}], [])
-    on_exit(fn -> MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, old}], []) end)
-  end
 end

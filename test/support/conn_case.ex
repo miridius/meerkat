@@ -29,4 +29,16 @@ defmodule MeerkatWeb.ConnCase do
     # host to loopback. Tests asserting the guard override this per-request.
     {:ok, conn: %{Phoenix.ConnTest.build_conn() | host: "127.0.0.1"}}
   end
+
+  @doc """
+  Merges `changes` into the endpoint's config for the calling test and
+  restores the old config when it exits. The config is global, so only a
+  synchronous test may call it.
+  """
+  def put_endpoint_config(changes) do
+    old = Keyword.delete(:ets.tab2list(MeerkatWeb.Endpoint), :__config__)
+    new = Enum.reject(old, fn {key, _} -> List.keymember?(changes, key, 0) end) ++ changes
+    MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, new}], [])
+    on_exit(fn -> MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, old}], []) end)
+  end
 end
