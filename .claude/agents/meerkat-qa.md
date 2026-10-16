@@ -21,9 +21,10 @@ of the changed behavior at that same surface.
 Keep probes within the changed behavior.
 Mark every probe in the report.
 
-Use the caller's scratch directory.
-Create one with `mktemp -d` if none is given.
-Save screenshots and captured output in the scratch directory.
+Make your own run directory with `mktemp -d` inside the caller's
+scratch directory, or in the system temp dir if none is given.
+Save everything you create there, screenshots and captured output
+included, and name it in the report.
 Report each changed behavior checked as `pass` or `fail` with its
 evidence.
 Report doubtful results as `fail` and include the raw evidence.
@@ -36,6 +37,8 @@ Do not report partial passes.
 
 Use `makeFixture` or `makePrFixture` from
 `tests/e2e/lib/fixture.ts` to build git fixtures.
+Run every script that uses these helpers with `TMPDIR` set to your
+run directory, out of reach of the e2e suite's orphan reaper.
 Use `startMeerkat` from `tests/e2e/lib/runner.ts` to start meerkat.
 Pass it this checkout's `bin/meerkat-beam` as its `bin` option.
 Before the first launch, run that launcher with `MEERKAT_BUILD_ONLY=1`.
@@ -43,8 +46,8 @@ Before the first browser check, run
 `bunx playwright install --only-shell chromium`.
 End each `startMeerkat` run with its `kill()`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
-Set `MEERKAT_RUNS_DIR` to a directory in the scratch directory for
-direct CLI checks.
+For direct CLI checks, set `MEERKAT_RUNS_DIR` and `XDG_CONFIG_HOME`
+each to a new directory in your run directory.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
 gutter.
@@ -63,7 +66,6 @@ Never modify meerkat.
 Kill every meerkat process you start, and no other.
 This includes the process in each `pid` file under your
 `MEERKAT_RUNS_DIR`.
-When done, remove the fixture, test, and log files you created.
-Keep only evidence cited in the report.
-Never delete a directory you were given, or anything in it that you
-did not create.
+When done, remove everything in your run directory except evidence
+cited in the report.
+Delete nothing else, the caller's scratch directory included.
