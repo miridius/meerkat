@@ -1,4 +1,4 @@
-import type { LanguageSupport } from "@codemirror/language";
+import { LanguageSupport } from "@codemirror/language";
 
 /** Dynamic-import factories for every CodeMirror 6 language pack we
  *  ship. Keyed by the canonical shiki language id that
@@ -36,7 +36,12 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	c: () => import("@codemirror/lang-cpp").then((m) => m.cpp()),
 	php: () => import("@codemirror/lang-php").then((m) => m.php()),
 	vue: () => import("@codemirror/lang-vue").then((m) => m.vue()),
-	clojure: () => import("@nextjournal/lang-clojure").then((m) => m.clojure()),
+	// The pack's own rule indents every list's arguments two spaces; ours
+	// follows cljfmt's defaults.
+	clojure: () =>
+		Promise.all([import("@nextjournal/lang-clojure"), import("./clojureIndent.js")]).then(
+			([m, indent]) => new LanguageSupport(m.clojureLanguage, indent.clojureIndent),
+		),
 };
 
 /** Every language id with a CodeMirror pack. */
