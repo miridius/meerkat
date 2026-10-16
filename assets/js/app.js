@@ -17,10 +17,9 @@ const csrfToken = document
   .getAttribute("content");
 
 // WindowClose hook fires window.close() 500ms after the done view
-// mounts. Chromium blocks the call for tabs not opened via
-// window.open(), but the underlying "you can close this tab" copy
-// + heading is the user-facing fallback — the spec asserts the
-// heading is visible, not that the tab actually closed.
+// mounts. Chromium blocks the call for a tab with more than one
+// history entry that window.open() did not open; the "you can close
+// this tab" copy + heading is the user-facing fallback.
 const hooks = {
   ...getHooks(Components),
   WindowClose: {
@@ -432,6 +431,17 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (typeof id !== "string") return;
   const el = document.getElementById(id);
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+});
+
+// In-page links, such as the file list's file names, scroll to their target
+// without navigating: a hash navigation adds a history entry, and Chrome lets
+// the done view's window.close() shut only a tab with a single entry.
+document.addEventListener("click", (e) => {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const link = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
+  if (!link) return;
+  e.preventDefault();
+  document.getElementById(decodeURIComponent(link.hash.slice(1)))?.scrollIntoView({ block: "start" });
 });
 
 // A footer open-form link: the server has just expanded / unhidden the
