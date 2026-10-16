@@ -12,7 +12,6 @@ defmodule Meerkat.MutateStagedMuexTest do
   import Meerkat.TestHelpers, only: [git: 2, stage: 3]
 
   setup do
-    Meerkat.TestHelpers.isolate_git_config()
     # As scripts/mutate.sh does before it runs muex, so a run from a hook
     # does not read meerkat's own index.
     {vars, 0} = System.cmd("git", ["rev-parse", "--local-env-vars"])
