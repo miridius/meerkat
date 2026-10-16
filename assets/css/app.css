@@ -76,6 +76,10 @@ main.review.done {
   text-align: center;
 }
 
+/* The page is inert until LiveView connects. Pointer events skip inert
+   content and land on the page behind it, so the cursor goes there. */
+html:has(main.review[inert]) { cursor: progress; }
+
 /* --- Buttons --- */
 
 button {
@@ -176,9 +180,10 @@ button.active {
 }
 
 /* Connection status pill. Phoenix's LiveSocket client adds
-   `.phx-loading`, `.phx-error`, `.phx-server-error`,
+   `.phx-connected`, `.phx-loading`, `.phx-error`, `.phx-server-error`,
    `.phx-client-error`, `.phx-disconnected` to an ancestor wrapper.
-   Default state (none of those) → connected → green. */
+   The page paints with none of those before the socket joins, so
+   only `.phx-connected` shows connected. */
 .conn-indicator {
   display: inline-flex;
   align-items: center;
@@ -194,21 +199,22 @@ button.active {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--success-strong);
-  box-shadow: 0 0 4px var(--success-strong);
-}
-.conn-indicator .conn-label-loading,
-.conn-indicator .conn-label-error { display: none; }
-.conn-indicator .conn-label-connected { display: inline; }
-
-.phx-loading .conn-indicator .conn-dot,
-.phx-client-error .conn-indicator .conn-dot,
-.phx-server-error .conn-indicator .conn-dot,
-.phx-disconnected .conn-indicator .conn-dot {
   background: var(--warn);
   box-shadow: 0 0 4px var(--warn);
   animation: conn-pulse 1.2s ease-in-out infinite;
 }
+.conn-indicator .conn-label-connected,
+.conn-indicator .conn-label-error { display: none; }
+.conn-indicator .conn-label-loading { display: inline; }
+
+.phx-connected .conn-indicator .conn-dot {
+  background: var(--success-strong);
+  box-shadow: 0 0 4px var(--success-strong);
+  animation: none;
+}
+.phx-connected .conn-indicator .conn-label-connected { display: inline; }
+.phx-connected .conn-indicator .conn-label-loading { display: none; }
+
 .phx-error .conn-indicator .conn-dot,
 .phx-server-error .conn-indicator .conn-dot,
 .phx-client-error .conn-indicator .conn-dot,
@@ -216,9 +222,6 @@ button.active {
   background: var(--danger);
   box-shadow: 0 0 4px var(--danger);
 }
-
-.phx-loading .conn-indicator .conn-label-connected { display: none; }
-.phx-loading .conn-indicator .conn-label-loading { display: inline; }
 
 .phx-error .conn-indicator .conn-label-connected,
 .phx-error .conn-indicator .conn-label-loading,

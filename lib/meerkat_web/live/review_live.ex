@@ -1117,7 +1117,9 @@ defmodule MeerkatWeb.ReviewLive do
       |> assign(:shown_rulers, shown_rulers(assigns))
 
     ~H"""
-    <main class="review" id="meerkat-root">
+    <%!-- The page paints before LiveView joins, and a click made then is
+          dropped, so the unconnected render takes no input. --%>
+    <main class="review" id="meerkat-root" inert={not connected?(@socket)}>
       <.diff_toolbar
         mode={@diff_mode}
         wrap_lines={@wrap_lines}
