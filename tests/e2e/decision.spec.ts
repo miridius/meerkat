@@ -83,7 +83,7 @@ test.describe("decision flow", () => {
 			// the banner states the verdict and the true count, bracketed top
 			// and bottom so it survives at either truncation end.
 			expect(stderr).toContain("2 comments");
-			expect(stderr.match(/User requested changes/g)?.length).toBe(2);
+			expect(stderr.match(/User rejected the commit/g)?.length).toBe(2);
 			expect(stderr).toContain("first finding here");
 			expect(stderr).toContain("second finding here");
 			expect(stderr).toContain("fn renamed() {}");

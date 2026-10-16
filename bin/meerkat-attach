@@ -8,7 +8,16 @@
 # leaves the review running for the next invocation to reattach to.
 # `meerkat_restore_run_files`, at the end, is the shepherd's.
 #
-# A backend's run dir holds `pid` (its shepherd), `token`, `log` (its
+# Each run has its own <runs>/<key>.<uuid> directory; <runs>/<key> is
+# a symlink naming the current run by its relative sibling name,
+# <key>.<uuid>. An attached caller keeps its own run dir, so a rerun
+# cannot replace the exit status it reads. A real dir at <runs>/<key>
+# belongs to an older meerkat; callers still attach to it because an
+# orphaned review lives until reattached and can outlast an upgrade.
+#
+# A backend's run dir holds `pid` (its shepherd), `caller` (the pid of
+# the caller waiting on it: a takeover overwrites it, and a refused one
+# restores it), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
 # (once a BEAM has announced the review), `opened` (the browser-open
 # marker), `index` (a held temporary index, if any) and, once it has
@@ -28,9 +37,14 @@ meerkat_attach() {
   runs="${MEERKAT_RUNS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meerkat/runs}"
   mkdir -p "$runs"
 
-  _MA_DIR="$runs/$key"
+  _MA_LINK="$runs/$key"
+  # Set before the traps: a signal can arrive before a run dir is found.
+  _MA_DIR=""
   _MA_RUN="$(uuidgen)"
   _MA_OWNED=0
+  # Whether this caller started its run or has heard from its server.
+  _MA_HELD=0
+  _MA_PREV_CALLER=""
   _MA_OFFSET=0
   _MA_QUIET=0
   _MA_PID_WAIT=0
@@ -39,24 +53,63 @@ meerkat_attach() {
   trap '_ma_stopped TERM' TERM
   trap '_ma_stopped INT' INT
   trap '_ma_stopped HUP' HUP
+  _ma_reap_finished
 
   while true; do
+    ((_MA_OWNED)) || _ma_find_server || continue
+
     if [[ -f "$_MA_DIR/exit" ]]; then
+      if ((_MA_OWNED && !_MA_HELD)); then
+        # A reattach whose server exited before it heard from it: that
+        # exit code was not this invocation's. Hand the run back to the
+        # caller it replaced, or remove it if none, and start afresh, as a
+        # new invocation would.
+        _ma_restore_caller
+        if [[ "$(cat "$_MA_DIR/caller" 2>/dev/null)" == "$$" ]]; then
+          _ma_must _ma_remove_run
+        fi
+        _MA_OWNED=0
+        continue
+      fi
       if ((_MA_OWNED)); then
         _ma_relay_log
         local code
         code="$(<"$_MA_DIR/exit")"
-        rm -rf "$_MA_DIR"
+        _ma_remove_run
         exit "$code"
       fi
-      # Its output went to the caller that was attached to it.
-      rm -rf "$_MA_DIR"
+      # Its exit code is for the caller attached to it, which removes it.
+      if ! _ma_caller_alive "$_MA_DIR"; then
+        # No live caller is recorded: remove its finished run now.
+        _ma_must _ma_remove_run
+      elif [[ "$_MA_DIR" != "$_MA_LINK" ]] || _ma_exit_stale "$_MA_DIR"; then
+        _ma_must _ma_retire "$_MA_DIR"
+      else
+        sleep 0.2
+      fi
+      continue
     fi
 
     if [[ ! -d "$_MA_DIR" ]]; then
+      if ((_MA_OWNED && !_MA_HELD)); then
+        # A reattach that never heard from its server, whose run another
+        # invocation has since removed (the caller before it, done with
+        # it, or one that found the server dead): start afresh, as a new
+        # invocation would.
+        _MA_OWNED=0
+        continue
+      fi
+      if ((_MA_OWNED)); then
+        # Another invocation removed our run dir, after its server died or
+        # over a minute after it finished (for example, while the laptop
+        # slept). We cannot read our own run's exit code, so fail closed
+        # instead of starting a new server.
+        echo "meerkat: $_MA_DIR was removed — defaulting to REJECT (commit aborted)." >&2
+        exit 2
+      fi
       if ! _ma_start_server "$self" "$@"; then
         # Another caller started one first.
-        [[ -d "$_MA_DIR" ]] && continue
+        [[ -L "$_MA_LINK" || -e "$_MA_LINK" ]] && continue
         # Otherwise every retry fails the same way, without pause.
         echo "meerkat: could not create $_MA_DIR — defaulting to REJECT (commit aborted)." >&2
         exit 2
@@ -70,7 +123,10 @@ meerkat_attach() {
     # it the banner.
     if ((!_MA_OWNED)); then
       _MA_OWNED=1
+      _MA_HELD=0
       _MA_OFFSET=$(_ma_log_size)
+      _MA_PREV_CALLER="$(cat "$_MA_DIR/caller" 2>/dev/null)"
+      _ma_write_caller
     fi
     _ma_relay_log
 
@@ -153,12 +209,138 @@ _ma_relay_log() {
   fi
 }
 
+# Set _MA_DIR to the run dir the key currently names and succeed, or to
+# "" and succeed when it names none, so the loop starts one.
+# Drop a symlink whose target dir is gone and fail so the loop looks again.
+# A real dir is an older meerkat's run: still use it because an orphaned
+# review lives until reattached and can outlast an upgrade.
+_ma_find_server() {
+  _MA_DIR=""
+  if [[ -L "$_MA_LINK" ]]; then
+    local target
+    target="$(readlink "$_MA_LINK")" || return 1
+    _MA_DIR="${_MA_LINK%/*}/$target"
+    [[ -n "$target" && -d "$_MA_DIR" ]] && return 0
+    _ma_must _ma_retire "$_MA_DIR"
+    return 1
+  elif [[ -d "$_MA_LINK" ]]; then
+    _MA_DIR="$_MA_LINK"
+  fi
+}
+
+# Drop the key's symlink if it still names the given run dir; for an
+# old-layout real dir, delete the dir itself. Fail only when the runs dir
+# cannot be changed. Read first, so the usual case, a link already
+# repointed, is never touched. Then rename the link to a name private to
+# this invocation, so only one invocation drops it, and check it again:
+# if another invocation repointed it meanwhile, put it back unless a
+# newer link has already taken its place.
+_ma_retire() {
+  if [[ "$1" == "$_MA_LINK" ]]; then
+    rm -rf "$1" 2>/dev/null
+    return
+  fi
+  local name="${1##*/}" held="$_MA_LINK.retiring.$_MA_RUN" target
+  [[ "$(readlink "$_MA_LINK" 2>/dev/null)" == "$name" ]] || return 0
+  if ! mv "$_MA_LINK" "$held" 2>/dev/null; then
+    [[ "$(readlink "$_MA_LINK" 2>/dev/null)" != "$name" ]]
+    return
+  fi
+  if [[ ! -L "$held" ]]; then
+    # An older meerkat made a real dir there in between: give it back.
+    mv "$held" "$_MA_LINK" 2>/dev/null
+    return 0
+  fi
+  target="$(readlink "$held")"
+  [[ -n "$target" && "$target" != "$name" ]] && ln -sn "$target" "$_MA_LINK" 2>/dev/null
+  rm -f "$held"
+}
+
+# Remove the run in _MA_DIR: the key's symlink if it still names it, and
+# the run dir itself.
+_ma_remove_run() {
+  _ma_retire "$_MA_DIR"
+  rm -rf "$_MA_DIR" 2>/dev/null && [[ ! -e "$_MA_DIR" ]]
+}
+
+# Run a change to the runs dir, failing closed if it cannot be made:
+# retrying it would spin, and going on with a run half removed would
+# misread it. Its own errors are dropped for this one message.
+_ma_must() {
+  "$@" 2>/dev/null && return
+  echo "meerkat: could not update ${_MA_LINK%/*} — defaulting to REJECT (commit aborted)." >&2
+  exit 2
+}
+
+# Write a pid, this caller's by default, to the run's `caller` file,
+# atomically: a reader seeing it empty would take the caller for dead.
+_ma_write_caller() {
+  echo "${1:-$$}" >"$_MA_DIR/caller.$$" && mv -f "$_MA_DIR/caller.$$" "$_MA_DIR/caller"
+}
+
+# A reattach the server refused, or whose server exited before it heard
+# from it, records again the caller it would have replaced, which may
+# still wait on the run. A caller displaced by a later one does nothing:
+# the file no longer names it.
+_ma_restore_caller() {
+  [[ -n "$_MA_PREV_CALLER" && "$(cat "$_MA_DIR/caller" 2>/dev/null)" == "$$" ]] || return 0
+  _ma_write_caller "$_MA_PREV_CALLER"
+}
+
+# Once at invocation start, delete this key's finished run dirs whose
+# caller is not alive or whose exit file is over a minute old.
+# The minute limit covers callers ps cannot check, where it is denied,
+# and a reused pid that passes the command check.
+_ma_reap_finished() {
+  local dir
+  for dir in "$_MA_LINK".*/; do
+    dir="${dir%/}"
+    [[ -L "$dir" || ! -f "$dir/exit" ]] && continue
+    if ! _ma_caller_alive "$dir" || _ma_exit_stale "$dir"; then
+      _ma_must rm -rf "$dir"
+    fi
+  done
+}
+
+# True once the run dir's exit file is over a minute old. This gives
+# the attached caller time to read its exit code: it polls every 0.2 s,
+# so a minute is far beyond its normal delay.
+_ma_exit_stale() {
+  [[ -n "$(find "$1/exit" -mmin +1 2>/dev/null)" ]]
+}
+
+# True if DIR/caller names a live process whose command contains "meerkat".
+# The command check stops a reused pid from passing for the caller. Where ps
+# cannot tell, assume the caller lives: its run is then reaped once its exit
+# file is stale, rather than taken from a caller still reading it.
+_ma_caller_alive() {
+  local pid
+  pid="$(cat "$1/caller" 2>/dev/null)" || return 1
+  [[ -n "$pid" ]] || return 1
+  _ma_ps_works || return 0
+  _ma_runs_meerkat "$pid"
+}
+
+# Whether ps shows pid $1 running meerkat: a reused pid runs something else.
+_ma_runs_meerkat() {
+  [[ "$(ps -p "$1" -o command= 2>/dev/null)" == *[Mm]eerkat* ]]
+}
+
 _ma_start_server() {
   local self="$1"
   shift
+  _MA_DIR="$_MA_LINK.$(uuidgen)"
   mkdir "$_MA_DIR" 2>/dev/null || return 1
+  # Written before the link makes the run findable, so a reattach finds
+  # them in place.
   uuidgen >"$_MA_DIR/token"
+  _ma_write_caller
+  if ! ln -sn "${_MA_DIR##*/}" "$_MA_LINK" 2>/dev/null; then
+    rm -rf "$_MA_DIR"
+    return 1
+  fi
   _MA_OWNED=1
+  _MA_HELD=1
   _MA_OFFSET=0
   _MA_PID_WAIT=0
   # fork + setsid take the backend out of the caller's process group and
@@ -192,7 +374,7 @@ _ma_server_alive() {
   # The command check stops a reused pid passing for the backend. Where ps
   # cannot tell, the live pid is all there is to go on.
   _ma_ps_works || return 0
-  [[ "$(ps -p "$pid" -o command= 2>/dev/null)" == *meerkat* ]]
+  _ma_runs_meerkat "$pid"
 }
 
 _ma_bury_server() {
@@ -203,17 +385,17 @@ _ma_bury_server() {
     local port beam
     read -r port beam <"$_MA_DIR/port"
     # A BEAM whose shepherd died still holds the review's port.
-    if [[ -n "$beam" && "$(ps -p "$beam" -o command= 2>/dev/null)" == *[Mm]eerkat* ]]; then
+    if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi
   fi
   if ((_MA_OWNED)); then
     _ma_relay_log
     echo "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)." >&2
-    rm -rf "$_MA_DIR"
+    _ma_must _ma_remove_run
     exit 2
   fi
-  rm -rf "$_MA_DIR"
+  _ma_must _ma_remove_run
 }
 
 _ma_wait_for_exit() {
@@ -260,6 +442,7 @@ _ma_attach() {
         "n "*) printf '%s' "${line:2}" >&2 ;;
         "x "*)
           code="${line:2}"
+          _MA_HELD=1
           # The outcome is printed: a signal now just ends the caller.
           trap - TERM INT HUP
           ;;
@@ -273,12 +456,13 @@ _ma_attach() {
           ;;
         "d "*)
           exec {fd}<&-
+          _ma_restore_caller
           printf '%s\n' "${line:2}" >&2
           exit 1
           ;;
       esac
       # A reattach after a BEAM restart must not print the banner again.
-      [[ "$line" == [on]" "* ]] && _MA_QUIET=1
+      [[ "$line" == [on]" "* ]] && _MA_QUIET=1 && _MA_HELD=1
       line=""
     elif (($? > 128)); then
       # A read that timed out returns the partial line it got.
@@ -295,7 +479,7 @@ _ma_attach() {
     _ma_request POST "attach/delivered?run=$_MA_RUN" -o /dev/null 2>/dev/null
     _ma_wait_for_exit
     _ma_relay_log
-    rm -rf "$_MA_DIR"
+    _ma_remove_run
     exit "$code"
   fi
 
@@ -309,9 +493,10 @@ _ma_attach() {
     409 | 503)
       _MA_OWNED=0
       _ma_wait_for_exit
-      rm -rf "$_MA_DIR"
+      _ma_remove_run
       ;;
     502)
+      _ma_restore_caller
       exit 64
       ;;
     *)

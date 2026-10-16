@@ -899,7 +899,7 @@ defmodule Meerkat.CLI do
     on its own — do NOT poll, sleep, or schedule wake-ups; just wait for the exit.
     If you remind the user to review, give them the URL in case they don't have it.
     Then read the process output to learn the outcome: it says whether the user
-    approved or requested changes, and carries any comments to act on. Read the
+    approved or rejected, and carries any comments they left. Read the
     whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
     the feedback. If the output ends with no outcome line, this process
     stopped before the review completed and the review is still open: run the
@@ -1135,7 +1135,7 @@ defmodule Meerkat.CLI do
 
   defp outcome_phrase(:approve_with_feedback), do: "User approved your commit"
   defp outcome_phrase(:timeout), do: "Review timed out, commit auto-approved unread"
-  defp outcome_phrase(:reject), do: "User requested changes"
+  defp outcome_phrase(:reject), do: "User rejected the commit"
 
   defp limit_phrase(ms) do
     if ms >= 60_000 and rem(ms, 60_000) == 0 do

@@ -1,7 +1,6 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { makeFixture } from "./lib/fixture";
+import { makeFixture, ownedTmpDir } from "./lib/fixture";
 import { type Runner, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -19,7 +18,7 @@ test.describe("a review that restarts onto a new version", () => {
 	test("resumes with its ticks and comments, and waits for a click even with every file ticked Approved", async ({
 		page,
 	}) => {
-		const versions = mkdtempSync(join(tmpdir(), "meerkat-e2e-versions-"));
+		const versions = ownedTmpDir("meerkat-e2e-versions");
 		mkdirSync(join(versions, "v1"));
 		mkdirSync(join(versions, "v2"));
 		const link = join(versions, "current");
