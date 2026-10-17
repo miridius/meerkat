@@ -635,6 +635,9 @@ defmodule Meerkat.CLI do
   def endpoint_config_for_test(port, manifest_path), do: endpoint_config(port, manifest_path)
 
   @doc false
+  def vite_manifest_path_for_test, do: vite_manifest_path()
+
+  @doc false
   def port_in_use_for_test(reason), do: port_in_use?(reason)
 
   @doc false
@@ -857,7 +860,15 @@ defmodule Meerkat.CLI do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
   end
 
-  defp vite_manifest_path, do: Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
+  # `:vite_manifest_path` lets a test BEAM, which has no Vite build until
+  # `bun run build` runs, serve a page from a fixture manifest.
+  defp vite_manifest_path do
+    Application.get_env(
+      :meerkat,
+      :vite_manifest_path,
+      Application.app_dir(:meerkat, "priv/static/.vite/manifest.json")
+    )
+  end
 
   # The layout's asset tags and static_changed?/1 both use this one parse,
   # read at boot. Were the layout to read the file itself, a build replaced

@@ -231,20 +231,24 @@ defmodule Meerkat.CLIMainTest do
   test "a review opens the browser at the port it bound",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")
+    # The test BEAM has no Vite build until `bun run build` runs, and the
+    # layout cannot render without a manifest.
+    manifest = Path.join(repo, "manifest.json")
+    File.write!(manifest, ~s({"js/app.js": {"file": "assets/app.js", "isEntry": true}}))
 
     {output, code, opened} =
-      run_review_with_stub_opener(repo, "", ["--commit-msg", commit_msg, "--port", "0"])
+      run_review_with_stub_opener(
+        repo,
+        "Application.put_env(:meerkat, :vite_manifest_path, #{inspect(manifest)}); ",
+        ["--commit-msg", commit_msg, "--port", "0"]
+      )
 
     assert [_, url, port] =
              Regex.run(~r{Paused for human review at (http://127\.0\.0\.1:(\d+)/)}, output)
 
     assert String.to_integer(port) > 0
-    # Any HTTP status shows the server answers there; curl reports 000
-    # when nothing listens. Whether the page renders is not this test's
-    # concern, and under MIX_ENV=test it may answer 500.
     assert {:ok, record} = opened
-    assert [^url, status] = String.split(record)
-    assert status != "000"
+    assert String.split(record) == [url, "200"]
     assert code == 143
   end
 
