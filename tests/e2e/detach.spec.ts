@@ -288,7 +288,7 @@ test.describe("a review outlives the process that invoked it", () => {
 		page,
 	}) => {
 		// Three BEAM boots, each of which can take ~40 s on a loaded machine.
-		test.setTimeout(180_000);
+		test.slow();
 		const fixture = makeFixture();
 		const first = await startMeerkat({ fixture, keepFixture: true, underParent: true });
 		let second: Runner | undefined;

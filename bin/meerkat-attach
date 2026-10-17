@@ -216,6 +216,8 @@ _ma_relay_log() {
 # review lives until reattached and can outlast an upgrade.
 _ma_find_server() {
   _MA_DIR=""
+  # A run found now gets its own wait for its pid.
+  _MA_PID_WAIT=0
   if [[ -L "$_MA_LINK" ]]; then
     local target
     target="$(readlink "$_MA_LINK")" || return 1

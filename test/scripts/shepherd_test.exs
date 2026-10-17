@@ -634,12 +634,7 @@ defmodule Meerkat.ShepherdTest do
 
     test "a caller that cannot remove the run it found dead says so" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
-      runs = Path.join(dir, "runs")
-      # What a reap that could not delete a run leaves: the key names an
-      # empty run dir whose backend never writes its pid.
-      emptied = run_key(dir) <> ".emptied"
-      File.mkdir_p!(Path.join(runs, emptied))
-      File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+      runs = emptied_run(dir)
       File.chmod!(runs, 0o555)
 
       on_exit(fn ->
@@ -664,11 +659,9 @@ defmodule Meerkat.ShepherdTest do
     test "a caller whose polls run slow, as under load, still waits about 10 s for a missing pid" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
-      runs = Path.join(dir, "runs")
-      emptied = run_key(dir) <> ".emptied"
-      File.mkdir_p!(Path.join(runs, emptied))
-      File.ln_s!(emptied, Path.join(runs, run_key(dir)))
-      # Every poll's 0.2 s sleep takes a second, so 50 polls take 50 s.
+      emptied_run(dir)
+      # Every `sleep` takes a second, so a wait that counted polls would
+      # outlast the 20 s limit below.
       stubs = Path.join(dir, "stubs")
       File.mkdir_p!(stubs)
       File.write!(Path.join(stubs, "sleep"), "#!/bin/sh\nexec /bin/sleep 1\n")
@@ -682,10 +675,38 @@ defmodule Meerkat.ShepherdTest do
           {"PATH", stubs <> ":" <> System.fetch_env!("PATH")}
         ])
 
+      started = System.monotonic_time(:millisecond)
       assert {2, output} = await_result(port, dir, "", 20_000)
+      # Whole-second SECONDS makes the 10 s wait 9-10 s.
+      assert System.monotonic_time(:millisecond) - started >= 8_000
 
       assert output =~
                "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."
+    end
+
+    test "a caller whose pid wait ran out for one run still waits for the pid of the next run it finds" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-pid-wait")
+      on_exit(fn -> File.rm_rf!(runs) end)
+      File.mkdir_p!(Path.join(runs, "key.old"))
+      File.mkdir_p!(Path.join(runs, "key.new"))
+      File.ln_s!("key.new", Path.join(runs, "key"))
+
+      # The caller waits for key.old's pid, then a minute passes, as when its
+      # review ran and a 409 sent it back to find the key's next run.
+      {out, 0} =
+        System.cmd("bash", [
+          "-c",
+          ~S"""
+          source "$1"; _MA_LINK="$2/key"; _MA_DIR="$2/key.old"; _MA_PID_WAIT=0
+          _ma_server_alive; SECONDS=60; _ma_find_server
+          if _ma_server_alive; then echo "waits for $_MA_DIR"; else echo "buries $_MA_DIR"; fi
+          """,
+          "pid-wait",
+          Path.expand("bin/meerkat-attach"),
+          runs
+        ])
+
+      assert out == "waits for #{runs}/key.new\n"
     end
 
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
@@ -1237,6 +1258,16 @@ defmodule Meerkat.ShepherdTest do
     :crypto.hash(:sha256, "#{dir}:--commit-msg /tmp/msg --no-open")
     |> Base.encode16(case: :lower)
     |> binary_part(0, 16)
+  end
+
+  # What a reap that could not delete a run leaves: the review's key names
+  # an empty run dir whose backend never writes its pid. Returns the runs dir.
+  defp emptied_run(dir) do
+    runs = Path.join(dir, "runs")
+    emptied = run_key(dir) <> ".emptied"
+    File.mkdir_p!(Path.join(runs, emptied))
+    File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+    runs
   end
 
   # Whether `path` holds `text` within 5 s.

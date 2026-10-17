@@ -18,8 +18,8 @@ test.describe("a review that restarts onto a new version", () => {
 	test("resumes with its ticks and comments, and waits for a click even with every file ticked Approved", async ({
 		page,
 	}) => {
-		// Three BEAM boots, one a restart, each of which can take ~40 s on a loaded machine.
-		test.setTimeout(180_000);
+		// Four BEAM boots (two reviews, a restart and a rerun), each of which can take ~40 s on a loaded machine.
+		test.slow();
 		const versions = ownedTmpDir("meerkat-e2e-versions");
 		mkdirSync(join(versions, "v1"));
 		mkdirSync(join(versions, "v2"));
