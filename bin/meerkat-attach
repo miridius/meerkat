@@ -372,6 +372,8 @@ _ma_server_alive() {
     ((SECONDS < _MA_PID_WAIT))
     return
   fi
+  # A pid lost later, until the shepherd restores it, gets a fresh wait.
+  _MA_PID_WAIT=0
   local pid
   pid="$(<"$_MA_DIR/pid")"
   kill -0 "$pid" 2>/dev/null || return 1

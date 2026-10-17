@@ -684,7 +684,7 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."
     end
 
-    test "a caller whose pid wait ran out for one run still waits for the pid of the next run it finds" do
+    test "a caller whose pid wait started for one run gives the next run it finds a fresh wait" do
       runs = Meerkat.TestHelpers.tmp_path("meerkat-pid-wait")
       on_exit(fn -> File.rm_rf!(runs) end)
       File.mkdir_p!(Path.join(runs, "key.old"))
@@ -707,6 +707,31 @@ defmodule Meerkat.ShepherdTest do
         ])
 
       assert out == "waits for #{runs}/key.new\n"
+    end
+
+    test "a caller whose run's pid appeared gives that pid a fresh wait if it goes missing later" do
+      run = Meerkat.TestHelpers.tmp_path("meerkat-pid-wait")
+      on_exit(fn -> File.rm_rf!(run) end)
+      File.mkdir_p!(run)
+
+      # The pid comes late, then the review runs a minute and loses it, as
+      # meerkat_restore_run_files allows for. This shell, running
+      # meerkat-attach, passes for the backend.
+      {out, 0} =
+        System.cmd("bash", [
+          "-c",
+          ~S"""
+          source "$1"; _MA_DIR="$2"; _MA_PID_WAIT=0
+          _ma_server_alive; echo $$ >"$2/pid"; _ma_server_alive
+          rm "$2/pid"; SECONDS=60
+          if _ma_server_alive; then echo waits; else echo buries; fi
+          """,
+          "pid-wait",
+          Path.expand("bin/meerkat-attach"),
+          run
+        ])
+
+      assert out == "waits\n"
     end
 
     test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
