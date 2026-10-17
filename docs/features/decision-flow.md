@@ -218,8 +218,13 @@ meerkat exits 2 and the commit is rejected.
 A decision clicked while no invocation is attached is held. The
 next invocation of the same review attaches to the same server and
 gets that decision byte for byte, with its exit code. Cancel is held
-like any other decision. The same review means the same staged
-content and the same commit message. When either has changed, the
+like any other decision. An invocation finds a running review by its
+working directory and its target: `--commit-msg`, `--pr`, or a ref or
+range. `--no-open`, `--port` and the order of the arguments do not
+matter, so a rerun with other launch flags still collects a held
+decision rather than leaving its server running. The same review
+means the same staged content and the same commit message. When
+either has changed, the
 old server exits and the invocation starts a new one. The
 [`GIT_INDEX_FILE` entry in cli.md](cli.md#env-vars) says which index
 an invocation's staged content is read from.

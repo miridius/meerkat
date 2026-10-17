@@ -30,8 +30,9 @@ meerkat_attach() {
   set +e
 
   local key runs
-  # Keyed like the port, so a rerun of the same review finds its run dir.
-  key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
+  # Keyed by the review's target, so a rerun of the same review finds its
+  # run dir whatever launch flags it passes.
+  key=$(printf '%s' "${MEERKAT_PWD}:$(_ma_target "$@")" | shasum -a 256 | head -c 16)
   # Not $TMPDIR: macOS deletes its files once they are three days old,
   # and a review can wait longer than that.
   runs="${MEERKAT_RUNS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meerkat/runs}"
@@ -137,6 +138,28 @@ meerkat_attach() {
       sleep 0.2
     fi
   done
+}
+
+# Print the arguments naming the review's target, in one order whatever
+# order they came in: each `--commit-msg` or `--pr` with its value
+# (given as `--flag V` or `--flag=V`) and any positional, sorted and
+# joined by spaces. Launch-only flags (`--no-open`, `--port`) are dropped. A lone
+# `--commit-msg P`, the git hook's call, prints what older launchers keyed
+# by, so a review one of them left waiting is still found.
+_ma_target() {
+  local parts=()
+  while (($#)); do
+    case "$1" in
+      --no-open | --no-open=* | --port=*) ;;
+      --port) shift ;;
+      --commit-msg | --pr) parts+=("$1 ${2-}") && shift ;;
+      --commit-msg=* | --pr=*) parts+=("${1%%=*} ${1#*=}") ;;
+      *) parts+=("$1") ;;
+    esac
+    (($#)) && shift
+  done
+  ((${#parts[@]})) || return 0
+  printf '%s\n' "${parts[@]}" | LC_ALL=C sort | paste -sd ' ' -
 }
 
 # Record every process above the caller, from its parent up to pid 1, so

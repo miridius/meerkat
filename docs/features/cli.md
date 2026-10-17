@@ -48,7 +48,9 @@ see [pending-answers.md](pending-answers.md).
   Launchers pass explicit options through and ignore `MEERKAT_PORT`
   for them; on respawn they may supply the last-bound port as a
   preference. A nonzero `N` binds exactly `N`; if occupied, meerkat
-  reports the conflict and exits `64`.
+  reports the conflict and exits `64`. A rerun that reattaches to a
+  running review ignores its own `--port`: the review stays on the
+  port its server bound.
 
 ## Env vars
 

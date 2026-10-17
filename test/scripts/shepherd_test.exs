@@ -440,6 +440,35 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  describe "the target a caller keys its review's run by" do
+    test "ignores launch-only flags and the order of the arguments" do
+      for args <- [
+            ["--commit-msg", "/tmp/m s g"],
+            ["--commit-msg", "/tmp/m s g", "--no-open"],
+            ["--no-open", "--port", "0", "--commit-msg", "/tmp/m s g"],
+            ["--port=5", "--commit-msg=/tmp/m s g", "--no-open=true"]
+          ] do
+        assert target(args) == "--commit-msg /tmp/m s g", inspect(args)
+      end
+
+      assert target(["HEAD", "--pr", "5", "--no-open"]) == "--pr 5 HEAD"
+      assert target(["--pr=5", "--port", "1", "HEAD"]) == "--pr 5 HEAD"
+      assert target(["--no-open"]) == ""
+    end
+
+    test "keeps reviews of different targets apart" do
+      assert target(["--commit-msg", "/tmp/a"]) != target(["--commit-msg", "/tmp/b"])
+      assert target(["--pr", "5"]) != target(["5"])
+      assert target(["HEAD"]) != target([])
+    end
+
+    # The git hook's call, which older launchers keyed by all of `$*`, so a
+    # review one of them left waiting is still found after an upgrade.
+    test "is the arguments themselves for a lone --commit-msg" do
+      assert target(["--commit-msg", "/tmp/msg"]) == "--commit-msg /tmp/msg"
+    end
+  end
+
   describe "an older meerkat's run dir at the review's key" do
     test "is removed once finished, and the caller starts a new run" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
@@ -1231,10 +1260,24 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  # What bin/meerkat-attach keys the run of a review with these arguments by,
+  # after the working directory.
+  defp target(args) do
+    {out, 0} =
+      System.cmd("bash", [
+        "-c",
+        ~S(source "$1"; shift; _ma_target "$@"),
+        "target",
+        Path.expand("bin/meerkat-attach") | args
+      ])
+
+    String.trim_trailing(out, "\n")
+  end
+
   # The key naming the run dir of a review run with MEERKAT_PWD=`dir` and
   # the arguments every test here passes.
   defp run_key(dir) do
-    :crypto.hash(:sha256, "#{dir}:--commit-msg /tmp/msg --no-open")
+    :crypto.hash(:sha256, "#{dir}:--commit-msg /tmp/msg")
     |> Base.encode16(case: :lower)
     |> binary_part(0, 16)
   end

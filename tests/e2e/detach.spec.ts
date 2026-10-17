@@ -208,6 +208,52 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
+	// Which arguments name the same review is covered by test/scripts/shepherd_test.exs;
+	// here the held decision reaches a rerun through the real backend, which then ends.
+	for (const decision of ["Approve", "Send Feedback"] as const) {
+		test(`a held ${decision} decision is collected by a rerun passing other launch flags, in another order, and its server ends`, async ({
+			page,
+		}) => {
+			const fixture = makeFixture();
+			const msg = fixture.commitMsgPath ?? "";
+			const first = await startMeerkat({ fixture, keepFixture: true, port: null });
+			let second: Runner | undefined;
+			try {
+				const backend = backendPid(first);
+				await page.goto(first.url);
+				await first.killCaller();
+				if (decision === "Send Feedback") await addGlobalComment(page, "held for the rerun");
+				await page.getByRole("button", { name: new RegExp(`^${decision}$`) }).click();
+				await expect(page.getByRole("heading", { name: /^(Approved|Feedback sent)$/ })).toBeVisible();
+
+				second = await startMeerkat({
+					fixture,
+					keepFixture: true,
+					runsDir: first.runsDir,
+					awaitUrl: false,
+					args: ["--port=0", "--commit-msg", msg],
+					port: null,
+				});
+				const { code, stderr } = await second.awaitExit();
+				expect(stderr, "the rerun collects the held decision, not a fresh outcome").not.toContain(
+					"auto-approving",
+				);
+				if (decision === "Approve") {
+					expect(code).toBe(0);
+					expect(stderr).toContain("The user approved your commit. Proceeding.");
+				} else {
+					expect(code).toBe(1);
+					expect(stderr).toContain("held for the rerun");
+				}
+				await expect.poll(() => alive(backend), { message: "the decided review's server ends" }).toBe(false);
+			} finally {
+				await second?.kill();
+				await first.kill();
+				rmSync(fixture.dir, { recursive: true, force: true });
+			}
+		});
+	}
+
 	// The countdown's display for a given time left is covered by
 	// assets/ts/countdown.test.ts; here the Countdown hook ticks in the
 	// browser from the deadline the server renders, before the SIGTERM.
