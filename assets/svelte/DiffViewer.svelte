@@ -86,6 +86,9 @@
   // Clojure hover request ids, unique across every DiffViewer on the
   // page, since each one hears every answer.
   let lastHoverId = 0;
+
+  // A code cell font's `2em` and `1ch` in px, by font, for the rulers.
+  const fontWidthCache = new Map<string, { offset: number; ch: number }>();
 </script>
 
 <script lang="ts">
@@ -452,11 +455,24 @@
       const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
       const visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
       // The code starts 2em into the cell, after the +/- marker.
-      const offset = probeWidth(td, "2em");
-      const ch = probeWidth(td, "100ch") / 100;
+      const { offset, ch } = fontWidths(td);
       const columns = fittingColumns(ruler_columns, visible, offset, ch);
       diffContainer.style.setProperty(variable, rulerBackground(columns, "2em", RULER_COLOR));
     }
+  }
+
+  // `2em` and `1ch` in `cell`'s font, in px. Each probe forces a layout of
+  // the diff table, which an expand makes slow on a long diff, so the
+  // widths are kept per font.
+  function fontWidths(cell: HTMLElement): { offset: number; ch: number } {
+    const style = getComputedStyle(cell);
+    const font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily, style.letterSpacing].join("|");
+    let widths = fontWidthCache.get(font);
+    if (!widths) {
+      widths = { offset: probeWidth(cell, "2em"), ch: probeWidth(cell, "100ch") / 100 };
+      fontWidthCache.set(font, widths);
+    }
+    return widths;
   }
 
   // The width, in px, of a CSS length in `cell`'s font.
@@ -476,7 +492,14 @@
     void wrap_lines;
     void font_size_px;
     const cancel = afterTwoFrames(drawRulers);
-    const resize = new ResizeObserver(() => drawRulers());
+    // Only a width change moves the rulers; an expand changes the height.
+    let width = -1;
+    const resize = new ResizeObserver((entries) => {
+      const next = entries[entries.length - 1].contentRect.width;
+      if (next === width) return;
+      width = next;
+      drawRulers();
+    });
     resize.observe(diffContainer);
     return () => {
       cancel();

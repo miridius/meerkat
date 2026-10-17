@@ -102,6 +102,7 @@ defmodule Meerkat.OutdatedGateTest do
            -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
         echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
         echo "$PWD" >> '#{scratch_log}'
+        if [[ -d patches ]]; then cat patches/* >> '#{base}/scratch-patches'; fi
         if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
       "curl "*api.github.com/*)
@@ -368,6 +369,14 @@ defmodule Meerkat.OutdatedGateTest do
       for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
         assert File.read!(Path.join(ctx.base, file)) == "base\n"
       end
+    end
+
+    test "gives the scratch copy the patches pnpm-workspace.yaml names", ctx do
+      File.mkdir_p!(Path.join(ctx.base, "patches"))
+      File.write!(Path.join([ctx.base, "patches", "pkg.patch"]), "the patch\n")
+
+      assert {_, 0} = run(ctx)
+      assert File.read!(Path.join(ctx.base, "scratch-patches")) == "the patch\n"
     end
 
     test "blocks the push when it cannot copy the workspace", ctx do
