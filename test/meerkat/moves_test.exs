@@ -183,6 +183,27 @@ defmodule Meerkat.MovesTest do
       assert move.(["abcdefghij", "", "klmnopqrs"]) == [[], []]
       assert move.(["abcde(){};.-=", "", "fghij(){};.-=+*/&|"]) == [[], []]
       assert [[_], [_]] = move.(["ünïcödé123", "", "ßtraße4567"])
+      assert move.(["ünïcödé12", "", "ßtraße4567"]) == [[], []]
+      assert [[_], [_]] = move.(["ABCDEFGHIJ", "", "KLMNOPQRST"])
+      assert move.(["ABCDEFGHI•", "", "KLMNOPQRS•"]) == [[], []]
+      # The first and last of each ASCII range count; the bytes either
+      # side of them don't.
+      assert [[_], [_]] = move.(["azAZ09azAZ", "", "09azAZ09az"])
+      assert move.(["azAZ09azA`{@[/:", "", "09azAZ09az"]) == [[], []]
+    end
+
+    test "Latin-1 lines move, counting only their ASCII letters and digits" do
+      move = fn contents ->
+        moved([
+          file("a.txt", [hunk(1, 1, lines("-", contents))]),
+          file("b.txt", [hunk(1, 1, lines("+", contents))])
+        ])
+      end
+
+      assert [[%{line_start: 1, line_end: 3}], [_]] =
+               move.([<<"abcdefghij", 233>>, "", <<"klmnopqrst", 233>>])
+
+      assert move.([<<"abcdefghi", 233>>, "", <<"klmnopqrst", 233>>]) == [[], []]
     end
 
     test "one substantial line padded out by short and blank lines is not a move" do

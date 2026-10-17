@@ -23,7 +23,9 @@ defmodule Meerkat.Moves do
     side's block covers its own lines, so the two can differ in length.
 
   Cross-file and within-file moves are both found. Greedy: the
-  longest runs win, and shorter overlapping ones are dropped.
+  longest runs win, and shorter overlapping ones are dropped. A run
+  that overlaps an earlier block only on its trailing blank lines
+  gives those up instead, and waits behind longer runs.
   """
 
   @min_block_size 3
@@ -90,9 +92,18 @@ defmodule Meerkat.Moves do
       positions ->
         for a_start <- positions,
             len = run_length(removed_arr, r_start, added_arr, a_start),
-            len >= @min_substantial_lines,
+            substantial_run?(removed_arr, r_start..(r_start + len - 1)//1),
             do: {r_start, a_start, len}
     end
+  end
+
+  # Whether a run holds enough substantial lines, and letters and
+  # digits, to count as moved. Checked before picking, as the blank
+  # lines a block gains or loses change neither, and runs such as an
+  # `end` and a blank, shared by unrelated code, can be many.
+  defp substantial_run?(removed_arr, run) do
+    Enum.count(run, &elem(removed_arr, &1).substantial) >= @min_substantial_lines and
+      Enum.sum_by(run, &elem(removed_arr, &1).alnum) >= @min_alnum_chars
   end
 
   # The blocks taken from the candidate runs, longest first, returned
@@ -107,9 +118,10 @@ defmodule Meerkat.Moves do
         a = extend(added_arr, a_start, len, a_taken)
 
         state =
-          if taken?(r_taken, r) or taken?(a_taken, a) or not qualifies?(removed_arr, r, a),
-            do: {acc, r_taken, a_taken},
-            else: {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
+          if taken?(r_taken, r) or taken?(a_taken, a) or
+               (Range.size(r) < @min_block_size and Range.size(a) < @min_block_size),
+             do: {acc, r_taken, a_taken},
+             else: {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
 
         pick(rest, removed_arr, added_arr, state)
 
@@ -153,18 +165,6 @@ defmodule Meerkat.Moves do
   end
 
   defp joins?(arr, j, taken), do: elem(arr, j).content == "" and not MapSet.member?(taken, j)
-
-  # The widened lines are all blank, so counting over the whole block
-  # counts the run's substantial lines, and its letters and digits.
-  defp qualifies?(removed_arr, r, a) do
-    Enum.count(r, &substantial?(elem(removed_arr, &1))) >= @min_substantial_lines and
-      (Range.size(r) >= @min_block_size or Range.size(a) >= @min_block_size) and
-      Enum.sum_by(r, &alnum_count(elem(removed_arr, &1).content)) >= @min_alnum_chars
-  end
-
-  defp alnum_count(content), do: length(Regex.scan(~r/[\p{L}\p{N}]/u, content))
-
-  defp substantial?(line), do: String.length(line.content) >= @min_line_chars
 
   defp taken?(taken, range), do: Enum.any?(range, &MapSet.member?(taken, &1))
 
@@ -234,7 +234,7 @@ defmodule Meerkat.Moves do
   defp build_index(lines) do
     lines
     |> Enum.with_index()
-    |> Enum.filter(fn {line, _pos} -> substantial?(line) end)
+    |> Enum.filter(fn {line, _pos} -> line.substantial end)
     |> Enum.reduce(%{}, fn {%{content: c}, pos}, acc ->
       Map.update(acc, c, [pos], &[pos | &1])
     end)
@@ -312,8 +312,36 @@ defmodule Meerkat.Moves do
   # No-newline-at-eof marker (`\`) or anything else: skip.
   defp consume_line({:other, _}, state, _file_idx, _side_char), do: state
 
-  defp add_line(acc, raw, file_idx, number),
-    do: [%{file_idx: file_idx, number: number, content: String.trim(raw)} | acc]
+  # With whether it is substantial and its count of letters and digits,
+  # which every run sharing the line needs.
+  defp add_line(acc, raw, file_idx, number) do
+    content = String.trim(raw)
+
+    line = %{
+      file_idx: file_idx,
+      number: number,
+      content: content,
+      substantial: String.length(content) >= @min_line_chars,
+      alnum: alnum_count(content, 0)
+    }
+
+    [line | acc]
+  end
+
+  # Letters and digits in any script. Walks the bytes, as a regex scan
+  # of every changed line of a large diff takes most of a second.
+  defp alnum_count(<<c, rest::binary>>, n)
+       when c in ?a..?z//1 or c in ?A..?Z//1 or c in ?0..?9//1,
+       do: alnum_count(rest, n + 1)
+
+  # muex:ignore equivalent: the clauses below skip these ASCII bytes too; this one only saves a regex call per byte
+  defp alnum_count(<<c, rest::binary>>, n) when c < 128, do: alnum_count(rest, n)
+
+  defp alnum_count(<<c::utf8, rest::binary>>, n),
+    do: alnum_count(rest, if(String.match?(<<c::utf8>>, ~r/[\p{L}\p{N}]/u), do: n + 1, else: n))
+
+  defp alnum_count(<<_, rest::binary>>, n), do: alnum_count(rest, n)
+  defp alnum_count(<<>>, n), do: n
 
   @doc false
   # Parse `@@ -10,5 +12,7 @@` → `{10, 12}`, or `nil` for any other
