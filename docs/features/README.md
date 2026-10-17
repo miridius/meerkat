@@ -39,7 +39,7 @@ bridges the two by exercising the docs against the running app.
 - [inline-comments.md](inline-comments.md) — drag-select, form anchoring, edit / remove, agent-instruction toggles, suggestion mode, visual line marker, persistence across BEAM restart.
 - [non-inline-comments.md](non-inline-comments.md) — global / file / commit-msg surfaces; shared CommentForm + GitHub PENDING flatten.
 - [commit-message.md](commit-message.md) — gutter rendering, block detection, click-to-comment.
-- [file-filter.md](file-filter.md) — sidebar, hide-extension, only-this-file, substring filter, generated-file toggle.
+- [file-filter.md](file-filter.md) — `☰ Files` dropdown folder tree, jump to a file, hide-extension, only-this-file, substring filter, generated-file toggle.
 - [clojure-hover.md](clojure-hover.md) — hover a symbol in a Clojure diff for its docs and source, via clj-kondo.
 - [approved-collapse.md](approved-collapse.md) — approved files collapse; click header to re-expand.
 - [pending-answers.md](pending-answers.md) — pinned banner, schema, lifecycle.

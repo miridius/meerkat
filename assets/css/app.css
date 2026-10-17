@@ -788,7 +788,9 @@ a.chip-link:hover .chip-value {
 .diff-toolbar {
   position: sticky;
   top: 0;
-  z-index: 5;
+  /* Above the decision footer (100), so the files dropdown it holds
+     draws over the whole review. */
+  z-index: 101;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -858,8 +860,8 @@ a.chip-link:hover .chip-value {
 
 .review-body {
   display: grid;
-  /* The file filter is a panel in normal page flow above the file list, so
-     the review body needs no sidebar column and always uses one column. */
+  /* The file filter is a dropdown in the toolbar, so the review body
+     needs no sidebar column and always uses one column. */
   grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
@@ -878,21 +880,40 @@ a.chip-link:hover .chip-value {
   border-color: var(--accent);
 }
 
-/* --- File filter (inline collapsible panel) ---
-   Sits in normal page flow above the file list; takes the full width of
-   the page's content area (the page's main element has padding), so file
-   paths fit on one line without truncation. Toggled via the toolbar's
-   '☰ Files' button. Same affordances as the pre-port version: substring
-   filter, status dots, full relative path (dir prefix dimmed + base name
-   at font-weight 500), per-entry only / hide-extension / show-all controls. */
+/* --- File filter (toolbar dropdown) ---
+   Drops from the toolbar's '☰ Files' button over the review. Placed
+   against the sticky toolbar rather than the button, so it starts below
+   the toolbar's last row when the toolbar wraps. As wide as its widest
+   row, so the longest name sets its width, up to the toolbar's width; as
+   tall as the viewport allows, with the folder tree scrolling inside it. */
 
 .file-filter {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* In line with the button, inside the toolbar's 10px side padding. */
+  left: 10px;
+  /* Over the toolbar's positioned popovers, such as the ⚙ settings. */
+  z-index: 20;
+  width: max-content;
+  min-width: 280px;
+  max-width: calc(100% - 20px);
+  /* The toolbar is not yet stuck at the top of an unscrolled page, so
+     leave room for the page's padding above it too. */
+  max-height: calc(100vh - var(--toolbar-h) - 40px);
+  display: flex;
+  flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 14px;
-  margin-bottom: 12px;
-  scroll-margin-top: var(--sticky-scroll-margin);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.file-tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .file-filter-header {
@@ -951,24 +972,43 @@ a.chip-link:hover .chip-value {
   border-radius: 999px;
 }
 
-.file-entries {
+.file-tree {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
 }
 
+.tree-dir,
 .file-entry {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 1px 4px;
+  width: 100%;
+  padding: 1px 4px 1px calc(var(--depth, 0) * 16px + 4px);
   border-radius: var(--radius-sm);
-  min-width: 0;
+  white-space: nowrap;
 }
+.tree-dir:hover,
 .file-entry:hover {
   background: var(--panel-2);
+}
+
+.tree-dir {
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.tree-caret {
+  display: inline-block;
+  width: 13px;
+  text-align: center;
+  transition: transform 120ms ease;
+}
+.tree-caret.collapsed {
+  transform: rotate(-90deg);
 }
 /* File hidden by something other than its own checkbox — generated
    filter, extension filter, or only_file_index. Dimmed so the
@@ -1000,19 +1040,19 @@ a.chip-link:hover .chip-value {
 
 .file-entry .file-path {
   flex: 1 1 auto;
-  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
   font-family: ui-monospace, monospace;
   font-size: 0.82rem;
   color: var(--text);
-  text-decoration: none;
   white-space: nowrap;
 }
 .file-entry .file-path:hover {
+  background: transparent;
   color: var(--accent);
   text-decoration: underline;
-}
-.file-entry .file-path .dir {
-  color: var(--muted);
 }
 .file-entry .file-path .base-name {
   color: inherit;
@@ -1032,7 +1072,8 @@ a.chip-link:hover .chip-value {
 }
 .file-entry:hover .only-btn,
 .file-entry:hover .hide-ext-btn,
-.file-entry:hover .ghost-btn.small {
+.file-entry:hover .ghost-btn.small,
+.file-entry:focus-within .ghost-btn.small {
   opacity: 1;
 }
 

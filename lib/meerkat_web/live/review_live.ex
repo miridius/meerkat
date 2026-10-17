@@ -22,6 +22,7 @@ defmodule MeerkatWeb.ReviewLive do
     CljHover,
     Comment,
     Decision,
+    FileTree,
     GitHub,
     OpenForms,
     PendingAnswers,
@@ -99,10 +100,12 @@ defmodule MeerkatWeb.ReviewLive do
        update_pending: false,
        filter_input: "",
        only_file_index: nil,
-       # File-filter sidebar is closed by default so the diff body
-       # uses the full viewport width. Toggle in the toolbar to
-       # reveal the file list / filter / per-file approval ticks.
+       # The toolbar's file-filter dropdown, closed by default.
        files_panel_open: false,
+       # Paths of the dropdown's folders the reviewer collapsed, without
+       # and with filter text.
+       collapsed_dirs: MapSet.new(),
+       filter_collapsed_dirs: MapSet.new(),
        # File indices the reviewer has explicitly expanded after the
        # file was approved (which collapses the diff body by default).
        # Click the file header to flip collapse state; the set is
@@ -559,16 +562,37 @@ defmodule MeerkatWeb.ReviewLive do
   ## --- File filter ---
 
   def handle_event("toolbar.toggle_files_panel", _, socket) do
-    opening? = not socket.assigns.files_panel_open
-    socket = assign(socket, files_panel_open: opening?)
+    {:noreply, assign(socket, files_panel_open: not socket.assigns.files_panel_open)}
+  end
 
-    # The panel renders near the top of the page, above the file list,
-    # but the toolbar is sticky, so opening it while scrolled down
-    # leaves it out of view.
-    socket =
-      if opening?, do: push_event(socket, "scroll-into-view", %{id: "file-filter"}), else: socket
+  def handle_event("files.close", _, socket) do
+    {:noreply, assign(socket, files_panel_open: false)}
+  end
 
-    {:noreply, socket}
+  # The file's section exists only while the main list shows it. Picking
+  # a file it hides leaves focus on the `☰ Files` button, rather than lost
+  # with the closed dropdown.
+  def handle_event("files.pick", %{"file_index" => idx}, socket) do
+    case parse_int(idx) do
+      {:ok, n} ->
+        %{state: state, filter_input: input, only_file_index: only} = socket.assigns
+        socket = assign(socket, files_panel_open: false)
+
+        {:noreply,
+         if(MapSet.member?(visible_indices(state, input, only), n),
+           do: push_event(socket, "scroll-into-view", %{id: "file-#{n}", focus: true}),
+           else: push_event(socket, "focus", %{id: "files-toggle"})
+         )}
+
+      :error ->
+        log_ignored_event("files.pick", "file_index", idx)
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("files.toggle_dir", %{"path" => path}, socket) do
+    key = collapsed_dirs_key(socket.assigns.filter_input)
+    {:noreply, update(socket, key, &toggle_member(&1, path))}
   end
 
   # Toggle whether a file's diff body is rendered. Approved files
@@ -630,7 +654,13 @@ defmodule MeerkatWeb.ReviewLive do
   # client event — fall through to empty string.
   def handle_event("filter.set_input", payload, socket) do
     value = if is_map(payload), do: Map.get(payload, "value", ""), else: ""
-    {:noreply, assign(socket, filter_input: value)}
+
+    socket =
+      if value == socket.assigns.filter_input,
+        do: socket,
+        else: assign(socket, filter_input: value, filter_collapsed_dirs: MapSet.new())
+
+    {:noreply, socket}
   end
 
   def handle_event("filter.show_only", %{"file_index" => idx}, socket) do
@@ -1116,6 +1146,12 @@ defmodule MeerkatWeb.ReviewLive do
         expanded_files={
           expanded_files(@state, @visible_indices, @expanded_approved, @collapsed_unapproved)
         }
+        files_panel_open={@files_panel_open}
+        filter_input={@filter_input}
+        only_file_index={@only_file_index}
+        visible_indices={@visible_indices}
+        collapsed_dirs={@collapsed_dirs}
+        filter_collapsed_dirs={@filter_collapsed_dirs}
       />
       <.flash_error_banner :if={@flash_error} message={@flash_error} />
       <.pending_answers_banner :if={@pending_answers} pending_answers={@pending_answers} />
@@ -1152,13 +1188,6 @@ defmodule MeerkatWeb.ReviewLive do
           ×
         </button>
       </p>
-      <.file_filter
-        :if={@files_panel_open}
-        state={@state}
-        filter_input={@filter_input}
-        only_file_index={@only_file_index}
-        visible_indices={@visible_indices}
-      />
       <div class="review-body">
         <.file_list
           state={@state}
@@ -1762,13 +1791,17 @@ defmodule MeerkatWeb.ReviewLive do
   attr :filter_input, :string, required: true
   attr :only_file_index, :any, required: true
   attr :visible_indices, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :collapsed_dirs, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :filter_collapsed_dirs, :any, required: true
 
   defp file_filter(assigns) do
-    # Panel that lists every file with hover-revealed "hide *.ext"
-    # and "only" buttons, plus a `.filter-input` for substring narrowing.
-    # The list filters by `filter_input` (substring on base_name); the
-    # title count and the main `.file-list` use `@visible_indices`
-    # (see `visible_indices/3`).
+    # Dropdown that lists every file as a folder tree with hover-revealed
+    # "hide *.ext" and "only" buttons, plus a `.filter-input` for substring
+    # narrowing. The tree filters by `filter_input` (substring on
+    # base_name); the title count and the main `.file-list` use
+    # `@visible_indices` (see `visible_indices/3`).
     visible_in_sidebar =
       filter_sidebar_entries(assigns.state.files, assigns.filter_input)
 
@@ -1779,14 +1812,23 @@ defmodule MeerkatWeb.ReviewLive do
 
     assigns =
       assign(assigns,
-        sidebar_entries: visible_in_sidebar,
+        tree: FileTree.build(visible_in_sidebar),
+        shown_collapsed_dirs: Map.fetch!(assigns, collapsed_dirs_key(assigns.filter_input)),
         total_count: length(assigns.state.files),
         visible_count: MapSet.size(assigns.visible_indices),
         matched_visible?: matched_visible?
       )
 
     ~H"""
-    <aside class="file-filter" id="file-filter">
+    <div
+      class="file-filter"
+      id="file-filter"
+      role="dialog"
+      aria-label="Files"
+      phx-mounted={JS.focus(to: "#file-filter-input")}
+      phx-window-keydown={JS.push("files.close") |> JS.focus(to: "#files-toggle")}
+      phx-key="Escape"
+    >
       <header class="file-filter-header">
         <button
           type="button"
@@ -1813,11 +1855,15 @@ defmodule MeerkatWeb.ReviewLive do
         </button>
       </header>
 
-      <form id="file-filter-form" phx-change="filter.set_input">
+      <%!-- phx-submit, so Enter applies the text rather than submitting the
+        form natively, which would reload the page and add a history entry. --%>
+      <form id="file-filter-form" phx-change="filter.set_input" phx-submit="filter.set_input">
         <input
           type="text"
+          id="file-filter-input"
           name="value"
           class="filter-input"
+          aria-label="Filter files"
           placeholder="Filter files…"
           value={@filter_input}
           phx-debounce="50"
@@ -1852,49 +1898,129 @@ defmodule MeerkatWeb.ReviewLive do
         </li>
       </ul>
 
-      <ul class="file-entries">
-        <li
-          :for={{file, idx} <- @sidebar_entries}
-          class={[
-            "file-entry",
-            not MapSet.member?(@visible_indices, idx) && "hidden-by-other"
-          ]}
-        >
-          <input
-            type="checkbox"
-            phx-click="filter.toggle_file"
-            phx-value-file_name={file.file_name}
-            checked={MapSet.member?(@visible_indices, idx)}
-            title={"Show / hide #{file.file_name} in the diff list"}
+      <div class="file-tree-scroll">
+        <.file_tree
+          rows={@tree}
+          depth={0}
+          collapsed_dirs={@shown_collapsed_dirs}
+          visible_indices={@visible_indices}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :rows, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :depth, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :collapsed_dirs, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :visible_indices, :any, required: true
+
+  # One level of the file filter's folder tree (see `Meerkat.FileTree`).
+  defp file_tree(assigns) do
+    ~H"""
+    <ul class="file-tree">
+      <li :for={row <- @rows}>
+        <%= if Map.has_key?(row, :dir) do %>
+          <button
+            type="button"
+            class="tree-dir"
+            style={"--depth: #{@depth}"}
+            phx-click="files.toggle_dir"
+            phx-value-path={row.dir}
+            aria-expanded={to_string(not MapSet.member?(@collapsed_dirs, row.dir))}
+            title={row.dir}
+          >
+            <span
+              class={[
+                "tree-caret",
+                MapSet.member?(@collapsed_dirs, row.dir) && "collapsed"
+              ]}
+              aria-hidden="true"
+            >
+              ▾
+            </span>
+            <span class="dir-name">{row.name}</span>
+          </button>
+          <.file_tree
+            :if={not MapSet.member?(@collapsed_dirs, row.dir)}
+            rows={row.children}
+            depth={@depth + 1}
+            collapsed_dirs={@collapsed_dirs}
+            visible_indices={@visible_indices}
           />
-          <span class={"status-dot status-#{file.status}"} title={status_label(file.status)}></span>
-          <a class="file-path" href={"#file-#{idx}"} title={file.file_name}>
-            <span class="dir">{file_path_dir(file.file_name)}</span><span class="base-name">{Path.basename(
-              file.file_name
-            )}</span>
-          </a>
-          <button
-            type="button"
-            class="ghost-btn small only-btn"
-            phx-click="filter.show_only"
-            phx-value-file_index={idx}
-            title="Show only this file"
-          >
-            only
-          </button>
-          <button
-            :if={extension_of(file.file_name) != ""}
-            type="button"
-            class="ghost-btn small hide-ext-btn"
-            phx-click="filter.toggle_extension"
-            phx-value-ext={extension_of(file.file_name)}
-            title={"Hide every *.#{extension_of(file.file_name)} file"}
-          >
-            hide *.{extension_of(file.file_name)}
-          </button>
-        </li>
-      </ul>
-    </aside>
+        <% else %>
+          <.file_entry
+            file={elem(row.file, 0)}
+            idx={elem(row.file, 1)}
+            depth={@depth}
+            visible?={MapSet.member?(@visible_indices, elem(row.file, 1))}
+          />
+        <% end %>
+      </li>
+    </ul>
+    """
+  end
+
+  # The assign holding the folders collapsed in the view the filter text
+  # selects. While the filter has text, a folder collapses only until the
+  # text changes, so no match hides in a folder collapsed beforehand, and
+  # the folders collapsed without a filter come back when it clears.
+  defp collapsed_dirs_key(""), do: :collapsed_dirs
+  defp collapsed_dirs_key(_filter_input), do: :filter_collapsed_dirs
+
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :file, :map, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :idx, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :depth, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :visible?, :boolean, required: true
+
+  defp file_entry(assigns) do
+    ~H"""
+    <div class={["file-entry", not @visible? && "hidden-by-other"]} style={"--depth: #{@depth}"}>
+      <input
+        type="checkbox"
+        phx-click="filter.toggle_file"
+        phx-value-file_name={@file.file_name}
+        checked={@visible?}
+        title={"Show / hide #{@file.file_name} in the diff list"}
+      />
+      <span class={"status-dot status-#{@file.status}"} title={status_label(@file.status)}></span>
+      <button
+        type="button"
+        class="file-path"
+        phx-click="files.pick"
+        phx-value-file_index={@idx}
+        title={@file.file_name}
+      >
+        <span class="base-name">{Path.basename(@file.file_name)}</span>
+      </button>
+      <button
+        type="button"
+        class="ghost-btn small only-btn"
+        phx-click="filter.show_only"
+        phx-value-file_index={@idx}
+        title="Show only this file"
+      >
+        only
+      </button>
+      <button
+        :if={extension_of(@file.file_name) != ""}
+        type="button"
+        class="ghost-btn small hide-ext-btn"
+        phx-click="filter.toggle_extension"
+        phx-value-ext={extension_of(@file.file_name)}
+        title={"Hide every *.#{extension_of(@file.file_name)} file"}
+      >
+        hide *.{extension_of(@file.file_name)}
+      </button>
+    </div>
     """
   end
 
@@ -1917,19 +2043,47 @@ defmodule MeerkatWeb.ReviewLive do
 
   # muex:ignore equivalent: an attr declaration is compile-time validation only, and the one call site passes it
   attr :expanded_files, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :files_panel_open, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :filter_input, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :only_file_index, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :visible_indices, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :collapsed_dirs, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :filter_collapsed_dirs, :any, required: true
 
   defp diff_toolbar(assigns) do
     ~H"""
     <div class="diff-toolbar" id="diff-toolbar" phx-hook="ToolbarHeight">
-      <button
-        type="button"
-        class="toolbar-icon-btn"
-        phx-click="toolbar.toggle_files_panel"
-        title="Toggle file list / filter sidebar"
-        aria-label="Toggle file list"
-      >
-        ☰ Files
-      </button>
+      <%!-- The button sits inside the click-away area, so clicking it while
+        open closes the dropdown once rather than closing and reopening it. --%>
+      <div class="files-dropdown" phx-click-away={@files_panel_open && "files.close"}>
+        <button
+          type="button"
+          id="files-toggle"
+          class="toolbar-icon-btn"
+          phx-click="toolbar.toggle_files_panel"
+          title="Show or hide the file list"
+          aria-label="Toggle file list"
+          aria-expanded={to_string(@files_panel_open)}
+          aria-controls={@files_panel_open && "file-filter"}
+        >
+          ☰ Files
+        </button>
+        <.file_filter
+          :if={@files_panel_open}
+          state={@state}
+          filter_input={@filter_input}
+          only_file_index={@only_file_index}
+          visible_indices={@visible_indices}
+          collapsed_dirs={@collapsed_dirs}
+          filter_collapsed_dirs={@filter_collapsed_dirs}
+        />
+      </div>
 
       <a
         :if={@state.pr}
@@ -2501,9 +2655,6 @@ defmodule MeerkatWeb.ReviewLive do
   def extension_of_for_test(file_name), do: extension_of(file_name)
 
   @doc false
-  def file_path_dir_for_test(file_name), do: file_path_dir(file_name)
-
-  @doc false
   def gutter_label_for_test(block), do: gutter_label(block)
 
   @doc false
@@ -2535,16 +2686,6 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:modified), do: "Modified"
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
-
-  # Directory prefix with a trailing slash, or "" for files in the repo root.
-  # The file filter panel renders it dimmed before the medium-weight (500)
-  # base name.
-  defp file_path_dir(file_name) do
-    case Path.dirname(file_name) do
-      "." -> ""
-      dir -> "#{dir}/"
-    end
-  end
 
   # The files the main list shows with their diff open: the filter
   # shows them and they are not collapsed.
