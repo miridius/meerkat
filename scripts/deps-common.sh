@@ -101,6 +101,8 @@ pnpm_installable() {
   if ! { tmp=$(mktemp -d) &&
     mkdir "$tmp/assets" &&
     cp package.json pnpm-workspace.yaml pnpm-lock.yaml "$tmp/" &&
+    # pnpm-workspace.yaml's patchedDependencies name files in patches/.
+    { [[ ! -d patches ]] || cp -R patches "$tmp/"; } &&
     cp assets/package.json "$tmp/assets/" &&
     # assets/package.json takes the Phoenix packages from ../deps.
     ln -s "$PWD/deps" "$tmp/deps"; }; then

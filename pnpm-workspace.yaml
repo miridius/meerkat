@@ -19,3 +19,14 @@ packageExtensions:
   "@nextjournal/lezer-clojure":
     dependencies:
       "@lezer/common": "^1.0.0"
+
+# Keyed by name, not version, so a bump keeps the patch while it
+# still applies; when it stops applying, install fails and the patch
+# must be ported to the new release.
+patchedDependencies:
+  # With Wrap off, Split view syncs each hunk row's height across its
+  # two tables. Upstream does it row by row as Svelte re-renders the
+  # rows, forcing a layout of both tables per row: an expand on a
+  # 3000-line diff took over a second. The patch batches the syncs into
+  # one pass per frame.
+  "@git-diff-view/svelte": patches/@git-diff-view__svelte.patch
