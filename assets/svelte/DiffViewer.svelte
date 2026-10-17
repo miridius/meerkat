@@ -412,7 +412,7 @@
         renderInlineComments();
         renderInlineForms($state.snapshot(inline_forms) as InlineFormDescriptor[]);
         // The library reuses row elements for other lines, so the moved
-        // tint and links must be placed again by line number.
+        // tint and arrows must be placed again by line number.
         applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
         drawRulers();
       });
@@ -1066,17 +1066,20 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  // Moved-line highlighting + jump badges. Each block of moved lines
+  // Moved-line highlighting + jump arrows. Each block of moved lines
   // gets a coloured background (4 colors cycled by pairId) on the
-  // covered rows, plus a clickable "← from foo:N" / "→ to foo:N"
-  // badge in the corner of the first row. Click dispatches a
-  // document-level `meerkat-move-jump` event the sibling DiffViewers
-  // listen for so the target file scrolls into view and flashes.
+  // covered rows, and an arrow in place of each line's +/− mark: → on
+  // the new side, ← on the old. Each arrow is a button titled with
+  // where the code moved. A click dispatches a document-level
+  // `meerkat-move-jump` event the DiffViewers listen for, so the target
+  // lines scroll into view and flash. When no viewer has them on the
+  // page, it asks the server to show the counterpart's file, and app.js
+  // dispatches the event again once that file renders.
   $effect(() => {
     if (!diffContainer || !diffInstance) return;
     const blocks = file.moved_lines ?? [];
     // A split/unified toggle, or a wrap toggle in split view, replaces
-    // the rows, dropping the moved tint and links.
+    // the rows, dropping the moved tint and arrows.
     void diffViewMode;
     void wrap_lines;
     return afterTwoFrames(() => applyMovedHighlights(blocks));
@@ -1087,8 +1090,11 @@
     diffContainer.querySelectorAll(".moved-line").forEach((el) => {
       el.classList.remove("moved-line", "moved-pair-0", "moved-pair-1", "moved-pair-2", "moved-pair-3");
     });
-    diffContainer.querySelectorAll(".moved-badge").forEach((el) => {
+    diffContainer.querySelectorAll(".moved-arrow").forEach((el) => {
       el.remove();
+    });
+    diffContainer.querySelectorAll(".moved-mark").forEach((el) => {
+      el.classList.remove("moved-mark");
     });
   }
 
@@ -1105,42 +1111,48 @@
         rowsBySideLine.get(`${side}:${ln}`)?.forEach((row) => {
           row.classList.add("moved-line", pairClass);
           const td = row.querySelector(`td.diff-line-${side}-content, td.diff-line-content`);
-          if (td) td.classList.add("moved-line", pairClass);
+          if (!td) return;
+          td.classList.add("moved-line", pairClass);
+          // The arrow covers the library's +/− mark rather than
+          // replacing it: @git-diff-view reuses the row for other lines.
+          const mark = td.querySelector(".diff-line-content-operator");
+          if (!mark) return;
+          mark.classList.add("moved-mark");
+          mark.append(movedArrow(block, pairClass));
         });
       }
-      const firstRows = rowsBySideLine.get(`${side}:${block.line_start}`);
-      if (!firstRows) continue;
-      const contentTd = firstRows[0].querySelector(
-        `td.diff-line-${side}-content, td.diff-line-content`,
-      ) as HTMLElement | null;
-      if (!contentTd) continue;
-
-      const badge = document.createElement("button");
-      badge.type = "button";
-      badge.className = `moved-badge ${pairClass}`;
-      const arrow = block.side === "old" ? "→" : "←";
-      const range =
-        block.to_line_start === block.to_line_end
-          ? `${block.to_line_start}`
-          : `${block.to_line_start}-${block.to_line_end}`;
-      badge.textContent = `${arrow} ${block.to_file}:${range}`;
-      badge.title = `moved ${block.side === "old" ? "to" : "from"} ${block.to_file} lines ${range}`;
-      badge.addEventListener("click", (e) => {
-        e.stopPropagation();
-        document.dispatchEvent(
-          new CustomEvent("meerkat-move-jump", {
-            detail: {
-              fileName: block.to_file,
-              side: block.to_side,
-              lineStart: block.to_line_start,
-              lineEnd: block.to_line_end,
-            },
-          }),
-        );
-      });
-      contentTd.style.position = "relative";
-      contentTd.appendChild(badge);
     }
+  }
+
+  function movedArrow(block: MovedBlock, pairClass: string): HTMLButtonElement {
+    const arrow = document.createElement("button");
+    arrow.type = "button";
+    arrow.className = `moved-arrow ${pairClass}`;
+    arrow.textContent = block.side === "old" ? "←" : "→";
+    const lines =
+      block.to_line_start === block.to_line_end
+        ? `line ${block.to_line_start}`
+        : `lines ${block.to_line_start}-${block.to_line_end}`;
+    arrow.title = `Moved ${block.side === "old" ? "to" : "from"} ${block.to_file} ${lines}`;
+    arrow.setAttribute("aria-label", arrow.title);
+    arrow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const detail = {
+        fileName: block.to_file,
+        side: block.to_side,
+        lineStart: block.to_line_start,
+        lineEnd: block.to_line_end,
+      };
+      // A counterpart already on the page takes the jump at once.
+      if (!document.dispatchEvent(new CustomEvent("meerkat-move-jump", { detail, cancelable: true }))) return;
+      live.pushEvent("moved.jump", {
+        file_name: block.to_file,
+        side: block.to_side,
+        line_start: block.to_line_start,
+        line_end: block.to_line_end,
+      });
+    });
+    return arrow;
   }
 
   // Held for 60% of the flash, then eased out.
@@ -1160,17 +1172,22 @@
     movedFlash = [];
   }
 
-  // Listen for jump events from sibling DiffViewers. If the event's
-  // fileName matches THIS file, scroll the target line into view and
-  // flash a temporary highlight so the reviewer can spot the
-  // counterpart of a moved block they just clicked.
+  // Listen for jump events to a moved block's counterpart. If the
+  // event's fileName matches THIS file and its lines are rendered,
+  // scroll them into view, flash a temporary highlight so the reviewer
+  // can spot them, and cancel the event to tell its sender it landed.
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {
       const ev = e as CustomEvent<{ fileName: string; side: "old" | "new"; lineStart: number; lineEnd: number }>;
       if (!ev.detail || ev.detail.fileName !== file.file_name) return;
+      // live_svelte unmounts a removed viewer only at the next
+      // `phx:page-loading-stop`, so a collapsed file's old viewer still
+      // listens, over rows no longer on the page.
+      if (!diffContainer?.isConnected) return;
       const rows = anchorRowsFor(ev.detail.side, ev.detail.lineStart);
       if (rows.length === 0) return;
+      ev.preventDefault();
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       // Flash the target side's cells for 1.6s, as an inset shadow over
@@ -1498,30 +1515,28 @@
       var(--meerkat-rulers-unified, none),
       linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
-  :global(.moved-badge) {
+  /* A moved line's arrow covers its +/− mark, which turns invisible. */
+  :global(.diff-content .diff-line-content-operator.moved-mark) {
+    position: relative;
+    color: transparent;
+  }
+  /* A borderless app.css button: it keeps the pointer and focus ring. */
+  :global(.moved-arrow) {
     position: absolute;
-    top: 2px;
-    right: 6px;
-    z-index: 2;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    border: 1px solid #30363d;
-    background: #161b22;
-    color: #c9d1d9;
-    cursor: pointer;
-    max-width: 40ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-weight: bold;
+    text-align: center;
+    text-indent: 0;
   }
-  :global(.moved-badge:hover) {
-    background: #21262d;
-    border-color: #58a6ff;
+  /* Outranks app.css's `button:hover:not(:disabled)`. */
+  :global(.diff-content .moved-arrow:hover) {
+    background: var(--border);
   }
-  :global(.moved-badge.moved-pair-0) { border-left: 3px solid rgb(96, 165, 250); }
-  :global(.moved-badge.moved-pair-1) { border-left: 3px solid rgb(192, 132, 252); }
-  :global(.moved-badge.moved-pair-2) { border-left: 3px solid rgb(52, 211, 153); }
-  :global(.moved-badge.moved-pair-3) { border-left: 3px solid rgb(251, 191, 36); }
+  :global(.moved-arrow.moved-pair-0) { color: rgb(96, 165, 250); }
+  :global(.moved-arrow.moved-pair-1) { color: rgb(192, 132, 252); }
+  :global(.moved-arrow.moved-pair-2) { color: rgb(52, 211, 153); }
+  :global(.moved-arrow.moved-pair-3) { color: rgb(251, 191, 36); }
 </style>

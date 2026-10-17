@@ -103,6 +103,19 @@ When the UI does open, the reviewer sees, top-to-bottom:
    and between hunks appear only in the right-hand (new-side)
    gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
    on the right; Unified view keeps them in its single gutter.
+   Moved code is tinted. A moved block is at least 2 identical
+   consecutive lines of 3 or more characters, removed in one place and
+   added in another, with any shorter or blank lines among or after
+   them. It takes in changed blank lines directly before or after it
+   that a longer block hasn't taken, and counts once it spans 3 lines
+   on either side and its lines hold 20 or more letters and digits,
+   git's threshold for moved code. Each moved line shows an arrow in
+   place of its `+` / `−` mark: `→` on the new side, `←` on the old
+   side. Each arrow is a button, titled with where the code moved,
+   that jumps to the block's counterpart, first showing its file's diff
+   if that file is collapsed, filtered out or rendered. Arrows show in
+   both views with Wrap on or off, cover no code, and stay out of
+   copied code.
 8. **Decision footer**, sticky at the bottom — Cancel, Post to
    GitHub (only when `state.pr` is set and not precommit mode),
    Send Feedback, Approve, plus a "N comments" running counter

@@ -72,10 +72,11 @@ defmodule Meerkat.MovesTest do
     end
 
     test "lines of 3 characters count, shorter ones do not" do
+      # Each has 20 or more letters and digits.
       for {words, expected} <- [
-            {["abc", "abd", "abe"],
-             [[block(:old, 1..3, 0, "b.txt", 1..3)], [block(:new, 1..3, 0, "a.txt", 1..3)]]},
-            {["ab", "ac", "ad"], [[], []]}
+            {~w(abc abd abe abf abg abh abi),
+             [[block(:old, 1..7, 0, "b.txt", 1..7)], [block(:new, 1..7, 0, "a.txt", 1..7)]]},
+            {~w(ab ac ad ae af ag ah ai aj ak), [[], []]}
           ] do
         files = [
           file("a.txt", [hunk(1, 1, lines("-", words))]),
@@ -83,6 +84,205 @@ defmodule Meerkat.MovesTest do
         ]
 
         assert moved(files) == expected
+      end
+    end
+
+    test "two lines and a blank count as moved when git puts the blank on different sides" do
+      # `git diff` shows a block moved to the end of a file with its
+      # blank after it on the old side and before it on the new side.
+      files = [
+        file("a.txt", [
+          hunk(1, 1, [
+            {" ", "const a = 1;"},
+            {"-", "function alpha() { return 1; }"},
+            {"-", "const beta = alpha() + 2;"},
+            {"-", ""},
+            {" ", "const c = 3;"},
+            {"+", ""},
+            {"+", "function alpha() { return 1; }"},
+            {"+", "const beta = alpha() + 2;"}
+          ])
+        ])
+      ]
+
+      [a] = Moves.detect(files)
+
+      assert [
+               %{side: :old, line_start: 2, line_end: 4, to_line_start: 3, to_line_end: 5},
+               %{side: :new, line_start: 3, line_end: 5, to_line_start: 2, to_line_end: 4}
+             ] = Enum.sort_by(a.moved_lines, & &1.side, :desc)
+    end
+
+    test "a blank between two lines is part of the block" do
+      lines = ["alpha line one", "", "beta line two"]
+
+      files = [
+        file("a.txt", [hunk(1, 1, Enum.map(lines, &{"-", &1}))]),
+        file("b.txt", [hunk(1, 1, Enum.map(lines, &{"+", &1}))])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3, to_line_start: 1, to_line_end: 3}] = a.moved_lines
+      assert [%{line_start: 1, line_end: 3, to_line_start: 1, to_line_end: 3}] = b.moved_lines
+    end
+
+    test "a short line inside a block does not split it" do
+      lines = ["alpha line one", "}", "beta line two"]
+
+      files = [
+        file("a.txt", [hunk(1, 1, Enum.map(lines, &{"-", &1}))]),
+        file("b.txt", [hunk(1, 1, Enum.map(lines, &{"+", &1}))])
+      ]
+
+      [a, _b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3}] = a.moved_lines
+    end
+
+    test "a short line that differs between the sides splits a block" do
+      files = [
+        file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "}", "beta line two"]))]),
+        file("b.txt", [hunk(1, 1, lines("+", ["alpha line one", ")", "beta line two"]))])
+      ]
+
+      assert moved(files) == [[], []]
+    end
+
+    test "a changed short line next to a block stays out of it" do
+      files = [
+        file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two", ""]))]),
+        file("b.txt", [hunk(1, 1, lines("+", ["}", "alpha line one", "beta line two", "y"]))])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3, to_line_start: 2, to_line_end: 3}] = a.moved_lines
+      assert [%{line_start: 2, line_end: 3, to_line_start: 1, to_line_end: 3}] = b.moved_lines
+    end
+
+    test "unrelated code sharing `end`, `end` and a blank is not a move" do
+      files = [
+        file("a.ex", [
+          hunk(1, 1, lines("-", ["def foo do", "  if x do", "    1", "  end", "end", ""]))
+        ]),
+        file("b.ex", [
+          hunk(1, 1, lines("+", ["def bar do", "  case y do", "    _ -> 2", "  end", "end", ""]))
+        ])
+      ]
+
+      assert moved(files) == [[], []]
+    end
+
+    test "a block counts once its lines hold 20 letters and digits; other characters don't count" do
+      move = fn contents ->
+        moved([
+          file("a.txt", [hunk(1, 1, lines("-", contents))]),
+          file("b.txt", [hunk(1, 1, lines("+", contents))])
+        ])
+      end
+
+      assert [[_], [_]] = move.(["abcdefghij", "", "klmnopqrst"])
+      assert move.(["abcdefghij", "", "klmnopqrs"]) == [[], []]
+      assert move.(["abcde(){};.-=", "", "fghij(){};.-=+*/&|"]) == [[], []]
+      assert [[_], [_]] = move.(["ünïcödé123", "", "ßtraße4567"])
+      assert move.(["ünïcödé12", "", "ßtraße4567"]) == [[], []]
+      assert [[_], [_]] = move.(["ABCDEFGHIJ", "", "KLMNOPQRST"])
+      assert move.(["ABCDEFGHI•", "", "KLMNOPQRS•"]) == [[], []]
+      # The first and last of each ASCII range count; the bytes either
+      # side of them don't.
+      assert [[_], [_]] = move.(["azAZ09azAZ", "", "09azAZ09az"])
+      assert move.(["azAZ09azA`{@[/:", "", "09azAZ09az"]) == [[], []]
+    end
+
+    test "Latin-1 lines move, counting only their ASCII letters and digits" do
+      move = fn contents ->
+        moved([
+          file("a.txt", [hunk(1, 1, lines("-", contents))]),
+          file("b.txt", [hunk(1, 1, lines("+", contents))])
+        ])
+      end
+
+      assert [[%{line_start: 1, line_end: 3}], [_]] =
+               move.([<<"abcdefghij", 233>>, "", <<"klmnopqrst", 233>>])
+
+      assert move.([<<"abcdefghi", 233>>, "", <<"klmnopqrst", 233>>]) == [[], []]
+    end
+
+    test "one substantial line padded out by short and blank lines is not a move" do
+      # Long enough to pass on letters and digits alone.
+      lines = ["const total = computeTheGrandTotal();", "}", ""]
+
+      files = [
+        file("a.txt", [hunk(1, 1, Enum.map(lines, &{"-", &1}))]),
+        file("b.txt", [hunk(1, 1, Enum.map(lines, &{"+", &1}))])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert a.moved_lines == []
+      assert b.moved_lines == []
+    end
+
+    test "short and blank lines alone are not a move" do
+      lines = ["}", "", "}", "", "}"]
+
+      files = [
+        file("a.txt", [hunk(1, 1, Enum.map(lines, &{"-", &1}))]),
+        file("b.txt", [hunk(1, 1, Enum.map(lines, &{"+", &1}))])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert a.moved_lines == []
+      assert b.moved_lines == []
+    end
+
+    test "two lines next to unchanged lines are not a move" do
+      files = [
+        file("a.txt", [
+          hunk(1, 1, [
+            {" ", ""},
+            {"-", "alpha line one"},
+            {"-", "beta line two"},
+            {" ", ""}
+          ])
+        ]),
+        file("b.txt", [
+          hunk(1, 1, [
+            {" ", ""},
+            {"+", "alpha line one"},
+            {"+", "beta line two"},
+            {" ", ""}
+          ])
+        ])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert a.moved_lines == []
+      assert b.moved_lines == []
+    end
+
+    test "a changed blank away from two lines, or in another file, does not join them" do
+      two = lines("+", ["alpha line one", "beta line two"])
+
+      for removed <- [
+            [
+              file("a.txt", [
+                hunk(1, 1, [
+                  {"-", "alpha line one"},
+                  {"-", "beta line two"},
+                  {" ", "unchanged"},
+                  {"-", ""}
+                ])
+              ])
+            ],
+            [
+              file("z.txt", [hunk(5, 5, [{"-", ""}])]),
+              file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two"]))])
+            ],
+            [
+              file("a.txt", [hunk(1, 1, lines("-", ["alpha line one", "beta line two"]))]),
+              file("z.txt", [hunk(3, 3, [{"-", ""}])])
+            ]
+          ] do
+        files = removed ++ [file("b.txt", [hunk(1, 1, two)])]
+        assert Enum.all?(moved(files), &(&1 == []))
       end
     end
 
@@ -156,6 +356,197 @@ defmodule Meerkat.MovesTest do
                [block(:new, 1..3, 0, "a.txt", 1..3)],
                [block(:new, 1..3, 1, "a.txt", 4..6)]
              ]
+    end
+
+    test "a block ends where the lines stop matching" do
+      files = [
+        file("a.txt", [
+          hunk(1, 1, [
+            {"-", "alpha line one"},
+            {"-", "beta line two"},
+            {"-", "gamma line three"},
+            {"-", "removed only"}
+          ])
+        ]),
+        file("b.txt", [
+          hunk(1, 1, [
+            {"+", "alpha line one"},
+            {"+", "beta line two"},
+            {"+", "gamma line three"},
+            {"+", "added only"}
+          ])
+        ])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3}] = a.moved_lines
+      assert [%{line_start: 1, line_end: 3}] = b.moved_lines
+    end
+
+    test "two lines and a blank on one side only count as moved" do
+      files = [
+        file("a.txt", [
+          hunk(1, 1, [{"-", "alpha line one"}, {"-", "beta line two"}, {"-", ""}])
+        ]),
+        file("b.txt", [hunk(1, 1, [{"+", "alpha line one"}, {"+", "beta line two"}])])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 3, to_line_start: 1, to_line_end: 2}] = a.moved_lines
+      assert [%{line_start: 1, line_end: 2, to_line_start: 1, to_line_end: 3}] = b.moved_lines
+    end
+
+    test "two lines and a blank on the added side only count as moved" do
+      files = [
+        file("a.txt", [hunk(1, 1, [{"-", "alpha line one"}, {"-", "beta line two"}])]),
+        file("b.txt", [
+          hunk(1, 1, [
+            {"+", "unrelated line one"},
+            {"+", "unrelated line two"},
+            {" ", "kept"},
+            {"+", ""},
+            {"+", "alpha line one"},
+            {"+", "beta line two"}
+          ])
+        ])
+      ]
+
+      [a, b] = Moves.detect(files)
+      assert [%{line_start: 1, line_end: 2, to_line_start: 4, to_line_end: 6}] = a.moved_lines
+      assert [%{line_start: 4, line_end: 6, to_line_start: 1, to_line_end: 2}] = b.moved_lines
+    end
+
+    test "a blank between two moved blocks joins only the longer one" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("src.txt", [hunk(1, 1, Enum.map(long ++ [""] ++ short, &{"-", &1}))]),
+        file("one.txt", [hunk(1, 1, Enum.map(long, &{"+", &1}))]),
+        file("two.txt", [hunk(1, 1, Enum.map(short, &{"+", &1}))])
+      ]
+
+      [src, _one, _two] = Moves.detect(files)
+
+      assert [{"one.txt", 1, 5}, {"two.txt", 6, 8}] =
+               src.moved_lines
+               |> Enum.map(&{&1.to_file, &1.line_start, &1.line_end})
+               |> Enum.sort()
+    end
+
+    test "a blank that a longer block takes in still leaves a shorter block that ends in it" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("src.txt", [hunk(1, 1, lines("-", short ++ [""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", [""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ [""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 4..9, 0, "one.txt", 1..6), block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:new, 1..6, 0, "src.txt", 4..9)],
+               [block(:new, 1..4, 1, "src.txt", 1..3)]
+             ]
+    end
+
+    test "a blank that a longer block takes in on the added side still leaves the shorter block" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("one.txt", [hunk(1, 1, lines("-", short ++ [""]))]),
+        file("two.txt", [hunk(1, 1, lines("-", long))]),
+        file("dst.txt", [hunk(1, 1, lines("+", short ++ [""] ++ long))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..4, 1, "dst.txt", 1..3)],
+               [block(:old, 1..5, 0, "dst.txt", 4..9)],
+               [block(:new, 4..9, 0, "two.txt", 1..5), block(:new, 1..3, 1, "one.txt", 1..4)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks to a longer block waits behind longer runs" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six"]
+
+      files = [
+        file("copy.txt", [hunk(1, 1, lines("-", short ++ ["", "unrelated line"]))]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ ["", ""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:old, 3..9, 0, "one.txt", 1..7)],
+               [block(:new, 1..7, 0, "src.txt", 3..9)],
+               [block(:new, 1..4, 1, "copy.txt", 1..3)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks queues behind runs of its new length" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six"]
+
+      files = [
+        file("copy.txt", [hunk(1, 1, lines("-", short ++ ["unrelated line"]))]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ ["", ""]))])
+      ]
+
+      assert moved(files) == [
+               [block(:old, 1..2, 1, "two.txt", 1..4)],
+               [block(:old, 3..9, 0, "one.txt", 1..7)],
+               [block(:new, 1..7, 0, "src.txt", 3..9)],
+               [block(:new, 1..4, 1, "copy.txt", 1..2)]
+             ]
+    end
+
+    test "a run that loses its trailing blanks still goes ahead of shorter runs" do
+      long = ["alpha line one", "beta line two", "gamma line three", "delta line four", "omega"]
+      short = ["epsilon line five", "zeta line six", "eta line seven"]
+
+      files = [
+        file("copy.txt", [
+          hunk(1, 1, lines("-", ["" | Enum.take(short, 2)] ++ ["unrelated line"]))
+        ]),
+        file("src.txt", [hunk(1, 1, lines("-", short ++ ["", ""] ++ long))]),
+        file("one.txt", [hunk(1, 1, lines("+", ["", ""] ++ long))]),
+        file("two.txt", [hunk(1, 1, lines("+", short ++ [""]))])
+      ]
+
+      assert moved(files) == [
+               [],
+               [block(:old, 4..10, 0, "one.txt", 1..7), block(:old, 1..3, 1, "two.txt", 1..4)],
+               [block(:new, 1..7, 0, "src.txt", 4..10)],
+               [block(:new, 1..4, 1, "src.txt", 1..3)]
+             ]
+    end
+
+    test "a longer run of substantial lines wins over one padded out by a blank" do
+      files = [
+        file("padded.txt", [
+          hunk(1, 1, Enum.map(["", "alpha line one", "beta line two"], &{"-", &1}))
+        ]),
+        file("full.txt", [
+          hunk(1, 1, [{"-", "alpha line one"}, {"-", "beta line two"}, {"-", "gamma line three"}])
+        ]),
+        file("dst.txt", [
+          hunk(
+            1,
+            1,
+            Enum.map(["", "alpha line one", "beta line two", "gamma line three"], &{"+", &1})
+          )
+        ])
+      ]
+
+      [padded, _full, dst] = Moves.detect(files)
+      assert padded.moved_lines == []
+      assert [%{line_start: 1, line_end: 4, to_file: "full.txt"}] = dst.moved_lines
     end
 
     test "a run stops at the end of either side's lines" do
