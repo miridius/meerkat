@@ -465,14 +465,7 @@ defmodule Meerkat.ShepherdTest do
       old = Path.join(dir, "key")
       File.mkdir_p!(old)
 
-      {_, 0} =
-        System.cmd("bash", [
-          "-c",
-          ~S(source "$1"; _MA_LINK="$2"; _MA_RUN=r; _ma_retire "$2.finished"),
-          "retire",
-          Path.expand("bin/meerkat-attach"),
-          old
-        ])
+      {_, 0} = attach_shell(~S(_MA_LINK="$2"; _MA_RUN=r; _ma_retire "$2.finished"), old)
 
       refute File.exists?(old <> ".retiring.r")
       assert File.dir?(old) and not match?({:ok, _}, File.read_link(old))
@@ -694,17 +687,14 @@ defmodule Meerkat.ShepherdTest do
       # The caller waits for key.old's pid, then a minute passes, as when its
       # review ran and a 409 sent it back to find the key's next run.
       {out, 0} =
-        System.cmd("bash", [
-          "-c",
+        attach_shell(
           ~S"""
-          source "$1"; _MA_LINK="$2/key"; _MA_DIR="$2/key.old"; _MA_PID_WAIT=0
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.old"
           _ma_server_alive; SECONDS=60; _ma_find_server
           if _ma_server_alive; then echo "waits for $_MA_DIR"; else echo "buries $_MA_DIR"; fi
           """,
-          "pid-wait",
-          Path.expand("bin/meerkat-attach"),
           runs
-        ])
+        )
 
       assert out == "waits for #{runs}/key.new\n"
     end
@@ -718,18 +708,15 @@ defmodule Meerkat.ShepherdTest do
       # meerkat_restore_run_files allows for. This shell, running
       # meerkat-attach, passes for the backend.
       {out, 0} =
-        System.cmd("bash", [
-          "-c",
+        attach_shell(
           ~S"""
-          source "$1"; _MA_DIR="$2"; _MA_PID_WAIT=0
+          _MA_DIR="$2"
           _ma_server_alive; echo $$ >"$2/pid"; _ma_server_alive
           rm "$2/pid"; SECONDS=60
           if _ma_server_alive; then echo waits; else echo buries; fi
           """,
-          "pid-wait",
-          Path.expand("bin/meerkat-attach"),
           run
-        ])
+        )
 
       assert out == "waits\n"
     end
@@ -1293,6 +1280,18 @@ defmodule Meerkat.ShepherdTest do
     File.mkdir_p!(Path.join(runs, emptied))
     File.ln_s!(emptied, Path.join(runs, run_key(dir)))
     runs
+  end
+
+  # Runs `script` in bash with bin/meerkat-attach sourced, so it can call the
+  # launcher's functions, and `arg` as "$2". Returns System.cmd's result.
+  defp attach_shell(script, arg) do
+    System.cmd("bash", [
+      "-c",
+      ~S(source "$1"; ) <> script,
+      "attach",
+      Path.expand("bin/meerkat-attach"),
+      arg
+    ])
   end
 
   # Whether `path` holds `text` within 5 s.

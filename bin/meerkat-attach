@@ -47,7 +47,8 @@ meerkat_attach() {
   _MA_PREV_CALLER=""
   _MA_OFFSET=0
   _MA_QUIET=0
-  _MA_PID_WAIT=0
+  # The run dir whose pid _MA_PID_WAIT is the deadline for.
+  _MA_PID_WAIT_DIR=""
   _MA_TICK=0
   _ma_record_ancestors
   trap '_ma_stopped TERM' TERM
@@ -216,8 +217,6 @@ _ma_relay_log() {
 # review lives until reattached and can outlast an upgrade.
 _ma_find_server() {
   _MA_DIR=""
-  # A run found now gets its own wait for its pid.
-  _MA_PID_WAIT=0
   if [[ -L "$_MA_LINK" ]]; then
     local target
     target="$(readlink "$_MA_LINK")" || return 1
@@ -344,7 +343,6 @@ _ma_start_server() {
   _MA_OWNED=1
   _MA_HELD=1
   _MA_OFFSET=0
-  _MA_PID_WAIT=0
   # fork + setsid take the backend out of the caller's process group and
   # session, so a signal to the caller's whole tree (the app that ran it
   # restarting) leaves the review running.
@@ -367,13 +365,16 @@ _ma_server_alive() {
   # The detached child writes `pid` after the fork returns here.
   if [[ ! -f "$_MA_DIR/pid" ]]; then
     # Wait up to 10 s by the clock, not by polls: under load each poll
-    # takes longer than its sleep. 0 means the wait has not started.
-    ((_MA_PID_WAIT)) || _MA_PID_WAIT=$((SECONDS + 10))
+    # takes longer than its sleep. Each run gets its own wait, and so
+    # does a pid that goes missing after it was seen.
+    if [[ "$_MA_PID_WAIT_DIR" != "$_MA_DIR" ]]; then
+      _MA_PID_WAIT_DIR="$_MA_DIR"
+      _MA_PID_WAIT=$((SECONDS + 10))
+    fi
     ((SECONDS < _MA_PID_WAIT))
     return
   fi
-  # A pid lost later, until the shepherd restores it, gets a fresh wait.
-  _MA_PID_WAIT=0
+  _MA_PID_WAIT_DIR=""
   local pid
   pid="$(<"$_MA_DIR/pid")"
   kill -0 "$pid" 2>/dev/null || return 1
