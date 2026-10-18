@@ -129,7 +129,8 @@ echo "meerkat: building Mix release for $(uname -sm)..."
 # the Hex and rebar3 .github/toolchain.env pins.
 if command -v mise >/dev/null; then
   mise install
-  eval "$(mise env --shell bash)"
+  mise_env=$(mise env --shell bash)
+  eval "$mise_env"
 fi
 bun scripts/setup-toolchain.ts
 

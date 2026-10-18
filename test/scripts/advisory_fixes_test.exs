@@ -69,7 +69,9 @@ defmodule Meerkat.AdvisoryFixesTest do
         exit 0 ;;
       # pnpm checks the lockfile against minimumReleaseAge too.
       "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline")
-        refuse '#{base}/locked-young' ;;
+        refuse '#{base}/locked-young'
+        [[ -e '#{base}/fail-install' ]] && { echo "ERR_PNPM_BROKEN_INSTALL"; exit 1; }
+        exit 0 ;;
       "mix hex.audit")
         if [[ -e '#{base}/hex-fixed' ]]; then echo "No retired or vulnerable packages found."; exit 0; fi
         cat '#{base}/hex-audit'
@@ -77,6 +79,10 @@ defmodule Meerkat.AdvisoryFixesTest do
         exit "$(cat '#{base}/hex-audit-code' 2>/dev/null || echo 0)" ;;
       "mix deps.update "*)
         if [[ -e '#{base}/floor-fixes' ]]; then touch '#{base}/hex-fixed'; fi
+        # With hex-after-floor, the update under the floor leaves that audit.
+        if [[ -z "${HEX_COOLDOWN:-}" && -e '#{base}/hex-after-floor' ]]; then
+          cp '#{base}/hex-after-floor' '#{base}/hex-audit'
+        fi
         exit 0 ;;
     esac
     """)
@@ -142,7 +148,8 @@ defmodule Meerkat.AdvisoryFixesTest do
     File.write!(Path.join(ctx.base, "locked-young"), "vite@8.3.2\n")
 
     assert {out, 0} = fixes(ctx)
-    # Refused under the floor, then once more with the young versions refused.
+    # Refused under the floor, refused again with only vite excluded, then
+    # accepted with the young versions excluded.
     assert length(Enum.filter(log(ctx), &(&1 =~ "update"))) == 3
 
     assert seen(ctx) =~
@@ -182,6 +189,17 @@ defmodule Meerkat.AdvisoryFixesTest do
     assert workspace(ctx) == @workspace
   end
 
+  test "a failure after the floor is lifted refuses, restoring the workspace", ctx do
+    audit(ctx, ["vite"])
+    File.write!(Path.join(ctx.base, "young"), "rollup@5.0.1\n")
+    File.touch!(Path.join(ctx.base, "fail-install"))
+
+    assert {out, 1} = fixes(ctx)
+    assert out =~ "ERR_PNPM_BROKEN_INSTALL"
+    assert seen(ctx) =~ "minimumReleaseAgeExclude"
+    assert workspace(ctx) == @workspace
+  end
+
   test "an unreadable pnpm audit refuses", ctx do
     File.write!(Path.join(ctx.base, "audit.json"), "ERR_PNPM_AUDIT_BAD_RESPONSE")
 
@@ -209,6 +227,27 @@ defmodule Meerkat.AdvisoryFixesTest do
     assert {out, 0} = fixes(ctx)
     assert out =~ "plug, bandit had advisories; updated under the 24h floor."
     assert "mix deps.update plug bandit HEX_COOLDOWN=0d" in log(ctx)
+  end
+
+  test "the Hex cooldown is lifted only for packages a fix 24h old leaves", ctx do
+    hex_audit(ctx, """
+    Advisories:
+      plug 1.18.0 - GHSA-aaaa: Header injection
+      bandit 1.8.0 - GHSA-bbbb: Request smuggling
+    """)
+
+    File.write!(
+      Path.join(ctx.base, "hex-after-floor"),
+      "Advisories:\n  bandit 1.8.0 - GHSA-bbbb: Request smuggling\n"
+    )
+
+    assert {out, 0} = fixes(ctx)
+
+    assert Enum.filter(log(ctx), &(&1 =~ "deps.update")) ==
+             ["mix deps.update plug bandit", "mix deps.update bandit HEX_COOLDOWN=0d"]
+
+    assert out =~ "plug had advisories; updated to fixes 24h old."
+    assert out =~ "bandit had advisories; updated under the 24h floor."
   end
 
   test "only retired Hex packages update nothing", ctx do

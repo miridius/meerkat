@@ -10,7 +10,8 @@
 //   bun scripts/age-excludes.ts check   lists each stale entry and exits 1
 //                                       if any (scripts/outdated.sh)
 //
-// Both exit 2, saying why, when a publish time cannot be read.
+// Both exit 2, saying why, when an entry is not an exact name@version or
+// its publish time cannot be read.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
@@ -20,7 +21,7 @@ const DAY_MS = 86_400_000;
 const COMMENT =
 	"# Releases under 24h old taken to fix an advisory; scripts/age-excludes.ts\n# drops each once it is 24h old.\n";
 const BLOCK =
-	/\n*(?:# Releases under 24h old taken[^\n]*\n# drops each[^\n]*\n)?minimumReleaseAgeExclude:\n(?: {2}- [^\n]*(?:\n|$))*/;
+	/^(?:# Releases under 24h old taken[^\n]*\n# drops each[^\n]*\n)?minimumReleaseAgeExclude:\n(?: {2}- [^\n]*(?:\n|$))*/m;
 
 export function readExcludes(text = readFileSync(WORKSPACE, "utf8")): string[] {
 	const m = text.match(/^minimumReleaseAgeExclude:\n((?: {2}- [^\n]*(?:\n|$))*)/m);
@@ -49,11 +50,34 @@ export function youngIn(output: string): string[] {
 	return [...plain.matchAll(/((?:@[\w.-]+\/)?[\w.-]+@\d\S*) was published at/g)].map((m) => m[1]);
 }
 
+// Thrown when untilAccepted's command fails.
+export class Refusal extends Error {}
+
+// untilAccepted CMD WORKSPACE EXCLUDES: runs CMD with the workspace TEXT
+// WORKSPACE excluding EXCLUDES and each version CMD refuses as under
+// minimumReleaseAge, adding those a round at a time, and returns the
+// versions it added. The rounds are bounded by the packages CMD pulls in.
+export function untilAccepted(cmd: string[], workspace: string, excludes: string[]): string[] {
+	const added: string[] = [];
+	for (let round = 0; round < 20; round++) {
+		writeFileSync(WORKSPACE, withExcludes(workspace, [...excludes, ...added]));
+		const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
+		const output = `${r.stdout.toString()}${r.stderr.toString()}`;
+		if (r.exitCode === 0) return added;
+		const young = youngIn(output).filter((v) => !excludes.includes(v) && !added.includes(v));
+		if (young.length === 0) throw new Refusal(`${cmd.join(" ")} failed:\n${output}`);
+		added.push(...young);
+	}
+	throw new Refusal(`${cmd.join(" ")} kept refusing young versions: ${added.join(", ")}`);
+}
+
 class Unreadable extends Error {}
 
 function published(entry: string): Date {
 	const at = entry.lastIndexOf("@");
 	const [name, version] = [entry.slice(0, at), entry.slice(at + 1)];
+	if (at <= 0 || !/^\d/.test(version))
+		throw new Unreadable(`${entry} is not an exact name@version entry`);
 	const view = Bun.spawnSync(["pnpm", "view", name, "time", "--json"], {
 		stdout: "pipe",
 		stderr: "pipe",
@@ -63,8 +87,10 @@ function published(entry: string): Date {
 		if (view.exitCode === 0) times = JSON.parse(view.stdout.toString());
 	} catch {}
 	const date = new Date(String(times[version]));
-	if (at <= 0 || Number.isNaN(date.getTime()))
-		throw new Unreadable(`could not read when the registry published ${entry}`);
+	if (Number.isNaN(date.getTime()))
+		throw new Unreadable(
+			`could not read when the registry published ${entry} (pnpm view exit ${view.exitCode}):\n${view.stderr.toString().trim()}`,
+		);
 	return date;
 }
 

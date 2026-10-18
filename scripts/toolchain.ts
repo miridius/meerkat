@@ -4,9 +4,9 @@
 // a workflow's `uses: owner/repo@sha # tag`, must be the
 // newest stable release at least 24h old. When a published advisory covers
 // that release, the pin must instead be the lowest newer release that no
-// advisory covers, however young. While there is none, the pin stays on
-// that release, and the check passes it with a note that an advisory
-// covers it.
+// advisory covers, however young. While there is none, the pin stays
+// where it is if no advisory covers it, or else moves to that release, and
+// the check passes it with a note.
 //
 //   bun scripts/toolchain.ts check   lists each pin that is off target and
 //                                    exits 1 if any is (scripts/outdated.sh)
@@ -19,7 +19,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { readExcludes, WORKSPACE, withExcludes, youngIn } from "./age-excludes";
+import { readExcludes, untilAccepted, WORKSPACE } from "./age-excludes";
 
 const DAY_MS = 86_400_000;
 const WORKFLOWS = [".github/workflows/ci.yml", ".github/workflows/audit.yml"];
@@ -79,34 +79,40 @@ export function inRange(version: string, range: string): boolean {
 }
 
 // An advisory's vulnerable range for one package, with the versions it
-// lists as patched.
-export type Vulnerable = { range: string; patched: string[] };
+// lists as patched, and whether the advisory gives the package one range
+// per release line, as Erlang/OTP does: more than one with no upper bound.
+export type Vulnerable = { range: string; patched: string[]; perLine: boolean };
 
 const major = (version: string) => parts(version).nums[0];
 
 // affects VULNERABLE VERSION: whether VERSION is vulnerable. A range with
-// an upper bound says so alone. One without, as Erlang/OTP writes them
-// (">= 17.0", patched "29.1.2, 28.5.0.8"), covers a release line, by
-// major, from its patched version on, or newer than every line it names.
-export function affects({ range, patched }: Vulnerable, version: string): boolean {
+// an upper bound says so alone, as does one with no upper bound and no
+// patched version unless it is one of an advisory's per-line ranges. One
+// without, as Erlang/OTP writes them (">= 17.0", patched "29.1.2,
+// 28.5.0.8"), covers each release line, by major, up to the newest it
+// names, except from a line's patched version on.
+export function affects({ range, patched, perLine }: Vulnerable, version: string): boolean {
 	if (!inRange(version, range)) return false;
 	if (/<|≤/.test(range)) return true;
+	if (patched.length === 0 && !perLine) return true;
 	const named = [...patched, ...[...range.matchAll(/\d[\w.+-]*/g)].map((m) => m[0])];
 	if (named.every((v) => major(v) < major(version))) return false;
 	return !patched.some((p) => major(p) === major(version) && compare(version, p) >= 0);
 }
 
 export type Target =
-	| { kind: "mature" | "fixes" | "unfixed"; version: string }
+	| { kind: "mature" | "fixes" | "unfixed" | "kept"; version: string }
 	| null;
 
-// target RELEASES VULNERABLE: the newest release at least 24h old or,
-// when an advisory covers it, the lowest newer release none covers, or
-// that release still, "unfixed", when every newer one is covered. Null
-// when no release is 24h old.
+// target RELEASES VULNERABLE CURRENT: the newest release at least 24h old
+// or, when an advisory covers it, the lowest newer release none covers.
+// When every newer one is covered too, the CURRENT pin, "kept", if no
+// advisory covers it, or else that newest release, "unfixed". Null when
+// no release is 24h old.
 export function target(
 	releases: Release[],
 	vulnerable: Vulnerable[],
+	current: string,
 	at = now,
 ): Target {
 	const sorted = [...releases].sort((a, b) => compare(b.version, a.version));
@@ -117,9 +123,10 @@ export function target(
 	const fix = sorted
 		.filter((r) => compare(r.version, mature.version) > 0 && !affected(r.version))
 		.at(-1);
-	return fix
-		? { kind: "fixes", version: fix.version }
-		: { kind: "unfixed", version: mature.version };
+	if (fix) return { kind: "fixes", version: fix.version };
+	return affected(current)
+		? { kind: "unfixed", version: mature.version }
+		: { kind: "kept", version: current };
 }
 
 // -------------------------------------------------------------------- http
@@ -232,7 +239,7 @@ function ranges(advisories: unknown[], name: string): Vulnerable[] {
 	return advisories.flatMap((a) => {
 		const adv = a as { withdrawn_at?: string; vulnerabilities?: unknown[] };
 		if (adv.withdrawn_at) return [];
-		return (adv.vulnerabilities ?? []).flatMap((v) => {
+		const vulns = (adv.vulnerabilities ?? []).flatMap((v) => {
 			const vuln = v as {
 				package?: { name?: string };
 				vulnerable_version_range?: string;
@@ -248,11 +255,13 @@ function ranges(advisories: unknown[], name: string): Vulnerable[] {
 				? [{ range: vuln.vulnerable_version_range, patched }]
 				: [];
 		});
+		const open = vulns.filter((v) => !/<|≤/.test(v.range));
+		return vulns.map((v) => ({ ...v, perLine: open.length > 1 }));
 	});
 }
 
-// builds URL PATTERN: the names in a list of builds, one per line (CSV
-// or space-separated), that match PATTERN.
+// builds URL PATTERN: the matches of PATTERN against the name opening each
+// line of a list of builds (CSV or space-separated).
 async function builds(url: string, pattern: RegExp): Promise<RegExpMatchArray[]> {
 	return (await text(url)).split("\n").flatMap((line) => {
 		const m = line.split(/[ ,]/)[0]?.match(pattern);
@@ -263,16 +272,21 @@ async function builds(url: string, pattern: RegExp): Promise<RegExpMatchArray[]>
 // Erlang/OTP and Elixir releases are dated by their GitHub releases, not
 // by the build lists, whose dates a rebuild of an old release resets.
 
-// Elixir releases Hex builds, with the OTP major of each build.
-async function elixirReleases(): Promise<(Release & { otp: number })[]> {
-	const [released, built] = await Promise.all([
-		githubReleases("elixir-lang/elixir", /^v(\d+\.\d+\.\d+)$/),
-		builds("https://builds.hex.pm/builds/elixir/builds.txt", /^v(\d+\.\d+\.\d+)-otp-(\d+)$/),
-	]);
-	return built.flatMap(([, version, otp]) => {
-		const r = released.find((x) => x.version === version);
-		return r ? [{ ...r, otp: Number(otp) }] : [];
-	});
+// Elixir releases Hex builds, with the OTP major of each build. Fetched
+// once per run, as both the OTP and the Elixir pin read them.
+let elixirPromise: Promise<(Release & { otp: number })[]> | undefined;
+function elixirReleases(): Promise<(Release & { otp: number })[]> {
+	elixirPromise ??= (async () => {
+		const [released, built] = await Promise.all([
+			githubReleases("elixir-lang/elixir", /^v(\d+\.\d+\.\d+)$/),
+			builds("https://builds.hex.pm/builds/elixir/builds.txt", /^v(\d+\.\d+\.\d+)-otp-(\d+)$/),
+		]);
+		return built.flatMap(([, version, otp]) => {
+			const r = released.find((x) => x.version === version);
+			return r ? [{ ...r, otp: Number(otp) }] : [];
+		});
+	})();
+	return elixirPromise;
 }
 
 // OTP releases built for the runners CI uses, macOS arm64 (ci.yml) and
@@ -553,25 +567,11 @@ function pnpmPin(): Pin {
 				),
 			);
 			const workspace = readFile(WORKSPACE);
-			const excludes = readExcludes(workspace);
-			for (let round = 0; round < 3; round++) {
-				writeFileSync(WORKSPACE, withExcludes(workspace, excludes));
-				const lock = Bun.spawn(["pnpm", "install", "--lockfile-only", "--ignore-scripts"], {
-					stdout: "pipe",
-					stderr: "pipe",
-				});
-				const [out, err, code] = await Promise.all([
-					new Response(lock.stdout).text(),
-					new Response(lock.stderr).text(),
-					lock.exited,
-				]);
-				if (code === 0) return;
-				const young = youngIn(`${out}${err}`).filter((v) => !excludes.includes(v));
-				if (young.length === 0)
-					throw new Error(`pnpm install --lockfile-only failed:\n${out}${err}`);
-				excludes.push(...young);
-			}
-			throw new Error("pnpm install --lockfile-only kept refusing young versions");
+			untilAccepted(
+				["pnpm", "install", "--lockfile-only", "--ignore-scripts"],
+				workspace,
+				readExcludes(workspace),
+			);
 		},
 	};
 }
@@ -644,7 +644,7 @@ async function judge(pin: Pin): Promise<Verdict> {
 		pin.advisories(),
 		pin.verify?.() ?? Promise.resolve([]),
 	]);
-	const t = target(releases, advisories);
+	const t = target(releases, advisories, pin.current);
 	if (!t) throw new Unreadable(`${pin.name}: no release is 24h old`);
 	return { pin, target: t, problems };
 }
@@ -683,7 +683,9 @@ async function main(mode: string): Promise<number> {
 				? " (fixes an advisory on the newest release 24h old)"
 				: t.kind === "unfixed"
 					? " (an advisory covers it; no release fixes it yet)"
-					: "";
+					: t.kind === "kept"
+						? " (an advisory covers the newest release 24h old; no release fixes it yet)"
+						: "";
 		if (pin.current === want && problems.length === 0) {
 			if (mode === "check") console.log(`current: ${pin.name} ${want}${why}`);
 			continue;

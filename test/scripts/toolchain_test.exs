@@ -170,6 +170,12 @@ defmodule Meerkat.ToolchainTest do
       assert out =~ "current: GNU bash 5.3.2"
     end
 
+    test "of GNU bash 24h old, not yet patched, becomes the target", ctx do
+      bash(ctx, "5.3", [{1, @old}, {2, @old}], {"5.4", @old})
+      assert {out, 1} = toolchain(ctx, "check")
+      assert out =~ "BLOCKED: GNU bash is pinned to 5.3.2; the target is 5.4.0"
+    end
+
     test "in testing is never the target", ctx do
       github(ctx, "erlang/rebar3", [{"3.27.3", @old}, {"3.28.0", @old, true}])
       elixir(ctx, [{"1.20.4-otp-29", @old}, {"1.21.0-rc.0-otp-29", @old}])
@@ -212,10 +218,30 @@ defmodule Meerkat.ToolchainTest do
     end
 
     test "with no release that fixes it leaves the target alone, noting the advisory", ctx do
-      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.0")
-      assert {out, 0} = toolchain(ctx, "check")
-      assert out =~ "current: bun 1.4.3 (an advisory covers it; no release fixes it yet)"
+      for range <- [">= 1.0", ">= 0", ["< 0.9.0", ">= 0.9.0"]] do
+        repo_advisory(ctx, "oven-sh/bun", "bun", range)
+        assert {out, 0} = toolchain(ctx, "check")
+        assert out =~ "current: bun 1.4.3 (an advisory covers it; no release fixes it yet)"
+      end
     end
+  end
+
+  test "an unfixed advisory on the newest release 24h old keeps a pin it does not cover", ctx do
+    github(ctx, "oven-sh/bun", [
+      {"bun-v1.4.3", @old},
+      {"bun-v1.4.4", @old},
+      {"bun-v1.4.5", hours_ago(1)}
+    ])
+
+    repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.4.4")
+
+    assert {out, 0} = toolchain(ctx, "check")
+
+    assert out =~
+             "current: bun 1.4.3 (an advisory covers the newest release 24h old; no release fixes it yet)"
+
+    assert {_, 0} = toolchain(ctx, "bump")
+    assert tools(ctx) =~ "\nbun 1.4.3\n"
   end
 
   # Erlang/OTP writes ranges with no upper bound, naming the fix on each
@@ -225,9 +251,9 @@ defmodule Meerkat.ToolchainTest do
       otp(ctx, [{"29.1.2", @old}, {"29.1.3", hours_ago(2)}, {"29.2.0", hours_ago(1)}])
 
       otp_advisories(ctx, [
-        {">= 18.0", "29.1.3, 28.5.0.9, 27.3.4.20"},
-        {">= 24.3.4.15", ""},
-        {">= 17.0", "23.2.3"}
+        [{">= 18.0", "29.1.3, 28.5.0.9, 27.3.4.20"}],
+        [{">= 26.2.1", "26.2.5.12, 27.3.4"}, {">= 24.3.4.15", ""}],
+        [{">= 17.0", "23.2.3"}]
       ])
 
       assert {out, 1} = toolchain(ctx, "check")
@@ -244,13 +270,21 @@ defmodule Meerkat.ToolchainTest do
       otp(ctx, [{"29.1.2", @old}, {"29.1.3", hours_ago(1)}])
 
       otp_advisories(ctx, [
-        {">= 18.0", "29.1.2, 28.5.0.8"},
-        {">= 24.3.4.15", ""},
-        {">= 17.0", "23.2.3"}
+        [{">= 18.0", "29.1.2, 28.5.0.8"}],
+        [{">= 26.2.1", "26.2.5.12, 27.3.4"}, {">= 24.3.4.15", ""}],
+        [{">= 17.0", "23.2.3"}]
       ])
 
       assert {out, 0} = toolchain(ctx, "check")
       assert out =~ "current: Erlang/OTP 29.1.2\n"
+    end
+
+    test "with one open range and no patched version covers every newer line", ctx do
+      otp(ctx, [{"29.1.2", @old}])
+      otp_advisories(ctx, [[{">= 17.0", ""}]])
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: Erlang/OTP 29.1.2 (an advisory covers it; no release fixes it yet)"
     end
   end
 
@@ -607,35 +641,39 @@ defmodule Meerkat.ToolchainTest do
     "HTTP/2 200\r\nlast-modified: #{Calendar.strftime(dt, "%a, %d %b %Y %H:%M:%S GMT")}\r\n\r\n"
   end
 
-  defp repo_advisory(ctx, repo, name, range, withdrawn \\ nil) do
+  # One advisory, with a row for each of RANGES (a range or a list).
+  defp repo_advisory(ctx, repo, name, ranges, withdrawn \\ nil) do
     serve(
       ctx,
       "https://api.github.com/repos/#{repo}/security-advisories?state=published&per_page=100",
       Jason.encode!([
         %{
           "withdrawn_at" => withdrawn,
-          "vulnerabilities" => [
-            %{"package" => %{"name" => name}, "vulnerable_version_range" => range}
-          ]
+          "vulnerabilities" =>
+            for range <- List.wrap(ranges) do
+              %{"package" => %{"name" => name}, "vulnerable_version_range" => range}
+            end
         }
       ])
     )
   end
 
-  defp otp_advisories(ctx, entries) do
+  # Each advisory is a list of {range, patched_versions} rows for OTP.
+  defp otp_advisories(ctx, advisories) do
     serve(
       ctx,
       "https://api.github.com/repos/erlang/otp/security-advisories?state=published&per_page=100",
       Jason.encode!(
-        for {range, patched} <- entries do
+        for rows <- advisories do
           %{
-            "vulnerabilities" => [
-              %{
-                "package" => %{"name" => "OTP"},
-                "vulnerable_version_range" => range,
-                "patched_versions" => patched
-              }
-            ]
+            "vulnerabilities" =>
+              for {range, patched} <- rows do
+                %{
+                  "package" => %{"name" => "OTP"},
+                  "vulnerable_version_range" => range,
+                  "patched_versions" => patched
+                }
+              end
           }
         end
       )

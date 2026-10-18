@@ -56,6 +56,16 @@ defmodule Meerkat.AgeExcludesTest do
     assert workspace(ctx) == @workspace
   end
 
+  test "prune keeps the keys around a list that is not last", ctx do
+    excluding(ctx, ["@esbuild/darwin-arm64@0.30.1", "vite@8.3.2"])
+    File.write!(Path.join(ctx.work, "pnpm-workspace.yaml"), workspace(ctx) <> "allowBuilds: {}\n")
+
+    assert {_, 0} = run(ctx, "prune")
+
+    assert workspace(ctx) ==
+             @workspace <> "\nallowBuilds: {}\n" <> @block <> ~s(  - "vite@8.3.2"\n)
+  end
+
   test "check fails the gate on an entry 24h old", ctx do
     excluding(ctx, ["vite@8.3.1", "vite@8.3.2"])
 
@@ -84,6 +94,14 @@ defmodule Meerkat.AgeExcludesTest do
     end
 
     assert workspace(ctx) == @workspace <> @block <> ~s(  - "vite@9.0.0"\n)
+  end
+
+  test "an entry that is not an exact name@version fails closed, naming it", ctx do
+    for entry <- ["vite", "@types/*"] do
+      excluding(ctx, [entry])
+      assert {out, 2} = run(ctx, "check")
+      assert out =~ "#{entry} is not an exact name@version entry"
+    end
   end
 
   defp hours_ago(h),

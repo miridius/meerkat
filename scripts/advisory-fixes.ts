@@ -1,9 +1,10 @@
 // The pre-commit bump's exception to the 24h release-age floor: a locked
 // Hex or JS dependency that an audit finds a published advisory against
-// is updated under the floor and, when the audit still finds it, again
-// with the floor lifted for it, so whatever release that update resolves
-// is taken however young it is. scripts/bump-deps.sh runs this after its
-// own updates; check.sh's audits then confirm the fix.
+// is updated under the floor and, when that update needs a release under
+// 24h old or the audit still finds it, again with the floor lifted for
+// it, so whatever release that update resolves is taken however young it
+// is. scripts/bump-deps.sh runs this after its own updates; check.sh's
+// audits then confirm the fix.
 //
 // - JS: each package `pnpm audit` names is updated (`--latest` when a
 //   workspace manifest depends on it directly). The floor is lifted with
@@ -20,7 +21,7 @@
 // Exits 1, saying why, when an audit cannot be read or an update fails.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { readExcludes, WORKSPACE, withExcludes, youngIn } from "./age-excludes";
+import { Refusal, readExcludes, untilAccepted, WORKSPACE, youngIn } from "./age-excludes";
 
 const MANIFESTS = ["package.json", "assets/package.json"];
 
@@ -34,8 +35,6 @@ function run(cmd: string[], env: Record<string, string> = {}) {
 }
 
 // Thrown rather than exiting, so fixJs restores the workspace.
-class Refusal extends Error {}
-
 function fail(message: string): never {
 	throw new Refusal(message);
 }
@@ -63,25 +62,6 @@ function direct(name: string): boolean {
 			(deps) => deps && name in deps,
 		);
 	});
-}
-
-// untilAccepted CMD EXCLUDES: runs CMD with the workspace excluding
-// EXCLUDES and each version CMD refuses as under minimumReleaseAge, adding
-// those a round at a time, and returns the versions it added. The rounds
-// are bounded by the packages the fix pulls in.
-function untilAccepted(cmd: string[], workspace: string, excludes: string[]): string[] {
-	const added: string[] = [];
-	for (let round = 0; round < 20; round++) {
-		writeFileSync(WORKSPACE, withExcludes(workspace, [...excludes, ...added]));
-		const r = run(cmd);
-		if (r.code === 0) return added;
-		const young = youngIn(`${r.out}${r.err}`).filter(
-			(v) => !excludes.includes(v) && !added.includes(v),
-		);
-		if (young.length === 0) fail(`${cmd.join(" ")} failed:\n${r.out}${r.err}`);
-		added.push(...young);
-	}
-	fail(`${cmd.join(" ")} kept refusing young versions: ${added.join(", ")}`);
 }
 
 function fixJs(name: string) {

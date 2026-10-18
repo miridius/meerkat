@@ -16,7 +16,7 @@ const prefix = process.argv[2] ?? "";
 async function published(name: string, version: string): Promise<Date | undefined> {
 	const proc = Bun.spawn(["curl", "-sSf", "--max-time", "10", `https://hex.pm/api/packages/${name}`], {
 		stdout: "pipe",
-		stderr: "ignore",
+		stderr: "inherit",
 	});
 	const [body, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 	if (code !== 0) return undefined;

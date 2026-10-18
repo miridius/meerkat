@@ -65,6 +65,37 @@ defmodule Meerkat.InstallScriptTest do
     assert File.exists?(ctx.marker)
   end
 
+  describe "a rebuild with mise" do
+    setup ctx do
+      executable(ctx.launcher, "#!/bin/sh\n")
+      shim = Path.join(Path.dirname(ctx.share), "shim")
+      pinned = Path.join(Path.dirname(ctx.share), "pinned")
+      pinned_marker = Path.join(pinned, "mix-ran")
+      executable(Path.join(pinned, "mix"), "#!/bin/sh\ntouch '#{pinned_marker}'\nexit 99\n")
+      %{mise: Path.join(shim, "mise"), pinned: pinned, pinned_marker: pinned_marker}
+    end
+
+    test "builds on the tools mise pins", ctx do
+      executable(
+        ctx.mise,
+        ~s(#!/bin/sh\n[ "$1" = env ] && echo 'export PATH="#{ctx.pinned}:$PATH"'\nexit 0\n)
+      )
+
+      assert {_, status} = install(ctx)
+      assert status != 0
+      assert File.exists?(ctx.pinned_marker)
+      refute File.exists?(ctx.marker)
+    end
+
+    test "stops when mise cannot give its environment", ctx do
+      executable(ctx.mise, ~s(#!/bin/sh\n[ "$1" = env ] && exit 3\nexit 0\n))
+
+      assert {_, 3} = install(ctx)
+      refute File.exists?(ctx.pinned_marker)
+      refute File.exists?(ctx.marker)
+    end
+  end
+
   defp install(ctx) do
     System.cmd("bash", [Path.join(ctx.repo, "scripts/install.sh")],
       env: ctx.env,
