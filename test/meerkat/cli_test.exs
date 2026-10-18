@@ -634,10 +634,9 @@ defmodule Meerkat.CLITest do
       assert is_binary(config[:secret_key_base])
     end
 
-    # HTTP/2 stays off as hardening against flaws like
-    # GHSA-69m6-wcv4-rwcf, fixed in Bandit 1.13.0. Over a real socket, the server must close a connection
-    # that opens with the HTTP/2 preface rather than answer it with
-    # HTTP/2 SETTINGS.
+    # HTTP/2 stays off; `Meerkat.CLI` says why. Over a real socket, the
+    # server must close a connection that opens with the HTTP/2 preface
+    # rather than answer it with HTTP/2 SETTINGS.
     test "the HTTP options it serves with refuse HTTP/2" do
       http = CLI.endpoint_config_for_test(0)[:http]
       server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
