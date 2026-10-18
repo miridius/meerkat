@@ -9,6 +9,15 @@ packages:
 # within that window.
 minimumReleaseAge: 1440
 
+# pnpm 12 fails an install over a build script it is not told to allow
+# or deny. None of these is needed: esbuild's binary comes from a
+# prebuilt optional dependency, the `prepare` script already runs
+# `lefthook install`, and svelte-preprocess's only prints a reminder.
+allowBuilds:
+  esbuild: false
+  lefthook: false
+  svelte-preprocess: false
+
 # The Clojure packs import these without declaring them, so they
 # resolved only when pnpm happened to hoist a copy; an install over an
 # older node_modules can leave none and break the asset build.

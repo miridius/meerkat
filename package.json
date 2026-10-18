@@ -2,7 +2,7 @@
   "name": "meerkat-e2e",
   "private": true,
   "version": "1.0.0",
-  "packageManager": "pnpm@10.29.2",
+  "packageManager": "pnpm@12.14.0",
   "scripts": {
     "test": "bash scripts/mix-test.sh && (cd assets && bun test) && bun test tests/e2e/lib && bun run test:e2e",
     "test:e2e": "MEERKAT_BIN=$PWD/bin/meerkat-beam playwright test",

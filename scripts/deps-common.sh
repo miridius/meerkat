@@ -133,10 +133,11 @@ npm_latest() {
 # hex_outdated: sets HEX_OUT to the `mix hex.outdated` report and
 # HEX_ROWS to one "name latest status" line per Hex dependency behind
 # latest. status is "possible", "not" when a requirement (in mix.exs
-# or another dependency) excludes latest, or "cooldown" when the
-# requirements admit latest but it is still in the configured Hex
-# cooldown window and so not yet installable. Hex marks no cooldown on a
-# release the requirements exclude, so that one is "not".
+# or another dependency) excludes latest, or "cooldown" when latest is
+# under the 24h Hex cooldown mix.exs sets, and so not yet installable.
+# Hex marks the cooldown only on a release the requirements admit, so
+# scripts/hex-cooldown.ts decides it for the rest by hex.pm's publish
+# time.
 hex_outdated() {
   local rc
   # hex.outdated exits 1 when updates exist.
@@ -161,4 +162,5 @@ hex_outdated() {
     echo "$prefix mix hex.outdated produced no readable dependency table (exit $rc) — cannot check Hex deps."
     return 1
   fi
+  HEX_ROWS=$(bun scripts/hex-cooldown.ts "$prefix" <<<"$HEX_ROWS") || return 1
 }

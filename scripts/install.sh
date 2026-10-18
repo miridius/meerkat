@@ -123,6 +123,17 @@ fi
 
 echo "meerkat: building Mix release for $(uname -sm)..."
 
+# The release bundles the Erlang it is built with: with mise, the one
+# .tool-versions pins, put first on PATH whether or not mise is activated
+# in the user's shell; without it, whatever is on PATH. Either way with
+# the Hex and rebar3 .github/toolchain.env pins.
+if command -v mise >/dev/null; then
+  mise install
+  mise_env=$(mise env --shell bash)
+  eval "$mise_env"
+fi
+bun scripts/setup-toolchain.ts
+
 # Fetch Elixir deps first: assets/package.json pulls phoenix /
 # live_svelte / phoenix_vite JS out of deps/ via `file:` links, so
 # deps/ must exist before `pnpm install` runs.

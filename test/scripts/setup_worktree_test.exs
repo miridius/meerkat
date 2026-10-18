@@ -1,7 +1,7 @@
 defmodule Meerkat.SetupWorktreeHookTest do
   # Runs .claude/hooks/setup-worktree.sh against a temp checkout, with stub
-  # `mix` and `pnpm` on PATH that record each call, sleep a chosen time
-  # and exit with a chosen status.
+  # `mix`, `pnpm`, `mise` and `bun` on PATH that record each call, sleep a
+  # chosen time and exit with a chosen status.
   use ExUnit.Case, async: true
 
   @script Path.expand(".claude/hooks/setup-worktree.sh")
@@ -29,7 +29,10 @@ defmodule Meerkat.SetupWorktreeHookTest do
     # A successful stub leaves behind what the real install would.
     installs = %{
       "mix" => "mkdir -p deps/bandit deps/muex/.git",
-      "pnpm" => "mkdir -p node_modules && touch node_modules/.modules.yaml"
+      "pnpm" => "mkdir -p node_modules && touch node_modules/.modules.yaml",
+      # `mise ls --current --missing` lists what the next install fetches.
+      "mise" => ~s([ "$1" = install ] && rm -f '#{dir}/mise-missing'),
+      "bun" => ":"
     }
 
     for {tool, install} <- installs do
@@ -37,6 +40,10 @@ defmodule Meerkat.SetupWorktreeHookTest do
 
       File.write!(stub, """
       #!/usr/bin/env bash
+      if [ "#{tool} $*" = "mise ls --current --missing" ]; then
+        [ -e '#{dir}/mise-ls-fails' ] && exit 1
+        cat '#{dir}/mise-missing' 2>/dev/null; exit 0
+      fi
       echo "#{tool} $*" >> '#{dir}/calls'
       echo "#{tool} output"
       sleep "$(cat '#{dir}/#{tool}-sleep' 2>/dev/null || echo 0)"
@@ -89,6 +96,40 @@ defmodule Meerkat.SetupWorktreeHookTest do
              "mix deps.get",
              "pnpm install --frozen-lockfile --prefer-offline"
            ]
+  end
+
+  describe "a checkout pinning its tools in .tool-versions" do
+    setup ctx do
+      set_up(ctx.checkout)
+      File.write!(Path.join(ctx.checkout, ".tool-versions"), "erlang 29.1.2\n")
+      File.mkdir_p!(Path.join(ctx.checkout, "scripts"))
+      File.write!(Path.join(ctx.checkout, "scripts/setup-toolchain.ts"), "")
+    end
+
+    test "installs the tools mise lacks before Hex, rebar3 and the deps", ctx do
+      File.write!(Path.join(ctx.dir, "mise-missing"), "erlang 29.1.2 (missing)\n")
+      File.rm_rf!(Path.join(ctx.checkout, "deps"))
+
+      assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
+
+      assert calls(ctx.dir) == [
+               "mise install",
+               "bun scripts/setup-toolchain.ts",
+               "mix deps.get"
+             ]
+    end
+
+    test "runs mise install when mise cannot list what is missing", ctx do
+      File.touch!(Path.join(ctx.dir, "mise-ls-fails"))
+
+      assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
+      assert calls(ctx.dir) == ["mise install", "bun scripts/setup-toolchain.ts"]
+    end
+
+    test "with every tool installed runs only the quick Hex and rebar3 check", ctx do
+      assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
+      assert calls(ctx.dir) == ["bun scripts/setup-toolchain.ts"]
+    end
   end
 
   test "a git dep without its nested repo fetches Mix deps", ctx do
