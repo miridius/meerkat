@@ -176,8 +176,9 @@ async function curl(
 	url: string,
 	opts: { head?: boolean } = {},
 ): Promise<Uint8Array> {
-	// Gives up only when a transfer stays under 1 KiB/s for a minute: a
-	// release archive can take minutes on a slow link.
+	// Gives up when connecting takes 30s or a transfer stays under 1 KiB/s
+	// for a minute, not after a fixed time: a release archive can take
+	// minutes on a slow link.
 	const args = [
 		"curl",
 		"-sSfL",

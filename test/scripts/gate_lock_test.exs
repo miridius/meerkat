@@ -103,9 +103,9 @@ defmodule Meerkat.GateLockTest do
     later = gate_lock_port(ctx.repo, "echo later ran")
     assert_receive {^later, {:data, {:eol, @waiting}}}, 5_000
 
+    # One slot is free, so if `later` sorted first it would take it.
     Port.close(earlier)
     assert_receive {^old_bash, {:data, {:eol, "old bash ran"}}}, 5_000
-    refute_ran([later])
   end
 
   # A gate on the script from before tickets waits for the `queue` lock,
@@ -123,17 +123,20 @@ defmodule Meerkat.GateLockTest do
     assert_receive {^old, {:data, {:eol, "old queued"}}}, 5_000
   end
 
-  test "a gate that stops being the head of the tickets lets the old script's lock go", ctx do
+  test "a gate lets the old script's lock go while it is not the head, then takes it back",
+       ctx do
     _first = hold_gate_slot(ctx.repo)
     _second = hold_gate_slot(ctx.repo)
     head = gate_lock_port(ctx.repo, "echo head ran")
     assert_receive {^head, {:data, {:eol, @waiting}}}, 5_000
-    old = old_script_waiter(ctx.repo)
-    refute_ran([old])
+    assert await_queue(ctx.repo, :locked)
 
     # As a gate under bash before 5 that started in the same second would.
-    _ahead = hold_ticket(ctx.repo, "1000000000000000.1")
-    assert_receive {^old, {:data, {:eol, "old queued"}}}, 5_000
+    ahead = hold_ticket(ctx.repo, "1000000000000000.1")
+    assert await_queue(ctx.repo, :free)
+
+    Port.close(ahead)
+    assert await_queue(ctx.repo, :locked)
   end
 
   test "a gate takes a free slot while a gate on the old script holds its lock", ctx do
@@ -249,6 +252,18 @@ defmodule Meerkat.GateLockTest do
         Path.join(repo, ".git/meerkat-gate-lock/queue")
       ]
     ])
+  end
+
+  # Whether the old script's `queue` lock reaches `state` within 5s.
+  defp await_queue(repo, state, tries \\ 25) do
+    queue = Path.join(repo, ".git/meerkat-gate-lock/queue")
+    {_, status} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
+
+    cond do
+      (status == 0 and state == :free) or (status == 75 and state == :locked) -> true
+      tries == 0 -> false
+      true -> Process.sleep(200) && await_queue(repo, state, tries - 1)
+    end
   end
 
   # One window for all the gates, so each gate does not add its own.

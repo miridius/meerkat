@@ -16,19 +16,19 @@
 # (the start of the second under bash before 5, so such a gate can go
 # ahead of one that started earlier in that second) and its pid, and holds
 # a lock on it on fd 8; only the gate with the earliest live ticket tries
-# the slots. A
-# ticket is locked before it gets its name, so a ticket without a lock
-# belongs to a gate that has died, and the next gate to find it deletes it;
-# no later ticket can take its name. Every lock is tried without waiting,
-# once a second, because lockf(1) on an fd spins a core while it blocks.
-# Each waiting gate prints that it is waiting, and gives up after
-# MEERKAT_GATE_LOCK_TIMEOUT seconds (default an hour).
+# the slots. A ticket is locked before it gets its name, so a ticket
+# without a lock belongs to a gate that has died, and the next gate to find
+# it deletes it; no later ticket can take its name. Every lock is tried
+# without waiting, once a second, because lockf(1) on an fd spins a core
+# while it blocks. Each waiting gate prints that it is waiting, and gives
+# up after MEERKAT_GATE_LOCK_TIMEOUT seconds (default an hour).
 #
 # Gates on the script from before tickets (#90) wait for a lock on
 # meerkat-gate-lock/queue and try the slots once they hold it, so the gate
 # with the earliest ticket also takes that lock when it is free, on fd 6,
-# and holds it until it gets a slot; while one of those gates holds it, the
-# two race for the slots. This can go once no branch predates #90.
+# and holds it until it gets a slot, stops being the earliest, or gives
+# up; while one of those gates holds it, the two race for the slots. This
+# can go once no branch predates #90.
 gate_lock() {
   local dir ticket slot status queued=false waited=false start=$SECONDS
   local timeout=${MEERKAT_GATE_LOCK_TIMEOUT:-3600}
@@ -55,7 +55,7 @@ gate_lock() {
       done
       exec 9>&-
     elif [[ "$queued" == true ]]; then
-      # A ticket taken under bash before 5 sorts ahead of this one now.
+      # A ticket that sorts ahead of this one has appeared since.
       exec 6>&-
       queued=false
     fi
