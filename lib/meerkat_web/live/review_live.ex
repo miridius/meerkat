@@ -614,6 +614,24 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
+  # A moved line's arrow: show its counterpart's file in diff view,
+  # then have the browser scroll to the counterpart lines.
+  def handle_event("moved.jump", %{"file_name" => name} = target, socket) do
+    case Enum.find_index(socket.assigns.state.files, &(&1.file_name == name)) do
+      nil ->
+        {:noreply, socket}
+
+      idx ->
+        {:noreply,
+         socket
+         |> show_file(idx, name, true)
+         |> push_event(
+           "moved:jump",
+           Map.take(target, ["file_name", "side", "line_start", "line_end"])
+         )}
+    end
+  end
+
   def handle_event("filter.toggle_extension", %{"ext" => ext}, socket) do
     %{state: state, review_id: rid} = socket.assigns
     hidden? = MapSet.member?(state.hidden_extensions, ext)
@@ -2649,13 +2667,15 @@ defmodule MeerkatWeb.ReviewLive do
        when surface in [:file, :inline] do
     case Enum.at(socket.assigns.state.files, idx) do
       nil -> socket
-      file -> show_file_for_form(socket, surface, idx, file.file_name)
+      file -> show_file(socket, idx, file.file_name, surface == :inline)
     end
   end
 
   defp show_form_file(socket, _form), do: socket
 
-  defp show_file_for_form(socket, surface, idx, name) do
+  # Shows file `idx` named `name`: unhides it from the filters and
+  # expands it, and when `diff?`, switches a rendered file to its diff.
+  defp show_file(socket, idx, name, diff?) do
     %{
       state: state,
       review_id: rid,
@@ -2686,7 +2706,7 @@ defmodule MeerkatWeb.ReviewLive do
         do: assign(socket, expanded_approved: MapSet.put(expanded, name)),
         else: assign(socket, collapsed_unapproved: MapSet.delete(collapsed, name))
 
-    if surface == :inline,
+    if diff?,
       do: assign(socket, rendered_files: MapSet.delete(rendered, name)),
       else: socket
   end

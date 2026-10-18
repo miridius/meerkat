@@ -1152,6 +1152,37 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert_push_event(view, "comment-form:reveal", %{key: "file:7"})
   end
 
+  test "a moved line's arrow shows its counterpart's file as a diff, then jumps to the lines",
+       %{conn: conn} do
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file, @md_file]})
+
+    render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+    render_click(view, "file.toggle_expanded", %{"file_name" => "README.md"})
+    render_hook(view, "filter.set_input", %{"value" => "widget"})
+    refute has_element?(view, "#file-1")
+
+    target = %{"file_name" => "README.md", "side" => "new", "line_start" => 1, "line_end" => 3}
+    render_hook(view, "moved.jump", Map.put(target, "extra", "dropped"))
+
+    assert has_element?(view, "#file-1")
+    refute has_element?(view, "#file-1.collapsed")
+    refute has_element?(view, "#file-1 .md-preview")
+    assert_push_event(view, "moved:jump", ^target)
+  end
+
+  test "a moved line's arrow to a file the review lacks does nothing", %{conn: conn} do
+    view = mount_unbound(conn)
+
+    render_hook(view, "moved.jump", %{
+      "file_name" => "gone.rs",
+      "side" => "old",
+      "line_start" => 1,
+      "line_end" => 3
+    })
+
+    no_push_event(view, "moved:jump")
+  end
+
   test "comment_form.hide without a form_key is ignored, not a crash", %{conn: conn} do
     view = mount_unbound(conn)
     render_click(view, "comment_form.show_global", %{})

@@ -434,28 +434,51 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
 });
 
-// A footer open-form link: the server has just expanded / unhidden the
-// form's file, so the form may take a few frames to mount (DiffViewer
-// injects inline forms two frames after render).
-window.addEventListener("phx:comment-form:reveal", (e) => {
-  const { key, id } = e.detail ?? {};
-  if (typeof key !== "string" || typeof id !== "string") return;
-  const find = () =>
-    document.getElementById(id) ??
-    document.querySelector(`tr.meerkat-form-row[data-meerkat-form-key="${CSS.escape(key)}"]`);
+// Calls `find` each frame until it returns something, then `act` with
+// that, giving up after 3s. The server has just expanded / unhidden a
+// file, so what it named may take a few frames to mount (DiffViewer
+// renders its rows a frame or two after mounting).
+function whenRendered(find, act, missing) {
   const deadline = performance.now() + 3000;
   const tick = () => {
-    const el = find();
-    if (el) {
-      el.scrollIntoView({ block: "center" });
-      el.querySelector("textarea")?.focus({ preventScroll: true });
+    const found = find();
+    if (found) {
+      act(found);
     } else if (performance.now() < deadline) {
       requestAnimationFrame(tick);
     } else {
-      console.warn("meerkat: open form not found to reveal", key);
+      console.warn(...missing);
     }
   };
   tick();
+}
+
+// A footer open-form link: scroll to the form and focus it.
+window.addEventListener("phx:comment-form:reveal", (e) => {
+  const { key, id } = e.detail ?? {};
+  if (typeof key !== "string" || typeof id !== "string") return;
+  whenRendered(
+    () =>
+      document.getElementById(id) ??
+      document.querySelector(`tr.meerkat-form-row[data-meerkat-form-key="${CSS.escape(key)}"]`),
+    (el) => {
+      el.scrollIntoView({ block: "center" });
+      el.querySelector("textarea")?.focus({ preventScroll: true });
+    },
+    ["meerkat: open form not found to reveal", key],
+  );
+});
+
+// A moved line's arrow: the target file's DiffViewer scrolls to the
+// counterpart lines and cancels the event once it has rendered them.
+window.addEventListener("phx:moved:jump", (e) => {
+  const { file_name, side, line_start, line_end } = e.detail ?? {};
+  const detail = { fileName: file_name, side, lineStart: line_start, lineEnd: line_end };
+  whenRendered(
+    () => !document.dispatchEvent(new CustomEvent("meerkat-move-jump", { detail, cancelable: true })),
+    () => {},
+    ["meerkat: moved lines not found to jump to", detail],
+  );
 });
 
 // Scroll preservation across a live-restart full reload.
