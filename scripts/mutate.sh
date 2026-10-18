@@ -249,7 +249,7 @@ run_mutate() {
   # it is given under :cover, whatever lines are mutated. The files under
   # test/scripts drive shell scripts in subprocesses, so in their own BEAM
   # they execute only the app-start lines every test file executes; leaving
-  # them out halves that run without changing which mutants are killed.
+  # them out cuts that run by over half without changing which mutants are killed.
   tests=$(find test -name '*_test.exs' -type f -not -path 'test/scripts/*' | sort | paste -sd , -)
   # Every selected line counts, so --no-filter keeps muex from skipping a
   # file it rates too simple to be worth mutating, and --no-optimize from
