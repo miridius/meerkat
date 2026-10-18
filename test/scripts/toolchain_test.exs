@@ -207,6 +207,15 @@ defmodule Meerkat.ToolchainTest do
       end
     end
 
+    test "never moves a newer pin down to the fix", ctx do
+      pin_bun(ctx, "1.4.5")
+
+      repo_advisory(ctx, "oven-sh/bun", "bun", "= 1.4.3")
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: bun 1.4.5 (fixes an advisory"
+    end
+
     test "for another package leaves the target alone", ctx do
       repo_advisory(ctx, "oven-sh/bun", "bunx", "< 1.4.4")
       assert {_, 0} = toolchain(ctx, "check")
@@ -223,7 +232,8 @@ defmodule Meerkat.ToolchainTest do
             ">= 0",
             ["< 0.9.0", ">= 0.9.0"],
             [">= 0.1", ">= 0.2"],
-            [{"= 0.5.0", "0.5.1"}, ">= 0.6.0"]
+            [{"= 0.5.0", "0.5.1"}, ">= 0.6.0"],
+            [{">= 0.5.0", "0.5.1"}, ">= 1.0.0"]
           ] do
         repo_advisory(ctx, "oven-sh/bun", "bun", range)
         assert {out, 0} = toolchain(ctx, "check")
@@ -252,10 +262,7 @@ defmodule Meerkat.ToolchainTest do
 
   describe "an unfixed advisory on the newest release 24h old moves the pin there" do
     test "when it covers the pin too", ctx do
-      File.write!(
-        Path.join(ctx.base, ".tool-versions"),
-        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.2")
-      )
+      pin_bun(ctx, "1.4.2")
 
       github(ctx, "oven-sh/bun", [{"bun-v1.4.2", @old}, {"bun-v1.4.3", @old}])
       repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.0")
@@ -266,11 +273,8 @@ defmodule Meerkat.ToolchainTest do
                "BLOCKED: bun is pinned to 1.4.2; the target is 1.4.3 (an advisory covers it; no release fixes it yet)"
     end
 
-    test "unless a newer one 24h old is clean", ctx do
-      File.write!(
-        Path.join(ctx.base, ".tool-versions"),
-        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.1")
-      )
+    test "unless a release 24h old newer than the pin is clean", ctx do
+      pin_bun(ctx, "1.4.1")
 
       github(ctx, "oven-sh/bun", [
         {"bun-v1.4.1", @old},
@@ -287,10 +291,7 @@ defmodule Meerkat.ToolchainTest do
     end
 
     test "unless the pin is newer", ctx do
-      File.write!(
-        Path.join(ctx.base, ".tool-versions"),
-        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.4")
-      )
+      pin_bun(ctx, "1.4.4")
 
       github(ctx, "oven-sh/bun", [{"bun-v1.4.3", @old}, {"bun-v1.4.4", hours_ago(2)}])
       repo_advisory(ctx, "oven-sh/bun", "bun", [">= 1.4.0"])
@@ -305,6 +306,52 @@ defmodule Meerkat.ToolchainTest do
 
       assert {out, 1} = toolchain(ctx, "check")
       assert out =~ "BLOCKED: bun is pinned to 1.4.3; the target is 1.4.4"
+
+      pin_bun(ctx, "1.4.5")
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.0")
+
+      assert {out, 1} = toolchain(ctx, "check")
+      assert out =~ "BLOCKED: bun is pinned to 1.4.5; the target is 1.4.4"
+    end
+
+    test "rather than to a clean release older than the pin", ctx do
+      pin_bun(ctx, "1.4.2")
+
+      github(ctx, "oven-sh/bun", [
+        {"bun-v1.4.1", @old},
+        {"bun-v1.4.2", @old},
+        {"bun-v1.4.3", @old}
+      ])
+
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.4.2")
+
+      assert {out, 1} = toolchain(ctx, "check")
+      assert out =~ "BLOCKED: bun is pinned to 1.4.2; the target is 1.4.3"
+    end
+
+    test "unless the pin is a clean release under 24h old", ctx do
+      pin_bun(ctx, "1.3.9")
+      github(ctx, "oven-sh/bun", [{"bun-v1.3.9", hours_ago(2)}, {"bun-v1.4.3", @old}])
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.4.0")
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: bun 1.3.9 (an advisory covers the newest release 24h old"
+    end
+
+    test "unless a fix for the pin under 24h old is newer than it", ctx do
+      pin_bun(ctx, "1.3.8")
+
+      github(ctx, "oven-sh/bun", [
+        {"bun-v1.3.8", @old},
+        {"bun-v1.3.9", hours_ago(2)},
+        {"bun-v1.4.2", @old},
+        {"bun-v1.4.3", @old}
+      ])
+
+      repo_advisory(ctx, "oven-sh/bun", "bun", [">= 1.4.0", "< 1.3.9"])
+
+      assert {out, 1} = toolchain(ctx, "check")
+      assert out =~ "BLOCKED: bun is pinned to 1.3.8; the target is 1.3.9 (fixes an advisory"
     end
   end
 
@@ -716,7 +763,11 @@ defmodule Meerkat.ToolchainTest do
           "withdrawn_at" => withdrawn,
           "vulnerabilities" =>
             for row <- List.wrap(ranges) do
-              {range, patched} = with range when is_binary(range) <- row, do: {range, nil}
+              {range, patched} =
+                case row do
+                  {range, patched} -> {range, patched}
+                  range when is_binary(range) -> {range, nil}
+                end
 
               %{
                 "package" => %{"name" => name},
@@ -764,6 +815,13 @@ defmodule Meerkat.ToolchainTest do
   defp env(ctx), do: File.read!(Path.join(ctx.base, ".github/toolchain.env"))
 
   defp tools(ctx), do: File.read!(Path.join(ctx.base, ".tool-versions"))
+
+  defp pin_bun(ctx, version),
+    do:
+      File.write!(
+        Path.join(ctx.base, ".tool-versions"),
+        String.replace(tools(ctx), ~r/bun \S+/, "bun #{version}")
+      )
 
   defp toolchain(ctx, mode) do
     System.cmd("bun", [@script, mode],

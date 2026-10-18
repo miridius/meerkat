@@ -57,8 +57,10 @@ remove commits a merged PR still references). Before committing:
   and the pre-commit hook bumps them. The one exception is a security
   fix: when a published advisory affects a dependency's current
   version, or a tool's newest release 24h old, the release that fixes
-  it is taken however young. While none does, a tool's pin that no
-  advisory covers stays where it is.
+  it is taken however young. While none does, a tool's pin moves to
+  the newest release no advisory covers that is 24h old and not older
+  than the pin, or else to a newer one however young, and otherwise
+  never to an older release.
   pnpm checks its lockfile against the floor too, so each such JS or
   pnpm release under 24h old keeps an exact `name@version` entry in
   `pnpm-workspace.yaml`'s `minimumReleaseAgeExclude`; the pre-commit

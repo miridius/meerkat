@@ -452,10 +452,17 @@ defmodule Meerkat.OutdatedGateTest do
     end
 
     test "fails closed when hex.pm's record of it is unreadable", ctx do
-      for report <- ["", "{}", "not json", releases([{"2.1.0", @old}])] do
+      for {report, why} <- [
+            {"", "hex.pm sent no JSON"},
+            {"not json", "hex.pm sent no JSON"},
+            {"{}", "hex.pm's record lists no publish time for 2.1.1"},
+            {releases([{"2.1.0", @old}]), "hex.pm's record lists no publish time for 2.1.1"}
+          ] do
         hex_release(ctx, "plug", report)
         assert {out, 1} = run(ctx)
-        assert out =~ "could not read when hex.pm published plug 2.1.1 — cannot check Hex deps"
+
+        assert out =~
+                 "could not read when hex.pm published plug 2.1.1 — cannot check Hex deps: #{why}"
       end
     end
   end
