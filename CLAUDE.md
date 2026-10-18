@@ -166,7 +166,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
-`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set.
+`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time and prints the 10 slowest files. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The gate's ExUnit step takes as long as its slowest file, so this limit bounds every commit. The pre-commit gate and CI enforce the same limit.
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
@@ -177,6 +177,11 @@ When behaviour changes, choose the lowest layer that exercises it:
   cannot reach, 1-3 tests per seam: browser Svelte/JS to LiveView,
   CLI to BEAM exit/stdout, and process lifecycle.
 - Keep owned/local behaviour real; mock only boundaries we don't own.
+- Keep unit tests fast. Never wait out a timeout to show that something
+  did not happen: check what is already known, such as a mailbox a
+  synchronous call has filled, or wait for the event that settles it.
+  Split or speed up a test file before it nears the per-file limit, and
+  list a file in `scripts/test-file-limit.json` only with a reason.
 - In e2e, read state an observer or `requestAnimationFrame` sets only
   through a retrying assertion or after `afterNextFrame`: CI renders late.
 

@@ -2,9 +2,10 @@ defmodule Meerkat.MixTestScriptTest do
   # Runs the repo's real scripts/mix-test.sh in a temporary directory against
   # a fixture tree of empty test files; only mix and getconf are PATH stubs.
   # The mix stub logs each run, records each test-file run's start and end,
-  # sleeps for a test-set delay, prints the file to stdout and stderr, and
-  # can fail compile or files named by a test, or kill their jobs. The getconf stub reports a
-  # test-set core count.
+  # sleeps for a test-set delay, and two seconds more for files named as slow,
+  # prints the file to stdout and stderr, and can fail compile or files named
+  # by a test, or kill their jobs. The getconf stub reports a test-set core
+  # count. The per-file time limit is one second unless a test sets another.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
@@ -23,9 +24,15 @@ defmodule Meerkat.MixTestScriptTest do
     killed = Path.join(base, "killed")
     cores = Path.join(base, "cores")
     delay = Path.join(base, "delay")
+    slow = Path.join(base, "slow")
 
     File.mkdir_p!(Path.join(base, "scripts"))
-    File.cp!(Path.join(@root, "scripts/mix-test.sh"), Path.join(base, "scripts/mix-test.sh"))
+
+    for script <- ~w(mix-test.sh test-file-times.ts) do
+      File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
+    end
+
+    write_limits(base, %{limit_seconds: 1, exempt: %{}})
 
     for file <- @files, do: write_test_file(base, file)
 
@@ -34,6 +41,7 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(killed, "")
     File.write!(cores, "4\n")
     File.write!(delay, "0\n")
+    File.write!(slow, "")
 
     File.mkdir_p!(stubs)
 
@@ -45,6 +53,7 @@ defmodule Meerkat.MixTestScriptTest do
     if grep -qxF "$3" '#{killed}'; then kill -9 "$PPID"; exit 1; fi
     echo "start" >> '#{spans}'
     sleep "$(cat '#{delay}')"
+    if grep -qxF "$3" '#{slow}'; then sleep 2; fi
     echo "end" >> '#{spans}'
     echo "ran $3"
     echo "err $3" >&2
@@ -64,7 +73,8 @@ defmodule Meerkat.MixTestScriptTest do
      failing: failing,
      killed: killed,
      cores: cores,
-     delay: delay}
+     delay: delay,
+     slow: slow}
   end
 
   test "compiles once, then runs every test file in its own mix test", ctx do
@@ -150,6 +160,96 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(ctx.delay, "0.5\n")
     assert {_, 0} = run(ctx)
     assert most_at_once(ctx) == 1
+  end
+
+  describe "the per-file time limit" do
+    test "lists the slowest files, slowest first", ctx do
+      File.write!(ctx.slow, "test/web/b_test.exs\n")
+      write_limits(ctx.base, %{limit_seconds: 60, exempt: %{}})
+
+      assert {out, 0} = run(ctx)
+      [_, listing] = String.split(out, "mix test: slowest test files:\n")
+      [first | rest] = listing |> String.split("\n", trim: true) |> Enum.take(3)
+      assert first =~ ~r/^\s+[2-9] s  test\/web\/b_test.exs$/
+
+      assert Enum.sort(Enum.map(rest, &(&1 |> String.split() |> List.last()))) ==
+               ["test/a_test.exs", "test/c_test.exs"]
+    end
+
+    test "only the 10 slowest files are listed", ctx do
+      for n <- 1..9, do: write_test_file(ctx.base, "test/more#{n}_test.exs")
+
+      assert {out, 0} = run(ctx)
+      [_, listing] = String.split(out, "mix test: slowest test files:\n")
+
+      assert listing
+             |> String.split("\n")
+             |> Enum.take_while(&(&1 =~ ~r/^\s+\d+ s  /))
+             |> length() == 10
+    end
+
+    test "a file over the limit fails the run and is named", ctx do
+      File.write!(ctx.slow, "test/web/b_test.exs\n")
+
+      assert {out, 1} = run(ctx)
+
+      assert out =~
+               ~r/test files over the 1 s limit for one file:\n  test\/web\/b_test.exs: \d+ s\n/
+
+      refute out =~ "a_test.exs: "
+      refute out =~ "all 3 test files passed"
+    end
+
+    test "a file over the limit with a reason passes, marked exempt", ctx do
+      File.write!(ctx.slow, "test/web/b_test.exs\n")
+
+      write_limits(ctx.base, %{
+        limit_seconds: 1,
+        exempt: %{"test/web/b_test.exs" => %{reason: "drives a real shell"}}
+      })
+
+      assert {out, 0} = run(ctx)
+      assert out =~ ~r/ s  test\/web\/b_test.exs  \(exempt\)\n/
+      assert out =~ "all 3 test files passed"
+    end
+
+    for {name, limits} <- [
+          {"an entry without a reason",
+           ~s({"limit_seconds": 60, "exempt": {"test/a_test.exs": {}}})},
+          {"an entry with a blank reason",
+           ~s({"limit_seconds": 60, "exempt": {"test/a_test.exs": {"reason": " "}}})},
+          {"no limit", ~s({"exempt": {}})},
+          {"no exempt object", ~s({"limit_seconds": 60})},
+          {"malformed JSON", "{"}
+        ] do
+      test "#{name} fails the run", ctx do
+        File.write!(Path.join(ctx.base, "scripts/test-file-limit.json"), unquote(limits))
+
+        assert {out, 1} = run(ctx)
+        assert out =~ "scripts/test-file-limit.json"
+      end
+    end
+
+    test "a missing limits file fails the run", ctx do
+      File.rm!(Path.join(ctx.base, "scripts/test-file-limit.json"))
+
+      assert {out, 1} = run(ctx)
+      assert out =~ "cannot read scripts/test-file-limit.json"
+    end
+
+    test "the repo's limit is 60 s and every exemption has a reason" do
+      limits = Path.join(@root, "scripts/test-file-limit.json") |> File.read!() |> Jason.decode!()
+      assert limits["limit_seconds"] == 60
+
+      for {file, entry} <- limits["exempt"] do
+        assert File.exists?(Path.join(@root, file)), "#{file} is exempt but does not exist"
+        assert String.trim(entry["reason"]) != ""
+      end
+    end
+  end
+
+  defp write_limits(base, limits) do
+    File.write!(Path.join(base, "scripts/test-file-limit.json"), Jason.encode!(limits))
   end
 
   defp write_test_file(base, file) do
