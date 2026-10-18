@@ -79,16 +79,20 @@ defmodule Meerkat.MixProject do
       # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
       # that adds, on top of 0.11.3, test-selection fixes (multi-alias
       # test selection, crediting each test file with only the lines it
-      # executed), parallel coverage collection, parallel runs of
-      # same-file mutants, per-process coverage export names,
-      # staged-line scoping, `# muex:ignore` directives, a JSON
-      # report that survives invalid UTF-8, no function-call mutants
-      # of map literals, `%` structs or `::` in interpolation and
-      # bitstring segments, and runs of mutants whose compiled code
-      # differs only as 4 vs 4.0, which were wrongly called equivalent.
+      # executed, selecting tests that name a module only as a value,
+      # such as `live_isolated(conn, MeerkatWeb.ReviewLive)`), parallel
+      # coverage collection, parallel runs of same-file mutants,
+      # per-process coverage export names, staged-line scoping,
+      # `--staged` refusing a file with unstaged changes, deletions included,
+      # `# muex:ignore` directives, a JSON report that survives invalid
+      # UTF-8, no function-call mutants of map literals, `%` structs or
+      # `::` in interpolation and bitstring segments, runs of mutants
+      # whose compiled code differs only as 4 vs 4.0, which were wrongly
+      # called equivalent, and git diffs that ignore textconv drivers
+      # and diff prefix config.
       {:muex,
-       github: "miridius/muex",
-       ref: "a047ce8f4af615cda2ec6076774cb52d1e8b3784",
+       github: "agent-for-miridius/muex",
+       ref: "09560dc884b0dff97da545c95ec171c2f727deb1",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
