@@ -531,7 +531,7 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     end
   end
 
-  describe "effective_oid_for / markdown_file? / extension_of / file_path_dir" do
+  describe "effective_oid_for / markdown_file? / extension_of" do
     @files [
       %{file_name: "src/a.ex", effective_oid: "oid1"},
       %{file_name: "README.md", effective_oid: "oid2"},
@@ -555,11 +555,6 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
     test "extension_of strips the dot; extensionless files are empty" do
       assert ReviewLive.extension_of_for_test("src/a.ex") == "ex"
       assert ReviewLive.extension_of_for_test("README") == ""
-    end
-
-    test "file_path_dir keeps the directory prefix; root files have none" do
-      assert ReviewLive.file_path_dir_for_test("src/a.ex") == "src/"
-      assert ReviewLive.file_path_dir_for_test("README") == ""
     end
   end
 

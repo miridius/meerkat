@@ -33,7 +33,8 @@ of the same review attaches to that server (see
 
 When the UI does open, the reviewer sees, top-to-bottom:
 
-1. **Diff toolbar** — sticky at the top. Files panel toggle, PR
+1. **Diff toolbar** — sticky at the top. `☰ Files` dropdown
+   (see [file-filter.md](file-filter.md)), PR
    pill (links to GitHub when `state.pr` is populated), the title
    (PR title / commit subject / branch), `base ← head` branch chip
    with the repo path on its tooltip, then on the right the diff's
@@ -88,8 +89,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
    while empty — see [non-inline-comments.md](non-inline-comments.md)).
 6. **Tip** paragraph (one-time dismissible) explaining line-num
    gutter clicks.
-7. **Review body** — file-filter sidebar on the left, file-list
-   diffs on the right (see [file-filter.md](file-filter.md)).
+7. **Review body** — the diffs of the files the file filter shows
+   (see [file-filter.md](file-filter.md)).
    Each file header shows that file's line counts on the right, just
    left of its buttons.
    In every review mode, a binary file shows a notice in place of its
