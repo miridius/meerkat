@@ -1,0 +1,20 @@
+{
+  "limit_seconds": 60,
+  "exempt": {
+    "test/scripts/pre_push_test.exs": {
+      "reason": "Took 122-142 s: 72 tests run the real no-private-refs.sh, most pushing through the real lefthook. PR #78 builds its fixture once per module and writes its 3000 refs directly; once that lands, split the file or cut its pushes, then drop this entry."
+    },
+    "test/scripts/pre_commit_test.exs": {
+      "reason": "Took 95-110 s: 65 tests run the real lefthook, check.sh and mutate.sh, most through a commit. PR #78 builds its fixture once per module; once that lands, split the file, then drop this entry."
+    },
+    "test/scripts/shepherd_test.exs": {
+      "reason": "Took 58-88 s: it drives the real launcher against a fake BEAM, and two tests of its missing-pid wait take about 10 s each. PR #78 makes its waits load-tolerant, not shorter; shorten those tests, then drop this entry."
+    },
+    "test/scripts/outdated_test.exs": {
+      "reason": "Took 50-57 s, so heavier load is likely to take it over 60 s: 46 tests each run outdated.sh, several times in some. Speed it up, then drop this entry."
+    },
+    "test/scripts/bump_deps_test.exs": {
+      "reason": "Took 58-66 s: 28 tests each commit through the real lefthook and bump-deps.sh, most also through check.sh. PR #78 builds its fixture once per module; once that lands and it runs under the limit, drop this entry."
+    }
+  }
+}

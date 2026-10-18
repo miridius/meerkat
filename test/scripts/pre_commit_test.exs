@@ -76,6 +76,12 @@ defmodule Meerkat.PreCommitHookTest do
     File.mkdir_p!(Path.join(work, "lib/meerkat"))
     File.write!(Path.join(work, "lib/meerkat/one.ex"), "one\nbase\n")
     File.write!(Path.join(work, "lib/meerkat/two.ex"), "two\nbase\n")
+
+    for test <- ~w(test/meerkat/one_test.exs test/web/two_test.exs test/scripts/gate_test.exs) do
+      File.mkdir_p!(Path.join(work, Path.dirname(test)))
+      File.write!(Path.join(work, test), "")
+    end
+
     git(work, ["add", "-A"])
     no_hooks(work, ["commit", "-qm", "base"])
     no_hooks(work, ["switch", "-q", "-c", "feature"])
@@ -347,6 +353,13 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-optimize" in args
     assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
+
+    # The test files that drive scripts in subprocesses are left out.
+    assert ["--test-paths", "test/meerkat/one_test.exs,test/web/two_test.exs"] in Enum.chunk_every(
+             args,
+             2,
+             1
+           )
 
     # muex prints the report's path, so the report must outlive the run.
     output = ctx.muex |> Path.join("output") |> File.read!() |> String.trim()

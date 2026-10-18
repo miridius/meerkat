@@ -13,6 +13,10 @@
 # none`); ELIXIR_ERL_OPTIONS already set comes after them, so it wins. Timed
 # file by file, that used a fifth to a third less CPU in no more wall time.
 #
+# Each file's wall time is kept, in whole seconds; scripts/test-file-times.ts
+# fails a file over the limit in scripts/test-file-limit.json that has no
+# entry there with a reason.
+#
 # On failure, print each failing file's output, list the failing files, and
 # exit non-zero. CI and the pre-commit gate both run this script, so each
 # runs the files the same way.
@@ -46,8 +50,10 @@ xargs -P "$jobs" -n 1 bash -c '
   log="$logs/$1"
   mkdir -p "$(dirname "$log")"
   status=0
+  start=$(date +%s)
   ELIXIR_ERL_OPTIONS="+S 4 +sbwt none ${ELIXIR_ERL_OPTIONS:-}" \
     mix test --no-compile "$1" >"$log" 2>&1 || status=$?
+  echo $(($(date +%s) - start)) >"$log.secs"
   echo "$status" >"$log.status"
 ' _ <<<"$files" || true
 
@@ -66,6 +72,10 @@ for file in $files; do
   fi
 done
 
+# Fails a file over the per-file time limit.
+# shellcheck disable=SC2086
+bun scripts/test-file-times.ts "$logs" $files && slow=0 || slow=1
+
 count=$(wc -l <<<"$files" | tr -d ' ')
 if [[ ${#failed[@]} -gt 0 ]]; then
   echo
@@ -73,4 +83,5 @@ if [[ ${#failed[@]} -gt 0 ]]; then
   printf '  %s\n' "${failed[@]}"
   exit 1
 fi
+((slow == 0)) || exit 1
 echo "mix test: all $count test files passed."

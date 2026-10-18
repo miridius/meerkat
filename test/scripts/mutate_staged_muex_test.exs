@@ -50,7 +50,7 @@ defmodule Meerkat.MutateStagedMuexTest do
   # scripts/mutate.sh's run_mutate flags, with one test BEAM and only
   # lib/tiny.ex.
   defp gate_args(dir) do
-    ~w(--files lib/tiny.ex --coverage-guided --concurrency 1 --no-filter --no-optimize
+    ~w(--files lib/tiny.ex --test-paths test/tiny_test.exs --coverage-guided --concurrency 1 --no-filter --no-optimize
        --staged --fail-at 0 --format json --output) ++ [Path.join(dir, "_build/report.json")]
   end
 end

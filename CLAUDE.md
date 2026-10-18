@@ -166,7 +166,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
-`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set.
+`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The pre-commit gate and CI enforce the same limit.
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
@@ -177,6 +177,11 @@ When behaviour changes, choose the lowest layer that exercises it:
   cannot reach, 1-3 tests per seam: browser Svelte/JS to LiveView,
   CLI to BEAM exit/stdout, and process lifecycle.
 - Keep owned/local behaviour real; mock only boundaries we don't own.
+- Keep unit tests fast. Never wait out a timeout to show that something
+  did not happen: check what is already known, such as a mailbox a
+  synchronous call has filled, or wait for the event that settles it.
+  Split or speed up a test file before it nears the per-file limit, and
+  list a file in `scripts/test-file-limit.json` only with a reason.
 - In e2e, read state an observer or `requestAnimationFrame` sets only
   through a retrying assertion or after `afterNextFrame`: CI renders late.
 
@@ -194,9 +199,18 @@ scripts/mutate.sh changed -- --concurrency 4
 
 `mix muex --coverage-guided` runs each mutant against the test files
 that execute its line.
+To learn which those are, it first runs every test file it is given
+under `:cover`, however few lines are mutated.
+`mutate.sh` gives it every `test/**/*_test.exs` file outside
+`test/scripts`.
+The `test/scripts` files drive shell scripts in subprocesses, so in
+their own BEAM they execute only the app-start lines every test file
+executes; leaving them out roughly halves the mutation gate.
+Put a test that calls `lib/` code directly, not through a subprocess,
+outside `test/scripts`.
 A mutant on a line no test executes is skipped as `no_coverage`.
 For a line `:cover` has no entry for, such as a `def` header, muex
-falls back to dependency analysis and then to the full test suite.
+falls back to dependency analysis and then to every test file it was given.
 A mutant is a survivor when the test files run for its line still
 pass against it.
 
