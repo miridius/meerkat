@@ -79,7 +79,8 @@ defmodule Meerkat.AdvisoryFixesTest do
         exit "$(cat '#{base}/hex-audit-code' 2>/dev/null || echo 0)" ;;
       "mix deps.update "*)
         if [[ -e '#{base}/floor-fixes' ]]; then touch '#{base}/hex-fixed'; fi
-        # With hex-after-floor, the update under the floor leaves that audit.
+        # With hex-after-floor, the update with the floor in force leaves
+        # that audit.
         if [[ -z "${HEX_COOLDOWN:-}" && -e '#{base}/hex-after-floor' ]]; then
           cp '#{base}/hex-after-floor' '#{base}/hex-audit'
         fi
@@ -102,7 +103,7 @@ defmodule Meerkat.AdvisoryFixesTest do
     audit(ctx, ["vite"])
 
     assert {out, 0} = fixes(ctx)
-    assert out =~ "vite has an advisory; updated it under the 24h floor."
+    assert out =~ "vite has an advisory; updated it with the 24h floor lifted."
     assert "pnpm -r update --ignore-scripts --latest vite" in log(ctx)
     assert seen(ctx) =~ ~s(minimumReleaseAgeExclude:\n  - "vite"\n)
     # The lockfile holds no young version, so nothing stays excluded.
@@ -148,7 +149,7 @@ defmodule Meerkat.AdvisoryFixesTest do
     File.write!(Path.join(ctx.base, "locked-young"), "vite@8.3.2\n")
 
     assert {out, 0} = fixes(ctx)
-    # Refused under the floor, refused again with only vite excluded, then
+    # Refused with the floor in force, refused again with only vite excluded, then
     # accepted with the young versions excluded.
     assert length(Enum.filter(log(ctx), &(&1 =~ "update"))) == 3
 
@@ -225,7 +226,7 @@ defmodule Meerkat.AdvisoryFixesTest do
     """)
 
     assert {out, 0} = fixes(ctx)
-    assert out =~ "plug, bandit had advisories; updated under the 24h floor."
+    assert out =~ "plug, bandit had advisories; updated with the 24h floor lifted."
     assert "mix deps.update plug bandit HEX_COOLDOWN=0d" in log(ctx)
   end
 
@@ -247,7 +248,7 @@ defmodule Meerkat.AdvisoryFixesTest do
              ["mix deps.update plug bandit", "mix deps.update bandit HEX_COOLDOWN=0d"]
 
     assert out =~ "plug had advisories; updated to fixes 24h old."
-    assert out =~ "bandit had advisories; updated under the 24h floor."
+    assert out =~ "bandit had advisories; updated with the 24h floor lifted."
   end
 
   test "only retired Hex packages update nothing", ctx do

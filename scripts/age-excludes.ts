@@ -50,17 +50,18 @@ export function youngIn(output: string): string[] {
 	return [...plain.matchAll(/((?:@[\w.-]+\/)?[\w.-]+@\d\S*) was published at/g)].map((m) => m[1]);
 }
 
-// Thrown when untilAccepted's command fails.
+// A failure to report: untilAccepted throws it, as does advisory-fixes.ts.
 export class Refusal extends Error {}
 
-// untilAccepted CMD WORKSPACE EXCLUDES: runs CMD with the workspace TEXT
-// WORKSPACE excluding EXCLUDES and each version CMD refuses as under
+// untilAccepted CMD TEXT EXCLUDES: runs CMD with the workspace file
+// written as TEXT excluding EXCLUDES and each version CMD refuses as under
 // minimumReleaseAge, adding those a round at a time, and returns the
-// versions it added. The rounds are bounded by the packages CMD pulls in.
-export function untilAccepted(cmd: string[], workspace: string, excludes: string[]): string[] {
+// versions it added. It leaves the file as last written, and gives up
+// after 20 rounds.
+export function untilAccepted(cmd: string[], text: string, excludes: string[]): string[] {
 	const added: string[] = [];
 	for (let round = 0; round < 20; round++) {
-		writeFileSync(WORKSPACE, withExcludes(workspace, [...excludes, ...added]));
+		writeFileSync(WORKSPACE, withExcludes(text, [...excludes, ...added]));
 		const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
 		const output = `${r.stdout.toString()}${r.stderr.toString()}`;
 		if (r.exitCode === 0) return added;
@@ -82,15 +83,18 @@ function published(entry: string): Date {
 		stdout: "pipe",
 		stderr: "pipe",
 	});
-	let times: Record<string, string> = {};
+	const why = (reason: string) =>
+		new Unreadable(`could not read when the registry published ${entry}: ${reason}`);
+	if (view.exitCode !== 0)
+		throw why(`pnpm view exited ${view.exitCode}:\n${view.stderr.toString().trim()}`);
+	let times: Record<string, string>;
 	try {
-		if (view.exitCode === 0) times = JSON.parse(view.stdout.toString());
-	} catch {}
-	const date = new Date(String(times[version]));
-	if (Number.isNaN(date.getTime()))
-		throw new Unreadable(
-			`could not read when the registry published ${entry} (pnpm view exit ${view.exitCode}):\n${view.stderr.toString().trim()}`,
-		);
+		times = JSON.parse(view.stdout.toString());
+	} catch (e) {
+		throw why(`pnpm view printed no JSON (${e instanceof Error ? e.message : e})`);
+	}
+	const date = new Date(String(times?.[version]));
+	if (Number.isNaN(date.getTime())) throw why(`the registry lists no publish time for ${version}`);
 	return date;
 }
 

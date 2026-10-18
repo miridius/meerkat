@@ -13,21 +13,27 @@
 const DAY_MS = 86_400_000;
 const prefix = process.argv[2] ?? "";
 
-async function published(name: string, version: string): Promise<Date | undefined> {
+// published NAME VERSION: when hex.pm published it, or why that cannot be
+// read.
+async function published(name: string, version: string): Promise<Date | string> {
 	const proc = Bun.spawn(["curl", "-sSf", "--max-time", "10", `https://hex.pm/api/packages/${name}`], {
 		stdout: "pipe",
-		stderr: "inherit",
+		stderr: "pipe",
 	});
-	const [body, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-	if (code !== 0) return undefined;
+	const [body, err, code] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	if (code !== 0) return err.trim() || `curl exited ${code}`;
+	let doc: { releases?: { version?: string; inserted_at?: string }[] };
 	try {
-		const doc = JSON.parse(body) as { releases?: { version?: string; inserted_at?: string }[] };
-		const at = doc.releases?.find((r) => r.version === version)?.inserted_at;
-		const date = new Date(String(at));
-		return at && !Number.isNaN(date.getTime()) ? date : undefined;
-	} catch {
-		return undefined;
+		doc = JSON.parse(body);
+	} catch (e) {
+		return `hex.pm sent no JSON (${e instanceof Error ? e.message : e})`;
 	}
+	const date = new Date(String(doc?.releases?.find((r) => r.version === version)?.inserted_at));
+	return Number.isNaN(date.getTime()) ? `hex.pm's record lists no publish time for ${version}` : date;
 }
 
 const rows = (await Bun.stdin.text()).split("\n").filter((line) => line.trim());
@@ -39,8 +45,10 @@ for (const row of rows) {
 		continue;
 	}
 	const at = await published(name, latest);
-	if (!at) {
-		console.error(`${prefix} could not read when hex.pm published ${name} ${latest} — cannot check Hex deps.`);
+	if (typeof at === "string") {
+		console.error(
+			`${prefix} could not read when hex.pm published ${name} ${latest} — cannot check Hex deps: ${at}`,
+		);
 		process.exit(1);
 	}
 	out.push(`${name} ${latest} ${Date.now() - at.getTime() < DAY_MS ? "cooldown" : "not"}`);

@@ -4,9 +4,11 @@
 // a workflow's `uses: owner/repo@sha # tag`, must be the
 // newest stable release at least 24h old. When a published advisory covers
 // that release, the pin must instead be the lowest newer release that no
-// advisory covers, however young. While there is none, the pin stays
-// where it is if no advisory covers it, or else moves to that release, and
-// the check passes it with a note.
+// advisory covers, however young. While there is none, the pin moves to
+// the newest release no advisory covers that is 24h old or the pin itself
+// and not older than the pin. Without one, it stays where it is if newer
+// than the newest release 24h old, or else moves to that release. Either
+// way the check passes it with a note.
 //
 //   bun scripts/toolchain.ts check   lists each pin that is off target and
 //                                    exits 1 if any is (scripts/outdated.sh)
@@ -80,17 +82,19 @@ export function inRange(version: string, range: string): boolean {
 
 // An advisory's vulnerable range for one package, with the versions it
 // lists as patched, and whether the advisory gives the package one range
-// per release line, as Erlang/OTP does: more than one with no upper bound.
+// per release line, as some Erlang/OTP advisories do: more than one
+// ">= X" alone, some naming their line's patched version. Only read for a
+// range with no patched version.
 export type Vulnerable = { range: string; patched: string[]; perLine: boolean };
 
 const major = (version: string) => parts(version).nums[0];
 
 // affects VULNERABLE VERSION: whether VERSION is vulnerable. A range with
 // an upper bound says so alone, as does one with no upper bound and no
-// patched version unless it is one of an advisory's per-line ranges. One
-// without, as Erlang/OTP writes them (">= 17.0", patched "29.1.2,
-// 28.5.0.8"), covers each release line, by major, up to the newest it
-// names, except from a line's patched version on.
+// patched version unless it is one of an advisory's per-line ranges. Any
+// other open range, as Erlang/OTP writes them (">= 17.0", patched
+// "29.1.2, 28.5.0.8"), covers each release line, by major, up to the
+// newest it names, except from a line's patched version on.
 export function affects({ range, patched, perLine }: Vulnerable, version: string): boolean {
 	if (!inRange(version, range)) return false;
 	if (/<|≤/.test(range)) return true;
@@ -101,14 +105,16 @@ export function affects({ range, patched, perLine }: Vulnerable, version: string
 }
 
 export type Target =
-	| { kind: "mature" | "fixes" | "unfixed" | "kept"; version: string }
+	| { kind: "mature" | "fixes" | "clean" | "unfixed"; version: string }
 	| null;
 
 // target RELEASES VULNERABLE CURRENT: the newest release at least 24h old
 // or, when an advisory covers it, the lowest newer release none covers.
-// When every newer one is covered too, the CURRENT pin, "kept", if no
-// advisory covers it, or else that newest release, "unfixed". Null when
-// no release is 24h old.
+// When every newer one is covered too, the newest release none covers
+// that is 24h old or the CURRENT pin and not older than it, "clean". Else,
+// "unfixed", the CURRENT pin if it is among RELEASES and newer than the
+// newest release 24h old, or that release. Null when no release is 24h
+// old.
 export function target(
 	releases: Release[],
 	vulnerable: Vulnerable[],
@@ -116,7 +122,8 @@ export function target(
 	at = now,
 ): Target {
 	const sorted = [...releases].sort((a, b) => compare(b.version, a.version));
-	const mature = sorted.find((r) => at - r.date.getTime() >= DAY_MS);
+	const old = (r: Release) => at - r.date.getTime() >= DAY_MS;
+	const mature = sorted.find(old);
 	if (!mature) return null;
 	const affected = (v: string) => vulnerable.some((x) => affects(x, v));
 	if (!affected(mature.version)) return { kind: "mature", version: mature.version };
@@ -124,9 +131,18 @@ export function target(
 		.filter((r) => compare(r.version, mature.version) > 0 && !affected(r.version))
 		.at(-1);
 	if (fix) return { kind: "fixes", version: fix.version };
-	return affected(current)
-		? { kind: "unfixed", version: mature.version }
-		: { kind: "kept", version: current };
+	const clean = sorted.find(
+		(r) =>
+			(old(r) || r.version === current) &&
+			compare(r.version, current) >= 0 &&
+			!affected(r.version),
+	);
+	if (clean) return { kind: "clean", version: clean.version };
+	const listed = sorted.some((r) => r.version === current);
+	return {
+		kind: "unfixed",
+		version: listed && compare(current, mature.version) > 0 ? current : mature.version,
+	};
 }
 
 // -------------------------------------------------------------------- http
@@ -255,8 +271,9 @@ function ranges(advisories: unknown[], name: string): Vulnerable[] {
 				? [{ range: vuln.vulnerable_version_range, patched }]
 				: [];
 		});
-		const open = vulns.filter((v) => !/<|≤/.test(v.range));
-		return vulns.map((v) => ({ ...v, perLine: open.length > 1 }));
+		const open = vulns.filter((v) => /^\s*(?:>=|≥)\s*v?\d[\w.+-]*\s*$/.test(v.range));
+		const perLine = open.length > 1 && open.some((v) => v.patched.length > 0);
+		return vulns.map((v) => ({ ...v, perLine }));
 	});
 }
 
@@ -683,7 +700,7 @@ async function main(mode: string): Promise<number> {
 				? " (fixes an advisory on the newest release 24h old)"
 				: t.kind === "unfixed"
 					? " (an advisory covers it; no release fixes it yet)"
-					: t.kind === "kept"
+					: t.kind === "clean"
 						? " (an advisory covers the newest release 24h old; no release fixes it yet)"
 						: "";
 		if (pin.current === want && problems.length === 0) {

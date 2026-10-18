@@ -90,10 +90,23 @@ defmodule Meerkat.AgeExcludesTest do
 
     for mode <- ~w(check prune) do
       assert {out, 2} = run(ctx, mode)
-      assert out =~ "could not read when the registry published vite@9.0.0"
+
+      assert out =~
+               "could not read when the registry published vite@9.0.0: the registry lists no publish time for 9.0.0"
     end
 
     assert workspace(ctx) == @workspace <> @block <> ~s(  - "vite@9.0.0"\n)
+
+    File.write!(Path.join(ctx.times, "proxied"), "<html>")
+
+    for {entry, why} <- [
+          {"proxied@1.0.0", "pnpm view printed no JSON"},
+          {"missing@1.0.0", "pnpm view exited 1:\ncat: "}
+        ] do
+      excluding(ctx, [entry])
+      assert {out, 2} = run(ctx, "check")
+      assert out =~ "could not read when the registry published #{entry}: #{why}"
+    end
   end
 
   test "an entry that is not an exact name@version fails closed, naming it", ctx do

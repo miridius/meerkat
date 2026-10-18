@@ -55,8 +55,10 @@ remove commits a merged PR still references). Before committing:
   `.github/toolchain.env`, `package.json`'s `packageManager`, or a
   workflow's action SHA is not the newest release at least 24h old,
   and the pre-commit hook bumps them. The one exception is a security
-  fix: when a published advisory affects a dependency or tool's
-  current version, the release that fixes it is taken however young.
+  fix: when a published advisory affects a dependency's current
+  version, or a tool's newest release 24h old, the release that fixes
+  it is taken however young. While none does, a tool's pin that no
+  advisory covers stays where it is.
   pnpm checks its lockfile against the floor too, so each such JS or
   pnpm release under 24h old keeps an exact `name@version` entry in
   `pnpm-workspace.yaml`'s `minimumReleaseAgeExclude`; the pre-commit
@@ -131,7 +133,7 @@ The end-to-end loop for a meerkat bug report or feature request:
 
 **Gate slots:** At most two gates in all worktrees of the repo run their checks at once. `check.sh`, in either mode, and `mutate.sh staged` or `changed` each take one of two slots from `scripts/gate-lock.sh` before their checks and free it when they end. A gate that finds both slots taken prints that it is waiting. Waiting gates queue: the one at the head takes the next freed slot, so a newcomer never jumps ahead of it, but which waiter moves to the head next is not ordered. A waiting gate tries the locks once a second rather than blocking, since `lockf` blocked on an fd spins a core, and gives up, failing the gate, after `MEERKAT_GATE_LOCK_TIMEOUT` seconds (default 3600). Each slot is a `lockf` lock on a file in `meerkat-gate-lock` in the git common dir, held on the gate's fd 9, which the kernel frees when the gate exits, however it exits. The gate runs its checks in a subshell that closes fd 9 first, so a command that outlives it does not hold the slot.
 
-`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a Hex release under 24h old and a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. Then `scripts/age-excludes.ts prune` drops each `minimumReleaseAgeExclude` entry that is 24h old, `scripts/advisory-fixes.ts` updates each Hex or JS package an audit finds an advisory against, first under the 24h floor and, when that does not fix it, with the floor lifted for it, and `scripts/toolchain.ts bump` moves the toolchain pins and action SHAs onto their targets. `bump-deps.sh` never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `assets/package.json`, `.tool-versions`, `.github/toolchain.env` and workflow files into the commit.
+`bump-deps.sh` bumps non-exempt outdated Hex and JS packages, moving a `~>` requirement in `mix.exs` to latest when needed. It skips a Hex release under 24h old and a JS release pnpm refuses under the 24h minimum release age. It refuses the commit when installing the locked dependencies would change a lockfile, it cannot rewrite a requirement, pnpm fails to resolve a JS release for any other reason, or an update fails. Then `scripts/age-excludes.ts prune` drops each `minimumReleaseAgeExclude` entry that is 24h old, `scripts/advisory-fixes.ts` updates each Hex or JS package an audit finds an advisory against, first with the 24h floor in force and, when that does not fix it, with the floor lifted for it, and `scripts/toolchain.ts bump` moves the toolchain pins and action SHAs onto their targets. `bump-deps.sh` never moves git dependencies, and stages changed `mix.exs`, `mix.lock`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `assets/package.json`, `.tool-versions`, `.github/toolchain.env` and workflow files into the commit.
 
 `check.sh` skips the checks when nothing is staged or all staged changes are Markdown-only. Otherwise, once it holds a gate slot, it runs these steps in order:
 

@@ -1,10 +1,10 @@
 // The pre-commit bump's exception to the 24h release-age floor: a locked
 // Hex or JS dependency that an audit finds a published advisory against
-// is updated under the floor and, when that update needs a release under
-// 24h old or the audit still finds it, again with the floor lifted for
-// it, so whatever release that update resolves is taken however young it
-// is. scripts/bump-deps.sh runs this after its own updates; check.sh's
-// audits then confirm the fix.
+// is updated with the floor in force and, when that update needs a
+// release under 24h old or the audit still finds it, again with the floor
+// lifted for it, so whatever release that update resolves is taken
+// however young it is. scripts/bump-deps.sh runs this after its own
+// updates; check.sh's audits then confirm the fix.
 //
 // - JS: each package `pnpm audit` names is updated (`--latest` when a
 //   workspace manifest depends on it directly). The floor is lifted with
@@ -87,7 +87,7 @@ function fixJs(name: string) {
 		);
 		const excluded = [...pulled, ...young];
 		const note = excluded.length ? `; excluded ${excluded.join(", ")} until 24h old` : "";
-		console.log(`pre-commit: ${name} has an advisory; updated it under the 24h floor${note}.`);
+		console.log(`pre-commit: ${name} has an advisory; updated it with the 24h floor lifted${note}.`);
 	} catch (e) {
 		writeFileSync(WORKSPACE, workspace);
 		throw e;
@@ -128,7 +128,7 @@ function fixHex() {
 	if (fixed.length) console.log(`pre-commit: ${fixed.join(", ")} had advisories; updated to fixes 24h old.`);
 	if (rest.length === 0) return;
 	hexUpdate(rest, { HEX_COOLDOWN: "0d" });
-	console.log(`pre-commit: ${rest.join(", ")} had advisories; updated under the 24h floor.`);
+	console.log(`pre-commit: ${rest.join(", ")} had advisories; updated with the 24h floor lifted.`);
 }
 
 try {

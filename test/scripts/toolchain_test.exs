@@ -218,7 +218,13 @@ defmodule Meerkat.ToolchainTest do
     end
 
     test "with no release that fixes it leaves the target alone, noting the advisory", ctx do
-      for range <- [">= 1.0", ">= 0", ["< 0.9.0", ">= 0.9.0"]] do
+      for range <- [
+            ">= 1.0",
+            ">= 0",
+            ["< 0.9.0", ">= 0.9.0"],
+            [">= 0.1", ">= 0.2"],
+            [{"= 0.5.0", "0.5.1"}, ">= 0.6.0"]
+          ] do
         repo_advisory(ctx, "oven-sh/bun", "bun", range)
         assert {out, 0} = toolchain(ctx, "check")
         assert out =~ "current: bun 1.4.3 (an advisory covers it; no release fixes it yet)"
@@ -242,6 +248,64 @@ defmodule Meerkat.ToolchainTest do
 
     assert {_, 0} = toolchain(ctx, "bump")
     assert tools(ctx) =~ "\nbun 1.4.3\n"
+  end
+
+  describe "an unfixed advisory on the newest release 24h old moves the pin there" do
+    test "when it covers the pin too", ctx do
+      File.write!(
+        Path.join(ctx.base, ".tool-versions"),
+        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.2")
+      )
+
+      github(ctx, "oven-sh/bun", [{"bun-v1.4.2", @old}, {"bun-v1.4.3", @old}])
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.0")
+
+      assert {out, 1} = toolchain(ctx, "check")
+
+      assert out =~
+               "BLOCKED: bun is pinned to 1.4.2; the target is 1.4.3 (an advisory covers it; no release fixes it yet)"
+    end
+
+    test "unless a newer one 24h old is clean", ctx do
+      File.write!(
+        Path.join(ctx.base, ".tool-versions"),
+        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.1")
+      )
+
+      github(ctx, "oven-sh/bun", [
+        {"bun-v1.4.1", @old},
+        {"bun-v1.4.2", @old},
+        {"bun-v1.4.3", @old}
+      ])
+
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.4.3")
+
+      assert {out, 1} = toolchain(ctx, "check")
+
+      assert out =~
+               "BLOCKED: bun is pinned to 1.4.1; the target is 1.4.2 (an advisory covers the newest"
+    end
+
+    test "unless the pin is newer", ctx do
+      File.write!(
+        Path.join(ctx.base, ".tool-versions"),
+        String.replace(tools(ctx), "bun 1.4.3", "bun 1.4.4")
+      )
+
+      github(ctx, "oven-sh/bun", [{"bun-v1.4.3", @old}, {"bun-v1.4.4", hours_ago(2)}])
+      repo_advisory(ctx, "oven-sh/bun", "bun", [">= 1.4.0"])
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: bun 1.4.4 (an advisory covers it; no release fixes it yet)"
+    end
+
+    test "when the pin is no longer a release", ctx do
+      github(ctx, "oven-sh/bun", [{"bun-v1.4.4", @old}])
+      repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.4.4")
+
+      assert {out, 1} = toolchain(ctx, "check")
+      assert out =~ "BLOCKED: bun is pinned to 1.4.3; the target is 1.4.4"
+    end
   end
 
   # Erlang/OTP writes ranges with no upper bound, naming the fix on each
@@ -641,7 +705,8 @@ defmodule Meerkat.ToolchainTest do
     "HTTP/2 200\r\nlast-modified: #{Calendar.strftime(dt, "%a, %d %b %Y %H:%M:%S GMT")}\r\n\r\n"
   end
 
-  # One advisory, with a row for each of RANGES (a range or a list).
+  # One advisory, with a row for each of RANGES: a range or a list of
+  # ranges and {range, patched_versions} pairs.
   defp repo_advisory(ctx, repo, name, ranges, withdrawn \\ nil) do
     serve(
       ctx,
@@ -650,8 +715,14 @@ defmodule Meerkat.ToolchainTest do
         %{
           "withdrawn_at" => withdrawn,
           "vulnerabilities" =>
-            for range <- List.wrap(ranges) do
-              %{"package" => %{"name" => name}, "vulnerable_version_range" => range}
+            for row <- List.wrap(ranges) do
+              {range, patched} = with range when is_binary(range) <- row, do: {range, nil}
+
+              %{
+                "package" => %{"name" => name},
+                "vulnerable_version_range" => range,
+                "patched_versions" => patched
+              }
             end
         }
       ])

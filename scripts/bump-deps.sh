@@ -17,8 +17,8 @@
 # - Advisories: scripts/age-excludes.ts drops each minimumReleaseAgeExclude
 #   entry that is now 24h old. Then scripts/advisory-fixes.ts updates each
 #   locked Hex or JS dependency an audit finds an advisory against, first
-#   under the 24h floor and, when that does not fix it, with the floor
-#   lifted for it.
+#   with the 24h floor in force and, when that does not fix it, with the
+#   floor lifted for it.
 # - Toolchain: scripts/toolchain.ts moves the pins in
 #   .tool-versions, .github/toolchain.env, package.json's packageManager and the
 #   workflows' actions onto their targets.
