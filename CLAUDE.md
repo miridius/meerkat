@@ -166,7 +166,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
-`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The gate's ExUnit step takes at least as long as its slowest file, so once no file is exempt, the limit bounds it. The pre-commit gate and CI enforce the same limit.
+`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The pre-commit gate and CI enforce the same limit.
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
@@ -206,7 +206,8 @@ under `:cover`, however few lines are mutated.
 The `test/scripts` files drive shell scripts in subprocesses, so in
 their own BEAM they execute only the app-start lines every test file
 executes; leaving them out roughly halves the mutation gate.
-Put a test that calls `lib/` code in its own BEAM outside `test/scripts`.
+Put a test that calls `lib/` code directly, not through a subprocess,
+outside `test/scripts`.
 A mutant on a line no test executes is skipped as `no_coverage`.
 For a line `:cover` has no entry for, such as a `def` header, muex
 falls back to dependency analysis and then to every test file it was given.

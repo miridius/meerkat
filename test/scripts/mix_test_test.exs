@@ -5,8 +5,8 @@ defmodule Meerkat.MixTestScriptTest do
   # sleeps for a test-set delay, and two seconds more for files named as slow,
   # prints the file to stdout and stderr, and can fail compile or files named
   # by a test, or kill their jobs. The getconf stub reports a test-set core
-  # count. The per-file time limit is 60 s, so only the tests of the limit,
-  # which set it to one second, can hit it.
+  # count. The per-file time limit is 60 s, so only the two over-limit
+  # tests, which set it to one second, can hit it.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
