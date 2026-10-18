@@ -559,7 +559,7 @@ defmodule Meerkat.PreCommitHookTest do
       stage(ctx.work, "code.txt", "staged\n")
       port = in_port(ctx, ["git", "commit", "-q", "-m", "change code"])
 
-      await_line(port, "waiting for one to finish")
+      await_line(port, "waiting for one of this repo's 2 gate slots")
       refute_receive {^port, {:exit_status, _}}, 1_000
       assert gates_run(ctx) == []
 
@@ -572,7 +572,7 @@ defmodule Meerkat.PreCommitHookTest do
       stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
       port = in_port(ctx, ["bash", "scripts/mutate.sh", "staged"])
 
-      await_line(port, "waiting for one to finish")
+      await_line(port, "waiting for one of this repo's 2 gate slots")
       refute_receive {^port, {:exit_status, _}}, 1_000
       assert gates_run(ctx) == []
 

@@ -7,7 +7,7 @@ defmodule Meerkat.GateLockTest do
   import Meerkat.TestHelpers,
     only: [git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1]
 
-  @waiting "gate-lock: 2 gates are already running checks in this repo; waiting for one to finish."
+  @waiting "gate-lock: waiting for one of this repo's 2 gate slots, behind any gates that started waiting first."
 
   setup do
     repo = Meerkat.TestHelpers.make_git_repo("meerkat-gate-lock")
@@ -93,6 +93,74 @@ defmodule Meerkat.GateLockTest do
     assert_receive {^waiting, {:data, {:eol, "waiting ran"}}}, 5_000
   end
 
+  # macOS's /bin/bash has no EPOCHREALTIME, so its gates count whole seconds.
+  test "gates under macOS's bash 3.2 queue first come, first served too", ctx do
+    first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+
+    old_bash = gate_lock_port(ctx.repo, "echo old bash ran; read -r _", bash: "/bin/bash")
+    assert_receive {^old_bash, {:data, {:eol, @waiting}}}, 5_000
+    later = gate_lock_port(ctx.repo, "echo later ran")
+    assert_receive {^later, {:data, {:eol, @waiting}}}, 5_000
+
+    Port.close(first)
+    assert_receive {^old_bash, {:data, {:eol, "old bash ran"}}}, 5_000
+    refute_ran([later])
+  end
+
+  # A gate on the script from before tickets waits for the `queue` lock,
+  # then tries the slots; the head of the tickets holds that lock.
+  test "the head of the tickets keeps gates on the old script from the slots", ctx do
+    first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+    head = gate_lock_port(ctx.repo, "echo head ran; read -r _")
+    assert_receive {^head, {:data, {:eol, @waiting}}}, 5_000
+
+    old =
+      Port.open({:spawn_executable, System.find_executable("bash")}, [
+        :binary,
+        {:line, 4096},
+        args: [
+          "-c",
+          ~s(exec 8>>"$0"; until lockf -s -t 0 8; do sleep 0.2; done; echo old queued; read -r _),
+          Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
+        ]
+      ])
+
+    refute_ran([old])
+    Port.close(first)
+    assert_receive {^head, {:data, {:eol, "head ran"}}}, 5_000
+    assert_receive {^old, {:data, {:eol, "old queued"}}}, 5_000
+  end
+
+  test "a gate whose ticket goes missing gives up, saying so", ctx do
+    _first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+    gate = gate_lock_port(ctx.repo, "echo ran")
+    assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
+
+    [ticket] = tickets(ctx.repo)
+    File.rm!(Path.join(ctx.repo, ".git/meerkat-gate-lock/waiting/#{ticket}"))
+
+    assert_receive {^gate, {:data, {:eol, "gate-lock: this gate's ticket " <> rest}}}, 5_000
+    assert String.ends_with?(rest, "/#{ticket} is gone.")
+    assert_receive {^gate, {:exit_status, 1}}, 5_000
+  end
+
+  test "a gate that cannot open an earlier ticket gives up, saying so", ctx do
+    waiting = Path.join(ctx.repo, ".git/meerkat-gate-lock/waiting")
+    File.mkdir_p!(waiting)
+    unreadable = Path.join(waiting, "1000000000000000.1")
+    File.write!(unreadable, "")
+    File.chmod!(unreadable, 0o000)
+
+    gate = gate_lock_port(ctx.repo, "echo ran")
+
+    assert_receive {^gate, {:data, {:eol, "gate-lock: cannot open " <> rest}}}, 5_000
+    assert String.ends_with?(rest, "/.git/meerkat-gate-lock/waiting/1000000000000000.1.")
+    assert_receive {^gate, {:exit_status, 1}}, 5_000
+  end
+
   # A gate behind the head of the queue waits for an earlier ticket to go,
   # and one at the head waits for a slot; neither may burn CPU while it waits.
   test "waiting gates sleep rather than spin", ctx do
@@ -112,17 +180,19 @@ defmodule Meerkat.GateLockTest do
     _first = hold_gate_slot(ctx.repo)
     _second = hold_gate_slot(ctx.repo)
 
-    gate = gate_lock_port(ctx.repo, "echo ran", 1)
+    gate = gate_lock_port(ctx.repo, "echo ran", timeout: 1)
     assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
 
     assert_receive {^gate,
                     {:data,
                      {:eol,
-                      "gate-lock: no slot came free in 1s; giving up. Set MEERKAT_GATE_LOCK_TIMEOUT to wait longer."}}},
+                      "gate-lock: got no slot in 1s; giving up. Set MEERKAT_GATE_LOCK_TIMEOUT to wait longer."}}},
                    5_000
 
     assert_receive {^gate, {:exit_status, 1}}, 5_000
     assert tickets(ctx.repo) == []
+    queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
+    assert {_, 0} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
   end
 
   # The kernel drops a dead process's flock, and the child, started with the
@@ -153,12 +223,20 @@ defmodule Meerkat.GateLockTest do
     assert tickets(ctx.repo) == []
   end
 
+  # One window for all the gates, so each gate does not add its own.
   defp refute_ran(gates) do
-    for gate <- gates, do: refute_receive({^gate, {:data, {:eol, _}}}, 1_500)
+    gates = Map.from_keys(gates, true)
+
+    receive do
+      {gate, {:data, {:eol, line}}} when is_map_key(gates, gate) ->
+        flunk("#{inspect(gate)} printed #{line}")
+    after
+      1_500 -> :ok
+    end
   end
 
   # Holds, until the returned port is closed, a locked ticket named `name`,
-  # as a waiting gate does.
+  # locking it before it gets its name, as a waiting gate does.
   defp hold_ticket(repo, name) do
     path = Path.join(repo, ".git/meerkat-gate-lock/waiting/#{name}")
 
@@ -166,7 +244,11 @@ defmodule Meerkat.GateLockTest do
       Port.open({:spawn_executable, System.find_executable("bash")}, [
         :binary,
         {:line, 4096},
-        args: ["-c", ~s(exec 8>"$0"; lockf -s -t 0 8; echo held; read -r _), path]
+        args: [
+          "-c",
+          ~s(exec 8>"$0.new"; lockf -s -t 0 8; mv "$0.new" "$0"; echo held; read -r _),
+          path
+        ]
       ])
 
     assert_receive {^port, {:data, {:eol, "held"}}}, 5_000
