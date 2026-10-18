@@ -1,22 +1,27 @@
 // The pre-commit bump's exception to the 24h release-age floor: a locked
 // Hex or JS dependency that an audit finds a published advisory against
-// is updated with the floor lifted for it, so a release that fixes the
-// advisory is taken however young it is. scripts/bump-deps.sh runs this
-// after its own updates; check.sh's audits then confirm the fix.
+// is updated under the floor and, when the audit still finds it, again
+// with the floor lifted for it, so whatever release that update resolves
+// is taken however young it is. scripts/bump-deps.sh runs this after its
+// own updates; check.sh's audits then confirm the fix.
 //
 // - JS: each package `pnpm audit` names is updated (`--latest` when a
-//   workspace manifest depends on it directly) with the package in
-//   pnpm-workspace.yaml's minimumReleaseAgeExclude, plus each exact
-//   version pnpm then refuses as too young for that update, such as a
-//   platform build the fix pins. The workspace file is restored after.
-// - Hex: the packages `mix hex.audit` lists under Advisories are updated
-//   with HEX_COOLDOWN=0d, as Hex has no per-package exclude.
+//   workspace manifest depends on it directly). The floor is lifted with
+//   the package in pnpm-workspace.yaml's minimumReleaseAgeExclude, plus
+//   each exact version pnpm then refuses as too young for that update,
+//   such as a platform build the fix pins. pnpm checks the lockfile
+//   against minimumReleaseAge too, so the package's own entry then goes,
+//   and each version under 24h old the lockfile now holds keeps an exact
+//   entry, which scripts/age-excludes.ts drops once it is 24h old.
+// - Hex: the packages `mix hex.audit` lists under Advisories are updated;
+//   the floor is lifted with HEX_COOLDOWN=0d, as Hex has no per-package
+//   exclude. Hex does not check locked versions against its cooldown.
 //
 // Exits 1, saying why, when an audit cannot be read or an update fails.
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { readExcludes, WORKSPACE, withExcludes, youngIn } from "./age-excludes";
 
-const WORKSPACE = "pnpm-workspace.yaml";
 const MANIFESTS = ["package.json", "assets/package.json"];
 
 function run(cmd: string[], env: Record<string, string> = {}) {
@@ -28,7 +33,7 @@ function run(cmd: string[], env: Record<string, string> = {}) {
 	return { code: p.exitCode ?? 1, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 
-// Thrown rather than exiting, so fixJs's finally restores the workspace.
+// Thrown rather than exiting, so fixJs restores the workspace.
 class Refusal extends Error {}
 
 function fail(message: string): never {
@@ -60,39 +65,52 @@ function direct(name: string): boolean {
 	});
 }
 
+// untilAccepted CMD EXCLUDES: runs CMD with the workspace excluding
+// EXCLUDES and each version CMD refuses as under minimumReleaseAge, adding
+// those a round at a time, and returns the versions it added. The rounds
+// are bounded by the packages the fix pulls in.
+function untilAccepted(cmd: string[], workspace: string, excludes: string[]): string[] {
+	const added: string[] = [];
+	for (let round = 0; round < 20; round++) {
+		writeFileSync(WORKSPACE, withExcludes(workspace, [...excludes, ...added]));
+		const r = run(cmd);
+		if (r.code === 0) return added;
+		const young = youngIn(`${r.out}${r.err}`).filter(
+			(v) => !excludes.includes(v) && !added.includes(v),
+		);
+		if (young.length === 0) fail(`${cmd.join(" ")} failed:\n${r.out}${r.err}`);
+		added.push(...young);
+	}
+	fail(`${cmd.join(" ")} kept refusing young versions: ${added.join(", ")}`);
+}
+
 function fixJs(name: string) {
 	const workspace = readFileSync(WORKSPACE, "utf8");
-	if (/^minimumReleaseAgeExclude:/m.test(workspace))
-		fail(`${WORKSPACE} already sets minimumReleaseAgeExclude; cannot lift the floor for ${name}.`);
-	const excluded = [name];
+	const kept = readExcludes(workspace);
 	const cmd = ["pnpm", "-r", "update", "--ignore-scripts"];
 	if (direct(name)) cmd.push("--latest");
 	cmd.push(name);
 	try {
-		// Each round lets one more exact version through, so the number of
-		// rounds is bounded by the packages the fix pulls in.
-		for (let round = 0; round < 20; round++) {
-			writeFileSync(
-				WORKSPACE,
-				`${workspace.trimEnd()}\n\nminimumReleaseAgeExclude:\n${excluded
-					.map((e) => `  - ${JSON.stringify(e)}\n`)
-					.join("")}`,
-			);
-			const update = run(cmd);
-			if (update.code === 0) {
-				console.log(`pre-commit: ${name} has an advisory; updated it under the 24h floor.`);
-				return;
-			}
-			const young = `${update.out}${update.err}`.match(
-				/Version (\S+) \(released [^)]*\) of (\S+) does not meet the minimumReleaseAge/,
-			);
-			if (!young || excluded.includes(`${young[2]}@${young[1]}`))
-				fail(`${cmd.join(" ")} failed:\n${update.out}${update.err}`);
-			excluded.push(`${young[2]}@${young[1]}`);
+		// A release 24h old may fix it; only if none does is the floor lifted.
+		const floored = run(cmd);
+		if (floored.code !== 0 && youngIn(`${floored.out}${floored.err}`).length === 0)
+			fail(`${cmd.join(" ")} failed:\n${floored.out}${floored.err}`);
+		if (floored.code === 0 && !jsAdvisories().includes(name)) {
+			console.log(`pre-commit: ${name} has an advisory; updated it to a fix 24h old.`);
+			return;
 		}
-		fail(`${cmd.join(" ")} kept refusing young versions: ${excluded.join(", ")}`);
-	} finally {
+		const pulled = untilAccepted(cmd, workspace, [...kept, name]);
+		const young = untilAccepted(
+			["pnpm", "install", "--frozen-lockfile", "--ignore-scripts", "--prefer-offline"],
+			workspace,
+			[...kept, ...pulled],
+		);
+		const excluded = [...pulled, ...young];
+		const note = excluded.length ? `; excluded ${excluded.join(", ")} until 24h old` : "";
+		console.log(`pre-commit: ${name} has an advisory; updated it under the 24h floor${note}.`);
+	} catch (e) {
 		writeFileSync(WORKSPACE, workspace);
+		throw e;
 	}
 }
 
@@ -114,13 +132,23 @@ function hexAdvisories(): string[] {
 	return [...new Set(names)];
 }
 
+function hexUpdate(names: string[], env: Record<string, string> = {}) {
+	const update = run(["mix", "deps.update", ...names], env);
+	if (update.code !== 0)
+		fail(`mix deps.update ${names.join(" ")} failed:\n${update.out}${update.err}`);
+}
+
+// A release 24h old may fix each; the cooldown is lifted only for the rest.
 function fixHex() {
 	const hex = hexAdvisories();
 	if (hex.length === 0) return;
-	const update = run(["mix", "deps.update", ...hex], { HEX_COOLDOWN: "0d" });
-	if (update.code !== 0)
-		fail(`mix deps.update ${hex.join(" ")} failed:\n${update.out}${update.err}`);
-	console.log(`pre-commit: ${hex.join(", ")} had advisories; updated under the 24h floor.`);
+	hexUpdate(hex);
+	const rest = hexAdvisories().filter((n) => hex.includes(n));
+	const fixed = hex.filter((n) => !rest.includes(n));
+	if (fixed.length) console.log(`pre-commit: ${fixed.join(", ")} had advisories; updated to fixes 24h old.`);
+	if (rest.length === 0) return;
+	hexUpdate(rest, { HEX_COOLDOWN: "0d" });
+	console.log(`pre-commit: ${rest.join(", ")} had advisories; updated under the 24h floor.`);
 }
 
 try {

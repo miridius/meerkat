@@ -123,9 +123,14 @@ fi
 
 echo "meerkat: building Mix release for $(uname -sm)..."
 
-# The release bundles the Erlang it is built with: the one .tool-versions
-# pins, through mise, with the Hex and rebar3 .github/toolchain.env pins.
-if command -v mise >/dev/null; then mise install; fi
+# The release bundles the Erlang it is built with: with mise, the one
+# .tool-versions pins, put first on PATH whether or not mise is activated
+# in the user's shell; without it, whatever is on PATH. Either way with
+# the Hex and rebar3 .github/toolchain.env pins.
+if command -v mise >/dev/null; then
+  mise install
+  eval "$(mise env --shell bash)"
+fi
 bun scripts/setup-toolchain.ts
 
 # Fetch Elixir deps first: assets/package.json pulls phoenix /

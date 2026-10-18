@@ -9,9 +9,10 @@
 # whose pinned GitHub commit contains the tag of its newest stable Hex
 # release at least 24h old, in the GitHub repo Hex links, counts as that
 # release; the gate fails on every other git dependency, exempt or not.
-# scripts/toolchain.ts holds the CI toolchain's pins to the same floor.
-# It also fails on a missing or malformed
-# scripts/dep-exemptions.json or a stale entry there, and when installing
+# The gate also fails on a missing or malformed
+# scripts/dep-exemptions.json or a stale entry there, on a toolchain pin
+# off its target (scripts/toolchain.ts), on a minimumReleaseAgeExclude
+# entry 24h old (scripts/age-excludes.ts), and when installing
 # the locked dependencies would change mix.lock or pnpm-lock.yaml. It
 # fails CLOSED on its own breakage: missing tools, unreachable
 # registries, unparseable probe output, or a pnpm resolution that fails
@@ -174,11 +175,13 @@ pin_contains() {
 }
 
 while read -r name; do
-  # hex.pm lists releases newest version first.
+  # hex.pm lists releases newest version first; a release is mature once
+  # 24h old, the cooldown mix.exs sets.
   if ! hex_json=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$name") ||
-    ! latest=$(jq -er --argjson now "$(date +%s)" \
-      "first(.releases[] | select((.version | contains(\"-\") | not) and ($HEX_MATURE))).version" \
-      <<<"$hex_json" 2>/dev/null); then
+    ! latest=$(jq -er --argjson now "$(date +%s)" '
+      first(.releases[] | select((.version | contains("-") | not) and
+        (.inserted_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 <= $now - 86400)))
+      | .version' <<<"$hex_json" 2>/dev/null); then
     echo "BLOCKED: $name — no stable Hex release at least 24h old found for this git dependency; failing closed"
     # Its entry was not checked, so it is not stale.
     matched+=("$name")
@@ -195,6 +198,11 @@ done < <(grep . <<<"$git_deps")
 echo
 echo "=== toolchain ==="
 bun scripts/toolchain.ts check && rc=0 || rc=$?
+((rc > 1)) && exit 1
+((rc == 0)) || fail=1
+
+# A young release let in for an advisory stays excluded only until 24h old.
+bun scripts/age-excludes.ts check && rc=0 || rc=$?
 ((rc > 1)) && exit 1
 ((rc == 0)) || fail=1
 

@@ -14,10 +14,11 @@
 #   and keeps pnpm-workspace.yaml's minimumReleaseAge, so no release
 #   younger than 24h enters the lockfile. A release that requires a
 #   package version younger than that is skipped, since pnpm refuses it.
-# - Advisories: scripts/advisory-fixes.ts then takes the release that fixes
-#   an advisory an audit finds on a locked Hex or JS dependency, under 24h
-#   old or not.
-# - CI toolchain: scripts/toolchain.ts moves the pins in
+# - Advisories: scripts/age-excludes.ts drops each minimumReleaseAgeExclude
+#   entry that is now 24h old. Then scripts/advisory-fixes.ts updates each
+#   locked Hex or JS dependency an audit finds an advisory against with the
+#   24h floor lifted for it.
+# - Toolchain: scripts/toolchain.ts moves the pins in
 #   .tool-versions, .github/toolchain.env, package.json's packageManager and the
 #   workflows' actions onto their targets.
 #
@@ -49,7 +50,7 @@ require_tools jq mix elixir pnpm curl bun
 load_exemptions
 
 files=(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json
-  .tool-versions .github/toolchain.env .github/workflows/ci.yml
+  pnpm-workspace.yaml .tool-versions .github/toolchain.env .github/workflows/ci.yml
   .github/workflows/audit.yml)
 before=()
 for file in "${files[@]}"; do
@@ -106,6 +107,7 @@ if [[ ${#js_names[@]} -gt 0 ]]; then
   pnpm -r update --latest --ignore-scripts "${js_names[@]}"
 fi
 
+bun scripts/age-excludes.ts prune
 bun scripts/advisory-fixes.ts
 bun scripts/toolchain.ts bump
 

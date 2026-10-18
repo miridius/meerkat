@@ -52,7 +52,7 @@ defmodule Meerkat.OutdatedGateTest do
 
     File.write!(Path.join(base, "mix.lock"), @hex_lock)
 
-    for script <- ~w(outdated.sh deps-common.sh) do
+    for script <- ~w(outdated.sh deps-common.sh hex-cooldown.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
     end
 
@@ -110,8 +110,11 @@ defmodule Meerkat.OutdatedGateTest do
         if [[ -e "$f" ]]; then cat "$f"; printf '\\n%s' "$(cat "$f.code" 2>/dev/null || echo 200)"
         else printf '\\n404'; fi ;;
       "gh auth token") cat '#{base}/gh-token' 2>/dev/null ;;
+      "bun scripts/hex-cooldown.ts "*) exec '#{System.find_executable("bun")}' "$@" ;;
       "bun scripts/toolchain.ts check")
         echo "toolchain checked"; exit "$(cat '#{base}/toolchain-code' 2>/dev/null || echo 0)" ;;
+      "bun scripts/age-excludes.ts check")
+        echo "excludes checked"; exit "$(cat '#{base}/excludes-code' 2>/dev/null || echo 0)" ;;
     esac
     """)
 
@@ -169,6 +172,23 @@ defmodule Meerkat.OutdatedGateTest do
   test "a CI toolchain it cannot check blocks the push at once", ctx do
     exempt(ctx, %{"jason" => entry("1.4.5")})
     File.write!(Path.join(ctx.base, "toolchain-code"), "2")
+
+    assert {out, 1} = run(ctx)
+    refute out =~ "stale exemption"
+  end
+
+  test "a stale minimumReleaseAgeExclude entry blocks the push", ctx do
+    exempt(ctx, %{})
+    File.write!(Path.join(ctx.base, "excludes-code"), "1")
+
+    assert {out, 1} = run(ctx)
+    assert out =~ "excludes checked"
+    assert out =~ "dependencies are behind latest"
+  end
+
+  test "minimumReleaseAgeExclude entries it cannot check block the push at once", ctx do
+    exempt(ctx, %{"jason" => entry("1.4.5")})
+    File.write!(Path.join(ctx.base, "excludes-code"), "2")
 
     assert {out, 1} = run(ctx)
     refute out =~ "stale exemption"

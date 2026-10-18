@@ -75,7 +75,29 @@ defmodule Meerkat.ToolchainTest do
     """)
 
     File.write!(Path.join(stubs, "gh"), "#!/bin/sh\nexit 1\n")
-    for stub <- ~w(curl gh), do: File.chmod!(Path.join(stubs, stub), 0o755)
+
+    # Re-locks pnpm, refusing as pnpm 12 does each version listed in
+    # pnpm-young that pnpm-workspace.yaml does not exclude.
+    File.write!(Path.join(base, "pnpm-young"), "")
+    File.write!(Path.join(base, "pnpm-workspace.yaml"), "minimumReleaseAge: 1440\n")
+
+    File.write!(Path.join(stubs, "pnpm"), """
+    #!/usr/bin/env bash
+    echo "pnpm $*" >> '#{base}/pnpm-log'
+    [[ "$*" == "install --lockfile-only --ignore-scripts" ]] || exit 1
+    refused=()
+    while read -r young; do
+      [[ -z "$young" ]] && continue
+      grep -qF "\\"$young\\"" pnpm-workspace.yaml || refused+=("$young")
+    done < '#{base}/pnpm-young'
+    for young in "${refused[@]}"; do
+      printf '\\e[31m      \\e[0m  %s was published at 2026-10-\\n' "$young"
+      printf '\\e[31m      \\e[0m15T13:13:29.674Z, within the minimumReleaseAge cutoff\\n'
+    done
+    (( ${#refused[@]} == 0 ))
+    """)
+
+    for stub <- ~w(curl gh pnpm), do: File.chmod!(Path.join(stubs, stub), 0o755)
 
     ctx = %{base: base, web: web, path: stubs <> ":" <> System.fetch_env!("PATH")}
     world(ctx)
@@ -141,6 +163,13 @@ defmodule Meerkat.ToolchainTest do
       assert {_, 0} = toolchain(ctx, "check")
     end
 
+    test "of GNU bash under 24h old, not yet patched, leaves the previous version's target",
+         ctx do
+      bash(ctx, "5.3", [{1, @old}, {2, @old}], {"5.4", hours_ago(2)})
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: GNU bash 5.3.2"
+    end
+
     test "in testing is never the target", ctx do
       github(ctx, "erlang/rebar3", [{"3.27.3", @old}, {"3.28.0", @old, true}])
       elixir(ctx, [{"1.20.4-otp-29", @old}, {"1.21.0-rc.0-otp-29", @old}])
@@ -182,9 +211,46 @@ defmodule Meerkat.ToolchainTest do
       assert {_, 0} = toolchain(ctx, "check")
     end
 
-    test "with no release that fixes it leaves the target alone", ctx do
+    test "with no release that fixes it leaves the target alone, noting the advisory", ctx do
       repo_advisory(ctx, "oven-sh/bun", "bun", ">= 1.0")
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: bun 1.4.3 (an advisory covers it; no release fixes it yet)"
+    end
+  end
+
+  # Erlang/OTP writes ranges with no upper bound, naming the fix on each
+  # release line in patched_versions.
+  describe "an Erlang/OTP advisory" do
+    test "makes the young release that patches its line the target", ctx do
+      otp(ctx, [{"29.1.2", @old}, {"29.1.3", hours_ago(2)}, {"29.2.0", hours_ago(1)}])
+
+      otp_advisories(ctx, [
+        {">= 18.0", "29.1.3, 28.5.0.9, 27.3.4.20"},
+        {">= 24.3.4.15", ""},
+        {">= 17.0", "23.2.3"}
+      ])
+
+      assert {out, 1} = toolchain(ctx, "check")
+
+      assert out =~
+               "BLOCKED: Erlang/OTP is pinned to 29.1.2; the target is 29.1.3 (fixes an advisory"
+
+      assert {_, 0} = toolchain(ctx, "bump")
+      assert tools(ctx) =~ "erlang 29.1.3\n"
       assert {_, 0} = toolchain(ctx, "check")
+    end
+
+    test "passes a release its line's patch or a newer line covers", ctx do
+      otp(ctx, [{"29.1.2", @old}, {"29.1.3", hours_ago(1)}])
+
+      otp_advisories(ctx, [
+        {">= 18.0", "29.1.2, 28.5.0.8"},
+        {">= 24.3.4.15", ""},
+        {">= 17.0", "23.2.3"}
+      ])
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: Erlang/OTP 29.1.2\n"
     end
   end
 
@@ -204,8 +270,38 @@ defmodule Meerkat.ToolchainTest do
       advisories("pnpm", "< 12.11.3")
     )
 
+    # pnpm checks its own release against minimumReleaseAge.
+    File.write!(
+      Path.join(ctx.base, "pnpm-young"),
+      "pnpm@12.11.3\n@pnpm/exe.darwin-arm64@12.11.3\n"
+    )
+
     assert {_, 0} = toolchain(ctx, "bump")
     assert File.read!(Path.join(ctx.base, "package.json")) =~ ~s("packageManager": "pnpm@12.11.3")
+
+    assert File.read!(Path.join(ctx.base, "pnpm-workspace.yaml")) =~
+             ~s(minimumReleaseAgeExclude:\n  - "pnpm@12.11.3"\n  - "@pnpm/exe.darwin-arm64@12.11.3"\n)
+
+    assert File.read!(Path.join(ctx.base, "pnpm-log")) ==
+             String.duplicate("pnpm install --lockfile-only --ignore-scripts\n", 2)
+  end
+
+  test "a pnpm bump re-locks pnpm", ctx do
+    serve(
+      ctx,
+      "https://registry.npmjs.org/pnpm",
+      Jason.encode!(%{
+        "dist-tags" => %{"latest" => "12.14.0"},
+        "time" => %{"12.11.2" => @old, "12.14.0" => @old}
+      })
+    )
+
+    assert {_, 0} = toolchain(ctx, "bump")
+
+    assert File.read!(Path.join(ctx.base, "pnpm-log")) ==
+             "pnpm install --lockfile-only --ignore-scripts\n"
+
+    assert File.read!(Path.join(ctx.base, "pnpm-workspace.yaml")) == "minimumReleaseAge: 1440\n"
   end
 
   test "a pin with a checksum gets the new release's checksum", ctx do
@@ -252,12 +348,27 @@ defmodule Meerkat.ToolchainTest do
     assert env(ctx) =~ "\nGRAPHVIZ_VERSION=16.1.1\nGRAPHVIZ_SHA256=#{sha}\n"
   end
 
-  test "OTP counts a release once both runners' builds are 24h old", ctx do
-    otp(ctx, [{"29.1.2", @old}, {"29.1.3", @old}], [{"29.1.2", @old}, {"29.1.3", hours_ago(2)}])
+  test "OTP counts a release 24h old once both runners have its build", ctx do
+    otp(ctx, [{"29.1.2", @old}, {"29.1.3", @old}], ["29.1.2"])
     assert {_, 0} = toolchain(ctx, "check")
 
-    otp(ctx, [{"29.1.2", @old}, {"29.1.3", @old}], [{"29.1.2", @old}])
+    otp(ctx, [{"29.1.2", @old}, {"29.1.3", hours_ago(2)}])
     assert {_, 0} = toolchain(ctx, "check")
+  end
+
+  test "a rebuilt Erlang or Elixir release keeps its release date", ctx do
+    # Every build the fixtures list is dated now.
+    assert {out, 0} = toolchain(ctx, "check")
+    assert out =~ "current: Erlang/OTP 29.1.2"
+    assert out =~ "current: Elixir 1.20.4"
+  end
+
+  test "OTP stays on a major Elixir has no release 24h old built for", ctx do
+    otp(ctx, [{"29.1.2", @old}, {"30.0", @old}])
+    elixir(ctx, [{"1.20.4-otp-29", @old}, {"1.20.5-otp-30", hours_ago(2)}])
+
+    assert {out, 0} = toolchain(ctx, "check")
+    assert out =~ "current: Erlang/OTP 29.1.2"
   end
 
   test "Elixir follows the OTP major it moves to", ctx do
@@ -335,6 +446,32 @@ defmodule Meerkat.ToolchainTest do
     assert File.read!(Path.join(ctx.base, ".github/toolchain.env")) == @env
   end
 
+  test "an advisory feed it cannot read fails closed", ctx do
+    url =
+      "https://api.github.com/repos/oven-sh/bun/security-advisories?state=published&per_page=100"
+
+    for body <- [~s({"message": "Not Found"}), "not json"] do
+      serve(ctx, url, body)
+      assert {out, 2} = toolchain(ctx, "check")
+      assert out =~ "cannot check the toolchain"
+    end
+  end
+
+  test "a pin on a release under 24h old is moved back to the target", ctx do
+    github(ctx, "oven-sh/bun", [{"bun-v1.4.3", @old}, {"bun-v1.4.4", hours_ago(2)}])
+
+    File.write!(
+      Path.join(ctx.base, ".tool-versions"),
+      "erlang 29.1.2\nelixir 1.20.4\nbun 1.4.4\n"
+    )
+
+    assert {out, 1} = toolchain(ctx, "check")
+    assert out =~ "BLOCKED: bun is pinned to 1.4.4; the target is 1.4.3"
+
+    assert {_, 0} = toolchain(ctx, "bump")
+    assert tools(ctx) =~ "\nbun 1.4.3\n"
+  end
+
   test "a source with no release 24h old fails closed", ctx do
     github(ctx, "hexpm/hex", [{"v2.5.3", hours_ago(1)}])
     assert {out, 2} = toolchain(ctx, "check")
@@ -376,18 +513,23 @@ defmodule Meerkat.ToolchainTest do
   defp commit(ctx, repo, tag, sha),
     do: serve(ctx, "https://api.github.com/repos/#{repo}/commits/#{tag}", ~s({"sha": "#{sha}"}))
 
-  defp otp(ctx, mac, ubuntu \\ nil) do
+  # OTP RELEASES on GitHub, each built for both runners, or for Ubuntu
+  # only those UBUNTU lists. Each build is dated now, as a rebuild would.
+  defp otp(ctx, releases, ubuntu \\ nil) do
+    versions = Enum.map(releases, &elem(&1, 0))
+    github(ctx, "erlang/otp", for({v, at} <- releases, do: {"OTP-#{v}", at}))
+
     serve(
       ctx,
       "https://raw.githubusercontent.com/erlef/otp_builds/refs/heads/main/builds/aarch64-apple-darwin.csv",
       "ref_name,ref,datetime,sha256\nmaster,abc,#{@old},def\n" <>
-        Enum.map_join(mac, &"OTP-#{elem(&1, 0)},abc,#{elem(&1, 1)},def\n")
+        Enum.map_join(versions, &"OTP-#{&1},abc,#{hours_ago(0)},def\n")
     )
 
     serve(
       ctx,
       "https://builds.hex.pm/builds/otp/ubuntu-24.04/builds.txt",
-      Enum.map_join(ubuntu || mac, &"OTP-#{elem(&1, 0)} abc #{elem(&1, 1)} def\n")
+      Enum.map_join(ubuntu || versions, &"OTP-#{&1} abc #{hours_ago(0)} def\n")
     )
   end
 
@@ -402,24 +544,45 @@ defmodule Meerkat.ToolchainTest do
     )
   end
 
-  defp elixir(ctx, builds),
-    do:
-      serve(
-        ctx,
-        "https://builds.hex.pm/builds/elixir/builds.txt",
-        Enum.map_join(builds, &"v#{elem(&1, 0)} abc #{elem(&1, 1)} def \n")
-      )
+  # Elixir BUILDS, "version-otp-major", each released on GitHub at its
+  # date and built now, as a rebuild would.
+  defp elixir(ctx, builds) do
+    github(
+      ctx,
+      "elixir-lang/elixir",
+      builds
+      |> Enum.map(fn {build, at} -> {"v" <> hd(String.split(build, "-otp-")), at} end)
+      |> Enum.uniq_by(&elem(&1, 0))
+    )
+
+    serve(
+      ctx,
+      "https://builds.hex.pm/builds/elixir/builds.txt",
+      Enum.map_join(builds, &"v#{elem(&1, 0)} abc #{hours_ago(0)} def \n")
+    )
+  end
 
   # Lists bash BASE and its patches, each patch's file answering the HEAD
-  # request with its Last-Modified date.
-  defp bash(ctx, base, patches) do
+  # request with its Last-Modified date. With UNPATCHED, also lists that
+  # newer version, released AT with no patches directory yet.
+  defp bash(ctx, base, patches, unpatched \\ nil) do
     [major, minor] = String.split(base, ".")
+
+    newer =
+      case unpatched do
+        {version, at} ->
+          serve(ctx, "https://ftp.gnu.org/gnu/bash/bash-#{version}.tar.gz", header(at, ""))
+          ~s(<a href="bash-#{version}.tar.gz">x</a>)
+
+        nil ->
+          ""
+      end
 
     serve(
       ctx,
       "https://ftp.gnu.org/gnu/bash/",
       ~s(<a href="bash-5.2.tar.gz">x</a><a href="bash-#{base}.tar.gz">x</a>) <>
-        ~s(<a href="bash-6.0-rc1.tar.gz">x</a>)
+        ~s(<a href="bash-#{base}-patches/">x</a><a href="bash-6.0-rc1.tar.gz">x</a>) <> newer
     )
 
     serve(
@@ -456,6 +619,26 @@ defmodule Meerkat.ToolchainTest do
           ]
         }
       ])
+    )
+  end
+
+  defp otp_advisories(ctx, entries) do
+    serve(
+      ctx,
+      "https://api.github.com/repos/erlang/otp/security-advisories?state=published&per_page=100",
+      Jason.encode!(
+        for {range, patched} <- entries do
+          %{
+            "vulnerabilities" => [
+              %{
+                "package" => %{"name" => "OTP"},
+                "vulnerable_version_range" => range,
+                "patched_versions" => patched
+              }
+            ]
+          }
+        end
+      )
     )
   end
 

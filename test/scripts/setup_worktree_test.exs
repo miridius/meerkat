@@ -41,6 +41,7 @@ defmodule Meerkat.SetupWorktreeHookTest do
       File.write!(stub, """
       #!/usr/bin/env bash
       if [ "#{tool} $*" = "mise ls --current --missing" ]; then
+        [ -e '#{dir}/mise-ls-fails' ] && exit 1
         cat '#{dir}/mise-missing' 2>/dev/null; exit 0
       fi
       echo "#{tool} $*" >> '#{dir}/calls'
@@ -116,6 +117,13 @@ defmodule Meerkat.SetupWorktreeHookTest do
                "bun scripts/setup-toolchain.ts",
                "mix deps.get"
              ]
+    end
+
+    test "runs mise install when mise cannot list what is missing", ctx do
+      File.touch!(Path.join(ctx.dir, "mise-ls-fails"))
+
+      assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
+      assert calls(ctx.dir) == ["mise install", "bun scripts/setup-toolchain.ts"]
     end
 
     test "with every tool installed runs only the quick Hex and rebar3 check", ctx do

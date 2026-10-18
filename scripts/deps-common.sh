@@ -130,36 +130,16 @@ npm_latest() {
   echo "$latest"
 }
 
-# HEX_MATURE: a jq filter, given a hex.pm release record and $now in
-# Unix seconds, that is true when the release is at least 24h old, the
-# cooldown mix.exs sets.
-HEX_MATURE='.inserted_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 <= $now - 86400'
-
-# hex_too_young NAME VERSION: 0 when hex.pm published NAME VERSION under
-# 24h ago, 1 when earlier, and 2, printing why, when hex.pm's record of
-# it cannot be read.
-hex_too_young() {
-  local json mature
-  if json=$(curl -sSf --max-time 10 "https://hex.pm/api/packages/$1") &&
-    mature=$(jq -r --arg v "$2" --argjson now "$(date +%s)" \
-      "first(.releases[] | select(.version == \$v)) | $HEX_MATURE" <<<"$json" 2>/dev/null) &&
-    [[ "$mature" == true || "$mature" == false ]]; then
-    [[ "$mature" == false ]]
-    return
-  fi
-  echo "$prefix could not read when hex.pm published $1 $2 — cannot check Hex deps."
-  return 2
-}
-
 # hex_outdated: sets HEX_OUT to the `mix hex.outdated` report and
 # HEX_ROWS to one "name latest status" line per Hex dependency behind
 # latest. status is "possible", "not" when a requirement (in mix.exs
 # or another dependency) excludes latest, or "cooldown" when latest is
 # under the 24h Hex cooldown mix.exs sets, and so not yet installable.
 # Hex marks the cooldown only on a release the requirements admit, so
-# hex.pm's publish time decides it for the rest.
+# scripts/hex-cooldown.ts decides it for the rest by hex.pm's publish
+# time.
 hex_outdated() {
-  local rc rows="" name latest status
+  local rc
   # hex.outdated exits 1 when updates exist.
   HEX_OUT=$(mix hex.outdated 2>&1) && rc=0 || rc=$?
   if ((rc > 1)) || ! HEX_ROWS=$(awk '
@@ -182,13 +162,5 @@ hex_outdated() {
     echo "$prefix mix hex.outdated produced no readable dependency table (exit $rc) — cannot check Hex deps."
     return 1
   fi
-  while read -r name latest status; do
-    if [[ "$status" == not ]]; then
-      hex_too_young "$name" "$latest" && rc=0 || rc=$?
-      ((rc == 2)) && return 1
-      ((rc == 0)) && status=cooldown
-    fi
-    rows+="$name $latest $status"$'\n'
-  done < <(grep . <<<"$HEX_ROWS")
-  HEX_ROWS=$rows
+  HEX_ROWS=$(bun scripts/hex-cooldown.ts "$prefix" <<<"$HEX_ROWS") || return 1
 }

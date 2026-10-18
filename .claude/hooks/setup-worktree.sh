@@ -59,10 +59,12 @@ run() {
 
 # The tools .tool-versions pins come from mise, then Hex and rebar3 for
 # that Elixir from scripts/setup-toolchain.ts, which is quick when they
-# are in place.
-if [ -f .tool-versions ] && command -v mise >/dev/null &&
-  [ -n "$(mise ls --current --missing 2>/dev/null)" ]; then
-  run mise install
+# are in place. When mise cannot list what is missing, the install runs
+# anyway, so its failure is reported.
+if [ -f .tool-versions ] && command -v mise >/dev/null; then
+  if ! missing=$(mise ls --current --missing 2>/dev/null) || [ -n "$missing" ]; then
+    run mise install
+  fi
 fi
 if [ -f scripts/setup-toolchain.ts ]; then run bun scripts/setup-toolchain.ts; fi
 if mix_deps_missing; then run mix deps.get; fi
