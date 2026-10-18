@@ -15,11 +15,12 @@ defmodule Meerkat.GateLockTest do
     {:ok, repo: repo}
   end
 
-  test "a gate takes a free slot at once, saying nothing", ctx do
+  test "a gate takes a free slot at once, saying nothing, and keeps no ticket", ctx do
     gate = gate_lock_port(ctx.repo, "echo ran")
 
     assert_receive {^gate, {:data, {:eol, line}}}, 5_000
     assert line == "ran"
+    assert tickets(ctx.repo) == []
     assert_receive {^gate, {:exit_status, 0}}, 5_000
   end
 
@@ -49,29 +50,51 @@ defmodule Meerkat.GateLockTest do
     assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
   end
 
-  test "the waiting gate at the head of the queue takes the next free slot", ctx do
+  test "waiting gates take freed slots in the order they started waiting", ctx do
     first = hold_gate_slot(ctx.repo)
     second = hold_gate_slot(ctx.repo)
 
-    earlier = gate_lock_port(ctx.repo, "echo earlier ran; read -r _")
-    assert_receive {^earlier, {:data, {:eol, @waiting}}}, 5_000
-    # Which waiter polls first after a slot frees is down to timing, so
-    # check that the one waiting holds the queue newcomers wait on.
-    queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
-    assert {_, 75} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
-    later = gate_lock_port(ctx.repo, "echo later ran")
-    assert_receive {^later, {:data, {:eol, @waiting}}}, 5_000
+    [w1, w2, w3, w4] =
+      for name <- ~w(w1 w2 w3 w4) do
+        gate = gate_lock_port(ctx.repo, "echo #{name} ran; read -r _")
+        assert_receive {^gate, {:data, {:eol, @waiting}}}, 5_000
+        gate
+      end
 
     Port.close(first)
-    assert_receive {^earlier, {:data, {:eol, "earlier ran"}}}, 5_000
-    refute_receive {^later, {:data, {:eol, "later ran"}}}, 1_500
+    assert_receive {^w1, {:data, {:eol, "w1 ran"}}}, 5_000
+    refute_ran([w2, w3, w4])
 
     Port.close(second)
-    assert_receive {^later, {:data, {:eol, "later ran"}}}, 5_000
+    assert_receive {^w2, {:data, {:eol, "w2 ran"}}}, 5_000
+    refute_ran([w3, w4])
+
+    Port.close(w1)
+    assert_receive {^w3, {:data, {:eol, "w3 ran"}}}, 5_000
+    refute_ran([w4])
+
+    Port.close(w2)
+    assert_receive {^w4, {:data, {:eol, "w4 ran"}}}, 5_000
   end
 
-  # A gate behind the head of the queue waits for the queue lock, and one at
-  # the head waits for a slot; neither may burn CPU while it waits.
+  test "a gate waits behind an earlier live ticket, even with a slot free", ctx do
+    first = hold_gate_slot(ctx.repo)
+    _second = hold_gate_slot(ctx.repo)
+    waiting = gate_lock_port(ctx.repo, "echo waiting ran; read -r _")
+    assert_receive {^waiting, {:data, {:eol, @waiting}}}, 5_000
+
+    # A ticket held by a live process that never takes a slot stands for a
+    # gate that started waiting first and has yet to poll.
+    holder = hold_ticket(ctx.repo, "1000000000000000.1")
+    Port.close(first)
+    refute_ran([waiting])
+
+    Port.close(holder)
+    assert_receive {^waiting, {:data, {:eol, "waiting ran"}}}, 5_000
+  end
+
+  # A gate behind the head of the queue waits for an earlier ticket to go,
+  # and one at the head waits for a slot; neither may burn CPU while it waits.
   test "waiting gates sleep rather than spin", ctx do
     _first = hold_gate_slot(ctx.repo)
     _second = hold_gate_slot(ctx.repo)
@@ -99,8 +122,7 @@ defmodule Meerkat.GateLockTest do
                    5_000
 
     assert_receive {^gate, {:exit_status, 1}}, 5_000
-    queue = Path.join(ctx.repo, ".git/meerkat-gate-lock/queue")
-    assert {_, 0} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
+    assert tickets(ctx.repo) == []
   end
 
   # The kernel drops a dead process's flock, and the child, started with the
@@ -128,7 +150,30 @@ defmodule Meerkat.GateLockTest do
     kill(killed)
     Port.close(first)
     assert_receive {^later, {:data, {:eol, "later ran"}}}, 5_000
+    assert tickets(ctx.repo) == []
   end
+
+  defp refute_ran(gates) do
+    for gate <- gates, do: refute_receive({^gate, {:data, {:eol, _}}}, 1_500)
+  end
+
+  # Holds, until the returned port is closed, a locked ticket named `name`,
+  # as a waiting gate does.
+  defp hold_ticket(repo, name) do
+    path = Path.join(repo, ".git/meerkat-gate-lock/waiting/#{name}")
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("bash")}, [
+        :binary,
+        {:line, 4096},
+        args: ["-c", ~s(exec 8>"$0"; lockf -s -t 0 8; echo held; read -r _), path]
+      ])
+
+    assert_receive {^port, {:data, {:eol, "held"}}}, 5_000
+    port
+  end
+
+  defp tickets(repo), do: File.ls!(Path.join(repo, ".git/meerkat-gate-lock/waiting"))
 
   defp kill(port) do
     {:os_pid, pid} = Port.info(port, :os_pid)
