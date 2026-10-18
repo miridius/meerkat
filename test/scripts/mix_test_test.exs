@@ -163,31 +163,6 @@ defmodule Meerkat.MixTestScriptTest do
   end
 
   describe "the per-file time limit" do
-    test "lists the slowest files, slowest first", ctx do
-      File.write!(ctx.slow, "test/web/b_test.exs\n")
-      write_limits(ctx.base, %{limit_seconds: 60, exempt: %{}})
-
-      assert {out, 0} = run(ctx)
-      [_, listing] = String.split(out, "mix test: slowest test files:\n")
-      [first | rest] = listing |> String.split("\n", trim: true) |> Enum.take(3)
-      assert first =~ ~r/^\s+[2-9] s  test\/web\/b_test.exs$/
-
-      assert Enum.sort(Enum.map(rest, &(&1 |> String.split() |> List.last()))) ==
-               ["test/a_test.exs", "test/c_test.exs"]
-    end
-
-    test "only the 10 slowest files are listed", ctx do
-      for n <- 1..9, do: write_test_file(ctx.base, "test/more#{n}_test.exs")
-
-      assert {out, 0} = run(ctx)
-      [_, listing] = String.split(out, "mix test: slowest test files:\n")
-
-      assert listing
-             |> String.split("\n")
-             |> Enum.take_while(&(&1 =~ ~r/^\s+\d+ s  /))
-             |> length() == 10
-    end
-
     test "a file over the limit fails the run and is named", ctx do
       File.write!(ctx.slow, "test/web/b_test.exs\n")
 
@@ -200,7 +175,7 @@ defmodule Meerkat.MixTestScriptTest do
       refute out =~ "all 3 test files passed"
     end
 
-    test "a file over the limit with a reason passes, marked exempt", ctx do
+    test "a file over the limit with a reason passes", ctx do
       File.write!(ctx.slow, "test/web/b_test.exs\n")
 
       write_limits(ctx.base, %{
@@ -209,7 +184,7 @@ defmodule Meerkat.MixTestScriptTest do
       })
 
       assert {out, 0} = run(ctx)
-      assert out =~ ~r/ s  test\/web\/b_test.exs  \(exempt\)\n/
+      refute out =~ "over the 1 s limit"
       assert out =~ "all 3 test files passed"
     end
 

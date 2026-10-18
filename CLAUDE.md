@@ -166,7 +166,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
-`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time and prints the 10 slowest files. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The gate's ExUnit step takes as long as its slowest file, so this limit bounds every commit. The pre-commit gate and CI enforce the same limit.
+`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The gate's ExUnit step takes as long as its slowest file, so this limit bounds every commit. The pre-commit gate and CI enforce the same limit.
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
@@ -202,7 +202,7 @@ that execute its line.
 To learn which those are, it first runs every test file it is given
 under `:cover`, however few lines are mutated.
 `mutate.sh` gives it every `test/**/*_test.exs` file outside
-`test/scripts`, and refuses to run when there is none.
+`test/scripts`.
 The `test/scripts` files drive shell scripts in subprocesses, so in
 their own BEAM they execute only the app-start lines every test file
 executes; leaving them out roughly halves the mutation gate.

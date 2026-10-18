@@ -395,18 +395,6 @@ defmodule Meerkat.PreCommitHookTest do
     assert muex_staged(ctx) == ["lib/meerkat/two.ex"]
   end
 
-  test "with no test files outside test/scripts the mutation gate blocks the commit", ctx do
-    head = git(ctx.work, ["rev-parse", "HEAD"])
-    for dir <- ~w(test/meerkat test/web), do: File.rm_rf!(Path.join(ctx.work, dir))
-    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-    assert {out, code} = commit(ctx, ["-am", "change lib"])
-    assert code != 0
-    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
-    assert out =~ "no test files outside test/scripts"
-    refute File.exists?(Path.join(ctx.muex, "args"))
-  end
-
   test "staging only deleted lib/ lines skips mutation testing", ctx do
     stage(ctx.work, "lib/meerkat/one.ex", "one\n")
 

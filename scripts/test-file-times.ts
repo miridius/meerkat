@@ -1,5 +1,4 @@
-// Run by scripts/mix-test.sh after its test files: prints the 10 slowest, and
-// fails when one took longer than the limit in scripts/test-file-limit.json
+// Run by scripts/mix-test.sh after its test files: fails when one took longer than the limit in scripts/test-file-limit.json
 // without an entry there giving a reason.
 //
 // Usage: bun scripts/test-file-times.ts <logs dir> <test file>...
@@ -45,13 +44,7 @@ const { limitSeconds, exempt } = loadLimits();
 
 const times = files
 	.filter((file) => existsSync(`${logs}/${file}.secs`))
-	.map((file) => ({ file, secs: Number(readFileSync(`${logs}/${file}.secs`, "utf8")) }))
-	.sort((a, b) => b.secs - a.secs);
-
-console.log("\nmix test: slowest test files:");
-for (const { file, secs } of times.slice(0, 10)) {
-	console.log(`  ${String(secs).padStart(4)} s  ${file}${exempt.has(file) ? "  (exempt)" : ""}`);
-}
+	.map((file) => ({ file, secs: Number(readFileSync(`${logs}/${file}.secs`, "utf8")) }));
 
 const over = times.filter(({ file, secs }) => secs > limitSeconds && !exempt.has(file));
 if (over.length > 0) {

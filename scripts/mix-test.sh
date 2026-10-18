@@ -14,8 +14,8 @@
 # file by file, that used a fifth to a third less CPU in no more wall time.
 #
 # Each file's wall time is kept, in whole seconds; scripts/test-file-times.ts
-# prints the 10 slowest and fails a file over the limit in
-# scripts/test-file-limit.json that has no entry there with a reason.
+# fails a file over the limit in scripts/test-file-limit.json that has no
+# entry there with a reason.
 #
 # On failure, print each failing file's output, list the failing files, and
 # exit non-zero. CI and the pre-commit gate both run this script, so each
@@ -72,7 +72,7 @@ for file in $files; do
   fi
 done
 
-# Prints the slowest files and fails a file over the per-file time limit.
+# Fails a file over the per-file time limit.
 # shellcheck disable=SC2086
 bun scripts/test-file-times.ts "$logs" $files && slow=0 || slow=1
 

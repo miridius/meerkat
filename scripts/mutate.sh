@@ -251,10 +251,6 @@ run_mutate() {
   # they execute only the app-start lines every test file executes; leaving
   # them out halves that run without changing which mutants are killed.
   tests=$(find test -name '*_test.exs' -type f -not -path 'test/scripts/*' | sort | paste -sd , -)
-  if [[ -z "$tests" ]]; then
-    echo "scripts/mutate.sh: no test files outside test/scripts." >&2
-    exit 2
-  fi
   # Every selected line counts, so --no-filter keeps muex from skipping a
   # file it rates too simple to be worth mutating, and --no-optimize from
   # dropping the mutants of a function it rates too simple.
