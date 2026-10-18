@@ -5,7 +5,8 @@ defmodule Meerkat.MixTestScriptTest do
   # sleeps for a test-set delay, and two seconds more for files named as slow,
   # prints the file to stdout and stderr, and can fail compile or files named
   # by a test, or kill their jobs. The getconf stub reports a test-set core
-  # count. The per-file time limit is one second unless a test sets another.
+  # count. The per-file time limit is 60 s, so only the tests of the limit,
+  # which set it to one second, can hit it.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
@@ -32,7 +33,7 @@ defmodule Meerkat.MixTestScriptTest do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
     end
 
-    write_limits(base, %{limit_seconds: 1, exempt: %{}})
+    write_limits(base, %{limit_seconds: 60, exempt: %{}})
 
     for file <- @files, do: write_test_file(base, file)
 
@@ -165,6 +166,7 @@ defmodule Meerkat.MixTestScriptTest do
   describe "the per-file time limit" do
     test "a file over the limit fails the run and is named", ctx do
       File.write!(ctx.slow, "test/web/b_test.exs\n")
+      write_limits(ctx.base, %{limit_seconds: 1, exempt: %{}})
 
       assert {out, 1} = run(ctx)
 
