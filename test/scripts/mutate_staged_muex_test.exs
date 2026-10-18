@@ -7,17 +7,17 @@ defmodule Meerkat.MutateStagedMuexTest do
   use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
+  import Meerkat.TestHelpers, only: [git: 2, make_git_repo: 1, put_env: 2, stage: 3]
 
   alias Mix.Tasks.Muex, as: MuexTask
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3]
 
   setup do
-    # As scripts/mutate.sh does before it runs muex, so a run from a hook
-    # does not read meerkat's own index.
+    # Git's hook variables, cleared so that a test run from a hook does not
+    # point muex at meerkat's own index.
     {vars, 0} = System.cmd("git", ["rev-parse", "--local-env-vars"])
-    for var <- String.split(vars), do: Meerkat.TestHelpers.put_env(var, nil)
+    for var <- String.split(vars), do: put_env(var, nil)
 
-    dir = Meerkat.TestHelpers.make_git_repo("meerkat-mutate-staged")
+    dir = make_git_repo("meerkat-mutate-staged")
     on_exit(fn -> File.rm_rf!(dir) end)
     git(dir, ["config", "user.email", "t@t.t"])
     git(dir, ["config", "user.name", "t"])
@@ -25,8 +25,9 @@ defmodule Meerkat.MutateStagedMuexTest do
     {:ok, dir: dir}
   end
 
-  # Deleting the comment moves double/1 up a line on disk, off the line the
-  # index numbers as staged, so the run would find no mutant to test.
+  # Without the refusal, the run would find no mutant to test: deleting the
+  # comment moves double/1 up a line on disk, off the line the index numbers
+  # as staged.
   test "a staged file whose only unstaged change is a deletion is refused", %{dir: dir} do
     stage(dir, "lib/tiny.ex", tiny("  # note\n", "a * 2"))
     git(dir, ["commit", "-qm", "base"])
@@ -46,7 +47,8 @@ defmodule Meerkat.MutateStagedMuexTest do
     "defmodule Tiny do\n#{comment}  def double(a), do: #{body}\nend\n"
   end
 
-  # scripts/mutate.sh's run_mutate, but on one job.
+  # scripts/mutate.sh's run_mutate flags, with one test BEAM and only
+  # lib/tiny.ex.
   defp gate_args(dir) do
     ~w(--files lib/tiny.ex --coverage-guided --concurrency 1 --no-filter --no-optimize
        --staged --fail-at 0 --format json --output) ++ [Path.join(dir, "_build/report.json")]
