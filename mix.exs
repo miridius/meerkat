@@ -83,7 +83,7 @@ defmodule Meerkat.MixProject do
       # such as `live_isolated(conn, MeerkatWeb.ReviewLive)`), parallel
       # coverage collection, parallel runs of same-file mutants,
       # per-process coverage export names, staged-line scoping,
-      # `--staged` refusing a file with an unstaged deletion,
+      # `--staged` refusing a file with unstaged changes, deletions included,
       # `# muex:ignore` directives, a JSON report that survives invalid
       # UTF-8, no function-call mutants of map literals, `%` structs or
       # `::` in interpolation and bitstring segments, runs of mutants
