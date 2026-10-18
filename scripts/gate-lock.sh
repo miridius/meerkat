@@ -13,8 +13,10 @@
 #
 # Gates wait their turn first come, first served. Each takes a ticket in
 # meerkat-gate-lock/waiting, named for the microsecond it started waiting
-# (the second under bash before 5) and its pid, and holds a lock on it on
-# fd 8; only the gate with the earliest live ticket tries the slots. A
+# (the start of the second under bash before 5, so such a gate can go
+# ahead of one that started earlier in that second) and its pid, and holds
+# a lock on it on fd 8; only the gate with the earliest live ticket tries
+# the slots. A
 # ticket is locked before it gets its name, so a ticket without a lock
 # belongs to a gate that has died, and the next gate to find it deletes it;
 # no later ticket can take its name. Every lock is tried without waiting,
@@ -24,8 +26,9 @@
 #
 # Gates on the script from before tickets (#90) wait for a lock on
 # meerkat-gate-lock/queue and try the slots once they hold it, so the gate
-# with the earliest ticket also holds that lock, on fd 6, until it gets a
-# slot. This can go once no branch predates #90.
+# with the earliest ticket also takes that lock when it is free, on fd 6,
+# and holds it until it gets a slot; while one of those gates holds it, the
+# two race for the slots. This can go once no branch predates #90.
 gate_lock() {
   local dir ticket slot status queued=false waited=false start=$SECONDS
   local timeout=${MEERKAT_GATE_LOCK_TIMEOUT:-3600}
@@ -51,6 +54,10 @@ gate_lock() {
         fi
       done
       exec 9>&-
+    elif [[ "$queued" == true ]]; then
+      # A ticket taken under bash before 5 sorts ahead of this one now.
+      exec 6>&-
+      queued=false
     fi
     gate_lock_waiting
     if ((SECONDS - start >= timeout)); then
@@ -67,7 +74,11 @@ gate_lock() {
 gate_lock_ticket() {
   local pending="$dir/waiting/.$$" now=${EPOCHREALTIME:-}
   now=${now//[!0-9]/}
-  ticket="$dir/waiting/${now:-$(date +%s)000000}.$$"
+  if [[ -z "$now" ]]; then
+    now=$(date +%s) || { echo "gate-lock: cannot read the time." >&2; return 1; }
+    now+=000000
+  fi
+  ticket="$dir/waiting/$now.$$"
   exec 8>"$pending"
   gate_lock_try 8 "$pending" || { exec 8>&-; rm -f "$pending"; return 1; }
   mv "$pending" "$ticket" || { exec 8>&-; rm -f "$pending"; return 1; }
