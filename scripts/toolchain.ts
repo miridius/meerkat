@@ -176,7 +176,21 @@ async function curl(
 	url: string,
 	opts: { head?: boolean } = {},
 ): Promise<Uint8Array> {
-	const args = ["curl", "-sSfL", "--max-time", "60", "-K", "-"];
+	// Gives up when connecting takes 30s or a transfer stays under 1 KiB/s
+	// for a minute, not after a fixed time: a release archive can take
+	// minutes on a slow link.
+	const args = [
+		"curl",
+		"-sSfL",
+		"--connect-timeout",
+		"30",
+		"--speed-limit",
+		"1024",
+		"--speed-time",
+		"60",
+		"-K",
+		"-",
+	];
 	if (opts.head) args.push("-I");
 	let config = "";
 	if (url.startsWith("https://api.github.com/")) {

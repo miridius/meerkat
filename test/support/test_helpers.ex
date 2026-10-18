@@ -238,18 +238,21 @@ defmodule Meerkat.TestHelpers do
   repo's scripts/gate-lock.sh, then runs the bash `command`. The port
   delivers its output, stderr included, line by line, and its exit status.
   Closing the port closes the gate's stdin. A gate that gets no slot gives
-  up after `timeout` seconds.
+  up after `:timeout` seconds (default 60). `:bash` is the bash that runs
+  it (default the one on PATH).
   """
-  @spec gate_lock_port(String.t(), String.t(), pos_integer()) :: port()
-  def gate_lock_port(repo, command, timeout \\ 60) do
+  @spec gate_lock_port(String.t(), String.t(), keyword()) :: port()
+  def gate_lock_port(repo, command, opts \\ []) do
     lib = Path.expand("../../scripts/gate-lock.sh", __DIR__)
 
     env = [
-      {~c"MEERKAT_GATE_LOCK_TIMEOUT", ~c"#{timeout}"}
+      {~c"MEERKAT_GATE_LOCK_TIMEOUT", ~c"#{Keyword.get(opts, :timeout, 60)}"}
       | for({name, nil} <- @git_discovery_overrides, do: {String.to_charlist(name), false})
     ]
 
-    Port.open({:spawn_executable, System.find_executable("bash")}, [
+    bash = Keyword.get_lazy(opts, :bash, fn -> System.find_executable("bash") end)
+
+    Port.open({:spawn_executable, bash}, [
       :binary,
       :exit_status,
       :stderr_to_stdout,
