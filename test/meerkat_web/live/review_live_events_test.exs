@@ -120,19 +120,6 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     {view, rid}
   end
 
-  defp no_push_event(view, event) do
-    pushed =
-      try do
-        assert_push_event(view, ^event, %{})
-        true
-      rescue
-        ExUnit.AssertionError -> false
-        ArgumentError -> false
-      end
-
-    refute pushed, "expected no #{event} push"
-  end
-
   defp commit(repo, message) do
     git(repo, [
       "-c",
@@ -656,7 +643,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     refute PendingAnswers.load(repo)
 
     # Unbound review: no drafts:wipe push (there is no review id to wipe).
-    no_push_event(view, "drafts:wipe")
+    refute_push_event(view, "drafts:wipe", _)
   end
 
   test "approve in bound mode wipes drafts and mirrors the approval cache", %{conn: conn} do
@@ -751,7 +738,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
-    no_push_event(view, "drafts:wipe")
+    refute_push_event(view, "drafts:wipe", _)
   end
 
   test "an open comment form disables Approve and Send Feedback until it closes", %{conn: conn} do
@@ -1140,7 +1127,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     view = mount_unbound(conn)
 
     render_click(view, "comment_form.reveal", %{"form_key" => "global"})
-    no_push_event(view, "comment-form:reveal")
+    refute_push_event(view, "comment-form:reveal", _)
 
     render_hook(view, "comment_form.show_global", %{})
     render_click(view, "comment_form.reveal", %{"form_key" => "global"})
@@ -1180,7 +1167,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       "line_end" => 3
     })
 
-    no_push_event(view, "moved:jump")
+    refute_push_event(view, "moved:jump", _)
   end
 
   test "comment_form.hide without a form_key is ignored, not a crash", %{conn: conn} do
@@ -1838,7 +1825,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # Closing does not nudge the scroll.
     html = render_click(view, "toolbar.toggle_files_panel", %{})
     refute html =~ "file-filter"
-    no_push_event(view, "scroll-into-view")
+    refute_push_event(view, "scroll-into-view", _)
   end
 
   test "file.toggle_expanded flips the collapse set for approved and unapproved files", %{
@@ -1927,7 +1914,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       end
     end
 
-    no_push_event(view, "open-url")
+    refute_push_event(view, "open-url", _)
   end
 
   # --- Third-pass kills (final survivors) ---
@@ -1979,7 +1966,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     {:ok, view2, _html} = live_isolated(conn, ReviewLive)
 
     render_hook(view2, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
-    no_push_event(view2, "scroll-into-view")
+    refute_push_event(view2, "scroll-into-view", _)
   end
 
   test "a second decision submit still lands on the done view", %{conn: conn} do

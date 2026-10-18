@@ -76,6 +76,12 @@ defmodule Meerkat.PreCommitHookTest do
     File.mkdir_p!(Path.join(work, "lib/meerkat"))
     File.write!(Path.join(work, "lib/meerkat/one.ex"), "one\nbase\n")
     File.write!(Path.join(work, "lib/meerkat/two.ex"), "two\nbase\n")
+
+    for test <- ~w(test/meerkat/one_test.exs test/web/two_test.exs test/scripts/gate_test.exs) do
+      File.mkdir_p!(Path.join(work, Path.dirname(test)))
+      File.write!(Path.join(work, test), "")
+    end
+
     git(work, ["add", "-A"])
     no_hooks(work, ["commit", "-qm", "base"])
     no_hooks(work, ["switch", "-q", "-c", "feature"])
@@ -348,6 +354,13 @@ defmodule Meerkat.PreCommitHookTest do
     assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
 
+    # The test files that drive scripts in subprocesses are left out.
+    assert ["--test-paths", "test/meerkat/one_test.exs,test/web/two_test.exs"] in Enum.chunk_every(
+             args,
+             2,
+             1
+           )
+
     # muex prints the report's path, so the report must outlive the run.
     output = ctx.muex |> Path.join("output") |> File.read!() |> String.trim()
     assert File.exists?(output)
@@ -380,6 +393,18 @@ defmodule Meerkat.PreCommitHookTest do
 
     assert {_, 0} = commit(ctx, ["-m", "change two", "--", "lib/meerkat/two.ex"])
     assert muex_staged(ctx) == ["lib/meerkat/two.ex"]
+  end
+
+  test "with no test files outside test/scripts the mutation gate blocks the commit", ctx do
+    head = git(ctx.work, ["rev-parse", "HEAD"])
+    for dir <- ~w(test/meerkat test/web), do: File.rm_rf!(Path.join(ctx.work, dir))
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+
+    assert {out, code} = commit(ctx, ["-am", "change lib"])
+    assert code != 0
+    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
+    assert out =~ "no test files outside test/scripts"
+    refute File.exists?(Path.join(ctx.muex, "args"))
   end
 
   test "staging only deleted lib/ lines skips mutation testing", ctx do

@@ -194,9 +194,16 @@ scripts/mutate.sh changed -- --concurrency 4
 
 `mix muex --coverage-guided` runs each mutant against the test files
 that execute its line.
+To learn which those are, it first runs every test file it is given
+under `:cover`, however few lines are mutated.
+`mutate.sh` gives it every `test/**/*_test.exs` file outside
+`test/scripts`, and refuses to run when there is none.
+The `test/scripts` files drive shell scripts in subprocesses, so in
+their own BEAM they execute only the app-start lines every test file
+executes; leaving them out roughly halves the mutation gate.
 A mutant on a line no test executes is skipped as `no_coverage`.
 For a line `:cover` has no entry for, such as a `def` header, muex
-falls back to dependency analysis and then to the full test suite.
+falls back to dependency analysis and then to every test file it was given.
 A mutant is a survivor when the test files run for its line still
 pass against it.
 

@@ -239,17 +239,27 @@ run_mutate() {
   # --coverage-guided runs each mutant against the test files that execute
   # its line, and skips mutants on lines no test executes (reported as
   # no coverage). For lines `:cover` has no data for, it falls back to
-  # muex's dependency analysis, then to the full suite. muex runs as many
-  # test BEAMs at once as there are cores; like scripts/mix-test.sh, cap
-  # them at half (at least one) so a commit leaves the machine usable. A
-  # --concurrency after `--` overrides this.
+  # muex's dependency analysis, then to every test file it is given. muex
+  # runs as many test BEAMs at once as there are cores; like
+  # scripts/mix-test.sh, cap them at half (at least one) so a commit leaves
+  # the machine usable. A --concurrency after `--` overrides this.
   jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
   ((jobs >= 1)) || jobs=1
+  # To find which tests execute which lines, muex first runs every test file
+  # it is given under :cover, whatever lines are mutated. The files under
+  # test/scripts drive shell scripts in subprocesses, so in their own BEAM
+  # they execute only the app-start lines every test file executes; leaving
+  # them out halves that run without changing which mutants are killed.
+  tests=$(find test -name '*_test.exs' -type f -not -path 'test/scripts/*' | sort | paste -sd , -)
+  if [[ -z "$tests" ]]; then
+    echo "scripts/mutate.sh: no test files outside test/scripts." >&2
+    exit 2
+  fi
   # Every selected line counts, so --no-filter keeps muex from skipping a
   # file it rates too simple to be worth mutating, and --no-optimize from
   # dropping the mutants of a function it rates too simple.
-  muex=(mix muex --files "$joined" --coverage-guided --concurrency "$jobs"
-    --no-filter --no-optimize "${scope_args[@]}")
+  muex=(mix muex --files "$joined" --test-paths "$tests" --coverage-guided
+    --concurrency "$jobs" --no-filter --no-optimize "${scope_args[@]}")
 
   # Every mode judges the run from muex's JSON report rather than its
   # score: muex's default --fail-at passes a run with survivors, its score
