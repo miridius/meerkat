@@ -6,7 +6,7 @@ defmodule Meerkat.ShepherdTest do
   # for its BEAMs.
   use ExUnit.Case, async: true
 
-  import Meerkat.TestHelpers, only: [eventually: 2, eventually: 3]
+  import Meerkat.TestHelpers, only: [eventually: 2]
 
   @shepherd Path.join(File.cwd!(), "bin/meerkat-shepherd")
   # How long any wait here lasts before the test fails. It bounds only a
@@ -1085,7 +1085,7 @@ defmodule Meerkat.ShepherdTest do
         |> Enum.flat_map(&read_pid/1)
         |> Enum.find(&(&1 not in known))
       end,
-      @timeout_ms
+      timeout: @timeout_ms
     ) || flunk("the caller started no backend in #{runs}")
   end
 
@@ -1106,7 +1106,7 @@ defmodule Meerkat.ShepherdTest do
           [] -> nil
         end
       end,
-      @timeout_ms
+      timeout: @timeout_ms
     ) || flunk("no BEAM recorded its port in #{runs}")
   end
 
@@ -1120,8 +1120,8 @@ defmodule Meerkat.ShepherdTest do
   defp await_gone(pid) do
     eventually(
       fn -> match?({_, 1}, System.cmd("ps", ["-p", pid], stderr_to_stdout: true)) end,
-      @timeout_ms,
-      50
+      timeout: @timeout_ms,
+      interval: 50
     )
   end
 
@@ -1256,7 +1256,7 @@ defmodule Meerkat.ShepherdTest do
           {:error, _} -> nil
         end
       end,
-      timeout_ms
+      timeout: timeout_ms
     )
   end
 
@@ -1292,7 +1292,7 @@ defmodule Meerkat.ShepherdTest do
 
   # Whether `path` holds `text` within @timeout_ms.
   defp await_content(path, text) do
-    eventually(fn -> File.read(path) == {:ok, text <> "\n"} end, @timeout_ms)
+    eventually(fn -> File.read(path) == {:ok, text <> "\n"} end, timeout: @timeout_ms)
   end
 
   # A PATH whose ps fails as Claude Code's sandbox makes it.
@@ -1307,7 +1307,7 @@ defmodule Meerkat.ShepherdTest do
 
   # Waits up to @timeout_ms for `pattern` to match a path.
   defp await_match(pattern) do
-    eventually(fn -> Path.wildcard(pattern) != [] end, @timeout_ms) ||
+    eventually(fn -> Path.wildcard(pattern) != [] end, timeout: @timeout_ms) ||
       flunk("nothing matched #{pattern}")
   end
 end

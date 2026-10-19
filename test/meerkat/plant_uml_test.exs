@@ -35,7 +35,8 @@ defmodule Meerkat.PlantUMLTest do
     File.chmod!(path, 0o755)
   end
 
-  # A real child that outlives the time budget; 0ms makes it time out at once.
+  # A real child that prints nothing and outlives any time budget a test
+  # passes; collect/3 kills it when the budget runs out.
   defp stuck_port do
     Port.open(
       {:spawn_executable, System.find_executable("sleep")},
@@ -133,7 +134,8 @@ defmodule Meerkat.PlantUMLTest do
     # Only the time spent waiting counts, so output that comes early leaves
     # nearly the whole budget for the exit that follows it.
     test "keeps waiting for the exit after output, within the budget" do
-      port = stuck_port()
+      # A port with no OS process: it sends nothing, and nothing outlives it.
+      {:ok, port} = :gen_tcp.listen(0, [])
       me = self()
 
       spawn_link(fn ->
@@ -312,8 +314,7 @@ defmodule Meerkat.PlantUMLTest do
           _ -> false
         end
       end,
-      ExUnit.configuration()[:assert_receive_timeout],
-      50
+      interval: 50
     )
   end
 

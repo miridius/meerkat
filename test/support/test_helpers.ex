@@ -45,21 +45,22 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  Calls `fun` every `interval_ms` until it returns a truthy value, and
-  returns that value, or `nil` once `timeout_ms` has passed, by default
-  when an `assert_receive` would have given up. Waits for what a test
-  needs to happen rather than a fixed time, which a loaded machine can
-  overrun; the caller asserts on the result. A `fun` that starts a process
-  takes a longer interval, so the wait adds less load.
+  Calls `fun` every `:interval` ms (10) until it returns a truthy value,
+  and returns that value, or `nil` once `:timeout` ms have passed, by
+  default when an `assert_receive` would have given up. Waits for what a
+  test needs to happen rather than a fixed time, which a loaded machine
+  can overrun; the caller asserts on the result. A `fun` that starts a
+  process takes a longer interval, so the wait adds less load.
   """
-  @spec eventually((-> result), non_neg_integer(), pos_integer()) :: result | nil
+  @spec eventually((-> result), timeout: non_neg_integer(), interval: pos_integer()) ::
+          result | nil
         when result: term()
-  def eventually(
-        fun,
-        timeout_ms \\ ExUnit.configuration()[:assert_receive_timeout],
-        interval_ms \\ 10
-      ) do
-    poll_until(fun, System.monotonic_time(:millisecond) + timeout_ms, interval_ms)
+  def eventually(fun, opts \\ []) do
+    timeout_ms =
+      Keyword.get_lazy(opts, :timeout, fn -> ExUnit.configuration()[:assert_receive_timeout] end)
+
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    poll_until(fun, deadline, Keyword.get(opts, :interval, 10))
   end
 
   defp poll_until(fun, deadline, interval_ms) do
