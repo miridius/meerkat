@@ -537,6 +537,38 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
            )
   end
 
+  test "the toolbar shows one total when hiding files leaves it unchanged", %{conn: conn} do
+    repo = tmp_git_repo()
+    stage(repo, "a.txt", "one\n")
+    stage(repo, "logo.bin", <<0, 1>>)
+    commit(repo, "base")
+    stage(repo, "a.txt", "two\n")
+    stage(repo, "logo.bin", <<0, 2>>)
+    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+
+    view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["bin"])})
+    assert has_element?(view, ".toolbar-line-counts", ~r/^\s*\+1\s*-1\s*$/)
+  end
+
+  test "a hidden generated -diff file counts in the whole diff's total", %{conn: conn} do
+    repo = tmp_git_repo()
+    stage(repo, ".gitattributes", "gen.txt linguist-generated -diff\n")
+    stage(repo, "a.txt", "one\n")
+    stage(repo, "gen.txt", "old\n")
+    commit(repo, "base")
+    stage(repo, "a.txt", "two\n")
+    stage(repo, "gen.txt", "new\nmore\n")
+    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+
+    view = mount_unbound(conn, state)
+
+    assert has_element?(
+             view,
+             ".toolbar-line-counts",
+             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\+3\s*-2\s*$/
+           )
+  end
+
   test "pending answers render as a banner with markdown questions and answers", %{conn: conn} do
     repo = tmp_git_repo()
 
@@ -597,7 +629,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     conn: conn
   } do
     repo = tmp_git_repo()
-    stage(repo, ".gitattributes", "added.md -diff\n")
+    stage(repo, ".gitattributes", "added.md binary\n")
     stage(repo, "BUILD.bazel", <<0, 255, 1>>)
     commit(repo, "base")
     stage(repo, "BUILD.bazel", <<0, 254, 2>>)
