@@ -258,8 +258,9 @@ run_mutate() {
   # muex gives up on a mutant's `mix test` after --timeout ms without
   # output. Its 10 s default is shorter than a test BEAM takes to boot on a
   # loaded machine (35-58 s seen at a load average of 175-317 on 18 cores),
-  # so load timed out mutants no test had judged. Keep it above ExUnit's
-  # per-test timeout, so a hang inside a test fails first, which is a kill.
+  # so load timed out mutants no test had judged. Keep it above a silent
+  # boot plus ExUnit's per-test timeout (test/test_helper.exs), so a hang
+  # inside a test fails first, which is a kill.
   muex=(mix muex --files "$joined" --test-paths "$tests" --coverage-guided
     --concurrency "$jobs" --no-filter --no-optimize --timeout 300000
     "${scope_args[@]}")
@@ -302,7 +303,7 @@ run_mutate() {
   # muex's patch holds the whole enclosing expression, which for a deleted
   # statement is the whole module body, so print only the lines one side
   # has and the other lacks, at most six per side.
-  listing() {
+  list_mutants() {
     jq -r --argjson statuses "$1" '
       def only($sign; $lines; $other):
         ($lines - $other) as $diff
@@ -318,8 +319,8 @@ run_mutate() {
            else "" end)
     ' "$report"
   }
-  failing=$(listing '["survived", "no_coverage"]')
-  timed_out=$(listing '["timeout"]')
+  failing=$(list_mutants '["survived", "no_coverage"]')
+  timed_out=$(list_mutants '["timeout"]')
 
   if [[ -n "$failing" ]]; then
     echo
@@ -332,7 +333,7 @@ run_mutate() {
   fi
   if [[ -n "$timed_out" ]]; then
     echo
-    echo "scripts/mutate.sh: no test judged these mutants of the $label lib/ lines; their tests printed nothing for five minutes:"
+    echo "scripts/mutate.sh: no test judged these mutants of the $label lib/ lines; their tests printed nothing within muex's --timeout:"
     echo
     echo "$timed_out"
     echo

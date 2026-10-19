@@ -37,6 +37,7 @@ defmodule Meerkat.ReviewIdTest do
     # joined by NUL bytes.
     test "ids stay the same across releases" do
       for {target, id} <- [
+            {{:staged, nil}, "ba49d641bf28ac38"},
             {{:staged, "/tmp/MSG"}, "d535c3fccda6db28"},
             {{:single_ref, "HEAD"}, "f32d180e2ac80921"},
             {{:range, "main", "feat", :two_dot}, "55eeccd43f59f678"},

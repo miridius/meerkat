@@ -428,6 +428,7 @@ defmodule Meerkat.PreCommitHookTest do
       assert out =~ "    - a == b"
       assert out =~ "    + a != b"
       refute out =~ "  killed  "
+      refute out =~ "no test judged"
     end
   end
 
@@ -445,6 +446,21 @@ defmodule Meerkat.PreCommitHookTest do
     assert out =~ "lib/meerkat/one.ex:2  timeout  Comparison: == to !="
     assert out =~ "Rerun once the machine is less loaded."
     refute out =~ "untested behaviour"
+  end
+
+  test "survivors and timed-out mutants are each listed under their own heading", ctx do
+    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
+    timed_out = %{mutant("timeout") | location: %{file: "lib/meerkat/one.ex", line: 3}}
+    report = write_report(ctx.base, "mixed", [mutant("survived"), timed_out])
+
+    assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
+    assert code != 0
+    assert [survivors, timeouts] = String.split(out, "no test judged these mutants")
+    assert survivors =~ "untested behaviour"
+    assert survivors =~ "lib/meerkat/one.ex:2  survived  "
+    refute survivors =~ "lib/meerkat/one.ex:3"
+    assert timeouts =~ "lib/meerkat/one.ex:3  timeout  "
+    refute timeouts =~ "lib/meerkat/one.ex:2"
   end
 
   test "killed, invalid, equivalent and ignored mutants pass", ctx do
@@ -513,8 +529,9 @@ defmodule Meerkat.PreCommitHookTest do
   end
 
   # muex's own exit status passes survivors under its default --fail-at
-  # and ignores no-coverage mutants, so every mode judges the report.
-  for status <- ~w(survived no_coverage) do
+  # and timed-out mutants and ignores no-coverage ones, so every mode
+  # judges the report.
+  for status <- ~w(survived no_coverage timeout) do
     test "`mutate.sh <path>` fails on a #{status} mutant and lists it", ctx do
       report = write_report(ctx.base, unquote(status), [mutant(unquote(status))])
       path = ctx.stubs <> ":" <> System.fetch_env!("PATH")

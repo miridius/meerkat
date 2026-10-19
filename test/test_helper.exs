@@ -3,7 +3,8 @@
 # BEAMs can run past ExUnit's 60 s default, and an assert_receive past
 # 1 s, then 5 s. Set no shorter wait on an assert_receive. It stays well
 # below the test timeout, so a message that never comes fails at its
-# assert_receive.
+# assert_receive. scripts/mutate.sh's muex --timeout must stay above the
+# test timeout, so a mutant that hangs a test is killed, not timed out.
 ExUnit.start(timeout: 180_000, assert_receive_timeout: 30_000)
 Meerkat.TestHelpers.isolate_tmp_dir()
 
