@@ -576,7 +576,8 @@ defmodule Meerkat.DecisionTest do
     ]
 
     setup do
-      repo = make_tmp_repo("meerkat-decision-ending")
+      # The review's server runs git in it.
+      repo = make_git_repo("meerkat-decision-ending")
       serve_dir = Path.join(repo, "run")
       File.mkdir_p!(serve_dir)
       review_id = "ending_#{System.unique_integer([:positive])}"
@@ -629,14 +630,49 @@ defmodule Meerkat.DecisionTest do
       String.trim(out)
     end
 
+    # Decision judges a review in a process it spawns. Tracing its spawns, and
+    # what they return from `end_if_unused/1`, shows whether a judgement ran
+    # and what it found without waiting for something not to happen.
+    defp trace_judgements do
+      judge = {ReviewServer, :end_if_unused, 1}
+      # A pattern set before its module loads matches nothing.
+      Code.ensure_loaded!(ReviewServer)
+      1 = :erlang.trace_pattern(judge, [{:_, [], [{:return_trace}]}], [:global])
+      decision = Process.whereis(Decision)
+      :erlang.trace(decision, true, [:procs, :call, :set_on_spawn])
+
+      on_exit(fn ->
+        :erlang.trace(decision, false, [:all])
+        :erlang.trace_pattern(judge, false, [:global])
+      end)
+
+      decision
+    end
+
+    defp assert_judged(decision, result) do
+      assert_receive {:trace, ^decision, :spawn, judgement, _}
+
+      assert_receive {:trace, ^judgement, :return_from, {ReviewServer, :end_if_unused, 1},
+                      ^result}
+    end
+
+    # Decision starts any judgement while it handles the caller's exit, so
+    # once it has dropped the caller, the spawn would already be traced.
+    defp refute_judged(decision, callers_left) do
+      assert eventually(fn -> map_size(:sys.get_state(Decision).callers) == callers_left end)
+      refute_received {:trace, ^decision, :spawn, _, _}
+    end
+
     test "a review with no comments ends once its last caller detaches, and turns later callers away" do
+      decision = trace_judgements()
       await_in_background()
       {first, _} = spawn_caller("run-a")
       {second, _} = spawn_caller("run-a")
       Process.exit(first, :kill)
-      refute_receive {:awaited, _}, 100
+      refute_judged(decision, 1)
 
       Process.exit(second, :kill)
+      assert_judged(decision, :ended)
       assert_receive {:awaited, {:ended, ""}}
       assert_receive {:meerkat_decision, {:ended, ""}}
       assert Decision.attach("run-b") == :closing
@@ -649,13 +685,13 @@ defmodule Meerkat.DecisionTest do
     } do
       start_review(review_id, repo)
       %{global_comments: [%{id: id}]} = ReviewServer.add_comment(review_id, :global, comment())
-      await_in_background()
+      decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       Process.exit(pid, :kill)
-      refute_receive {:awaited, _}, 200
+      assert_judged(decision, :kept)
 
       ReviewServer.remove_comment(review_id, :global, id)
-      refute_receive {:awaited, _}, 200
+      refute_judged(decision, 0)
       assert Decision.current() == nil
     end
 
@@ -666,34 +702,39 @@ defmodule Meerkat.DecisionTest do
       [{server, _}] = Registry.lookup(Meerkat.ReviewRegistry, review_id)
       :ok = DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, server)
 
-      await_in_background()
+      decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       Process.exit(pid, :kill)
-      refute_receive {:awaited, _}, 200
+      assert_judged(decision, :kept)
+      assert Decision.current() == nil
     end
 
     test "a review with an open comment form stays open", %{repo: repo, review_id: review_id} do
       start_review(review_id, repo)
       ReviewServer.open_form(review_id, %{surface: :global, anchor: %{}})
-      await_in_background()
+      decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       Process.exit(pid, :kill)
-      refute_receive {:awaited, _}, 200
+      assert_judged(decision, :kept)
+      assert Decision.current() == nil
     end
 
     test "a decision made before the caller detaches stands" do
+      decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       {:ok, _} = Decision.submit({:approve, ""})
       Process.exit(pid, :kill)
-      refute_receive {:meerkat_decision, {:ended, _}}, 200
+      refute_judged(decision, 0)
       assert Decision.current() == {:approve, ""}
     end
 
     test "a caller that died before attaching ends the review", %{serve_dir: serve_dir} do
+      decision = trace_judgements()
       File.write!(Path.join(serve_dir, "caller"), exited_pid())
       await_in_background()
       # Well inside the default second, so the configured 5 ms is what runs.
       assert_receive {:awaited, {:ended, ""}}, 500
+      assert_judged(decision, :ended)
     end
 
     test "the recorded caller is checked once a second unless configured otherwise" do
@@ -702,45 +743,67 @@ defmodule Meerkat.DecisionTest do
       assert Decision.caller_check_ms() == 1_000
     end
 
-    test "without a launcher, a review stays open when its caller detaches" do
+    test "without a launcher, nothing checks for a caller and a review stays open when its caller detaches" do
+      assert is_reference(:sys.get_state(Decision).caller_check)
       Application.delete_env(:meerkat, :serve_dir)
-      await_in_background()
+      Decision.reset()
+      assert :sys.get_state(Decision).caller_check == nil
+
+      decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       Process.exit(pid, :kill)
-      # Long enough for a judgement, which starts the review's server, to land.
-      refute_receive {:awaited, _}, 1_000
+      refute_judged(decision, 0)
     end
 
     test "a caller leaving while another stays attached keeps the deadline armed" do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
       on_exit(fn -> System.delete_env("MEERKAT_REVIEW_TIMEOUT") end)
       Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      decision = trace_judgements()
       {first, _} = spawn_caller("run-a")
       {second, _} = spawn_caller("run-a")
       Process.exit(first, :kill)
-      refute_receive {:meerkat_deadline, nil}, 200
+      # Decision broadcasts the disarm while it drops the caller.
+      refute_judged(decision, 1)
+      refute_received {:meerkat_deadline, nil}
 
       Process.exit(second, :kill)
       assert_receive {:meerkat_deadline, nil}
+      # Left running, the judgement would end the next test's review.
+      assert_judged(decision, :ended)
     end
 
-    test "a caller check arriving once a caller is attached is dropped silently", %{
-      serve_dir: serve_dir,
-      review_id: review_id
-    } do
-      {_pid, _} = spawn_caller("run-a")
+    test "a caller check due when a caller attached is dropped silently, so a kept review is judged once",
+         %{serve_dir: serve_dir, repo: repo, review_id: review_id} do
+      start_review(review_id, repo)
+      ReviewServer.add_comment(review_id, :global, comment())
+      Application.put_env(:meerkat, :caller_check_ms, 60_000)
+      Decision.reset()
+      due = :sys.get_state(Decision).caller_check
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      assert_judged(decision, :kept)
       File.write!(Path.join(serve_dir, "caller"), exited_pid())
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          send(Decision, :check_caller)
+          send(Decision, {:check_caller, due})
           :sys.get_state(Decision)
         end)
 
       assert log == ""
-      # Judging would have started the review's server.
-      Process.sleep(100)
-      assert Registry.lookup(Meerkat.ReviewRegistry, review_id) == []
+      refute_received {:trace, ^decision, :spawn, _, _}
+    end
+
+    test "a decision made with no caller attached stops the caller checks, judging nothing", %{
+      serve_dir: serve_dir
+    } do
+      decision = trace_judgements()
+      {:ok, _} = Decision.submit({:approve, ""})
+      File.write!(Path.join(serve_dir, "caller"), exited_pid())
+      assert eventually(fn -> :sys.get_state(Decision).caller_check == nil end)
+      refute_received {:trace, ^decision, :spawn, _, _}
     end
 
     test "end_if_unused/1 says whether it ended the review", %{repo: repo, review_id: review_id} do
@@ -766,14 +829,20 @@ defmodule Meerkat.DecisionTest do
       on_exit(fn -> System.cmd("kill", [to_string(caller)], stderr_to_stdout: true) end)
       File.write!(Path.join(serve_dir, "caller"), "#{caller}\n")
       await_in_background()
-      refute_receive {:awaited, _}, 100
+      decision = trace_judgements()
+      :erlang.trace(decision, true, [:receive])
+      # The second check arrives only once the first has found the caller alive.
+      assert_receive {:trace, ^decision, :receive, {:check_caller, _}}
+      assert_receive {:trace, ^decision, :receive, {:check_caller, _}}
+      refute_received {:trace, ^decision, :spawn, _, _}
 
       # Once a caller attaches, the recorded pid is no longer what is checked.
       {pid, _} = spawn_caller("run-a")
+      assert :sys.get_state(Decision).caller_check == nil
       File.write!(Path.join(serve_dir, "caller"), exited_pid())
-      refute_receive {:awaited, _}, 100
 
       Process.exit(pid, :kill)
+      assert_judged(decision, :ended)
       assert_receive {:awaited, {:ended, ""}}
     end
 

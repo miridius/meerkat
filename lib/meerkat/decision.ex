@@ -217,8 +217,6 @@ defmodule Meerkat.Decision do
   def init(:no_decision), do: {:ok, fresh_state()}
 
   defp fresh_state do
-    schedule_caller_check()
-
     schedule_deadline_check(%{
       decision: nil,
       waiters: [],
@@ -226,6 +224,7 @@ defmodule Meerkat.Decision do
       callers: %{},
       deadline_run: nil,
       deadline_tick: nil,
+      caller_check: schedule_caller_check(),
       delivered_to: nil,
       delivery_waiters: []
     })
@@ -306,7 +305,8 @@ defmodule Meerkat.Decision do
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
     callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
-    {:reply, {:ok, state.outcome}, %{state | callers: callers}}
+    # The attached caller is watched from here on, not the recorded one.
+    {:reply, {:ok, state.outcome}, %{state | callers: callers, caller_check: nil}}
   end
 
   def handle_call(:end_unattended, _from, %{decision: nil, callers: callers} = state)
@@ -361,15 +361,12 @@ defmodule Meerkat.Decision do
 
   def handle_info(:check_deadline, state), do: {:noreply, %{state | deadline_tick: nil}}
 
-  def handle_info(:check_caller, %{decision: nil, callers: callers} = state)
-      when callers == %{} do
-    dir = serve_dir()
-    if dir && Meerkat.Caller.gone?(dir), do: judge(), else: schedule_caller_check()
-    {:noreply, state}
+  def handle_info({:check_caller, check}, %{caller_check: check} = state) do
+    {:noreply, %{state | caller_check: check_caller(state)}}
   end
 
-  # A caller attached or a decision was made: stop checking.
-  def handle_info(:check_caller, state), do: {:noreply, state}
+  # A check scheduled before a caller attached or the state was reset.
+  def handle_info({:check_caller, _check}, state), do: {:noreply, state}
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{callers: callers} = state)
       when is_map_key(callers, ref) do
@@ -409,11 +406,31 @@ defmodule Meerkat.Decision do
     end
   end
 
-  # Only a launcher records a caller to check. The check stops once a caller
-  # attaches or a decision is made.
+  # Only a launcher records a caller to check. Returns the check's tag, which
+  # `caller_check` holds while that check is the one due, or nil.
   defp schedule_caller_check do
-    if serve_dir(), do: Process.send_after(self(), :check_caller, caller_check_ms())
+    if serve_dir() do
+      check = make_ref()
+      Process.send_after(self(), {:check_caller, check}, caller_check_ms())
+      check
+    end
   end
+
+  # Judges the review once the recorded caller is gone, and otherwise checks
+  # again, until a decision is made. Returns the next check's tag, or nil. An
+  # attach drops the check that is due, so no caller is attached here.
+  defp check_caller(%{decision: nil}) do
+    dir = serve_dir()
+
+    if dir && Meerkat.Caller.gone?(dir) do
+      judge()
+      nil
+    else
+      schedule_caller_check()
+    end
+  end
+
+  defp check_caller(_decided), do: nil
 
   defp serve_dir, do: Application.get_env(:meerkat, :serve_dir)
 
