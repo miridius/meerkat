@@ -79,12 +79,13 @@ remove commits a merged PR still references). Before committing:
 
 ## Workflow
 
-The end-to-end loop for a meerkat bug report or feature request:
+The `dev-process` and `pull-requests` plugins from the
+`miridius-public` marketplace, enabled in `.claude/settings.json`,
+hold the development-process and PR rules. The loop below adds
+meerkat's own steps for a bug report or feature request:
 
-1. **Understand.** If the request is ambiguous, ask clarifying
-   questions before touching code. For a big feature, first open a
-   PR changing only its `docs/features/*.md` spec. Settle the
-   design in that PR before building. Small changes skip that PR.
+1. **Spec.** A feature's spec, which a big feature's spec-only PR
+   changes, is its `docs/features/*.md` file.
 2. **Build, test, verify.** Implement in small slices. Each slice
    ends with `mix test` green AND a manual verification: review a
    real diff through `bin/meerkat-beam` from this checkout and use
@@ -93,41 +94,12 @@ The end-to-end loop for a meerkat bug report or feature request:
    behaviour the way a user meets it. Turn each QA-found bug into a
    test that fails before the fix, at the lowest layer that reaches
    it; use e2e only when lower-layer tests cannot reach the seam,
-   1-3 tests per seam.
-3. **Keep going until it's PR-ready, and meet every requirement the
-   user asked for or approved.** Don't stop part way through. Don't
-   ask the user "should I continue?" or "should I do X later?" — just
-   do it. "Out of scope" is not an escape hatch for a requirement the
-   user asked for or approved; if the work spans repos or layers, ship
-   all of them in this PR (vendor cross-repo bits if needed). The session
-   ends when every requirement is met and the work is on a
-   reviewable branch, not when a response boundary feels
-   convenient.
-4. **Ship.** Branch off `main`, or off the branch of the open PR
-   this work builds on, commit, push, and open a **draft** PR.
-   Do not ask before pushing or opening the PR. `main` is
-   branch-protected on GitHub — no direct pushes, no force-pushes;
-   changes land via PR.
-
-   Link a PR built on another open PR into a GitHub stack with
-   `gh stack link`. Its text does not say it is stacked.
-
-   Before opening the draft PR, do a quick self-review of the diff
-   and the PR description you are about to post, so unchecked work
-   does not reach the user when the PR opens. Does it do what was
-   asked? Is it sensible? Does it avoid unnecessary changes or
-   complexity? Fix every finding from any review you run before
-   opening the PR, regardless of which review found it. Keep this
-   self-review cheap: it must not add review agents,
-   mutation-testing runs, or extra test suites of its own. The
-   thorough review still happens at merge through
-   `/manager:review-and-merge`; this self-review does not replace it.
-
-   When a PR changes what meerkat's review page shows, screenshots are
-   called for. Use judgement to choose whichever screenshots, and how
-   many, will help review that PR; for changed UI, a before/after pair
-   can help. Crop each screenshot to the changed element. Put each in
-   its own table row so they read on a phone.
+   1-3 tests per seam. Tests and agent-run checks pass `--no-open`.
+   A run that needs a browser (Playwright, `meerkat-qa`) opens the
+   printed URL itself.
+3. **Ship.** Commit and push without asking first.
+   `main` is branch-protected on GitHub — no direct pushes, no
+   force-pushes; changes land via PR.
 
 ## Quality gates
 
@@ -255,7 +227,7 @@ Name the e2e test that kills the mutant.
 
 ## Review and merge
 
-The `/manager:review-and-merge` skill runs the merge-time checks and
+The `/pull-requests:review-and-merge` skill runs the merge-time checks and
 post-merge steps in this section.
 
 ### Mutation-test the PR
