@@ -654,6 +654,9 @@ defmodule Meerkat.DecisionTest do
 
       assert_receive {:trace, ^judgement, :return_from, {ReviewServer, :end_if_unused, 1},
                       ^result}
+
+      # A kept judgement then marks the serve dir.
+      assert_receive {:trace, ^judgement, :exit, :normal}
     end
 
     # Decision starts any judgement while it handles the caller's exit, so
@@ -679,20 +682,34 @@ defmodule Meerkat.DecisionTest do
       assert {:already_decided, {:ended, ""}} = Decision.submit({:approve, ""})
     end
 
-    test "a review with a saved comment stays open, even once its comments are deleted", %{
-      repo: repo,
-      review_id: review_id
-    } do
+    test "a review with a saved comment stays open, even once its comments are deleted and its BEAM is respawned",
+         %{repo: repo, review_id: review_id, serve_dir: serve_dir} do
       start_review(review_id, repo)
       %{global_comments: [%{id: id}]} = ReviewServer.add_comment(review_id, :global, comment())
       decision = trace_judgements()
       {pid, _} = spawn_caller("run-a")
       Process.exit(pid, :kill)
       assert_judged(decision, :kept)
+      assert File.exists?(Path.join(serve_dir, "kept"))
 
       ReviewServer.remove_comment(review_id, :global, id)
       refute_judged(decision, 0)
       assert Decision.current() == nil
+
+      # A respawned BEAM starts Decision afresh, as reset/0 does, with the
+      # launcher's dead caller still recorded.
+      File.write!(Path.join(serve_dir, "caller"), exited_pid())
+      Decision.reset()
+      assert :sys.get_state(Decision).caller_check == nil
+      assert Decision.current() == nil
+    end
+
+    test "an ended review leaves no kept mark", %{serve_dir: serve_dir} do
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      assert_judged(decision, :ended)
+      refute File.exists?(Path.join(serve_dir, "kept"))
     end
 
     test "comments saved by an earlier BEAM keep the review open before any tab starts its server",

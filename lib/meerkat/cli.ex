@@ -255,23 +255,23 @@ defmodule Meerkat.CLI do
 
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend"
         {tag, payload} = decision = await_decision_or_reject()
+
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; settle/2 itself is tested in cli_test): killed by detach.spec.ts "a review with no comments ends once its caller is killed…", whose backend must keep its snapshot and exit
+        {delete_snapshot?, deliver_to} = settle(tag, serve_dir)
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
         # ReviewServer runs the delete after any save in flight and saves
         # nothing once a decision exists, so the snapshot stays deleted.
-        # An ended review had no comments; its snapshot keeps the Approved
-        # ticks for a rerun.
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a rerun after a message-only change replaces a held decision without its comments…" and "a review with no comments ends once its caller is killed…"
-        _ = if tag != :ended, do: ReviewServer.delete_snapshot(repo_path(), review_id)
+        _ = if delete_snapshot?, do: ReviewServer.delete_snapshot(repo_path(), review_id)
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
         Process.sleep(750)
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
         {code, text} = exit_code(decision, review_id, feedback_file_path(log))
-        # Nothing waits for an ended review's outcome, and Decision turns
-        # away any caller that comes, so it goes to the log alone.
+
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend" and "a review with no comments ends once its caller is killed…"
-        run = deliver({code, text}, if(tag != :ended, do: serve_dir))
+        run = deliver({code, text}, deliver_to)
 
         _ =
           if run,
@@ -606,6 +606,9 @@ defmodule Meerkat.CLI do
 
   @doc false
   def mark_served_for_test(serve_dir), do: mark_served(serve_dir)
+
+  @doc false
+  def settle_for_test(tag, serve_dir), do: settle(tag, serve_dir)
 
   @doc false
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
@@ -947,6 +950,14 @@ defmodule Meerkat.CLI do
 
   defp served?(nil), do: false
   defp served?(serve_dir), do: File.exists?(Path.join(serve_dir, "served"))
+
+  # Whether to delete the review's snapshot, and where to deliver its
+  # outcome, once it has the decision `tag`. An ended review had no
+  # comments, so its snapshot keeps the Approved ticks for a rerun; nothing
+  # waits for its outcome, and Decision turns away any caller that comes,
+  # so the outcome goes to the log alone.
+  defp settle(:ended, _serve_dir), do: {false, nil}
+  defp settle(_tag, serve_dir), do: {true, serve_dir}
 
   defp deliver({_code, text}, nil) do
     IO.write(:stderr, text)

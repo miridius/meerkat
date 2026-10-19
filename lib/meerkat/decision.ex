@@ -49,7 +49,9 @@ defmodule Meerkat.Decision do
   ReviewServer calls this server. If the review has no comments and no
   open forms, that calls `end_unattended/0`, which stores the decision
   `{:ended, ""}` only while there is still no decision and no caller. An
-  ended review turns later callers away with `:closing`.
+  ended review turns later callers away with `:closing`. A kept review is
+  marked `kept` in the serve dir, which every BEAM respawned for the review
+  shares, so a respawned BEAM does not check for its dead caller again.
   """
 
   use GenServer
@@ -224,7 +226,7 @@ defmodule Meerkat.Decision do
       callers: %{},
       deadline_run: nil,
       deadline_tick: nil,
-      caller_check: schedule_caller_check(),
+      caller_check: first_caller_check(),
       delivered_to: nil,
       delivery_waiters: []
     })
@@ -406,6 +408,13 @@ defmodule Meerkat.Decision do
     end
   end
 
+  # A review an earlier BEAM kept is judged again only once a caller has
+  # attached and gone, so its dead caller is not checked.
+  defp first_caller_check do
+    dir = serve_dir()
+    if dir && File.exists?(kept_marker(dir)), do: nil, else: schedule_caller_check()
+  end
+
   # Only a launcher records a caller to check. Returns the check's tag, which
   # `caller_check` holds while that check is the one due, or nil.
   defp schedule_caller_check do
@@ -434,12 +443,20 @@ defmodule Meerkat.Decision do
 
   defp serve_dir, do: Application.get_env(:meerkat, :serve_dir)
 
+  # The launcher's serve dir outlives each BEAM its shepherd respawns.
+  defp kept_marker(dir), do: Path.join(dir, "kept")
+
   # ReviewServer calls this server while saving, so judging from inside it
   # could deadlock.
   defp judge do
+    marker = kept_marker(serve_dir())
+    review_id = Application.fetch_env!(:meerkat, :review_id)
+
     {:ok, _} =
       Task.start(fn ->
-        Meerkat.ReviewServer.end_if_unused(Application.fetch_env!(:meerkat, :review_id))
+        # A serve dir deleted meanwhile takes its `caller` file with it, so a
+        # respawned BEAM has no caller to check and the marker is not needed.
+        if Meerkat.ReviewServer.end_if_unused(review_id) == :kept, do: _ = File.touch(marker)
       end)
   end
 

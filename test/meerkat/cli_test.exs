@@ -919,6 +919,17 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "settle/2" do
+    test "an ended review keeps its snapshot and delivers to nobody; any other decision deletes it and delivers to the serve dir" do
+      assert CLI.settle_for_test(:ended, "/run/dir") == {false, nil}
+
+      for tag <- [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
+        assert CLI.settle_for_test(tag, "/run/dir") == {true, "/run/dir"}
+        assert CLI.settle_for_test(tag, nil) == {true, nil}
+      end
+    end
+  end
+
   describe "decision_atom/1" do
     test "the review log records approve-with-feedback as an approval, every other decision as itself" do
       assert CLI.decision_atom_for_test(:approve_with_feedback) == :approve

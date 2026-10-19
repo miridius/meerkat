@@ -290,7 +290,9 @@ nothing but show the notice.
 Otherwise the server stays up until a later invocation of the same
 review attaches to it. Deleting the review's comments afterwards does
 not end it; only another invocation that attaches and then goes away
-is judged again. A decision clicked before the invocation went away
+is judged again. The server records the kept judgement in the run dir
+as `kept`, so a BEAM respawned for the review, after an install or a
+dev-mode edit, does not check the dead invocation again. A decision clicked before the invocation went away
 is held for the next one, as above.
 
 ## Persistence across decisions
