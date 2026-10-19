@@ -366,11 +366,14 @@ defmodule Meerkat.CljHoverTest do
 
     # Not restarted: a crash re-indexing in a loop would take its
     # supervisor, and every other review's server, down with it.
+    name = {:via, Registry, {Meerkat.ReviewRegistry, {CljHover, ctx.rid}}}
+    assert GenServer.whereis(name) == ctx.pid
     ref = Process.monitor(ctx.pid)
     Process.exit(ctx.pid, :kill)
     assert_receive {:DOWN, ^ref, :process, _, :killed}
     _ = :sys.get_state(Meerkat.ReviewServerSup)
-    assert Registry.lookup(Meerkat.ReviewRegistry, {CljHover, ctx.rid}) == []
+    # The registry drops the dead pid in its own time; whereis skips it.
+    refute GenServer.whereis(name)
   end
 
   test "outside a git repo, hover answers nothing" do
