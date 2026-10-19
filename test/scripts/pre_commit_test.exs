@@ -586,7 +586,7 @@ defmodule Meerkat.PreCommitHookTest do
       assert gates_run(ctx) == []
 
       Port.close(ctx.first)
-      assert_receive {^port, {:exit_status, 0}}, 30_000
+      assert_receive {^port, {:exit_status, 0}}
       assert gates_run(ctx) == @gates
     end
 
@@ -599,7 +599,7 @@ defmodule Meerkat.PreCommitHookTest do
       assert gates_run(ctx) == []
 
       Port.close(ctx.second)
-      assert_receive {^port, {:exit_status, 0}}, 30_000
+      assert_receive {^port, {:exit_status, 0}}
       assert gates_run(ctx) == @mutation
     end
 
@@ -805,7 +805,8 @@ defmodule Meerkat.PreCommitHookTest do
       {^port, {:exit_status, status}} ->
         flunk("exited #{status} before printing #{inspect(text)}")
     after
-      30_000 -> flunk("no line containing #{inspect(text)}")
+      ExUnit.configuration()[:assert_receive_timeout] ->
+        flunk("no line containing #{inspect(text)}")
     end
   end
 

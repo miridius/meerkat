@@ -46,16 +46,14 @@ defmodule Meerkat.TestHelpers do
 
   @doc """
   Calls `fun` every 10 ms until it returns a truthy value, and returns that
-  value, or `nil` once an `assert_receive` would have given up. Waits for
-  what a test needs to happen rather than a fixed time, which a loaded
-  machine can overrun; the caller asserts on the result.
+  value, or `nil` once `timeout_ms` has passed, by default when an
+  `assert_receive` would have given up. Waits for what a test needs to
+  happen rather than a fixed time, which a loaded machine can overrun; the
+  caller asserts on the result.
   """
-  @spec eventually((-> result)) :: result | nil when result: term()
-  def eventually(fun) do
-    deadline =
-      System.monotonic_time(:millisecond) + ExUnit.configuration()[:assert_receive_timeout]
-
-    poll_until(fun, deadline)
+  @spec eventually((-> result), non_neg_integer()) :: result | nil when result: term()
+  def eventually(fun, timeout_ms \\ ExUnit.configuration()[:assert_receive_timeout]) do
+    poll_until(fun, System.monotonic_time(:millisecond) + timeout_ms)
   end
 
   defp poll_until(fun, deadline) do
@@ -331,7 +329,8 @@ defmodule Meerkat.TestHelpers do
     receive do
       {^port, {:data, {:eol, "held"}}} -> port
     after
-      30_000 -> ExUnit.Assertions.flunk("no gate slot came free in #{repo}")
+      ExUnit.configuration()[:assert_receive_timeout] ->
+        ExUnit.Assertions.flunk("no gate slot came free in #{repo}")
     end
   end
 

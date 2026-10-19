@@ -400,6 +400,22 @@ defmodule Meerkat.PrePushHookTest do
     assert out =~ "line 1 of .git/info/private-refs matches empty text, so"
   end
 
+  test "the self-test fails a generic pattern that misses its own example", ctx do
+    replace_in_script(ctx.work, "mail a.dev@\"'corp.io'\" now", "mail nobody now")
+
+    assert {out, 1} = self_test(ctx.work)
+    assert out =~ "SELF-TEST: 'email address' misses its own example: mail nobody now"
+  end
+
+  test "the self-test fails a generic pattern that fires on its counter-example", ctx do
+    # Split, as the scan would refuse this file holding the address whole.
+    address = "b.dev@" <> "corp.io"
+    replace_in_script(ctx.work, "mail someone@example.com now", "mail #{address} now")
+
+    assert {out, 1} = self_test(ctx.work)
+    assert out =~ "SELF-TEST: 'email address' fires on its counter-example: mail #{address} now"
+  end
+
   # pack-objects sends the original object, not a local replacement.
   test "a replace ref does not hide a pushed commit's content", ctx do
     commit(ctx.work, "a.txt", "see acme-internal docs\n", "add a")
@@ -985,6 +1001,23 @@ defmodule Meerkat.PrePushHookTest do
       env: [{"LC_ALL", "C.UTF-8"} | hook_env()],
       stderr_to_stdout: true
     )
+  end
+
+  # Runs the fixture's no-private-refs.sh --self-test.
+  defp self_test(work) do
+    System.cmd("bash", ["scripts/no-private-refs.sh", "--self-test"],
+      cd: work,
+      env: hook_env(),
+      stderr_to_stdout: true
+    )
+  end
+
+  # Replaces the one occurrence of `from` in the fixture's no-private-refs.sh.
+  defp replace_in_script(work, from, to) do
+    path = Path.join(work, "scripts/no-private-refs.sh")
+    script = File.read!(path)
+    assert [_, _] = String.split(script, from)
+    File.write!(path, String.replace(script, from, to))
   end
 
   # Puts a commit on the remote's main that `work` lacks, from another clone.

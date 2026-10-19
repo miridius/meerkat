@@ -151,9 +151,10 @@ grep_dir() {
 # git grep reads files, never stdin, so the self-test's samples are
 # files in a temporary directory: an empty line in `empty/`, and in
 # `examples/` each generic pattern's example as `match-<n>` and its
-# counter-example as `miss-<n>`. Each pattern searches each directory once,
-# and its hits are told apart by file, since under load every process a
-# push starts costs it time.
+# counter-example as `miss-<n>`. Each generic pattern searches each
+# directory once, and its hits are told apart by file, since under load
+# every process a push starts costs it time; a private pattern searches
+# only `empty/`.
 write_samples() {
   local i=0 entry positive
   samples=$(mktemp -d)

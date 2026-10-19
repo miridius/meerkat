@@ -5,7 +5,7 @@ defmodule Meerkat.GateLockTest do
   use ExUnit.Case, async: true
 
   import Meerkat.TestHelpers,
-    only: [eventually: 1, git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1]
+    only: [git: 2, gate_lock_port: 2, gate_lock_port: 3, hold_gate_slot: 1]
 
   @waiting "gate-lock: waiting for one of this repo's 2 gate slots, behind any gates that started waiting first."
 
@@ -253,15 +253,16 @@ defmodule Meerkat.GateLockTest do
     ])
   end
 
-  # Whether the old script's `queue` lock reaches `state` before an
-  # assert_receive would give up.
-  defp await_queue(repo, state) do
+  # Whether the old script's `queue` lock reaches `state` within 5s.
+  defp await_queue(repo, state, tries \\ 25) do
     queue = Path.join(repo, ".git/meerkat-gate-lock/queue")
-    want = if state == :free, do: 0, else: 75
+    {_, status} = System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])
 
-    eventually(fn ->
-      match?({_, ^want}, System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"]))
-    end)
+    cond do
+      (status == 0 and state == :free) or (status == 75 and state == :locked) -> true
+      tries == 0 -> false
+      true -> Process.sleep(200) && await_queue(repo, state, tries - 1)
+    end
   end
 
   # One window for all the gates, so each gate does not add its own.
