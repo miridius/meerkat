@@ -84,7 +84,7 @@ const OWNED_TMP_DIR_PREFIXES = [
 
 export const OWNED_TMP_DIR_RE = new RegExp(`^(?:${OWNED_TMP_DIR_PREFIXES.join("|")})-(\\d+)-[A-Za-z0-9]+$`);
 
-// Holds every dir the e2e tests make, so the reapers list only it: the OS
+// Holds every dir the reapers own, so they list only it: the OS
 // temp dir can hold far more entries than is quick to list.
 export const OWNED_TMP_PARENT = join(tmpdir(), "meerkat-e2e-owned");
 mkdirSync(OWNED_TMP_PARENT, { recursive: true });

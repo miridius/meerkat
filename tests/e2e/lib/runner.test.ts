@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { makeFixture, OWNED_TMP_PARENT } from "./fixture.js";
 import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat } from "./runner.js";
@@ -35,7 +35,7 @@ function alive(pid: number): boolean {
 }
 
 // bun runs a file's tests one at a time, which the reaper tests need: each
-// reap scans the whole temp dir, so one test's reap must not run while
+// reap scans all of `OWNED_TMP_PARENT`, so one test's reap must not run while
 // another is still arranging its runs dirs.
 describe("orphaned backend reaper", () => {
 	test("stops backends whose owning test process has exited and keeps those of a live one", async () => {
@@ -134,8 +134,8 @@ describe("orphaned fixture reaper", () => {
 	});
 
 	test("leaves alone fixture dirs whose name carries no owner pid", () => {
-		// Named like the fixtures of older test runs, which a concurrent run
-		// on an older checkout may still be using.
+		// Named like the fixtures of older test runs; without an owner pid the
+		// reaper cannot tell whether the run using it is over.
 		const unowned = mkdtempSync(join(OWNED_TMP_PARENT, "meerkat-e2e-"));
 		try {
 			reapOrphanedFixtures();
@@ -145,23 +145,23 @@ describe("orphaned fixture reaper", () => {
 			rmSync(unowned, { recursive: true, force: true });
 		}
 	});
+});
 
-	test("lists only its own parent dir, not the whole OS temp dir", async () => {
-		// Named like an orphaned fixture and runs dir, but where listing would
-		// mean reading every entry of the OS temp dir.
-		const outside = [
-			mkdtempSync(join(tmpdir(), `meerkat-e2e-${exitedPid()}-`)),
-			mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`)),
-		];
-		try {
-			await reapOrphanedBackends();
-			reapOrphanedFixtures();
+test("the reapers list only their own parent dir, not the whole OS temp dir", async () => {
+	// Named like an orphaned fixture and runs dir, but where listing would
+	// mean reading every entry of the OS temp dir.
+	const outside = [
+		mkdtempSync(join(tmpdir(), `meerkat-e2e-${exitedPid()}-`)),
+		mkdtempSync(join(tmpdir(), `meerkat-runs-${exitedPid()}-`)),
+	];
+	try {
+		await reapOrphanedBackends();
+		reapOrphanedFixtures();
 
-			for (const dir of outside) expect(existsSync(dir), `${dir} outside the parent is not listed`).toBe(true);
-		} finally {
-			for (const dir of outside) rmSync(dir, { recursive: true, force: true });
-		}
-	});
+		for (const dir of outside) expect(existsSync(dir), `${dir} outside the parent is not listed`).toBe(true);
+	} finally {
+		for (const dir of outside) rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 test("a meerkat that exits before printing its URL leaves no backend, fixture, runs or config dir behind", async () => {
@@ -195,6 +195,7 @@ exit 1
 		await expect(start).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
 		const [runsDir, recorded, configHome] = readFileSync(seen, "utf8").trim().split(" ");
 		pid = Number(recorded);
+		expect(dirname(runsDir), "runs dir is where the reapers look").toBe(OWNED_TMP_PARENT);
 		expect(alive(pid), "backend is stopped").toBe(false);
 		expect(existsSync(runsDir), "runs dir is removed").toBe(false);
 		expect(configHome, "settings stay out of the user's config dir").toBe(`${runsDir}cfg`);
