@@ -56,11 +56,13 @@ defmodule Meerkat.TestHelpers do
           result | nil
         when result: term()
   def eventually(fun, opts \\ []) do
-    timeout_ms =
-      Keyword.get_lazy(opts, :timeout, fn -> ExUnit.configuration()[:assert_receive_timeout] end)
+    opts =
+      Keyword.validate!(opts,
+        timeout: ExUnit.configuration()[:assert_receive_timeout],
+        interval: 10
+      )
 
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    poll_until(fun, deadline, Keyword.get(opts, :interval, 10))
+    poll_until(fun, System.monotonic_time(:millisecond) + opts[:timeout], opts[:interval])
   end
 
   defp poll_until(fun, deadline, interval_ms) do

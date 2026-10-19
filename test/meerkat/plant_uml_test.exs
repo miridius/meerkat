@@ -44,6 +44,13 @@ defmodule Meerkat.PlantUMLTest do
     )
   end
 
+  # A port with no OS process, a loopback listening socket: it sends
+  # nothing, and nothing outlives the test.
+  defp processless_port do
+    {:ok, socket} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    socket
+  end
+
   # sh that sets `$m` to whether the script's stderr is its stdout.
   @stderr_check "if [ /dev/fd/1 -ef /dev/fd/2 ]; then m=merged; else m=split; fi"
 
@@ -134,8 +141,7 @@ defmodule Meerkat.PlantUMLTest do
     # Only the time spent waiting counts, so output that comes early leaves
     # nearly the whole budget for the exit that follows it.
     test "keeps waiting for the exit after output, within the budget" do
-      # A port with no OS process: it sends nothing, and nothing outlives it.
-      {:ok, port} = :gen_tcp.listen(0, [])
+      port = processless_port()
       me = self()
 
       spawn_link(fn ->
@@ -190,7 +196,7 @@ defmodule Meerkat.PlantUMLTest do
 
       {collector, ref} =
         spawn_monitor(fn ->
-          port = stuck_port()
+          port = processless_port()
           send(parent, {:port, port})
           receive do: (:go -> :ok)
           send(self(), {port, {:data, "."}})
@@ -295,7 +301,7 @@ defmodule Meerkat.PlantUMLTest do
 
     test "closes a port that has no OS process without killing anything", %{calls: calls} = ctx do
       stub(ctx, "kill", "echo \"$*\" >> '#{calls}'")
-      {:ok, socket} = :gen_tcp.listen(0, [])
+      socket = processless_port()
 
       assert {:error, _} = PlantUML.collect_for_test(socket, [], 0)
       assert Port.info(socket) == nil

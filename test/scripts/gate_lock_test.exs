@@ -258,7 +258,7 @@ defmodule Meerkat.GateLockTest do
   # so probes come 200 ms apart, leaving the gate under test room to take it.
   defp await_queue(repo, state) do
     queue = Path.join(repo, ".git/meerkat-gate-lock/queue")
-    want = %{free: 0, locked: 75} |> Map.fetch!(state)
+    want = Map.fetch!(%{free: 0, locked: 75}, state)
 
     eventually(
       fn -> match?({_, ^want}, System.cmd("lockf", ["-k", "-s", "-t", "0", queue, "true"])) end,
