@@ -84,11 +84,16 @@ const OWNED_TMP_DIR_PREFIXES = [
 
 export const OWNED_TMP_DIR_RE = new RegExp(`^(?:${OWNED_TMP_DIR_PREFIXES.join("|")})-(\\d+)-[A-Za-z0-9]+$`);
 
+// Holds every dir the reapers own, so they list only it: the OS
+// temp dir can hold far more entries than is quick to list.
+export const OWNED_TMP_PARENT = join(tmpdir(), "meerkat-e2e-owned");
+mkdirSync(OWNED_TMP_PARENT, { recursive: true });
+
 // Names the dir after the test process making it, so `reapOrphanedFixtures`
 // can remove it once that process has exited, as when its worker is killed
 // before the dir's cleanup runs.
 export function ownedTmpDir(prefix: (typeof OWNED_TMP_DIR_PREFIXES)[number]): string {
-	return mkdtempSync(join(tmpdir(), `${prefix}-${process.pid}-`));
+	return mkdtempSync(join(OWNED_TMP_PARENT, `${prefix}-${process.pid}-`));
 }
 
 function rmAll(dirs: string[]): void {
