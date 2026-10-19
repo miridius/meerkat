@@ -120,8 +120,8 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 	}
 });
 
-// A 1200-line file with a line changed every 30 lines, so 40 hunks follow
-// the first one.
+// A 1200-line file with a line changed every 30 lines, so the diff has 40
+// hunks.
 function manyHunkFixture() {
 	const lines = (edit: boolean) =>
 		`${Array.from({ length: 1200 }, (_, i) => {
@@ -136,7 +136,8 @@ function manyHunkFixture() {
 }
 
 // With Wrap off, Split view draws each side in its own table. Lists the
-// rows, by `data-line`, whose top differs from the other side's row.
+// rows, by `data-line`, whose top differs from the other side's row, or a
+// single entry giving the row counts when a side has none or they differ.
 function misalignedRows(file: Locator): Promise<string[]> {
 	return file.evaluate((section) => {
 		const tops = (side: string) =>
@@ -183,12 +184,14 @@ test("in Split view with Wrap off, an expand lays the diff out a few times, not 
 		await cdp.send("Tracing.end");
 		await traced;
 		const layouts = events.filter((e) => e.name === "Layout" && e.ph === "X").length;
+		// 3-4 with the fix, about 90 without it.
 		expect(layouts).toBeGreaterThan(0);
-		expect(layouts).toBeLessThan(10);
+		expect(layouts).toBeLessThan(8);
 		expect(await misalignedRows(file)).toEqual([]);
 
 		// A font size change resizes every row in place, without a
-		// re-render, and the sides stay level.
+		// re-render. Both sides' rows here are the same natural height, so
+		// this guards against a sync writing a wrong height.
 		await page.locator(".toolbar-settings > summary").click();
 		await page.getByLabel("Increase font size").click();
 		await page.getByLabel("Increase font size").click();

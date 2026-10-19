@@ -33,9 +33,11 @@ packageExtensions:
 # still applies; when it stops applying, install fails and the patch
 # must be ported to the new release.
 patchedDependencies:
-  # With Wrap off, Split view syncs each hunk row's height across its
+  # With Wrap off, Split view syncs each row pair's height across its
   # two tables. Upstream does it row by row as Svelte re-renders the
   # rows, forcing a layout of both tables per row: an expand on a
-  # 3000-line diff took over a second. The patch batches the syncs into
-  # one pass per frame.
+  # 3000-line diff with 100 hunks ran about 200 layouts. The patch
+  # batches those syncs into one pass per frame. It also registers the
+  # cleanup of a second row watching an already-watched element, which
+  # upstream drops.
   "@git-diff-view/svelte": patches/@git-diff-view__svelte.patch

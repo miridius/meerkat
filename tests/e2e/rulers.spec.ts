@@ -102,6 +102,24 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
 		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
 
+		// The rulers follow a font size change, and back: at 17px each side
+		// fits only 80.
+		await openSettings(page);
+		const fontSize = page.locator(".toolbar-settings .toolbar-value").first();
+		for (const [button, px] of [
+			["Increase font size", [14, 15, 16, 17]],
+			["Decrease font size", [16, 15, 14, 13]],
+		] as const) {
+			for (const size of px) {
+				await page.getByLabel(button).click();
+				await expect(fontSize).toHaveText(`${size}px`);
+			}
+			const expected = button.startsWith("Increase") ? ["80"] : ["80", "110"];
+			await expect.poll(() => rulersOn(oldCell)).toEqual(expected);
+			await expect.poll(() => rulersOn(newCell)).toEqual(expected);
+		}
+		await page.locator(".toolbar-settings > summary").click();
+
 		// A moved line's tint keeps its rulers.
 		const movedCell = page.locator(".file-section").filter({ hasText: "moved.txt" }).locator("td.moved-line").first();
 		await expect(movedCell).toBeVisible();

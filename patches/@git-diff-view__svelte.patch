@@ -6,13 +6,13 @@ index a5902d94be7edb5dfd0640799c911b197b9914eb..33bdb76e93c8e7b1ec8e570be9afb8d2
  import { getId } from '../context/id.js';
  import { getElementRoot } from '../utils/dom.js';
  import { useIsMounted } from './useIsMounted.svelte.js';
-+// Patched by meerkat: every row pair's sync runs in one batch before the
-+// next paint, all writes, then all reads, then all writes, so an expand
-+// that re-renders many rows lays the tables out once rather than once per
-+// row. A pair already the same height is left at its own height, so the
-+// batch does not make the next layout redo the tables.
++// Patched by meerkat: the syncs rows queue as Svelte renders them run in
++// one batch before the next paint (all writes, all reads, then all
++// writes), so an expand lays the tables out a fixed number of times, not
++// once per row. A pair already level gets height auto, so the batch
++// leaves nothing for the next layout to redo.
 +const pending = new Set();
-+// The height each observed element had when its pair was last synced.
++// The height each element was left at by its pair's last sync.
 +const syncedHeight = new WeakMap();
 +let frame = 0;
 +const flushSyncHeights = () => {

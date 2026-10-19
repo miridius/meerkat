@@ -461,15 +461,15 @@
     }
   }
 
-  // `2em` and `1ch` in `cell`'s font, in px. Each probe forces a layout of
-  // the diff table, which an expand makes slow on a long diff, so the
-  // widths are kept per font.
+  // `2em` and `1ch` in `cell`'s font, in px. The `ch` probe forces a
+  // layout of the diff table, slow on a long diff, so the widths are kept
+  // per font.
   function fontWidths(cell: HTMLElement): { offset: number; ch: number } {
     const style = getComputedStyle(cell);
     const font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily, style.letterSpacing].join("|");
     let widths = fontWidthCache.get(font);
     if (!widths) {
-      widths = { offset: probeWidth(cell, "2em"), ch: probeWidth(cell, "100ch") / 100 };
+      widths = { offset: 2 * Number.parseFloat(style.fontSize), ch: probeWidth(cell, "100ch") / 100 };
       fontWidthCache.set(font, widths);
     }
     return widths;
@@ -492,14 +492,7 @@
     void wrap_lines;
     void font_size_px;
     const cancel = afterTwoFrames(drawRulers);
-    // Only a width change moves the rulers; an expand changes the height.
-    let width = -1;
-    const resize = new ResizeObserver((entries) => {
-      const next = entries[entries.length - 1].contentRect.width;
-      if (next === width) return;
-      width = next;
-      drawRulers();
-    });
+    const resize = new ResizeObserver(() => drawRulers());
     resize.observe(diffContainer);
     return () => {
       cancel();

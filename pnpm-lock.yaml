@@ -165,9 +165,7 @@ settings:
 packageExtensionsChecksum: sha256-8Aq+CkBFvrASKILzlCGk6ISrz/iGdhUnZaMj2BFITRg=
 
 patchedDependencies:
-  '@git-diff-view/svelte':
-    hash: dd106f01f6e1d1f60377bcc423b5cc08af327e42e873e26bdea6582e66b044f3
-    path: patches/@git-diff-view__svelte.patch
+  '@git-diff-view/svelte': 4eac90f0fb5bc0a08ef6d3c6a208f91fb3511d7850d693aaa7dd604e25f3e77d
 
 importers:
 
@@ -247,7 +245,7 @@ importers:
         version: 0.1.8
       '@git-diff-view/svelte':
         specifier: ^0.1.8
-        version: 0.1.8(patch_hash=dd106f01f6e1d1f60377bcc423b5cc08af327e42e873e26bdea6582e66b044f3)(svelte@5.57.2)
+        version: 0.1.8(patch_hash=4eac90f0fb5bc0a08ef6d3c6a208f91fb3511d7850d693aaa7dd604e25f3e77d)(svelte@5.57.2)
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
@@ -1613,7 +1611,7 @@ snapshots:
       '@types/hast': 3.0.5
       shiki: 3.23.0
 
-  '@git-diff-view/svelte@0.1.8(patch_hash=dd106f01f6e1d1f60377bcc423b5cc08af327e42e873e26bdea6582e66b044f3)(svelte@5.57.2)':
+  '@git-diff-view/svelte@0.1.8(patch_hash=4eac90f0fb5bc0a08ef6d3c6a208f91fb3511d7850d693aaa7dd604e25f3e77d)(svelte@5.57.2)':
     dependencies:
       '@git-diff-view/core': 0.1.8
       '@types/hast': 3.0.5
