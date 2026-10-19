@@ -16,3 +16,7 @@
 	# A push or fetch keeps what it receives as one pack rather than
 	# unpacking each object into its own file.
 	unpackLimit = 1
+[pack]
+	# No .rev file beside each pack's .idx: git builds the reverse index in
+	# memory, which costs nothing at fixture sizes.
+	writeReverseIndex = false

@@ -38,10 +38,9 @@ defmodule Meerkat.PreCommitHookTest do
 
   # Built once, then copied for each test.
   setup_all do
-    template = Meerkat.TestHelpers.make_tmp_repo("meerkat-pre-commit-template")
-    on_exit(fn -> File.rm_rf!(template) end)
-    File.rm_rf!(Path.join(template, ".git"))
-    build_fixture(template)
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-pre-commit-template", &build_fixture/1)
+
     {:ok, template: template}
   end
 

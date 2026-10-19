@@ -199,6 +199,30 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
+  Builds a fixture tree for `copy_fixture/2`: calls `build` on a new
+  `tmp_path/1` dir named with `prefix`, removed when the caller exits, and
+  returns the dir. Each git repo in the tree then keeps its objects in one
+  pack, so a copy holds a few files where each loose object would be a
+  file and often a directory.
+  """
+  @spec fixture_template(String.t(), (String.t() -> any())) :: String.t()
+  def fixture_template(prefix, build) do
+    dir = tmp_path(prefix)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.mkdir_p!(dir)
+    build.(dir)
+
+    for objects <- Path.wildcard(Path.join(dir, "**/objects"), match_dot: true),
+        git_dir = Path.dirname(objects),
+        File.regular?(Path.join(git_dir, "HEAD")) do
+      # -n: no server info, which only dumb HTTP serving reads.
+      git(git_dir, ["--git-dir=.", "repack", "-adqn"])
+    end
+
+    dir
+  end
+
+  @doc """
   Copies the fixture tree `template` to a new `tmp_path/1` dir named with
   `prefix`, removed when the test exits, and returns the copy. Each file
   outside git's object stores that names `template`, such as a remote's
@@ -207,8 +231,8 @@ defmodule Meerkat.TestHelpers do
   cannot be copied this way.
 
   A module that builds the same fixture for every test builds it once in
-  `setup_all` and copies it per test: under load, each git or lefthook
-  process that builds it costs a test seconds.
+  `setup_all` with `fixture_template/2` and copies it per test: under
+  load, each git or lefthook process that builds it costs a test seconds.
   """
   @spec copy_fixture(String.t(), String.t()) :: String.t()
   def copy_fixture(template, prefix) do
