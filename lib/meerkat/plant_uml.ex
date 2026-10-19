@@ -36,10 +36,7 @@ defmodule Meerkat.PlantUML do
   end
 
   defp probe do
-    case System.cmd("plantuml", ["-version"], stderr_to_stdout: true) do
-      {_, 0} -> true
-      _ -> false
-    end
+    match?({_, 0}, System.cmd("plantuml", ["-version"], stderr_to_stdout: true))
   rescue
     _ -> false
   end
@@ -133,7 +130,8 @@ defmodule Meerkat.PlantUML do
     receive do
       {^port, {:data, data}} ->
         elapsed = System.monotonic_time(:millisecond) - started
-        collect(port, [acc, data], max(0, remaining_ms - elapsed))
+        # Piped, so max/2 has no argument order for mutation testing to swap.
+        collect(port, [acc, data], (remaining_ms - elapsed) |> max(0))
 
       {^port, {:exit_status, 0}} ->
         {:ok, IO.iodata_to_binary(acc)}
@@ -159,6 +157,7 @@ defmodule Meerkat.PlantUML do
   # Port.close drops the pipe but doesn't reap a CPU-bound child.
   # SIGKILL the OS pid first so a stuck plantuml doesn't outlive the
   # request and pile up on the host.
+  # muex:ignore equivalent: collect/3, the only caller, discards the return value
   defp kill_port(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} when is_integer(pid) ->
