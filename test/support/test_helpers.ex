@@ -95,9 +95,12 @@ defmodule Meerkat.TestHelpers do
   # Fault injection only at the process boundary; successful reads still
   # use real commits, blobs and diffs. Actions can invoke "$real_git".
   def intercept_git(dir, arg, action) do
-    real_git = System.find_executable("git")
     old_path = System.fetch_env!("PATH")
     bin = Path.join(dir, "bin")
+    # Skip `bin` so a second intercept doesn't wrap the first, which
+    # would then exec itself forever.
+    search = old_path |> String.split(":") |> Enum.reject(&(&1 == bin)) |> Enum.join(":")
+    real_git = List.to_string(:os.find_executable(~c"git", String.to_charlist(search)))
     File.mkdir_p!(bin)
 
     File.write!(Path.join(bin, "git"), """

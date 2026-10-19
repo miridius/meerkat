@@ -363,8 +363,9 @@ defmodule Meerkat.Git do
   # Port + close-after-write that races the child's read; positional
   # args avoid that race entirely.
   # The first clause saves a git process: with no paths, `check-attr`
-  # fails, and every caller reads a failure as an empty answer.
-  # muex:ignore equivalent: no caller tells this answer from an error or a swapped call's
+  # fails, and `split_unset_diff_text`, the one caller that can pass no
+  # paths, reads a failure as no text paths.
+  # muex:ignore equivalent: its caller reads an error the same, and swapped wildcards change nothing
   defp check_attrs(_repo_path, _attrs, []), do: {:ok, %{}}
 
   defp check_attrs(repo_path, attrs, paths) do
@@ -522,7 +523,8 @@ defmodule Meerkat.Git do
   end
 
   # Shared by the staged patch and its binary classification, so both
-  # see the same diff.
+  # see the same diff. Textconv and external diff are off: both must
+  # match index bytes.
   @staged_diff_args ["-w", "-M", "--no-textconv", "--no-ext-diff"]
 
   @doc """
@@ -547,10 +549,9 @@ defmodule Meerkat.Git do
       # On batched-call failure we surface the error into every
       # file's `read_errors` (red banner) — silently empty hunks
       # would let a reviewer approve what looks like an empty diff.
-      {hunks_map, batched_hunks_error} = staged_hunks_or_error(repo_path)
+      {hunks_map, batched_hunks_error} = staged_hunks_or_error(repo_path, [])
       {oid_map, batched_oids_error} = effective_oids_or_error(repo_path, entries)
-      # Disable textconv/external diff here and in the hunks: they must
-      # match index bytes.
+
       {numstat_binary_paths, binary_paths_error} =
         binary_paths_or_error(repo_path, [
           "diff",
@@ -559,8 +560,8 @@ defmodule Meerkat.Git do
           "-z" | @staged_diff_args
         ])
 
-      text_paths = unset_diff_text_paths(repo_path, entries, numstat_binary_paths, "HEAD", ":0")
-      binary_paths = MapSet.difference(numstat_binary_paths, text_paths)
+      {binary_paths, text_paths} =
+        split_unset_diff_text(repo_path, entries, numstat_binary_paths, "HEAD", ":0")
 
       # muex:ignore equivalent: the batched patch holds no hunks for a file it calls binary, so the keys never overlap
       hunks_map = Map.merge(hunks_map, staged_text_hunks(repo_path, entries, text_paths))
@@ -588,18 +589,27 @@ defmodule Meerkat.Git do
     end
   end
 
-  # The batched patch shows a `-diff` file as binary; `--text` gets its
-  # lines.
+  # The batched patch shows a `-diff` file as binary; one more batched
+  # patch, with `--text` and limited to those files' paths, gets their
+  # lines. A failure lands in each of those files' `read_errors`.
   defp staged_text_hunks(repo_path, entries, text_paths) do
-    for entry <- entries, MapSet.member?(text_paths, entry.file_name), into: %{} do
-      paths = Enum.uniq([entry.old_file_name || entry.file_name, entry.file_name])
-      args = ["--literal-pathspecs", "diff", "--cached", "-U3", "--text" | @staged_diff_args]
-      {entry.file_name, hunks_for_path(repo_path, args ++ ["--" | paths])}
+    paths =
+      for entry <- entries,
+          MapSet.member?(text_paths, entry.file_name),
+          path <- [entry.old_file_name || entry.file_name, entry.file_name],
+          do: path
+
+    # With no paths, the pathspec would select every staged file.
+    if paths == [] do
+      %{}
+    else
+      {map, errors} = staged_hunks_or_error(repo_path, ["--text", "--" | paths])
+      Map.new(text_paths, &{&1, Map.get(map, &1, {[], errors})})
     end
   end
 
-  defp staged_hunks_or_error(repo_path) do
-    case staged_hunks_many(repo_path) do
+  defp staged_hunks_or_error(repo_path, extra_args) do
+    case staged_hunks_many(repo_path, extra_args) do
       {:ok, map} -> {map, []}
       {:partial, map, reason} -> {map, [reason]}
       {:error, reason} -> {%{}, [reason]}
@@ -669,38 +679,48 @@ defmodule Meerkat.Git do
   defp put_binary_path(paths, name, "-", "-"), do: MapSet.put(paths, name)
   defp put_binary_path(paths, _name, _added, _deleted), do: paths
 
-  # A side over this many bytes is not read, and its file stays binary.
-  @max_text_probe_bytes 4 * 1024 * 1024
-
   # Git calls a file binary whatever its content when its `diff`
   # attribute is unset (`-diff`), which is how a repo keeps generated
-  # text out of `git diff`. Of the files numstat calls binary, return
-  # those with `diff` unset on a side and no side under the `binary`
-  # macro, whose every side passes git's content test: no NUL in the
-  # first 8000 bytes. A file whose lookups fail stays binary.
-  # `old_ref` and `new_ref` name the two sides: a tree-ish, or `:0` for
-  # the index.
-  defp unset_diff_text_paths(repo_path, entries, binary_paths, old_ref, new_ref) do
+  # text out of `git diff`. Splits the files numstat calls binary into
+  # `{binary_paths, text_paths}`: text are those with `diff` unset on a
+  # side and no side under the `binary` macro, whose every side passes
+  # git's content test, no NUL in the first 8000 bytes, and is valid
+  # UTF-8, which the page's JSON needs. A file whose lookups fail stays
+  # binary.
+  # `old_ref` and `new_ref` name the two sides' blobs: a tree-ish, or
+  # `:0` for the index. Attributes come from the working tree, as
+  # `git diff` reads them.
+  defp split_unset_diff_text(repo_path, entries, numstat_binary_paths, old_ref, new_ref) do
     sides =
       for entry <- entries,
-          MapSet.member?(binary_paths, entry.file_name),
+          MapSet.member?(numstat_binary_paths, entry.file_name),
           into: %{},
           do: {entry.file_name, file_sides(entry, old_ref, new_ref)}
 
-    paths = sides |> Map.values() |> Enum.concat() |> Enum.map(&elem(&1, 1))
+    # muex:ignore equivalent: git answers a repeated path with the same rows; this only shortens argv
+    paths = sides |> Map.values() |> Enum.concat() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
 
-    case check_attrs(repo_path, ["diff", "binary"], paths) do
-      {:ok, attrs} ->
-        for {name, file_sides} <- sides,
-            Enum.any?(file_sides, &(side_attr(attrs, &1, "diff") == "unset")),
-            not Enum.any?(file_sides, &(side_attr(attrs, &1, "binary") == "set")),
-            Enum.all?(file_sides, &text_blob?(repo_path, &1)),
-            into: MapSet.new(),
-            do: name
+    candidates =
+      case check_attrs(repo_path, ["diff", "binary"], paths) do
+        {:ok, attrs} ->
+          for {name, file_sides} <- sides,
+              Enum.any?(file_sides, &(side_attr(attrs, &1, "diff") == "unset")),
+              not Enum.any?(file_sides, &(side_attr(attrs, &1, "binary") == "set")),
+              do: {name, Enum.map(file_sides, fn {ref, path} -> "#{ref}:#{path}" end)}
 
-      {:error, _} ->
-        MapSet.new()
-    end
+        {:error, _} ->
+          []
+      end
+
+    blobs = read_blobs(repo_path, Enum.flat_map(candidates, &elem(&1, 1)))
+
+    text_paths =
+      for {name, objects} <- candidates,
+          Enum.all?(objects, &text_blob?(Map.get(blobs, &1))),
+          into: MapSet.new(),
+          do: name
+
+    {MapSet.difference(numstat_binary_paths, text_paths), text_paths}
   end
 
   defp file_sides(%{status: :added, file_name: name}, _old_ref, new_ref), do: [{new_ref, name}]
@@ -711,17 +731,48 @@ defmodule Meerkat.Git do
 
   defp side_attr(attrs, {_ref, path}, attr), do: get_in(attrs, [path, attr])
 
-  defp text_blob?(repo_path, {ref, path}) do
-    object = "#{ref}:#{path}"
+  defp text_blob?(nil), do: false
 
-    with {:ok, size} <- run_git_unmerged(repo_path, ["cat-file", "-s", object]),
-         {size, ""} when size <= @max_text_probe_bytes <- Integer.parse(String.trim(size)),
-         {:ok, content} <- run_git_unmerged(repo_path, ["cat-file", "blob", object]) do
-      not (content |> binary_slice(0, 8000) |> String.contains?(<<0>>))
-    else
-      _ -> false
+  defp text_blob?(content),
+    do:
+      String.valid?(content) and not (content |> binary_slice(0, 8000) |> String.contains?(<<0>>))
+
+  # `%{object => content}` for each blob one `git cat-file --batch` reads.
+  # `System.cmd` can't write to stdin, so `sh` feeds it the names, one
+  # per line; a name holding a newline would split, so it is left out.
+  # An object missing from the answer reads as no content.
+  defp read_blobs(repo_path, objects) do
+    case Enum.reject(objects, &String.contains?(&1, "\n")) do
+      [] ->
+        %{}
+
+      objects ->
+        # muex:ignore equivalent: `-x` traces only to stderr, which the parse never reads
+        sh_args = ["-c", ~s(printf '%s\\n' "$0" "$@" | exec git cat-file --batch)]
+
+        case System.cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
+          {output, 0} -> parse_batch(output, objects, %{})
+          _ -> %{}
+        end
     end
   end
+
+  # Each answer is `<oid> blob <size>\n<content>\n`. Any other answer
+  # ends the parse, so it and the objects after it read as no content.
+  defp parse_batch(output, [object | objects], acc) do
+    with [header, rest] <- :binary.split(output, "\n"),
+         [size] <- Regex.run(~r/^[0-9a-f]+ blob (\d+)$/, header, capture: :all_but_first),
+         size = String.to_integer(size),
+         # muex:ignore equivalent: `binary-size` and `size-binary` are one segment type
+         <<content::binary-size(^size), "\n", rest::binary>> <- rest do
+      # muex:ignore equivalent: one object name always reads as the same blob, so put_new changes nothing
+      parse_batch(rest, objects, Map.put(acc, object, content))
+    else
+      _ -> acc
+    end
+  end
+
+  defp parse_batch(_output, [], acc), do: acc
 
   # Batched `git diff --cached -U3 -w -M` for the whole staged set.
   # Returns `{:ok, %{file_name => {hunks, errors}}}` when every block
@@ -737,22 +788,25 @@ defmodule Meerkat.Git do
   # whitespace-unambiguous (one token per line, ends at newline) — the
   # `diff --git a/<old> b/<new>` header is ambiguous when paths contain
   # a literal ` b/` because git uses spaces to separate old/new.
-  @spec staged_hunks_many(String.t()) ::
+  # `extra_args` follow the shared flags, e.g. `--text` and a pathspec,
+  # which `--literal-pathspecs` keeps from globbing.
+  @spec staged_hunks_many(String.t(), [String.t()]) ::
           {:ok, %{String.t() => {[String.t()], [String.t()]}}}
           | {:partial, %{String.t() => {[String.t()], [String.t()]}}, String.t()}
           | {:error, String.t()}
-  defp staged_hunks_many(repo_path) do
+  defp staged_hunks_many(repo_path, extra_args) do
     args =
       [
         "-c",
         "core.quotePath=false",
+        "--literal-pathspecs",
         "diff",
         "--cached",
         "-U3",
         # Lowercase `u` excludes unmerged paths, preventing Git's
         # `* Unmerged path ...` output from entering the hunk parser.
         "--diff-filter=u"
-      ] ++ @staged_diff_args
+      ] ++ @staged_diff_args ++ extra_args
 
     case run_git(repo_path, args) do
       {:ok, output} ->
@@ -940,10 +994,8 @@ defmodule Meerkat.Git do
       {numstat_binary_paths, binary_paths_error} =
         binary_paths_or_error(repo_path, ["diff", "--numstat", "-z", "#{effective_base}..#{head}"])
 
-      text_paths =
-        unset_diff_text_paths(repo_path, entries, numstat_binary_paths, effective_base, head)
-
-      binary_paths = MapSet.difference(numstat_binary_paths, text_paths)
+      {binary_paths, text_paths} =
+        split_unset_diff_text(repo_path, entries, numstat_binary_paths, effective_base, head)
 
       diffs =
         entries

@@ -96,10 +96,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    diff, and meerkat never reads its content. The exception is a file
    git calls binary only because its `diff` attribute is unset
    (`-diff`, as for generated files), not through git's `binary`
-   macro. Meerkat reads each side of 4 MiB or less and, when no side
-   has a NUL byte in its first 8000 bytes (git's own test), shows the
-   file's diff and line counts like any text file's. A file with a
-   side over 4 MiB stays binary, unread.
+   macro. Meerkat reads each side and, when every side is valid UTF-8
+   with no NUL byte in its first 8000 bytes (git's own test), shows
+   the file's diff and line counts like any text file's.
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
    The exception is a hunk meerkat splits where a run both removes

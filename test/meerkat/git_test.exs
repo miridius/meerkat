@@ -470,7 +470,8 @@ defmodule Meerkat.GitTest do
         ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(dir) end)
 
       diff_error =
-        "couldn't compute batched staged diff (git -c core.quotePath=false diff --cached " <>
+        "couldn't compute batched staged diff (git -c core.quotePath=false " <>
+          "--literal-pathspecs diff --cached " <>
           "-U3 --diff-filter=u -w -M --no-textconv --no-ext-diff exited 128: fatal: unable to read #{added_oid}); " <>
           "per-file content may render empty"
 
