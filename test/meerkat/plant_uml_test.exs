@@ -35,6 +35,14 @@ defmodule Meerkat.PlantUMLTest do
     File.chmod!(path, 0o755)
   end
 
+  # A real child that outlives the time budget; 0ms makes it time out at once.
+  defp stuck_port do
+    Port.open(
+      {:spawn_executable, System.find_executable("sleep")},
+      [:binary, :exit_status, :stderr_to_stdout, :use_stdio, args: ["30"]]
+    )
+  end
+
   # sh that sets `$m` to whether the script's stderr is its stdout.
   @stderr_check "if [ /dev/fd/1 -ef /dev/fd/2 ]; then m=merged; else m=split; fi"
 
@@ -112,9 +120,6 @@ defmodule Meerkat.PlantUMLTest do
   end
 
   describe "collect/3" do
-    setup :keep_timeout_env
-    setup do: Application.put_env(:meerkat, :plantuml_timeout_ms, 30_000)
-
     test "returns what a child that exits 0 printed, as one binary" do
       port =
         Port.open(
@@ -123,6 +128,22 @@ defmodule Meerkat.PlantUMLTest do
         )
 
       assert PlantUML.collect_for_test(port, [], 5_000) == {:ok, "x"}
+    end
+
+    # Only the time spent waiting counts, so output that comes early leaves
+    # nearly the whole budget for the exit that follows it.
+    test "keeps waiting for the exit after output, within the budget" do
+      port = stuck_port()
+      me = self()
+
+      spawn_link(fn ->
+        send(me, {port, {:data, "."}})
+        Process.sleep(50)
+        send(me, {port, {:exit_status, 0}})
+      end)
+
+      assert PlantUML.collect_for_test(port, [], 30_000) == {:ok, "."}
+      Port.close(port)
     end
 
     # The feeder outlasts the budget many times over, so a budget that
@@ -236,14 +257,6 @@ defmodule Meerkat.PlantUMLTest do
     setup :keep_timeout_env
     setup do: Application.put_env(:meerkat, :plantuml_timeout_ms, 30_000)
 
-    # A real child that outlives the time budget; 0ms makes it time out at once.
-    defp stuck_port do
-      Port.open(
-        {:spawn_executable, System.find_executable("sleep")},
-        [:binary, :exit_status, :stderr_to_stdout, :use_stdio, args: ["30"]]
-      )
-    end
-
     test "with no output says only that plantuml was killed" do
       assert {:error, msg} = PlantUML.collect_for_test(stuck_port(), [], 0)
       assert msg == "plantuml did not finish within 30000ms; the process was killed."
@@ -288,15 +301,20 @@ defmodule Meerkat.PlantUMLTest do
     end
   end
 
-  # True once OS process `pid` has exited (a zombie counts).
+  # True once OS process `pid` has exited (a zombie counts). Each probe
+  # starts a `ps`, so probes come 50 ms apart.
   defp eventually_gone?(pid) do
-    Meerkat.TestHelpers.eventually(fn ->
-      case System.cmd("ps", ["-o", "stat=", "-p", to_string(pid)]) do
-        {_, 1} -> true
-        {"Z" <> _, 0} -> true
-        _ -> false
-      end
-    end)
+    Meerkat.TestHelpers.eventually(
+      fn ->
+        case System.cmd("ps", ["-o", "stat=", "-p", to_string(pid)]) do
+          {_, 1} -> true
+          {"Z" <> _, 0} -> true
+          _ -> false
+        end
+      end,
+      ExUnit.configuration()[:assert_receive_timeout],
+      50
+    )
   end
 
   # Runs the real `plantuml` binary; CI installs it.
@@ -333,10 +351,8 @@ defmodule Meerkat.PlantUMLTest do
     end
 
     # A plantuml that exits 0 but whose SVG is gone by the time it is read.
-    test "an SVG that cannot be read is an error, not a crash", %{stub_dir: dir, tmp: tmp} do
-      path = Path.join(dir, "plantuml")
-      File.write!(path, "#!/bin/sh\nrm -f '#{tmp}'/meerkat-puml-*.svg\nexit 0\n")
-      File.chmod!(path, 0o755)
+    test "an SVG that cannot be read is an error, not a crash", %{tmp: tmp} = ctx do
+      stub(ctx, "plantuml", "rm -f '#{tmp}'/meerkat-puml-*.svg\nexit 0")
 
       assert {:error, reason} = PlantUML.render("@startuml\nAlice -> Bob\n@enduml\n")
       assert reason =~ ~r/^reading .*\.svg failed: no such file or directory$/

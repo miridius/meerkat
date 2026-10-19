@@ -45,18 +45,24 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  Calls `fun` every 10 ms until it returns a truthy value, and returns that
-  value, or `nil` once `timeout_ms` has passed, by default when an
-  `assert_receive` would have given up. Waits for what a test needs to
-  happen rather than a fixed time, which a loaded machine can overrun; the
-  caller asserts on the result.
+  Calls `fun` every `interval_ms` until it returns a truthy value, and
+  returns that value, or `nil` once `timeout_ms` has passed, by default
+  when an `assert_receive` would have given up. Waits for what a test
+  needs to happen rather than a fixed time, which a loaded machine can
+  overrun; the caller asserts on the result. A `fun` that starts a process
+  takes a longer interval, so the wait adds less load.
   """
-  @spec eventually((-> result), non_neg_integer()) :: result | nil when result: term()
-  def eventually(fun, timeout_ms \\ ExUnit.configuration()[:assert_receive_timeout]) do
-    poll_until(fun, System.monotonic_time(:millisecond) + timeout_ms)
+  @spec eventually((-> result), non_neg_integer(), pos_integer()) :: result | nil
+        when result: term()
+  def eventually(
+        fun,
+        timeout_ms \\ ExUnit.configuration()[:assert_receive_timeout],
+        interval_ms \\ 10
+      ) do
+    poll_until(fun, System.monotonic_time(:millisecond) + timeout_ms, interval_ms)
   end
 
-  defp poll_until(fun, deadline) do
+  defp poll_until(fun, deadline, interval_ms) do
     cond do
       result = fun.() ->
         result
@@ -65,8 +71,8 @@ defmodule Meerkat.TestHelpers do
         nil
 
       true ->
-        Process.sleep(10)
-        poll_until(fun, deadline)
+        Process.sleep(interval_ms)
+        poll_until(fun, deadline, interval_ms)
     end
   end
 

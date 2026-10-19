@@ -6,7 +6,7 @@ defmodule Meerkat.ShepherdTest do
   # for its BEAMs.
   use ExUnit.Case, async: true
 
-  import Meerkat.TestHelpers, only: [eventually: 2]
+  import Meerkat.TestHelpers, only: [eventually: 2, eventually: 3]
 
   @shepherd Path.join(File.cwd!(), "bin/meerkat-shepherd")
   # How long any wait here lasts before the test fails. It bounds only a
@@ -330,13 +330,13 @@ defmodule Meerkat.ShepherdTest do
 
       # The shepherd's EXIT trap writes `exit` into its run dir after the
       # TERM; deleting the dir before then races that write. Not every run
-      # dir gets an `exit`, so each wait gets 5 s, not @timeout_ms: several
+      # dir gets an `exit`, so each wait gets 10 s, not @timeout_ms: several
       # full waits would outlast ExUnit's 180 s on_exit limit.
       on_exit(fn ->
         System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
 
         for run <- Path.wildcard(Path.join(runs, "*")),
-            do: await_file(Path.join(run, "exit"), 5_000)
+            do: await_file(Path.join(run, "exit"), 10_000)
       end)
 
       {:os_pid, caller} = Port.info(port, :os_pid)
@@ -1102,8 +1102,7 @@ defmodule Meerkat.ShepherdTest do
     eventually(
       fn ->
         case Path.wildcard(Path.join([runs, "*", "port"])) do
-          # Read between the BEAM's truncate and write, it is empty.
-          [port_file | _] -> port_file |> File.read!() |> String.split() |> List.last()
+          [port_file | _] -> port_file |> File.read() |> beam_pid()
           [] -> nil
         end
       end,
@@ -1111,11 +1110,18 @@ defmodule Meerkat.ShepherdTest do
     ) || flunk("no BEAM recorded its port in #{runs}")
   end
 
-  # Whether process `pid` exits within @timeout_ms.
+  # Read between the BEAM's truncate and write, the port file is empty; a
+  # caller may also remove its run dir between the listing and the read.
+  defp beam_pid({:ok, contents}), do: contents |> String.split() |> List.last()
+  defp beam_pid({:error, _}), do: nil
+
+  # Whether process `pid` exits within @timeout_ms. Each probe starts a
+  # `ps`, so probes come 50 ms apart.
   defp await_gone(pid) do
     eventually(
       fn -> match?({_, 1}, System.cmd("ps", ["-p", pid], stderr_to_stdout: true)) end,
-      @timeout_ms
+      @timeout_ms,
+      50
     )
   end
 
@@ -1228,11 +1234,11 @@ defmodule Meerkat.ShepherdTest do
     # A shepherd may not have written its pid file yet. Missed, it outlives
     # the test; once its stub directory is deleted, it runs the real `mix`
     # and starts a BEAM that never exits. Not every run dir gets a pid, so
-    # each wait gets 5 s, not @timeout_ms: this runs once await_result has
-    # already waited @timeout_ms, inside the 180 s test timeout.
+    # each wait gets 10 s, not @timeout_ms: after a wait that timed out,
+    # @timeout_ms of the 180 s test timeout is already spent.
     detached =
       for run <- Path.wildcard(Path.join([dir, "runs", "*"])),
-          backend = await_file(Path.join(run, "pid"), 5_000),
+          backend = await_file(Path.join(run, "pid"), 10_000),
           do: backend
 
     if detached != [] do
