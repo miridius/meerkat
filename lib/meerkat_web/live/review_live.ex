@@ -2007,21 +2007,10 @@ defmodule MeerkatWeb.ReviewLive do
         Clojure hover off: clj-kondo not found
       </span>
 
-      <span class="toolbar-line-counts">
-        <%= if length(@expanded_files) < length(@state.files) do %>
-          <span class="counts-showing">showing</span>
-          <.line_counts
-            additions={Enum.sum_by(@expanded_files, & &1.additions)}
-            deletions={Enum.sum_by(@expanded_files, & &1.deletions)}
-          />
-          <span class="counts-of">of</span>
-          <span class="counts-slash">/</span>
-        <% end %>
-        <.line_counts
-          additions={Enum.sum_by(@state.files, & &1.additions)}
-          deletions={Enum.sum_by(@state.files, & &1.deletions)}
-        />
-      </span>
+      <.toolbar_line_counts
+        shown={line_total(@expanded_files)}
+        total={line_total(@state.files)}
+      />
 
       <.connection_indicator />
 
@@ -2158,6 +2147,35 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp toolbar_title(%ReviewState{head_branch: b}) when is_binary(b) and b != "", do: b
   defp toolbar_title(_), do: ""
+
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and every call site passes it
+  attr :shown, :map, required: true
+
+  # muex:ignore equivalent: an attr declaration is compile-time validation only, and every call site passes it
+  attr :total, :map, required: true
+
+  # The expanded files' total before the whole diff's, only when the two
+  # differ: equal totals would read as a filter that hides nothing.
+  defp toolbar_line_counts(assigns) do
+    ~H"""
+    <span class="toolbar-line-counts">
+      <%= if @shown != @total do %>
+        <span class="counts-showing">showing</span>
+        <.line_counts {@shown} />
+        <span class="counts-of">of</span>
+        <span class="counts-slash">/</span>
+      <% end %>
+      <.line_counts {@total} />
+    </span>
+    """
+  end
+
+  defp line_total(files) do
+    %{
+      additions: Enum.sum_by(files, & &1.additions),
+      deletions: Enum.sum_by(files, & &1.deletions)
+    }
+  end
 
   # muex:ignore equivalent: an attr declaration is compile-time validation only, and every call site passes it
   attr :additions, :integer, required: true

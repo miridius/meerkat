@@ -28,7 +28,7 @@ test("a binary file, a deleted diagram and a long file each render as their kind
 	const fixture = makeFixture({ files: {} });
 	try {
 		const bazel = join(fixture.dir, "BUILD.bazel");
-		writeFileSync(join(fixture.dir, ".gitattributes"), "BUILD.bazel -diff\n");
+		writeFileSync(join(fixture.dir, ".gitattributes"), "BUILD.bazel binary\n");
 		writeFileSync(bazel, "old target\n");
 		writeFileSync(join(fixture.dir, "flow.puml"), "@startuml\nAlice -> Bob : hi\n@enduml\n");
 		fixture.git("add", ".gitattributes", "BUILD.bazel", "flow.puml");
