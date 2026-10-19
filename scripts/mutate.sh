@@ -25,7 +25,8 @@
 #                                   lib/**/*.ex files, refusing any
 #                                   other path.
 #
-# Every mode fails when any mutant survives or no test reaches it.
+# Every mode fails when any mutant survives, no test reaches it, or its
+# tests time out.
 #
 # A pass of either gated mode records the contents it judged with
 # scripts/checked-trees.sh --mutated when they are known to be gated
@@ -254,8 +255,15 @@ run_mutate() {
   # Every selected line counts, so --no-filter keeps muex from skipping a
   # file it rates too simple to be worth mutating, and --no-optimize from
   # dropping the mutants of a function it rates too simple.
+  # muex gives up on a mutant's `mix test` after --timeout ms without
+  # output. Its 10 s default is shorter than a test BEAM takes to boot on a
+  # loaded machine (35-58 s seen at a load average of 175-317 on 18 cores),
+  # so load timed out mutants no test had judged. Keep it above a silent
+  # boot plus ExUnit's per-test timeout (test/test_helper.exs), so a hang
+  # inside a test fails first, which is a kill.
   muex=(mix muex --files "$joined" --test-paths "$tests" --coverage-guided
-    --concurrency "$jobs" --no-filter --no-optimize "${scope_args[@]}")
+    --concurrency "$jobs" --no-filter --no-optimize --timeout 300000
+    "${scope_args[@]}")
 
   # Every mode judges the run from muex's JSON report rather than its
   # score: muex's default --fail-at passes a run with survivors, its score
@@ -290,24 +298,29 @@ run_mutate() {
 
   # A survivor is a judged line whose behaviour the tests do not pin
   # down. A no-coverage mutant is the same gap, found without running:
-  # no ExUnit test executes its line.
+  # no ExUnit test executes its line. A timed-out mutant was judged by no
+  # test at all: see --timeout above.
   # muex's patch holds the whole enclosing expression, which for a deleted
   # statement is the whole module body, so print only the lines one side
   # has and the other lacks, at most six per side.
-  failing=$(jq -r '
-    def only($sign; $lines; $other):
-      ($lines - $other) as $diff
-      | $diff[:6] | map("\n    \($sign) " + .) | join("")
-        + (if ($diff | length) > 6 then "\n    \($sign) …" else "" end);
-    .mutations[]
-    | select(.status == "survived" or .status == "no_coverage")
-    | "\(.location.file):\(.location.line)  \(.status)  \(.description)"
-      + (if .patch then
-           (.patch.before | split("\n")) as $b
-           | (.patch.after | split("\n")) as $a
-           | only("-"; $b; $a) + only("+"; $a; $b)
-         else "" end)
-  ' "$report")
+  list_mutants() {
+    jq -r --argjson statuses "$1" '
+      def only($sign; $lines; $other):
+        ($lines - $other) as $diff
+        | $diff[:6] | map("\n    \($sign) " + .) | join("")
+          + (if ($diff | length) > 6 then "\n    \($sign) …" else "" end);
+      .mutations[]
+      | select(.status | IN($statuses[]))
+      | "\(.location.file):\(.location.line)  \(.status)  \(.description)"
+        + (if .patch then
+             (.patch.before | split("\n")) as $b
+             | (.patch.after | split("\n")) as $a
+             | only("-"; $b; $a) + only("+"; $a; $b)
+           else "" end)
+    ' "$report"
+  }
+  failing=$(list_mutants '["survived", "no_coverage"]')
+  timed_out=$(list_mutants '["timeout"]')
 
   if [[ -n "$failing" ]]; then
     echo
@@ -317,8 +330,16 @@ run_mutate() {
     echo
     echo "Add or tighten a test that fails for each mutant above, in this $([[ $mode == staged ]] && echo commit || echo branch)."
     echo "See CLAUDE.md \"Mutation testing\" for the documented exceptions."
-    exit 1
   fi
+  if [[ -n "$timed_out" ]]; then
+    echo
+    echo "scripts/mutate.sh: no test judged these mutants of the $label lib/ lines; their tests printed nothing within muex's --timeout:"
+    echo
+    echo "$timed_out"
+    echo
+    echo "Rerun once the machine is less loaded."
+  fi
+  [[ -z "$failing" && -z "$timed_out" ]] || exit 1
 
   record_if_gated
   echo "scripts/mutate.sh: no mutant of the $label lib/ lines survived."
