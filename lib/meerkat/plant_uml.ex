@@ -2,7 +2,8 @@ defmodule Meerkat.PlantUML do
   @moduledoc """
   Render `.puml` diagram source to SVG via the locally-installed
   `plantuml` CLI. SANDBOX security profile blocks `!include` of
-  arbitrary files / URLs; 30s timeout; source redirected onto stdin
+  arbitrary files / URLs; 30s timeout (`:plantuml_timeout_ms` in the app
+  env overrides it); source redirected onto stdin
   from a tmp file, SVG written from stdout to another tmp file and
   read back. plantuml's stderr is captured so syntax errors propagate
   back to the LV (the user sees the actual diagnosis, not just "exit
@@ -15,6 +16,10 @@ defmodule Meerkat.PlantUML do
 
   @timeout_ms 30_000
   @available_key {__MODULE__, :available?}
+
+  @doc "How long a render may run before plantuml is killed."
+  @spec timeout_ms() :: pos_integer()
+  def timeout_ms, do: Application.get_env(:meerkat, :plantuml_timeout_ms, @timeout_ms)
 
   @doc "True iff `plantuml -version` succeeded the first time this BEAM asked."
   @spec available?() :: boolean()
@@ -31,10 +36,7 @@ defmodule Meerkat.PlantUML do
   end
 
   defp probe do
-    case System.cmd("plantuml", ["-version"], stderr_to_stdout: true) do
-      {_, 0} -> true
-      _ -> false
-    end
+    match?({_, 0}, System.cmd("plantuml", ["-version"], stderr_to_stdout: true))
   rescue
     _ -> false
   end
@@ -87,7 +89,7 @@ defmodule Meerkat.PlantUML do
       try do
         with :ok <- file_result(File.write(src_path, source), "writing", src_path),
              {:ok, _diagnostics} <-
-               collect(open_port(plantuml, src_path, svg_path), [], @timeout_ms) do
+               collect(open_port(plantuml, src_path, svg_path), [], timeout_ms()) do
           file_result(File.read(svg_path), "reading", svg_path)
         end
       after
@@ -128,7 +130,8 @@ defmodule Meerkat.PlantUML do
     receive do
       {^port, {:data, data}} ->
         elapsed = System.monotonic_time(:millisecond) - started
-        collect(port, [acc, data], max(0, remaining_ms - elapsed))
+        # Piped, so max/2 has no argument order for mutation testing to swap.
+        collect(port, [acc, data], (remaining_ms - elapsed) |> max(0))
 
       {^port, {:exit_status, 0}} ->
         {:ok, IO.iodata_to_binary(acc)}
@@ -141,7 +144,7 @@ defmodule Meerkat.PlantUML do
         partial = String.trim(IO.iodata_to_binary(acc))
         kill_port(port)
 
-        msg = "plantuml did not finish within #{@timeout_ms}ms; the process was killed."
+        msg = "plantuml did not finish within #{timeout_ms()}ms; the process was killed."
 
         {:error,
          if(partial == "",
@@ -154,6 +157,7 @@ defmodule Meerkat.PlantUML do
   # Port.close drops the pipe but doesn't reap a CPU-bound child.
   # SIGKILL the OS pid first so a stuck plantuml doesn't outlive the
   # request and pile up on the host.
+  # muex:ignore equivalent: collect/3, the only caller, discards the return value
   defp kill_port(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} when is_integer(pid) ->
@@ -175,7 +179,7 @@ defmodule Meerkat.PlantUML do
   end
 
   # Test seam: plantuml_test.exs times a render out against a stuck child
-  # without waiting the 30s budget.
+  # without waiting the whole budget.
   @doc false
   def collect_for_test(port, acc, remaining_ms), do: collect(port, acc, remaining_ms)
 end

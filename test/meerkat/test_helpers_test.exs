@@ -30,4 +30,20 @@ defmodule Meerkat.TestHelpersTest do
       assert File.exists?(unowned), "dir without an owner pid is kept"
     end
   end
+
+  test "copy_fixture/2 points the copy's files at the copy, leaving object stores alone" do
+    template = TestHelpers.tmp_path("copy-fixture-template")
+    on_exit(fn -> File.rm_rf!(template) end)
+    File.mkdir_p!(Path.join(template, "repo/.git/objects/ab"))
+    File.write!(Path.join(template, "repo/.git/config"), "url = #{template}/remote.git\n")
+    File.write!(Path.join(template, "repo/.git/objects/ab/cd"), "#{template}\n")
+    File.ln_s!("config", Path.join(template, "repo/.git/link"))
+
+    copy = TestHelpers.copy_fixture(template, "copy-fixture")
+
+    assert File.read!(Path.join(copy, "repo/.git/config")) == "url = #{copy}/remote.git\n"
+    assert File.read!(Path.join(copy, "repo/.git/objects/ab/cd")) == "#{template}\n"
+    assert {:ok, "config"} = File.read_link(Path.join(copy, "repo/.git/link"))
+    assert File.read!(Path.join(template, "repo/.git/config")) == "url = #{template}/remote.git\n"
+  end
 end

@@ -81,8 +81,12 @@ defmodule MeerkatWeb.LiveSocketTest do
     read_all(socket, "")
   end
 
+  # A read waits as long as an assert_receive: a loaded machine can take
+  # seconds to answer.
+  defp recv_ms, do: ExUnit.configuration()[:assert_receive_timeout]
+
   defp read_all(socket, acc) do
-    case :gen_tcp.recv(socket, 0, 5_000) do
+    case :gen_tcp.recv(socket, 0, recv_ms()) do
       {:ok, data} -> read_all(socket, acc <> data)
       {:error, :closed} -> acc
     end
@@ -114,7 +118,7 @@ defmodule MeerkatWeb.LiveSocketTest do
     if String.contains?(acc, "\r\n\r\n") do
       {:ok, acc}
     else
-      {:ok, data} = :gen_tcp.recv(socket, 0, 5_000)
+      {:ok, data} = :gen_tcp.recv(socket, 0, recv_ms())
       recv_head(socket, acc <> data)
     end
   end
@@ -163,15 +167,15 @@ defmodule MeerkatWeb.LiveSocketTest do
   end
 
   defp recv_frame(socket) do
-    {:ok, <<_fin_op, _mask::1, len7::7>>} = :gen_tcp.recv(socket, 2, 5_000)
+    {:ok, <<_fin_op, _mask::1, len7::7>>} = :gen_tcp.recv(socket, 2, recv_ms())
 
     len =
       case len7 do
-        126 -> with {:ok, <<n::16>>} <- :gen_tcp.recv(socket, 2, 5_000), do: n
-        127 -> with {:ok, <<n::64>>} <- :gen_tcp.recv(socket, 8, 5_000), do: n
+        126 -> with {:ok, <<n::16>>} <- :gen_tcp.recv(socket, 2, recv_ms()), do: n
+        127 -> with {:ok, <<n::64>>} <- :gen_tcp.recv(socket, 8, recv_ms()), do: n
         n -> n
       end
 
-    :gen_tcp.recv(socket, len, 5_000)
+    :gen_tcp.recv(socket, len, recv_ms())
   end
 end

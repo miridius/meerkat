@@ -12,11 +12,29 @@ defmodule Meerkat.PrePushHookTest do
   # Assembled from pieces: this file is itself scanned before every push.
   @private_path "/Us" <> "ers/alice/notes"
 
-  setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-pre-push")
-    on_exit(fn -> File.rm_rf!(base) end)
-    File.rm_rf!(Path.join(base, ".git"))
+  # Built once, then copied for each test.
+  setup_all do
+    template = Meerkat.TestHelpers.make_tmp_repo("meerkat-pre-push-template")
+    on_exit(fn -> File.rm_rf!(template) end)
+    File.rm_rf!(Path.join(template, ".git"))
+    build_fixture(template)
+    {:ok, template: template}
+  end
 
+  setup %{template: template} do
+    base = Meerkat.TestHelpers.copy_fixture(template, "meerkat-pre-push")
+    work = Path.join(base, "work")
+
+    {:ok,
+     work: work,
+     marker: Path.join(base, "outdated-ran"),
+     outdated_status: Path.join(base, "outdated-status"),
+     verified_args: Path.join(base, "verified-push-args"),
+     verified_status: Path.join(base, "verified-push-status"),
+     private_refs: Path.join(work, ".git/info/private-refs")}
+  end
+
+  defp build_fixture(base) do
     work = Path.join(base, "work")
     remote = Path.join(base, "remote.git")
     marker = Path.join(base, "outdated-ran")
@@ -56,14 +74,6 @@ defmodule Meerkat.PrePushHookTest do
 
     commit(work, "README.md", "hello\n", "base")
     no_hooks(work, ["push", "-q", "origin", "main"])
-
-    {:ok,
-     work: work,
-     marker: marker,
-     outdated_status: outdated_status,
-     verified_args: verified_args,
-     verified_status: verified_status,
-     private_refs: private_refs}
   end
 
   test "a push hands each new tip to verified-push.sh", ctx do
@@ -390,6 +400,22 @@ defmodule Meerkat.PrePushHookTest do
     assert out =~ "line 1 of .git/info/private-refs matches empty text, so"
   end
 
+  test "the self-test fails a generic pattern that misses its own example", ctx do
+    replace_in_script(ctx.work, "mail a.dev@\"'corp.io'\" now", "mail nobody now")
+
+    assert {out, 1} = self_test(ctx.work)
+    assert out =~ "SELF-TEST: 'email address' misses its own example: mail nobody now"
+  end
+
+  test "the self-test fails a generic pattern that fires on its counter-example", ctx do
+    # Split, as the scan would refuse this file holding the address whole.
+    address = "b.dev@" <> "corp.io"
+    replace_in_script(ctx.work, "mail someone@example.com now", "mail #{address} now")
+
+    assert {out, 1} = self_test(ctx.work)
+    assert out =~ "SELF-TEST: 'email address' fires on its counter-example: mail #{address} now"
+  end
+
   # pack-objects sends the original object, not a local replacement.
   test "a replace ref does not hide a pushed commit's content", ctx do
     commit(ctx.work, "a.txt", "see acme-internal docs\n", "add a")
@@ -671,11 +697,16 @@ defmodule Meerkat.PrePushHookTest do
     # Below the hits, so the pull-request refs do not make them public.
     sha = git(ctx.work, ["rev-parse", "HEAD~1"])
 
-    no_hooks(ctx.work, [
-      "push",
-      "-q",
-      "origin" | Enum.map(1..3000, &"#{sha}:refs/pull/#{&1}/head")
-    ])
+    # Written straight into the remote: pushing 3000 refs is far slower.
+    remote = git(ctx.work, ["remote", "get-url", "origin"])
+    refs = Path.join(Path.dirname(ctx.work), "pull-refs")
+    File.write!(refs, Enum.map(1..3000, &"create refs/pull/#{&1}/head #{sha}\n"))
+
+    {_, 0} =
+      System.cmd("bash", ["-c", ~s(git update-ref --stdin < "$0"), refs],
+        cd: remote,
+        env: hook_env()
+      )
 
     remote_ahead(ctx.work)
     commit(ctx.work, "b.txt", "b\n", "add b")
@@ -970,6 +1001,23 @@ defmodule Meerkat.PrePushHookTest do
       env: [{"LC_ALL", "C.UTF-8"} | hook_env()],
       stderr_to_stdout: true
     )
+  end
+
+  # Runs the fixture's no-private-refs.sh --self-test.
+  defp self_test(work) do
+    System.cmd("bash", ["scripts/no-private-refs.sh", "--self-test"],
+      cd: work,
+      env: hook_env(),
+      stderr_to_stdout: true
+    )
+  end
+
+  # Replaces the one occurrence of `from` in the fixture's no-private-refs.sh.
+  defp replace_in_script(work, from, to) do
+    path = Path.join(work, "scripts/no-private-refs.sh")
+    script = File.read!(path)
+    assert [_, _] = String.split(script, from)
+    File.write!(path, String.replace(script, from, to))
   end
 
   # Puts a commit on the remote's main that `work` lacks, from another clone.

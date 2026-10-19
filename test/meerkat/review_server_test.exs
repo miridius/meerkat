@@ -59,6 +59,33 @@ defmodule Meerkat.ReviewServerTest do
 
       refute pid_a == pid_b
     end
+
+    test "registers the server under the given id, whatever review_id the args hold",
+         %{repo: repo, review_id: id} do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{},
+          review_id: "#{id}_stale"
+        })
+
+      assert [{^pid, _}] = Registry.lookup(Meerkat.ReviewRegistry, id)
+      assert %ReviewState{} = ReviewServer.get_state(id)
+    end
+
+    test "starts from the snapshot an earlier server saved", %{repo: repo, review_id: id} do
+      saved = %ReviewState{approved_file_names: MapSet.new(["a.ex"])}
+      :ok = Persistence.save(repo, id, saved)
+
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      assert MapSet.equal?(ReviewServer.get_state(id).approved_file_names, MapSet.new(["a.ex"]))
+    end
+  end
+
+  test "topic/1 is the review id prefixed with review:" do
+    assert ReviewServer.topic("abc") == "review:abc"
   end
 
   describe "single-writer + broadcast" do
@@ -139,6 +166,45 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
+  describe "the reply wait" do
+    setup do
+      previous = Application.fetch_env(:meerkat, :review_server_call_timeout_ms)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:meerkat, :review_server_call_timeout_ms, value)
+          :error -> Application.delete_env(:meerkat, :review_server_call_timeout_ms)
+        end
+      end)
+    end
+
+    test "is 5 s unless the app env sets it" do
+      Application.delete_env(:meerkat, :review_server_call_timeout_ms)
+      assert ReviewServer.call_timeout_ms() == 5_000
+
+      Application.put_env(:meerkat, :review_server_call_timeout_ms, 7)
+      assert ReviewServer.call_timeout_ms() == 7
+    end
+
+    test "bounds every call to a server that does not answer", %{repo: repo, review_id: id} do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      Application.put_env(:meerkat, :review_server_call_timeout_ms, 50)
+      :sys.suspend(pid)
+
+      try do
+        assert {:timeout, {GenServer, :call, [_, :get_state, 50]}} =
+                 catch_exit(ReviewServer.get_state(id))
+
+        assert {:timeout, {GenServer, :call, [^pid, :delete_snapshot, 50]}} =
+                 catch_exit(ReviewServer.delete_snapshot(repo, id))
+      after
+        :sys.resume(pid)
+      end
+    end
+  end
+
   describe "argument guards" do
     test "reject a negative file index, a non-binary comment id and an unknown or non-boolean flag",
          %{review_id: id} do
@@ -161,6 +227,60 @@ defmodule Meerkat.ReviewServerTest do
         ReviewServer.set_flag(id, :global, "c1", unknown_flag, true)
       end
     end
+
+    # No server runs for `id`, so a call that got past its guard would
+    # exit rather than raise.
+    test "reject every other ill-typed or unknown argument", %{review_id: id} do
+      # Read back at runtime so the compiler's type check doesn't flag them.
+      bogus = Process.get(:bogus, :bogus)
+      not_binary = Process.get(:not_binary, 1)
+      not_boolean = Process.get(:not_boolean, "yes")
+      not_map = Process.get(:not_map, [])
+
+      calls = [
+        fn -> ReviewServer.ensure_started(not_binary, %{repo_path: "", initial_state: nil}) end,
+        fn -> ReviewServer.add_comment(id, bogus, %{}) end,
+        fn -> ReviewServer.remove_comment(id, bogus, "c1") end,
+        fn -> ReviewServer.set_flag(id, bogus, "c1", :lint_rule, true) end,
+        fn -> ReviewServer.set_flag(id, :global, not_binary, :lint_rule, true) end,
+        fn -> ReviewServer.set_approved(id, "a.ex", not_boolean) end,
+        fn -> ReviewServer.set_extension_hidden(id, "ex", not_boolean) end,
+        fn -> ReviewServer.set_file_override(id, not_binary, :show) end,
+        fn -> ReviewServer.set_file_override(id, "a.ex", bogus) end,
+        fn -> ReviewServer.set_file_overrides(id, not_map) end,
+        fn -> ReviewServer.set_show_generated(id, not_boolean) end,
+        fn -> ReviewServer.open_form(id, not_map) end,
+        fn -> ReviewServer.close_form(id, not_binary) end
+      ]
+
+      for call <- calls, do: assert_raise(FunctionClauseError, call)
+    end
+  end
+
+  describe "set_file_override/3" do
+    test "shows or hides a file, and :default drops its override",
+         %{repo: repo, review_id: id} do
+      {:ok, _} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      _ = ReviewServer.set_file_override(id, "a.ex", :show)
+      _ = ReviewServer.set_file_override(id, "b.ex", :hide)
+      assert ReviewServer.get_state(id).file_overrides == %{"a.ex" => :show, "b.ex" => :hide}
+
+      assert ReviewServer.set_file_override(id, "a.ex", :default).file_overrides ==
+               %{"b.ex" => :hide}
+    end
+
+    test "the server refuses an unknown decision that skips the client's guard",
+         %{repo: repo, review_id: id} do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {{:function_clause, _}, _} =
+                 catch_exit(GenServer.call(pid, {:set_file_override, "a.ex", :bogus}))
+      end)
+    end
   end
 
   describe "a failed save" do
@@ -179,8 +299,13 @@ defmodule Meerkat.ReviewServerTest do
           assert MapSet.member?(state.approved_file_names, "a.ex")
         end)
 
-      assert_receive {:persistence_failed, _reason}
-      assert stderr =~ "couldn't persist review #{id} state"
+      assert_receive {:persistence_failed, reason}
+
+      warning =
+        "meerkat: warning — couldn't persist review #{id} state: #{inspect(reason)}. " <>
+          "In-memory state preserved; comments may be lost if the BEAM dies before next save."
+
+      assert warning in String.split(stderr, "\n")
     end
   end
 
@@ -379,6 +504,38 @@ defmodule Meerkat.ReviewServerTest do
 
       _ = ReviewServer.set_flag(id, :inline, inline_id, :lint_rule, true)
       assert [%{lint_rule: true}] = ReviewServer.get_state(id).comments
+    end
+  end
+
+  describe "each comment surface" do
+    @surfaces [
+      inline: :comments,
+      file: :file_comments,
+      global: :global_comments,
+      commit_msg: :commit_message_comments
+    ]
+
+    setup %{repo: repo, review_id: id} do
+      initial =
+        Enum.reduce(@surfaces, %ReviewState{}, fn {surface, key}, state ->
+          Map.put(state, key, [%{id: "#{surface}", lint_rule: false}])
+        end)
+
+      {:ok, _} = ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: initial})
+      :ok
+    end
+
+    test "takes set_flag/5 on its own list", %{review_id: id} do
+      for {surface, key} <- @surfaces do
+        state = ReviewServer.set_flag(id, surface, "#{surface}", :lint_rule, true)
+        assert [%{lint_rule: true}] = Map.fetch!(state, key)
+      end
+    end
+
+    test "takes remove_comment/3 on its own list", %{review_id: id} do
+      for {surface, key} <- @surfaces do
+        assert ReviewServer.remove_comment(id, surface, "#{surface}") |> Map.fetch!(key) == []
+      end
     end
   end
 
