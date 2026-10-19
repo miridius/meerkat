@@ -1,9 +1,11 @@
-// Run by scripts/mix-test.sh after its test files: fails when one took longer than the limit in scripts/test-file-limit.json
-// without an entry there giving a reason.
+// Run by scripts/mix-test.sh after its test files: runs each passing file that took longer than the limit in
+// scripts/test-file-limit.json, without an entry there giving a reason, again on its own, and fails when that run
+// is also over the limit or fails. Other test files slow a file down, so only the second run judges its own speed.
 //
-// Usage: bun scripts/test-file-times.ts <logs dir> <test file>...
-// Each finished file's wall time, in whole seconds, is in <logs dir>/<file>.secs.
-import { existsSync, readFileSync } from "node:fs";
+// Usage: bun scripts/test-file-times.ts <logs dir> <test-file slots> <test file>...
+// Each finished file's wall time, in whole seconds, is in <logs dir>/<file>.secs, and its exit status in
+// <logs dir>/<file>.status.
+import { existsSync, openSync, readFileSync } from "node:fs";
 
 const LIMITS = "scripts/test-file-limit.json";
 
@@ -39,19 +41,46 @@ function loadLimits(): Limits {
 	return { limitSeconds: limit_seconds, exempt: reasons };
 }
 
-const [logs, ...files] = process.argv.slice(2);
+const [logs, slots, ...files] = process.argv.slice(2);
 const { limitSeconds, exempt } = loadLimits();
 
-const times = files
-	.filter((file) => existsSync(`${logs}/${file}.secs`))
-	.map((file) => ({ file, secs: Number(readFileSync(`${logs}/${file}.secs`, "utf8")) }));
+const passed = (file: string) =>
+	existsSync(`${logs}/${file}.status`) && readFileSync(`${logs}/${file}.status`, "utf8").trim() === "0";
+const secs = (path: string) => Number(readFileSync(path, "utf8"));
 
-const over = times.filter(({ file, secs }) => secs > limitSeconds && !exempt.has(file));
+const slow = files
+	.filter((file) => passed(file) && !exempt.has(file))
+	.map((file) => ({ file, secs: secs(`${logs}/${file}.secs`) }))
+	.filter(({ secs }) => secs > limitSeconds);
+if (slow.length === 0) process.exit(0);
+
+console.log(`\nmix test: running again on its own each test file over the ${limitSeconds} s limit beside others:`);
+const over: { file: string; secs: number }[] = [];
+let failed = false;
+for (const { file, secs: beside } of slow) {
+	const log = `${logs}/${file}.alone`;
+	const out = openSync(log, "w");
+	const run = Bun.spawnSync(["bash", "scripts/run-test-file.sh", slots, file, `${log}.secs`], {
+		stdio: ["ignore", out, out],
+	});
+	if (run.exitCode !== 0) {
+		failed = true;
+		console.log(`  ${file}: ${beside} s beside others; failed on its own`);
+		console.log(`\n=== mix test ${file}, run again on its own ===`);
+		console.log(readFileSync(log, "utf8"));
+		continue;
+	}
+	const alone = secs(`${log}.secs`);
+	console.log(`  ${file}: ${beside} s beside others, ${alone} s alone`);
+	if (alone > limitSeconds) over.push({ file, secs: alone });
+}
+
 if (over.length > 0) {
-	console.log(`\nmix test: test files over the ${limitSeconds} s limit for one file:`);
+	console.log(`\nmix test: test files over the ${limitSeconds} s limit for one file, run on their own:`);
 	for (const { file, secs } of over) console.log(`  ${file}: ${secs} s`);
 	console.log(
 		`Make each faster or split it. List one in ${LIMITS} only with a reason it must stay slow.`,
 	);
-	process.exit(1);
 }
+if (failed) console.log("\nmix test: a test file run again on its own failed.");
+if (failed || over.length > 0) process.exit(1);
