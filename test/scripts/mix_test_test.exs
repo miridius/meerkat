@@ -1,12 +1,13 @@
 defmodule Meerkat.MixTestScriptTest do
-  # Runs the repo's real scripts/mix-test.sh in a temporary directory against
-  # a fixture tree of empty test files; only mix and getconf are PATH stubs.
-  # The mix stub logs each run, records each test-file run's start and end,
-  # sleeps for a test-set delay, and two seconds more for files named as slow,
-  # prints the file to stdout and stderr, and can fail compile or files named
-  # by a test, or kill their jobs. The getconf stub reports a test-set core
-  # count. The per-file time limit is 60 s, so only the two over-limit
-  # tests, which set it to one second, can hit it.
+  # Runs the repo's real scripts/mix-test.sh, with the scripts it runs, in a
+  # temporary git repo against a fixture tree of empty test files; only mix
+  # and getconf are PATH stubs. The mix stub logs each run, records each
+  # test-file run's start and end, sleeps for a test-set delay, and three
+  # seconds more for files named as slow, or named as slow beside others on
+  # their first run only, prints the file to stdout and stderr, and can fail
+  # compile or files named by a test, or kill their jobs. The getconf stub
+  # reports a test-set core count. The per-file time limit is 60 s, so only
+  # the over-limit tests, which set it to two seconds, can hit it.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
@@ -14,7 +15,7 @@ defmodule Meerkat.MixTestScriptTest do
   @files ~w(test/a_test.exs test/web/b_test.exs test/c_test.exs)
 
   setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-mix-test")
+    base = Meerkat.TestHelpers.make_git_repo("meerkat-mix-test")
     on_exit(fn -> File.rm_rf!(base) end)
 
     stubs = Path.join(base, "stubs")
@@ -22,14 +23,17 @@ defmodule Meerkat.MixTestScriptTest do
     erl_opts = Path.join(base, "erl_opts")
     spans = Path.join(base, "spans")
     failing = Path.join(base, "failing")
+    failing_alone = Path.join(base, "failing_alone")
     killed = Path.join(base, "killed")
     cores = Path.join(base, "cores")
     delay = Path.join(base, "delay")
     slow = Path.join(base, "slow")
+    slow_beside = Path.join(base, "slow_beside")
+    seen = Path.join(base, "seen")
 
     File.mkdir_p!(Path.join(base, "scripts"))
 
-    for script <- ~w(mix-test.sh test-file-times.ts) do
+    for script <- ~w(mix-test.sh run-test-file.sh gate-lock.sh test-file-times.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
     end
 
@@ -38,26 +42,33 @@ defmodule Meerkat.MixTestScriptTest do
     for file <- @files, do: write_test_file(base, file)
 
     File.write!(Path.join(base, "test/test_helper.exs"), "")
-    File.write!(failing, "")
-    File.write!(killed, "")
+
+    for file <- [failing, failing_alone, killed, slow, slow_beside, seen],
+        do: File.write!(file, "")
+
     File.write!(cores, "4\n")
     File.write!(delay, "0\n")
-    File.write!(slow, "")
 
     File.mkdir_p!(stubs)
 
+    # A file's second run is its run on its own; the job a stub kills is
+    # run-test-file.sh's parent.
     File.write!(Path.join(stubs, "mix"), """
     #!/usr/bin/env bash
     echo "$MIX_ENV mix $*" >> '#{log}'
     echo "$1: ${ELIXIR_ERL_OPTIONS-unset}" >> '#{erl_opts}'
     if [ "$1" = compile ]; then ! grep -qxF compile '#{failing}'; exit; fi
-    if grep -qxF "$3" '#{killed}'; then kill -9 "$PPID"; exit 1; fi
+    if grep -qxF "$3" '#{killed}'; then kill -9 $(ps -o ppid= -p "$PPID"); exit 1; fi
+    alone=false
+    if grep -qxF "$3" '#{seen}'; then alone=true; else echo "$3" >> '#{seen}'; fi
     echo "start" >> '#{spans}'
     sleep "$(cat '#{delay}')"
-    if grep -qxF "$3" '#{slow}'; then sleep 2; fi
+    if grep -qxF "$3" '#{slow}'; then sleep 3; fi
+    if [ $alone = false ] && grep -qxF "$3" '#{slow_beside}'; then sleep 3; fi
     echo "end" >> '#{spans}'
     echo "ran $3"
     echo "err $3" >&2
+    if [ $alone = true ] && grep -qxF "$3" '#{failing_alone}'; then exit 1; fi
     ! grep -qxF "$3" '#{failing}'
     """)
 
@@ -72,10 +83,12 @@ defmodule Meerkat.MixTestScriptTest do
      erl_opts: erl_opts,
      spans: spans,
      failing: failing,
+     failing_alone: failing_alone,
      killed: killed,
      cores: cores,
      delay: delay,
-     slow: slow}
+     slow: slow,
+     slow_beside: slow_beside}
   end
 
   test "compiles once, then runs every test file in its own mix test", ctx do
@@ -163,31 +176,86 @@ defmodule Meerkat.MixTestScriptTest do
     assert most_at_once(ctx) == 1
   end
 
+  test "two runs at once share half the cores' worth of slots, waiting silently", ctx do
+    File.write!(ctx.cores, "4\n")
+    File.write!(ctx.delay, "0.5\n")
+
+    runs = for _ <- 1..2, do: Task.async(fn -> run(ctx) end)
+
+    for {out, status} <- Task.await_many(runs, :infinity) do
+      assert status == 0
+      refute out =~ "gate-lock"
+    end
+
+    assert most_at_once(ctx) == 2
+  end
+
   describe "the per-file time limit" do
-    test "a file over the limit fails the run and is named", ctx do
+    test "a file over the limit on its own fails the run and is named", ctx do
       File.write!(ctx.slow, "test/web/b_test.exs\n")
-      write_limits(ctx.base, %{limit_seconds: 1, exempt: %{}})
+      write_limits(ctx.base, %{limit_seconds: 2, exempt: %{}})
 
       assert {out, 1} = run(ctx)
 
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+ s beside others, \d+ s alone\n/
+
       assert out =~
-               ~r/test files over the 1 s limit for one file:\n  test\/web\/b_test.exs: \d+ s\n/
+               ~r/test files over the 2 s limit for one file, run on their own:\n  test\/web\/b_test.exs: \d+ s\n/
 
       refute out =~ "a_test.exs: "
       refute out =~ "all 3 test files passed"
     end
 
-    test "a file over the limit with a reason passes", ctx do
+    test "a file over the limit only beside others passes, run again on its own", ctx do
+      File.write!(ctx.slow_beside, "test/web/b_test.exs\n")
+      write_limits(ctx.base, %{limit_seconds: 2, exempt: %{}})
+
+      assert {out, 0} = run(ctx)
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+ s beside others, \d+ s alone\n/
+      assert out =~ "all 3 test files passed"
+
+      assert Enum.count(runs(ctx), &(&1 == "test mix test --no-compile test/web/b_test.exs")) == 2
+      assert erl_opts(ctx) == ["compile: unset" | List.duplicate("test: +S 4 +sbwt none ", 4)]
+    end
+
+    test "a file that fails when run again on its own fails the run and has its output shown",
+         ctx do
+      File.write!(ctx.slow_beside, "test/web/b_test.exs\n")
+      File.write!(ctx.failing_alone, "test/web/b_test.exs\n")
+      write_limits(ctx.base, %{limit_seconds: 2, exempt: %{}})
+
+      assert {out, 1} = run(ctx)
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+ s beside others; failed on its own\n/
+
+      assert out =~
+               "=== mix test test/web/b_test.exs, run again on its own ===\nran test/web/b_test.exs"
+
+      refute out =~ "all 3 test files passed"
+    end
+
+    test "a file over the limit that failed is not run again", ctx do
+      File.write!(ctx.slow, "test/web/b_test.exs\n")
+      File.write!(ctx.failing, "test/web/b_test.exs\n")
+      write_limits(ctx.base, %{limit_seconds: 2, exempt: %{}})
+
+      assert {out, 1} = run(ctx)
+      refute out =~ "running again"
+      assert out =~ "1 of 3 test files failed:\n  test/web/b_test.exs"
+      assert length(runs(ctx)) == 4
+    end
+
+    test "a file over the limit with a reason passes and is not run again", ctx do
       File.write!(ctx.slow, "test/web/b_test.exs\n")
 
       write_limits(ctx.base, %{
-        limit_seconds: 1,
+        limit_seconds: 2,
         exempt: %{"test/web/b_test.exs" => %{reason: "drives a real shell"}}
       })
 
       assert {out, 0} = run(ctx)
-      refute out =~ "over the 1 s limit"
+      refute out =~ "over the 2 s limit"
       assert out =~ "all 3 test files passed"
+      assert length(runs(ctx)) == 4
     end
 
     for {name, limits} <- [
@@ -234,11 +302,14 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(Path.join(base, file), "")
   end
 
-  # This suite's own runner may have set ELIXIR_ERL_OPTIONS.
+  # This suite's own runner may have set ELIXIR_ERL_OPTIONS. hook_env/0 keeps
+  # the test-file slots in the fixture's repo when this suite runs in a hook.
   defp run(ctx, env \\ [{"ELIXIR_ERL_OPTIONS", nil}]) do
     System.cmd("bash", ["scripts/mix-test.sh"],
       cd: ctx.base,
-      env: [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")} | env],
+      env:
+        [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")} | env] ++
+          Meerkat.TestHelpers.hook_env(),
       stderr_to_stdout: true
     )
   end
