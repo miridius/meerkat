@@ -1,0 +1,96 @@
+diff --git a/dist/hooks/useSyncHeight.svelte.js b/dist/hooks/useSyncHeight.svelte.js
+index a5902d94be7edb5dfd0640799c911b197b9914eb..33bdb76e93c8e7b1ec8e570be9afb8d25e052b68 100644
+--- a/dist/hooks/useSyncHeight.svelte.js
++++ b/dist/hooks/useSyncHeight.svelte.js
+@@ -2,6 +2,43 @@ import { getDom } from '../context/dom.js';
+ import { getId } from '../context/id.js';
+ import { getElementRoot } from '../utils/dom.js';
+ import { useIsMounted } from './useIsMounted.svelte.js';
++// Patched by meerkat: the syncs rows queue as Svelte renders them run in
++// one batch before the next paint (all writes, all reads, then all
++// writes), so an expand lays the tables out a fixed number of times, not
++// once per row. A pair already level gets height auto, so the batch
++// leaves nothing for the next layout to redo.
++const pending = new Set();
++// The height each element was left at by its pair's last sync.
++const syncedHeight = new WeakMap();
++let frame = 0;
++const flushSyncHeights = () => {
++    cancelAnimationFrame(frame);
++    frame = 0;
++    const jobs = Array.from(pending).filter((job) => job.ele1.isConnected && job.ele2.isConnected);
++    pending.clear();
++    for (const job of jobs) {
++        job.ele1.style.height = 'auto';
++        job.ele2.style.height = 'auto';
++    }
++    const rects = jobs.map((job) => [job.ele1.getBoundingClientRect(), job.ele2.getBoundingClientRect()]);
++    jobs.forEach((job, i) => {
++        const [rect1, rect2] = rects[i];
++        const maxHeight = Math.max(rect1.height, rect2.height);
++        const height = rect1.height === rect2.height ? 'auto' : maxHeight + 'px';
++        job.wrapper1.style.height = height;
++        job.wrapper2.style.height = height;
++        job.wrapper1.setAttribute('data-sync-height', String(maxHeight));
++        job.wrapper2.setAttribute('data-sync-height', String(maxHeight));
++        const isWrapper = (ele) => ele === job.wrapper1 || ele === job.wrapper2;
++        syncedHeight.set(job.ele1, isWrapper(job.ele1) ? maxHeight : rect1.height);
++        syncedHeight.set(job.ele2, isWrapper(job.ele2) ? maxHeight : rect2.height);
++    });
++};
++const scheduleSyncHeight = (job) => {
++    pending.add(job);
++    if (!frame)
++        frame = requestAnimationFrame(flushSyncHeights);
++};
+ export const useSyncHeight = ({ selector, wrapper, side, enable }) => {
+     const id = $derived.by(getId());
+     const dom = $derived.by(getDom());
+@@ -25,19 +62,11 @@ export const useSyncHeight = ({ selector, wrapper, side, enable }) => {
+                 const wrapper2 = wrappers[1];
+                 const target = ele1.getAttribute('data-side') === side() ? ele1 : ele2;
+                 const typedTarget = target;
+-                const cb = () => {
+-                    ele1.style.height = 'auto';
+-                    ele2.style.height = 'auto';
+-                    const rect1 = ele1.getBoundingClientRect();
+-                    const rect2 = ele2.getBoundingClientRect();
+-                    const maxHeight = Math.max(rect1.height, rect2.height);
+-                    wrapper1.style.height = maxHeight + 'px';
+-                    wrapper2.style.height = maxHeight + 'px';
+-                    wrapper1.setAttribute('data-sync-height', String(maxHeight));
+-                    wrapper2.setAttribute('data-sync-height', String(maxHeight));
+-                };
++                const job = { ele1, ele2, wrapper1, wrapper2 };
++                const cb = () => scheduleSyncHeight(job);
+                 cb();
+                 const cleanCb = () => {
++                    pending.delete(job);
+                     typedTarget.__observeCallback?.delete(cb);
+                     if (typedTarget.__observeCallback?.size === 0) {
+                         typedTarget.__observeInstance?.disconnect();
+@@ -48,13 +77,22 @@ export const useSyncHeight = ({ selector, wrapper, side, enable }) => {
+                 };
+                 if (typedTarget.__observeCallback) {
+                     typedTarget.__observeCallback.add(cb);
+-                    clean = cleanCb;
++                    unSubscribe.current = cleanCb;
+                     return;
+                 }
+                 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using native Set for non-reactive callback storage
+                 typedTarget.__observeCallback = new Set();
+                 typedTarget.__observeCallback.add(cb);
+-                const observer = new ResizeObserver(() => typedTarget.__observeCallback?.forEach((cb) => cb()));
++                // A size the last sync left in place, such as the one the
++                // observer reports when it starts, needs no new sync. A
++                // changed size is synced before this frame paints.
++                const observer = new ResizeObserver((entries) => {
++                    const height = entries[entries.length - 1].borderBoxSize[0].blockSize;
++                    if (height === syncedHeight.get(target))
++                        return;
++                    typedTarget.__observeCallback?.forEach((cb) => cb());
++                    flushSyncHeights();
++                });
+                 typedTarget.__observeInstance = observer;
+                 observer.observe(target);
+                 target.setAttribute('data-observe', 'height');

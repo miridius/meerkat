@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
-import { expect, test } from "./lib/test";
+import { afterNextFrame, expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
 
@@ -115,6 +115,89 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		// data-side, before measuring anything in it.
 		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
 		await checkSplit(page, file);
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+// A 1200-line file with a line changed every 30 lines, so the diff has 40
+// hunks.
+function manyHunkFixture() {
+	const lines = (edit: boolean) =>
+		`${Array.from({ length: 1200 }, (_, i) => {
+			const n = i + 1;
+			return edit && n % 30 === 0 ? `changed line ${n}` : `line ${n}`;
+		}).join("\n")}\n`;
+	const fixture = makeFixture({ files: { "many.txt": lines(false) } });
+	fixture.git("commit", "-q", "-m", "base");
+	writeFileSync(join(fixture.dir, "many.txt"), lines(true));
+	fixture.git("add", "many.txt");
+	return fixture;
+}
+
+// With Wrap off, Split view draws each side in its own table. Lists the
+// rows, by `data-line`, whose top differs from the other side's row, or a
+// single entry giving the row counts when a side has none or they differ.
+function misalignedRows(file: Locator): Promise<string[]> {
+	return file.evaluate((section) => {
+		const tops = (side: string) =>
+			new Map(
+				Array.from(section.querySelectorAll<HTMLElement>(`table.${side}-diff-table > tbody > tr[data-line]`), (tr) => [
+					tr.dataset.line,
+					tr.getBoundingClientRect().top,
+				]),
+			);
+		const oldTops = tops("old");
+		const newTops = tops("new");
+		if (oldTops.size === 0 || oldTops.size !== newTops.size) return [`old ${oldTops.size} rows, new ${newTops.size}`];
+		return Array.from(oldTops).flatMap(([line, top]) => {
+			const other = newTops.get(line);
+			return other !== undefined && Math.abs(other - top) < 0.5 ? [] : [`${line}: ${top} vs ${other}`];
+		});
+	});
+}
+
+test("in Split view with Wrap off, an expand lays the diff out a few times, not once per hunk, and the two sides' rows stay level", async ({
+	page,
+}) => {
+	const meerkat = await startMeerkat({ fixture: manyHunkFixture() });
+	try {
+		await page.goto(meerkat.url);
+		const file = page.locator(".file-section").filter({ hasText: "many.txt" });
+		await page.getByRole("button", { name: /^Split$/ }).click();
+		await page.locator(".diff-toolbar .wrap-toggle input[type=checkbox]").uncheck();
+		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
+		await afterNextFrame(page);
+		expect(await misalignedRows(file)).toEqual([]);
+
+		// The rows after the expanded lines each hold a hunk whose height
+		// @git-diff-view syncs across the two tables. Done row by row as
+		// Svelte re-renders the rows, each sync laid out both tables again.
+		const cdp = await page.context().newCDPSession(page);
+		const events: { name: string; ph: string }[] = [];
+		cdp.on("Tracing.dataCollected", (data) => events.push(...(data.value as { name: string; ph: string }[])));
+		const traced = new Promise((resolve) => cdp.once("Tracing.tracingComplete", resolve));
+		await cdp.send("Tracing.start", { categories: "devtools.timeline", transferMode: "ReportEvents" });
+		await expandButtons(file).nth(1).click();
+		await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();
+		await afterNextFrame(page);
+		await cdp.send("Tracing.end");
+		await traced;
+		const layouts = events.filter((e) => e.name === "Layout" && e.ph === "X").length;
+		// 3-4 with the fix, about 90 without it.
+		expect(layouts).toBeGreaterThan(0);
+		expect(layouts).toBeLessThan(8);
+		expect(await misalignedRows(file)).toEqual([]);
+
+		// A font size change resizes every row in place, without a
+		// re-render. Both sides' rows here are the same natural height, so
+		// this guards against a sync writing a wrong height.
+		await page.locator(".toolbar-settings > summary").click();
+		await page.getByLabel("Increase font size").click();
+		await page.getByLabel("Increase font size").click();
+		await expect(page.locator(".toolbar-settings .toolbar-value").first()).toHaveText("15px");
+		await afterNextFrame(page);
+		await expect.poll(() => misalignedRows(file)).toEqual([]);
 	} finally {
 		await meerkat.kill();
 	}
