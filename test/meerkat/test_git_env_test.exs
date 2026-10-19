@@ -45,7 +45,16 @@ defmodule Meerkat.TestGitEnvTest do
     Meerkat.TestHelpers.put_git_config_env()
 
     assert git(base, ["config", "--list", "--show-scope"]) ==
-             "global\tmaintenance.auto=false\nglobal\tcore.logallrefupdates=false\nglobal\tinit.templatedir=\nglobal\ttransfer.unpacklimit=1"
+             Enum.join(
+               [
+                 "global\tmaintenance.auto=false",
+                 "global\tcore.logallrefupdates=false",
+                 "global\tinit.templatedir=",
+                 "global\ttransfer.unpacklimit=1",
+                 "global\tpack.writereverseindex=false"
+               ],
+               "\n"
+             )
   end
 
   # A non-interactive rebase's hooks get GIT_SEQUENCE_EDITOR=:, which would

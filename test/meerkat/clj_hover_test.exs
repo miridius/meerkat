@@ -134,9 +134,11 @@ defmodule Meerkat.CljHoverTest do
   # once. Every test that only reads them shares one copy; a test that
   # changes the repo is tagged `:own_repo` and gets its own.
   setup_all do
-    template = Meerkat.TestHelpers.tmp_path("meerkat-clj-hover-template")
-    on_exit(fn -> File.rm_rf!(template) end)
-    build_fixture(Path.join(template, "repo"), Path.join(template, "ext"))
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-clj-hover-template", fn template ->
+        build_fixture(Path.join(template, "repo"), Path.join(template, "ext"))
+      end)
+
     {:ok, template: template, shared_dir: copy(template)}
   end
 
