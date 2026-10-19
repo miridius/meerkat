@@ -242,25 +242,36 @@ defmodule Meerkat.CLI do
 
         Application.put_env(:meerkat, :review_target, target)
         Application.put_env(:meerkat, :no_open, opts.no_open)
+        # Set before the application starts, like the deadline: it tells
+        # `Meerkat.Decision` which caller to watch.
+        # muex:ignore unreachable I/O seam (in-VM tests stop before a review server starts; cli_main_test's review runs are separate BEAMs cover cannot see): killed by detach.spec.ts "a review with no comments ends once its caller is killed…"
+        Application.put_env(:meerkat, :serve_dir, serve_dir)
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
         # No in-VM test gets here: the test VM's endpoint already runs
         # without a server, so `review_url/0` raises in `announce_url/2`.
         # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
-        decision = await_decision_or_reject()
+
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend"
+        {tag, payload} = decision = await_decision_or_reject()
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
         # ReviewServer runs the delete after any save in flight and saves
         # nothing once a decision exists, so the snapshot stays deleted.
-        _ = ReviewServer.delete_snapshot(repo_path(), review_id)
+        # An ended review had no comments; its snapshot keeps the Approved
+        # ticks for a rerun.
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a rerun after a message-only change replaces a held decision without its comments…" and "a review with no comments ends once its caller is killed…"
+        _ = if tag != :ended, do: ReviewServer.delete_snapshot(repo_path(), review_id)
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
         Process.sleep(750)
-        {tag, payload} = decision
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
         {code, text} = exit_code(decision, review_id, feedback_file_path(log))
-        run = deliver({code, text}, serve_dir)
+        # Nothing waits for an ended review's outcome, and Decision turns
+        # away any caller that comes, so it goes to the log alone.
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend" and "a review with no comments ends once its caller is killed…"
+        run = deliver({code, text}, if(tag != :ended, do: serve_dir))
 
         _ =
           if run,
@@ -903,8 +914,9 @@ defmodule Meerkat.CLI do
     approved or rejected, and carries any comments they left. Read the
     whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
     the feedback. If the output ends with no outcome line, this process
-    stopped before the review completed and the review is still open: run the
-    same command again to wait for its outcome.
+    stopped before the review completed, and the review stays open if it has
+    comments or an open comment form: run the same command again to
+    wait for its outcome.
     """
   end
 
@@ -1072,6 +1084,12 @@ defmodule Meerkat.CLI do
 
   defp exit_code({:cancel, _payload}, _review_id, _feedback_path) do
     {1, "Review cancelled — commit aborted, no feedback to act on.\n"}
+  end
+
+  defp exit_code({:ended, _payload}, _review_id, _feedback_path) do
+    {1,
+     "meerkat: no invocation was waiting on this review and it had no comments, " <>
+       "so it ended.\n"}
   end
 
   defp decision_atom(:approve_with_feedback), do: :approve

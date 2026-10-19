@@ -17,10 +17,9 @@ const csrfToken = document
   .getAttribute("content");
 
 // WindowClose hook fires window.close() 500ms after the done view
-// mounts. Chromium blocks the call for tabs not opened via
-// window.open(), but the underlying "you can close this tab" copy
-// + heading is the user-facing fallback — the spec asserts the
-// heading is visible, not that the tab actually closed.
+// mounts. Browsers allow it only for a tab opened by a script or
+// whose history holds one page, such as the tab meerkat opens; in any
+// other the "you can close this tab" copy + heading is the fallback.
 const hooks = {
   ...getHooks(Components),
   WindowClose: {
@@ -29,7 +28,7 @@ const hooks = {
         try {
           window.close();
         } catch (_e) {
-          /* Chromium blocks; leave the done view up */
+          /* Blocked; leave the done view up */
         }
       }, 500);
     },

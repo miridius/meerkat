@@ -309,7 +309,7 @@ defmodule Meerkat.ShepherdTest do
   end
 
   for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
-    test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
+    test "a caller stopped by SIG#{signal} says when the review stays open and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       rel = Path.join(dir, "rel")
@@ -347,7 +347,8 @@ defmodule Meerkat.ShepherdTest do
 
       assert output =~
                "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
-                 "The review is still open; run the same command again to wait for its outcome.\n"
+                 "The review stays open if it has comments or an open comment form; " <>
+                 "run the same command again to wait for its outcome.\n"
 
       assert {_, 0} = System.cmd("kill", ["-0", backend], stderr_to_stdout: true)
     end

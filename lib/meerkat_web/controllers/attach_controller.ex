@@ -15,7 +15,8 @@ defmodule MeerkatWeb.AttachController do
   a caller sending none is read from the repo's own index. Before the
   409 is sent, every attached caller
   gets a `d <line>` frame; a displaced caller prints `<line>` to stderr
-  and exits 1. Once a caller has taken delivery, others get 503. `quiet=1`
+  and exits 1. Once a caller has taken delivery, or the review has ended with
+  no caller waiting on it, others get 503. `quiet=1`
   skips the banner, for a caller that already printed it. A later
   invocation whose review target cannot be resolved, or whose staged
   review names an index that no longer exists, gets 502 with the error

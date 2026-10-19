@@ -732,6 +732,33 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
   end
 
+  test "a review that ended with nothing waiting on it shows every tab the Review ended notice, which tries to close the tab",
+       %{conn: conn} do
+    view = mount_unbound(conn)
+    assert Decision.end_unattended() == :ended
+
+    html = render(view)
+    assert has_element?(view, "h1", ~r/^Review ended$/)
+
+    assert html =~
+             "Nothing was waiting on this review and it had no comments, so meerkat ended it."
+
+    assert has_element?(view, "#window-close-host[phx-hook=WindowClose]")
+
+    # A click the tab sent before it heard is refused, and the notice stays.
+    assert render_click(view, "decision.reject", %{}) =~ "Review ended"
+    assert Decision.current() == {:ended, ""}
+
+    {:ok, later, _html} = live_isolated(conn, ReviewLive)
+    assert render(later) =~ "Review ended"
+  end
+
+  test "other done views do not say the review ended", %{conn: conn} do
+    view = mount_unbound(conn)
+    html = render_click(view, "decision.reject", %{})
+    refute html =~ "Nothing was waiting on this review"
+  end
+
   test "a tab that mounts before any decision keeps its drafts", %{conn: conn} do
     repo = tmp_git_repo()
     on_exit(fn -> File.rm_rf!(repo) end)

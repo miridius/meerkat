@@ -192,9 +192,9 @@ _ma_still_open() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
   local IFS=$' \t\n' port beam at=""
-  # No port while a BEAM starts; the review is still open then too.
+  # No port while a BEAM starts; the review stays open then too.
   read -r port beam 2>/dev/null <"$_MA_DIR/port" && at=" at http://127.0.0.1:$port/"
-  echo "meerkat: $1 before the review completed. The review is still open$at; run the same command again to wait for its outcome." >&2
+  echo "meerkat: $1 before the review completed. The review stays open$at if it has comments or an open comment form; run the same command again to wait for its outcome." >&2
 }
 
 _ma_log_size() {
@@ -491,8 +491,9 @@ _ma_attach() {
     exit "$code"
   fi
 
-  # 409 means the review changed and 503 means another caller took delivery;
-  # either way, the backend is exiting and this caller starts a fresh one.
+  # 409 means the review changed, and 503 that another caller took delivery
+  # or the review ended with nothing waiting on it; either way, the backend
+  # is exiting and this caller starts a fresh one.
   # 502 means this rerun could not resolve its review target or named an
   # index that no longer exists; the error was
   # printed from its o frames, the backend keeps its review, and this caller

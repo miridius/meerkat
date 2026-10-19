@@ -124,6 +124,8 @@ see [pending-answers.md](pending-answers.md).
   unanswered (with the unanswered questions and answer instructions on
   stderr; no browser opens). A reattaching caller also exits 1 if owed
   question state is unreadable, leaving the existing backend running.
+  A review that [ended with nothing waiting on
+  it](decision-flow.md#when-nothing-waits-on-the-review) also exits 1.
   The git hook aborts. Under
   `--answers`: the input was rejected and nothing was written.
 - `2` — an unhandled crash downstream of `Meerkat.CLI.main/1`. The
@@ -174,9 +176,9 @@ see [pending-answers.md](pending-answers.md).
   SIGINT or SIGHUP also exits 143, without a message, after
   SIGKILLing its BEAM. The invocation waiting on the review is
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
-  the decision prints that the review is still open and dies of that
-  signal (128 plus its number to a shell, so 130 for SIGINT and 129
-  for SIGHUP), and the review keeps running; see
+  the decision prints that the review stays open if it has comments
+  or an open comment form and dies of that signal (128 plus its
+  number to a shell, so 130 for SIGINT and 129 for SIGHUP); see
   [decision-flow.md](decision-flow.md#when-the-caller-exits).
 
 ## Output

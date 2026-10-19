@@ -580,14 +580,14 @@ defmodule Meerkat.CLITest do
 
     # A process killed by SIGKILL, or read before it finished, shows the
     # banner with no outcome line after it.
-    test "says an output ending without an outcome line means the review is still open" do
+    test "says an output ending without an outcome line means the review stays open if it has comments" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         flat = target |> CLI.pause_banner_for_test(@url) |> String.replace(~r/\s+/, " ")
 
         assert flat =~
                  "If the output ends with no outcome line, this process stopped before " <>
-                   "the review completed and " <>
-                   "the review is still open: run the same command again to wait for its outcome."
+                   "the review completed, and the review stays open if it has comments or " <>
+                   "an open comment form: run the same command again to wait for its outcome."
       end
     end
 
@@ -910,13 +910,20 @@ defmodule Meerkat.CLITest do
       assert code == 1
       assert err =~ "Review cancelled — commit aborted, no feedback to act on."
     end
+
+    test "an ended review exits 1 and says why it ended", %{path: path} do
+      assert exit_code({:ended, ""}, path) ==
+               {1,
+                "meerkat: no invocation was waiting on this review and it had no comments, " <>
+                  "so it ended.\n"}
+    end
   end
 
   describe "decision_atom/1" do
     test "the review log records approve-with-feedback as an approval, every other decision as itself" do
       assert CLI.decision_atom_for_test(:approve_with_feedback) == :approve
 
-      for tag <- [:approve, :reject, :cancel, :timeout] do
+      for tag <- [:approve, :reject, :cancel, :timeout, :ended] do
         assert CLI.decision_atom_for_test(tag) == tag
       end
     end

@@ -561,6 +561,234 @@ defmodule Meerkat.DecisionTest do
     end
   end
 
+  describe "ending a review nothing waits on" do
+    import Meerkat.TestHelpers
+
+    alias Meerkat.{Comment, ReviewServer}
+
+    @env_keys [
+      :repo_path,
+      :review_id,
+      :review_state,
+      :serve_dir,
+      :caller_check_ms,
+      :review_deadline_ms
+    ]
+
+    setup do
+      repo = make_tmp_repo("meerkat-decision-ending")
+      serve_dir = Path.join(repo, "run")
+      File.mkdir_p!(serve_dir)
+      review_id = "ending_#{System.unique_integer([:positive])}"
+      Application.put_env(:meerkat, :repo_path, repo)
+      Application.put_env(:meerkat, :review_id, review_id)
+      Application.put_env(:meerkat, :review_state, %ReviewState{})
+      Application.put_env(:meerkat, :serve_dir, serve_dir)
+      Application.put_env(:meerkat, :caller_check_ms, 5)
+
+      on_exit(fn ->
+        case Registry.lookup(Meerkat.ReviewRegistry, review_id) do
+          [{pid, _}] -> DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, pid)
+          [] -> :ok
+        end
+
+        Enum.each(@env_keys, &Application.delete_env(:meerkat, &1))
+        Decision.reset()
+        File.rm_rf(repo)
+      end)
+
+      Decision.reset()
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.decision_topic())
+      %{repo: repo, serve_dir: serve_dir, review_id: review_id}
+    end
+
+    defp await_in_background do
+      parent = self()
+      spawn_link(fn -> send(parent, {:awaited, Decision.await()}) end)
+    end
+
+    defp start_review(review_id, repo) do
+      {:ok, _} =
+        ReviewServer.ensure_started(review_id, %{repo_path: repo, initial_state: %ReviewState{}})
+    end
+
+    defp comment do
+      %{
+        id: Comment.new_id(),
+        body: "keep me",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false,
+        created_at: Comment.now()
+      }
+    end
+
+    # The pid of a shell that has exited.
+    defp exited_pid do
+      {out, 0} = System.cmd("/bin/sh", ["-c", "echo $$"])
+      String.trim(out)
+    end
+
+    test "a review with no comments ends once its last caller detaches, and turns later callers away" do
+      await_in_background()
+      {first, _} = spawn_caller("run-a")
+      {second, _} = spawn_caller("run-a")
+      Process.exit(first, :kill)
+      refute_receive {:awaited, _}, 100
+
+      Process.exit(second, :kill)
+      assert_receive {:awaited, {:ended, ""}}
+      assert_receive {:meerkat_decision, {:ended, ""}}
+      assert Decision.attach("run-b") == :closing
+      assert {:already_decided, {:ended, ""}} = Decision.submit({:approve, ""})
+    end
+
+    test "a review with a saved comment stays open, even once its comments are deleted", %{
+      repo: repo,
+      review_id: review_id
+    } do
+      start_review(review_id, repo)
+      %{global_comments: [%{id: id}]} = ReviewServer.add_comment(review_id, :global, comment())
+      await_in_background()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      refute_receive {:awaited, _}, 200
+
+      ReviewServer.remove_comment(review_id, :global, id)
+      refute_receive {:awaited, _}, 200
+      assert Decision.current() == nil
+    end
+
+    test "comments saved by an earlier BEAM keep the review open before any tab starts its server",
+         %{repo: repo, review_id: review_id} do
+      start_review(review_id, repo)
+      ReviewServer.add_comment(review_id, :global, comment())
+      [{server, _}] = Registry.lookup(Meerkat.ReviewRegistry, review_id)
+      :ok = DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, server)
+
+      await_in_background()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      refute_receive {:awaited, _}, 200
+    end
+
+    test "a review with an open comment form stays open", %{repo: repo, review_id: review_id} do
+      start_review(review_id, repo)
+      ReviewServer.open_form(review_id, %{surface: :global, anchor: %{}})
+      await_in_background()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      refute_receive {:awaited, _}, 200
+    end
+
+    test "a decision made before the caller detaches stands" do
+      {pid, _} = spawn_caller("run-a")
+      {:ok, _} = Decision.submit({:approve, ""})
+      Process.exit(pid, :kill)
+      refute_receive {:meerkat_decision, {:ended, _}}, 200
+      assert Decision.current() == {:approve, ""}
+    end
+
+    test "a caller that died before attaching ends the review", %{serve_dir: serve_dir} do
+      File.write!(Path.join(serve_dir, "caller"), exited_pid())
+      await_in_background()
+      # Well inside the default second, so the configured 5 ms is what runs.
+      assert_receive {:awaited, {:ended, ""}}, 500
+    end
+
+    test "the recorded caller is checked once a second unless configured otherwise" do
+      assert Decision.caller_check_ms() == 5
+      Application.delete_env(:meerkat, :caller_check_ms)
+      assert Decision.caller_check_ms() == 1_000
+    end
+
+    test "without a launcher, a review stays open when its caller detaches" do
+      Application.delete_env(:meerkat, :serve_dir)
+      await_in_background()
+      {pid, _} = spawn_caller("run-a")
+      Process.exit(pid, :kill)
+      # Long enough for a judgement, which starts the review's server, to land.
+      refute_receive {:awaited, _}, 1_000
+    end
+
+    test "a caller leaving while another stays attached keeps the deadline armed" do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      on_exit(fn -> System.delete_env("MEERKAT_REVIEW_TIMEOUT") end)
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      {first, _} = spawn_caller("run-a")
+      {second, _} = spawn_caller("run-a")
+      Process.exit(first, :kill)
+      refute_receive {:meerkat_deadline, nil}, 200
+
+      Process.exit(second, :kill)
+      assert_receive {:meerkat_deadline, nil}
+    end
+
+    test "a caller check arriving once a caller is attached is dropped silently", %{
+      serve_dir: serve_dir,
+      review_id: review_id
+    } do
+      {_pid, _} = spawn_caller("run-a")
+      File.write!(Path.join(serve_dir, "caller"), exited_pid())
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, :check_caller)
+          :sys.get_state(Decision)
+        end)
+
+      assert log == ""
+      # Judging would have started the review's server.
+      Process.sleep(100)
+      assert Registry.lookup(Meerkat.ReviewRegistry, review_id) == []
+    end
+
+    test "end_if_unused/1 says whether it ended the review", %{repo: repo, review_id: review_id} do
+      start_review(review_id, repo)
+      %{global_comments: [%{id: id}]} = ReviewServer.add_comment(review_id, :global, comment())
+      assert ReviewServer.end_if_unused(review_id) == :kept
+
+      ReviewServer.remove_comment(review_id, :global, id)
+      assert ReviewServer.end_if_unused(review_id) == :ended
+      assert Decision.current() == {:ended, ""}
+    end
+
+    test "a caller still alive before attaching keeps the review waiting until it detaches", %{
+      serve_dir: serve_dir
+    } do
+      port =
+        Port.open({:spawn_executable, "/bin/sh"}, [
+          :binary,
+          args: ["-c", "sleep 30; true", "meerkat-attach"]
+        ])
+
+      {:os_pid, caller} = Port.info(port, :os_pid)
+      on_exit(fn -> System.cmd("kill", [to_string(caller)], stderr_to_stdout: true) end)
+      File.write!(Path.join(serve_dir, "caller"), "#{caller}\n")
+      await_in_background()
+      refute_receive {:awaited, _}, 100
+
+      # Once a caller attaches, the recorded pid is no longer what is checked.
+      {pid, _} = spawn_caller("run-a")
+      File.write!(Path.join(serve_dir, "caller"), exited_pid())
+      refute_receive {:awaited, _}, 100
+
+      Process.exit(pid, :kill)
+      assert_receive {:awaited, {:ended, ""}}
+    end
+
+    test "end_unattended/0 keeps a review with an attached caller or a decision" do
+      {_pid, _} = spawn_caller("run-a")
+      assert Decision.end_unattended() == :kept
+      assert Decision.current() == nil
+
+      Decision.reset()
+      {:ok, _} = Decision.submit({:cancel, ""})
+      assert Decision.end_unattended() == :kept
+      assert Decision.current() == {:cancel, ""}
+    end
+  end
+
   describe "reset/0" do
     test "clears a submitted decision back to nil" do
       Decision.submit({:approve, []})
