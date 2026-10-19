@@ -521,6 +521,10 @@ defmodule Meerkat.Git do
     end
   end
 
+  # Shared by the staged patch and its binary classification, so both
+  # see the same diff.
+  @staged_diff_args ["-w", "-M", "--no-textconv", "--no-ext-diff"]
+
   @doc """
   Return staged-vs-HEAD diffs as `[%file_diff{}]`. Each entry has the
   full old/new content + hunks the Svelte DiffViewer needs.
@@ -532,10 +536,6 @@ defmodule Meerkat.Git do
   in the same file; only entries that come back with zero hunks under
   `-w` are filtered.
   """
-  # Shared by the staged patch and its binary classification, so both
-  # see the same diff.
-  @staged_diff_args ["-w", "-M", "--no-textconv", "--no-ext-diff"]
-
   @spec staged_file_diffs(String.t()) :: {:ok, [file_diff]} | {:error, String.t()}
   def staged_file_diffs(repo_path) do
     with {:ok, initial_index} <- run_git_unmerged(repo_path, ["ls-files", "--stage", "-z"]),
