@@ -76,6 +76,11 @@ remove commits a merged PR still references). Before committing:
   as `scripts/gate-lock.sh`, stays bash with it.
 - **No mock/demo data.** The review UI runs against real diffs. If you
   need test data, write a real commit / range / PR.
+- **Headless browsers only.** Agents never open a visible browser
+  window on the user's screen: run Playwright headless, any Chrome they
+  launch with `--headless=new`, and pass `--no-open` to every meerkat
+  they run themselves. A git hook's meerkat, which opens for the
+  user's review, is exempt.
 
 ## Workflow
 
@@ -94,7 +99,7 @@ meerkat's own steps for a bug report or feature request:
    behaviour the way a user meets it. Turn each QA-found bug into a
    test that fails before the fix, at the lowest layer that reaches
    it; use e2e only when lower-layer tests cannot reach the seam,
-   1-3 tests per seam. Tests and agent-run checks pass `--no-open`.
+   1-3 tests per seam. Tests pass `--no-open`.
    A run that needs a browser (Playwright, `meerkat-qa`) opens the
    printed URL itself.
 3. **Ship.** Commit and push without asking first.
