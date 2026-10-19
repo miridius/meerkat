@@ -1,6 +1,8 @@
 defmodule MeerkatWeb.ReviewLiveFilterTest do
-  # Drives `MeerkatWeb.ReviewLive`'s approval and file-filter event
-  # handlers; `MeerkatWeb.ReviewLiveEventsCase` describes the setup.
+  # Drives `MeerkatWeb.ReviewLive`'s approval, file-filter and file-panel
+  # event handlers, then the mutant kills of the third mutation pass,
+  # which span every surface; `MeerkatWeb.ReviewLiveEventsCase` describes
+  # the setup.
 
   use MeerkatWeb.ReviewLiveEventsCase
 

@@ -79,7 +79,8 @@ remove commits a merged PR still references). Before committing:
 - **Headless browsers only.** Agents never open a visible browser
   window on the user's screen: run Playwright headless, any Chrome they
   launch with `--headless=new`, and pass `--no-open` to every meerkat
-  they start.
+  they run themselves. A git hook's meerkat, which opens for the
+  user's review, is exempt.
 
 ## Workflow
 
