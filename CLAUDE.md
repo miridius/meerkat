@@ -84,7 +84,8 @@ The `dev-process` and `pull-requests` plugins from the
 hold the development-process and PR rules. The loop below adds
 meerkat's own steps for a bug report or feature request:
 
-1. **Spec.** A feature's spec is its `docs/features/*.md` file.
+1. **Spec.** A feature's spec, which a big feature's spec-only PR
+   changes, is its `docs/features/*.md` file.
 2. **Build, test, verify.** Implement in small slices. Each slice
    ends with `mix test` green AND a manual verification: review a
    real diff through `bin/meerkat-beam` from this checkout and use
@@ -96,7 +97,7 @@ meerkat's own steps for a bug report or feature request:
    1-3 tests per seam. Tests and agent-run checks pass `--no-open`.
    A run that needs a browser (Playwright, `meerkat-qa`) opens the
    printed URL itself.
-3. **Ship.** Commit, push, and open the PR without asking first.
+3. **Ship.** Commit and push without asking first.
    `main` is branch-protected on GitHub — no direct pushes, no
    force-pushes; changes land via PR.
 
@@ -226,7 +227,7 @@ Name the e2e test that kills the mutant.
 
 ## Review and merge
 
-The `/manager:review-and-merge` skill runs the merge-time checks and
+The `/pull-requests:review-and-merge` skill runs the merge-time checks and
 post-merge steps in this section.
 
 ### Mutation-test the PR
