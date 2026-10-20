@@ -31,15 +31,11 @@ defmodule Meerkat.Cljfmt do
 
   @doc """
   `code` repaired and formatted as it would sit between `above` and
-  `below`, by the hook run in `cwd`; `code` itself when the hook isn't
-  on `PATH`.
+  `below`, by the hook run in `cwd`.
   """
   @spec format(String.t(), String.t(), String.t(), Path.t()) :: String.t()
   def format(code, above, below, cwd) do
-    case System.find_executable(@hook) do
-      nil -> code
-      hook -> format_with(code, above, below, &run_hook(hook, cwd, &1, &2))
-    end
+    format_with(code, above, below, &run_hook(cwd, &1, &2))
   end
 
   # Test seam: `run.(path, cljfmt?)` rewrites the file at `path`,
@@ -55,9 +51,10 @@ defmodule Meerkat.Cljfmt do
     try do
       # Parinfer keeps every line, so the repaired suggestion is what
       # lies between the unchanged lines around it.
-      with {:ok, repaired} <- through(run, path, false, above <> code <> below),
-           {:ok, repaired_code} <- between(repaired, above, below),
-           {:ok, formatted} <- through(run, path, true, above <> repaired_code <> below),
+      repaired = through(run, path, false, above <> code <> below)
+
+      with {:ok, repaired_code} <- between(repaired, above, below),
+           formatted = through(run, path, true, above <> repaired_code <> below),
            {:ok, lines} <- cut(formatted, above, repaired_code, below) do
         Enum.join(lines, "\n")
       else
@@ -71,15 +68,13 @@ defmodule Meerkat.Cljfmt do
   defp through(run, path, cljfmt?, text) do
     File.write!(path, text)
     run.(path, cljfmt?)
-    File.read(path)
+    File.read!(path)
   end
 
-  # An empty repaired suggestion has nothing to format: it comes back
-  # as typed, without running the hook again.
   defp between(text, above, below) do
     size = byte_size(text) - byte_size(above) - byte_size(below)
 
-    if size > 0 and String.starts_with?(text, above) and String.ends_with?(text, below),
+    if String.starts_with?(text, above) and String.ends_with?(text, below),
       do: {:ok, binary_part(text, byte_size(above), size)},
       else: :error
   end
@@ -129,7 +124,7 @@ defmodule Meerkat.Cljfmt do
   # The hook reads a Claude Code PostToolUse payload for an edit of
   # `path` on stdin. System.cmd can't write to stdin, so `sh` redirects
   # a tmp file of the payload onto it.
-  defp run_hook(hook, cwd, path, cljfmt?) do
+  defp run_hook(cwd, path, cljfmt?) do
     payload = path <> ".json"
 
     File.write!(
@@ -148,7 +143,7 @@ defmodule Meerkat.Cljfmt do
     try do
       case System.cmd(
              "/bin/sh",
-             ["-c", ~s(exec "$0" "$@" < "$MEERKAT_HOOK_PAYLOAD"), hook | flags],
+             ["-c", ~s(exec "$0" "$@" < "$MEERKAT_HOOK_PAYLOAD"), @hook | flags],
              env: [{"MEERKAT_HOOK_PAYLOAD", payload}],
              cd: cwd,
              stderr_to_stdout: true

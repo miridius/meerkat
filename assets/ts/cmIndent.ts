@@ -4,39 +4,39 @@ import {
 	IndentContext,
 	indentService,
 	indentUnit,
+	type Language,
+	LanguageSupport,
 } from "@codemirror/language";
-import { type Compartment, EditorState, type Extension, Prec, Text } from "@codemirror/state";
+import { type Compartment, EditorState, type Extension, Prec, type Text } from "@codemirror/state";
 
-/** The file's text around the lines a suggestion editor holds: `before`
- *  ends with a line break and `after` starts with one, unless empty. */
-export interface FileContext {
-	before: string;
-	after: string;
+/** The text of `source` above its line `line` (1-based), split the way
+ *  the server cuts the editor's seed from it: it ends with a line break,
+ *  unless empty. */
+export function textAbove(source: string, line: number): string {
+	return source
+		.split("\n")
+		.slice(0, line - 1)
+		.map((l) => `${l}\n`)
+		.join("");
 }
 
-/** The text of `source` around its lines `start..end` (1-based,
- *  inclusive), split the way the server cuts the editor's seed from it. */
-export function anchorContext(source: string, start: number, end: number): FileContext {
-	const lines = source.split("\n");
-	return {
-		before: lines
-			.slice(0, start - 1)
-			.map((line) => `${line}\n`)
-			.join(""),
-		after: lines
-			.slice(end)
-			.map((line) => `\n${line}`)
-			.join(""),
-	};
-}
-
-/** How the editor indents a new line. Clojure indents by its rules over
- *  the whole file, when the editor holds lines of one. Other languages
- *  keep the line's indentation: their rules see only the editor's lines,
- *  cut from the code around them, and misjudge it. */
-export function indentation(language: string, context: FileContext | undefined, support: Compartment): Extension {
+/** How the editor indents a new line. Clojure indents by its rules as if
+ *  the editor's lines sat below `above`, when they are lines of a file.
+ *  Other languages keep the line's indentation: their rules see only the
+ *  editor's lines, cut from the code around them, and misjudge it. */
+export function indentation(language: string, above: string | undefined, support: Compartment): Extension {
 	if (language !== "clojure") return Prec.high(indentService.of(() => null));
-	return context ? contextIndentation(context, support) : [];
+	return above === undefined ? [] : formIndentation(above, support);
+}
+
+/** The part of `above` from the start of the top-level form still open
+ *  at its end, or "" when none is: a line's indentation depends on no
+ *  other text in the file. */
+export function openForm(above: string, language: Language): string {
+	const last = language.parser.parse(above).topNode.lastChild;
+	// An unclosed form runs to the end of the text; a closed one ends at
+	// its closer, before `above`'s final line break.
+	return last && last.to === above.length ? above.slice(last.from) : "";
 }
 
 /** The fields CodeMirror's commands pass in an IndentContext's options.
@@ -47,24 +47,24 @@ interface IndentOptions {
 	simulateDoubleBreak?: boolean;
 }
 
-/** Indentation computed as if the editor's lines sat in the whole file:
- *  the language's rules run over `context.before` + the editor's text +
- *  `context.after`, so a line inside a function the editor holds only part
- *  of indents as it would in the file. `language` holds the editor's
- *  language support; without one, the editor's default applies. */
-export function contextIndentation(context: FileContext, language: Compartment): Extension {
-	// CodeMirror counts each line break as one character, `\r\n` included.
-	const offset = Text.of(context.before.split(/\r\n?|\n/)).length;
-	// Parsing the file again for each Enter is cheap next to typing, but
-	// indent-on-input asks several times per keystroke; reuse the parse
-	// until the text or the language changes.
-	let cache: { doc: Text; support: Extension; state: EditorState } | null = null;
+/** Indentation computed as if the editor's lines sat below `above`: the
+ *  language's rules run over the open form `above` ends in + the editor's
+ *  text, so a line inside a function the editor holds only part of
+ *  indents as it would in the file. `language` holds the editor's
+ *  language support; until it loads, the editor's default applies. */
+function formIndentation(above: string, language: Compartment): Extension {
+	let form: string | null = null;
+	// Indent-on-input asks several times per keystroke; reuse the parse
+	// until the text changes.
+	let cache: { doc: Text; state: EditorState } | null = null;
 	return Prec.high(
 		indentService.of((cx, pos) => {
 			const support = language.get(cx.state);
-			if (!support || (Array.isArray(support) && support.length === 0)) return undefined;
-			if (cache?.doc !== cx.state.doc || cache.support !== support) {
-				const doc = context.before + cx.state.doc.toString() + context.after;
+			if (!(support instanceof LanguageSupport)) return undefined;
+			form ??= openForm(above, support.language);
+			const offset = form.length;
+			if (cache?.doc !== cx.state.doc) {
+				const doc = form + cx.state.doc.toString();
 				const created = EditorState.create({
 					doc,
 					extensions: [support, indentUnit.of(cx.state.facet(indentUnit)), EditorState.tabSize.of(cx.state.tabSize)],
@@ -72,7 +72,7 @@ export function contextIndentation(context: FileContext, language: Compartment):
 				ensureSyntaxTree(created, doc.length, 1000);
 				// The state keeps the tree it was created with; an update
 				// takes the finished parse.
-				cache = { doc: cx.state.doc, support, state: created.update({}).state };
+				cache = { doc: cx.state.doc, state: created.update({}).state };
 			}
 			const options = (cx as unknown as { options: IndentOptions }).options;
 			const override = options.overrideIndentation;

@@ -8,7 +8,6 @@
 
   import { onDestroy, untrack } from "svelte";
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
-  import type { FileContext } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
   import type { EditorView } from "@codemirror/view";
 
@@ -29,7 +28,7 @@
     initialLintRule = false,
     initialCode = "",
     fileName = "",
-    codeContext,
+    textAbove,
     draftKey,
     formKey,
     rulerColumns,
@@ -45,9 +44,9 @@
     initialLintRule?: boolean;
     initialCode?: string;
     fileName?: string;
-    // The file's text around the anchored lines, so the suggestion
+    // The file's text above the anchored lines, so the suggestion
     // editor indents new lines as they would sit in the file.
-    codeContext?: FileContext;
+    textAbove?: string;
     draftKey?: string;
     // Names this form to the server, so submit and cancel act on it
     // and not on another open form.
@@ -172,7 +171,7 @@
       doc: code,
       language,
       rulerColumns: untrack(() => rulerColumns),
-      context: untrack(() => codeContext),
+      textAbove: untrack(() => textAbove),
       onChange: (v) => (code = v),
       onSubmit: () => submit(),
       onCancel: () => cancel(),

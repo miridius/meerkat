@@ -105,8 +105,11 @@ When `finding_type === "suggestion"`:
   reaches it and the editor is scrolled there. Changing the setting
   updates open editors.
 - In Clojure, Enter indents the new line as it would sit in the file,
-  by cljfmt's default indentation over the file around the anchored
-  lines. In other languages, Enter keeps the line's indentation.
+  by cljfmt's default indentation. That indentation depends only on
+  the text before the line from the start of its top-level form, so
+  the editor finds where that form starts once, then indents over
+  that form alone. In other languages, Enter keeps the line's
+  indentation.
 - The caret is a 2px gold bar. The selection is a purple tint drawn
   under the text, visible on the caret's line too, and dimmer while
   the editor is unfocused. Only a focused editor marks the caret's
@@ -122,9 +125,11 @@ When `finding_type === "suggestion"`:
   run in the reviewed repo. First it repairs unbalanced delimiters
   with parinfer, then it formats with cljfmt. The hook applies the
   repo's cljfmt config only when cljfmt's defaults would also
-  change the file. The suggestion is saved as typed when the hook isn't on
-  `PATH`, when a repair would change lines outside the suggestion,
-  or when cljfmt joins a suggestion line onto a line around it. A
+  change the file. The suggestion is saved as typed when a repair
+  would change lines outside the suggestion,
+  when cljfmt joins a suggestion line onto a line around it, or when
+  cljfmt changes more than whitespace, as a repo config that sorts
+  `ns` references can. A
   file-level comment's suggestion is formatted on its own.
 
 ## Rendered comment
