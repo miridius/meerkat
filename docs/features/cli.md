@@ -176,8 +176,8 @@ see [pending-answers.md](pending-answers.md).
   SIGINT or SIGHUP also exits 143, without a message, after
   SIGKILLing its BEAM. The invocation waiting on the review is
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
-  the decision prints whether the review is still open or ended
-  and dies of that signal (128 plus its
+  the decision prints whether the review is still open or ended,
+  or stops a server that cannot say, and dies of that signal (128 plus its
   number to a shell, so 130 for SIGINT and 129 for SIGHUP); see
   [decision-flow.md](decision-flow.md#when-the-caller-exits).
 

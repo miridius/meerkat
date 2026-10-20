@@ -308,15 +308,21 @@ defmodule Meerkat.ShepherdTest do
     refute File.exists?(Path.join(dir, "tmp"))
   end
 
-  for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
-    test "a caller stopped by SIG#{signal} says when the review stays open and dies of the signal" do
+  # A BEAM that never binds, so the review has no URL yet, or one whose
+  # port nothing answers on.
+  for {signal, number, backend, beam} <- [
+        {"TERM", 15, "starts", "exec sleep 60"},
+        {"INT", 2, "starts", "exec sleep 60"},
+        {"HUP", 1, "starts", "exec sleep 60"},
+        {"TERM", 15, "does not answer", ~S|echo "1 $$" >"$MEERKAT_SERVE_DIR/port"; exec sleep 60|}
+      ] do
+    test "a caller stopped by SIG#{signal} while its backend #{backend} stops the backend, says to rerun and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       rel = Path.join(dir, "rel")
       File.mkdir_p!(Path.join(rel, "bin"))
       File.ln_s!(rel, Path.join(dir, "current"))
-      # A BEAM that never binds, so the review has no URL yet.
-      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\n#{unquote(beam)}\n")
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
 
       port =
@@ -347,10 +353,10 @@ defmodule Meerkat.ShepherdTest do
 
       assert output =~
                "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
-                 "The review stays open if it has comments or an open comment form; " <>
-                 "run the same command again to wait for its outcome.\n"
+                 "Run the same command again.\n"
 
-      assert {_, 0} = System.cmd("kill", ["-0", backend], stderr_to_stdout: true)
+      [run] = Path.wildcard(Path.join(runs, "*.*"))
+      assert await_file(Path.join(run, "exit")) == "143"
     end
   end
 

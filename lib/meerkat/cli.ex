@@ -917,9 +917,7 @@ defmodule Meerkat.CLI do
     approved or rejected, and carries any comments they left. Read the
     whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
     the feedback. If the output ends with no outcome line, this process
-    stopped before the review completed, and the review stays open if it has
-    comments or an open comment form: run the same command again to
-    wait for its outcome.
+    stopped before the review completed: run the same command again.
     """
   end
 

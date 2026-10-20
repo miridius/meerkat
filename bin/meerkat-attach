@@ -190,14 +190,12 @@ _ma_stopped() {
 
 # Detach from the backend, which judges the review at once, and print what
 # it answers: whether the review ended or is still open. A backend still
-# starting, or one that does not answer within 2 s, gets the line that says
-# when it stays open.
+# starting, or one that does not answer within 2 s, is stopped.
 _ma_leave() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
-  local IFS=$' \t\n' port beam token at="" standing=""
+  local IFS=$' \t\n' port beam token standing=""
   if read -r port beam 2>/dev/null <"$_MA_DIR/port"; then
-    at=" at http://127.0.0.1:$port/"
     token="$(cat "$_MA_DIR/token" 2>/dev/null)"
     standing="$(curl -sf --max-time 2 -X POST -H "x-meerkat-token: $token" \
       "http://127.0.0.1:$port/api/attach/leave?run=$_MA_RUN" 2>/dev/null)"
@@ -205,8 +203,11 @@ _ma_leave() {
   local said="meerkat: $1 before the review completed."
   case "$standing" in
     ended) echo "$said The review had no comments or open comment form, so it ended; run the same command again to start a new one." >&2 ;;
-    open) echo "$said The review is still open$at; run the same command again to wait for its outcome." >&2 ;;
-    *) echo "$said The review stays open$at if it has comments or an open comment form; run the same command again to wait for its outcome." >&2 ;;
+    open) echo "$said The review is still open at http://127.0.0.1:$port/; run the same command again to wait for its outcome." >&2 ;;
+    *)
+      [[ -f "$_MA_DIR/pid" ]] && _ma_server_alive && kill -TERM "$(<"$_MA_DIR/pid")" 2>/dev/null
+      echo "$said Run the same command again." >&2
+      ;;
   esac
 }
 

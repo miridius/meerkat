@@ -204,15 +204,14 @@ it the outcome, naming the signal it got, and dies of that signal:
   `meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
 - The review ended:
   `meerkat: stopped waiting (SIGTERM) before the review completed. The review had no comments or open comment form, so it ended; run the same command again to start a new one.`
-- The server gave no answer within 2 seconds, or is still starting:
-  `meerkat: stopped waiting (SIGTERM) before the review completed. The review stays open at <url> if it has comments or an open comment form; run the same command again to wait for its outcome.`
-  It leaves out ` at <url>` while the server is still starting.
+- The server is still starting or gave no answer within 2 seconds: the
+  invocation stops the server and prints
+  `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
 
 The pause
 banner covers an invocation killed without a chance to print, as by
-SIGKILL: it says an output that ends after the banner with no outcome
-line means the review stays open if it has comments or an open
-comment form.
+SIGKILL: it says to run the same command again when the output ends
+after the banner with no outcome line.
 
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep

@@ -580,14 +580,13 @@ defmodule Meerkat.CLITest do
 
     # A process killed by SIGKILL, or read before it finished, shows the
     # banner with no outcome line after it.
-    test "says an output ending without an outcome line means the review stays open if it has comments" do
+    test "says to rerun when the output ends without an outcome line" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         flat = target |> CLI.pause_banner_for_test(@url) |> String.replace(~r/\s+/, " ")
 
         assert flat =~
                  "If the output ends with no outcome line, this process stopped before " <>
-                   "the review completed, and the review stays open if it has comments or " <>
-                   "an open comment form: run the same command again to wait for its outcome."
+                   "the review completed: run the same command again."
       end
     end
 
@@ -595,7 +594,7 @@ defmodule Meerkat.CLITest do
     test "ends with its last sentence and a newline" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         banner = CLI.pause_banner_for_test(target, @url)
-        assert String.ends_with?(banner, "wait for its outcome.\n")
+        assert String.ends_with?(banner, "run the same command again.\n")
       end
     end
   end
