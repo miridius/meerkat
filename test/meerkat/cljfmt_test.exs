@@ -67,6 +67,18 @@ defmodule Meerkat.CljfmtTest do
       run = fake(& &1, replace("(f  x)", "(f x)"))
 
       assert Cljfmt.format_with("\n  \n(f  x)\n\n", "(a)\n", "\n(b)", run) == "\n\n(f x)\n\n"
+      assert Cljfmt.format_with("\n(f  x)\n\n", "(a)\n", "\n(b)", run) == "\n(f x)\n\n"
+    end
+
+    test "keeps a suggestion the repair leaves empty, without formatting it" do
+      assert Cljfmt.format_with("", "(a)\n", "\n(b)", fake(& &1)) == ""
+      assert_received {:ran, false, _}
+      refute_received {:ran, true, _}
+    end
+
+    test "formats a one-character suggestion" do
+      run = fake(& &1, replace("(a)\nx", "(a)\n  x"))
+      assert Cljfmt.format_with("x", "(a)\n", "\n(b)", run) == "  x"
     end
 
     test "keeps blank lines inside the suggestion" do
@@ -123,14 +135,24 @@ defmodule Meerkat.CljfmtTest do
       refute File.exists?(path)
     end
 
-    test "removes the file it formats in" do
+    test "removes the file it formats in, a tmp file of its own for each suggestion" do
       test_pid = self()
       run = fn path, _ -> send(test_pid, {:path, path}) end
 
       Cljfmt.format_with("(f x)", "", "", run)
+      Cljfmt.format_with("(f x)", "", "", run)
       assert_received {:path, path}
-      assert Path.extname(path) == ".clj"
-      refute File.exists?(path)
+      assert_received {:path, ^path}
+      assert_received {:path, other}
+      assert_received {:path, ^other}
+
+      for p <- [path, other] do
+        assert Path.join(System.tmp_dir!(), Path.basename(p)) == p
+        assert Path.basename(p) =~ ~r/\Ameerkat-cljfmt-#{System.pid()}-\d+\.clj\z/
+        refute File.exists?(p)
+      end
+
+      assert path != other
     end
   end
 
@@ -148,8 +170,9 @@ defmodule Meerkat.CljfmtTest do
       %{stub_dir: stub_dir, prev_path: prev_path}
     end
 
-    # A hook on PATH that records its working directory, arguments and
-    # stdin, then exits with `code`.
+    # A hook on PATH that records its working directory, arguments,
+    # stdin and whether the payload file sits beside the file it names,
+    # writes to stderr, then exits with `code`.
     defp stub_hook(%{stub_dir: dir, prev_path: prev_path}, code) do
       path = Path.join(dir, @hook)
       calls = Path.join(dir, "calls")
@@ -158,9 +181,11 @@ defmodule Meerkat.CljfmtTest do
       #!/bin/sh
       pwd >> '#{calls}'
       echo "$@" >> '#{calls}'
-      cat >> '#{calls}'
-      echo >> '#{calls}'
-      echo hook output
+      payload=$(cat)
+      echo "$payload" >> '#{calls}'
+      file=$(echo "$payload" | sed 's/.*"file_path":"\\([^"]*\\)".*/\\1/')
+      if [ -f "$file.json" ]; then echo beside >> '#{calls}'; fi
+      echo hook output >&2
       exit #{code}
       """)
 
@@ -179,9 +204,12 @@ defmodule Meerkat.CljfmtTest do
       calls = stub_hook(ctx, 0)
       cwd = File.cwd!() |> Path.join("test")
 
-      assert Cljfmt.format("(f  x)", "", "", cwd) == "(f  x)"
+      # A hook that succeeds is not logged.
+      assert capture_io(:stderr, fn ->
+               assert Cljfmt.format("(f  x)", "", "", cwd) == "(f  x)"
+             end) == ""
 
-      [cwd1, args1, payload1, cwd2, args2, payload2] =
+      [cwd1, args1, payload1, "beside", cwd2, args2, payload2, "beside"] =
         calls |> File.read!() |> String.split("\n", trim: true)
 
       assert cwd1 == cwd and cwd2 == cwd

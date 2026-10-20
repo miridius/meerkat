@@ -74,10 +74,12 @@ defmodule Meerkat.Cljfmt do
     File.read(path)
   end
 
+  # An empty repaired suggestion has nothing to format: it comes back
+  # as typed, without running the hook again.
   defp between(text, above, below) do
     size = byte_size(text) - byte_size(above) - byte_size(below)
 
-    if size >= 0 and String.starts_with?(text, above) and String.ends_with?(text, below),
+    if size > 0 and String.starts_with?(text, above) and String.ends_with?(text, below),
       do: {:ok, binary_part(text, byte_size(above), size)},
       else: :error
   end
@@ -101,6 +103,7 @@ defmodule Meerkat.Cljfmt do
 
     with true <- strip(formatted) == strip(above <> code <> below),
          [{_, ^first, _} | _] <- picked,
+         # muex:ignore equivalent: swapping the tuple's first two elements swaps `_` with `_`
          {_, _, ^last} <- List.last(picked) do
       {:ok,
        blank_lines(code, &Enum.take_while/2) ++
@@ -145,7 +148,8 @@ defmodule Meerkat.Cljfmt do
     try do
       case System.cmd(
              "/bin/sh",
-             ["-c", ~s(in=$1; shift; exec "$@" < "$in"), "sh", payload, hook | flags],
+             ["-c", ~s(exec "$0" "$@" < "$MEERKAT_HOOK_PAYLOAD"), hook | flags],
+             env: [{"MEERKAT_HOOK_PAYLOAD", payload}],
              cd: cwd,
              stderr_to_stdout: true
            ) do
