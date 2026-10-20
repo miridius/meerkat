@@ -31,6 +31,25 @@ defmodule Meerkat.TestHelpersTest do
     end
   end
 
+  test "fixture_template/2 keeps each repo's objects in one pack" do
+    template =
+      TestHelpers.fixture_template("fixture-template", fn dir ->
+        work = Path.join(dir, "work")
+        TestHelpers.git(dir, ["init", "-q", "--bare", "nested/remote.git"])
+        TestHelpers.git(dir, ["init", "-q", "--initial-branch=main", work])
+        TestHelpers.git(work, ["commit", "-q", "--allow-empty", "-m", "base"])
+        TestHelpers.git(work, ["push", "-q", "../nested/remote.git", "main"])
+      end)
+
+    for repo <- ["work/.git", "nested/remote.git"] do
+      objects = Path.join([template, repo, "objects"])
+      assert [_] = Path.wildcard(Path.join(objects, "pack/*.pack"))
+      assert Path.wildcard(Path.join(objects, "??")) == []
+    end
+
+    assert TestHelpers.git(Path.join(template, "work"), ["log", "--format=%s"]) == "base"
+  end
+
   test "copy_fixture/2 points the copy's files at the copy, leaving object stores alone" do
     template = TestHelpers.tmp_path("copy-fixture-template")
     on_exit(fn -> File.rm_rf!(template) end)
