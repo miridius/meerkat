@@ -254,6 +254,8 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       render_click(view, "comment_form.show_file", %{"file_index" => "1"})
       submit_comment(view, "file:1", readme, "suggestion", "markdown")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
+      submit_comment(view, "file:0", "\n\n```clojure\n(inc x)\n```", "suggestion", "plaintext")
+      render_click(view, "comment_form.show_file", %{"file_index" => "0"})
       submit_comment(view, "file:0", "\n\n```rust\n(inc x)\n```", "suggestion", "clojure")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
       submit_comment(view, "file:0", "\n\n```clojure\n(inc x)\n```", "issue", "clojure")
@@ -266,6 +268,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
       assert Enum.map(state.file_comments, & &1.body) == [
                readme,
+               "\n\n```clojure\n(inc x)\n```",
                "\n\n```rust\n(inc x)\n```",
                "\n\n```clojure\n(inc x)\n```"
              ]

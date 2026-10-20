@@ -63,36 +63,40 @@ test("Enter in a Clojure suggestion on lines inside a form indents as in the fil
 // editor's language, and the server formats only a Clojure suggestion.
 // The formatting is covered by test/meerkat_web/live/review_live_comments_test.exs.
 test("saving a Clojure suggestion runs the formatter hook", async ({ page }) => {
-	// A hook whose cljfmt pass widens one space, which the save keeps.
+	// A hook whose cljfmt pass widens the space in `(pos? x)` to three,
+	// which the save keeps.
 	const hookDir = ownedTmpDir("meerkat-e2e");
-	const hook = join(hookDir, "clj-paren-repair-claude-hook");
-	writeFileSync(
-		hook,
-		`#!/bin/sh
+	try {
+		const hook = join(hookDir, "clj-paren-repair-claude-hook");
+		writeFileSync(
+			hook,
+			`#!/bin/sh
 file=$(sed 's/.*"file_path":"\\([^"]*\\)".*/\\1/')
 if [ "$2" = --cljfmt ]; then
   sed 's/(pos? x)/(pos?   x)/' "$file" > "$file.new" && mv "$file.new" "$file"
 fi
 `,
-	);
-	chmodSync(hook, 0o755);
-	const meerkat = await startMeerkat({
-		fixture: makeFixture({ files: { "src/demo/core.clj": CLJ } }),
-		pathPrefixes: [hookDir],
-	});
-	try {
-		await page.goto(meerkat.url);
-		const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
-		await dragLines(page, fileSection, 5, 6);
-		const form = fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="6"] .comment-form');
-		await form.getByRole("button", { name: /^Suggestion$/ }).click();
-		await expect(form.locator(".code-host .cm-line")).toHaveCount(2);
-		await form.getByRole("button", { name: "Add Comment" }).click();
-		await expect
-			.poll(() => fileSection.locator(".inline-comment pre").first().evaluate((el) => el.textContent))
-			.toContain("(pos?   x)");
+		);
+		chmodSync(hook, 0o755);
+		const meerkat = await startMeerkat({
+			fixture: makeFixture({ files: { "src/demo/core.clj": CLJ } }),
+			pathPrefixes: [hookDir],
+		});
+		try {
+			await page.goto(meerkat.url);
+			const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
+			await dragLines(page, fileSection, 5, 6);
+			const form = fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="6"] .comment-form');
+			await form.getByRole("button", { name: /^Suggestion$/ }).click();
+			await expect(form.locator(".code-host .cm-line")).toHaveCount(2);
+			await form.getByRole("button", { name: "Add Comment" }).click();
+			await expect
+				.poll(() => fileSection.locator(".inline-comment pre").first().evaluate((el) => el.textContent))
+				.toContain("(pos?   x)");
+		} finally {
+			await meerkat.kill();
+		}
 	} finally {
-		await meerkat.kill();
 		rmSync(hookDir, { recursive: true, force: true });
 	}
 });
