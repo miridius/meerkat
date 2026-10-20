@@ -35,16 +35,8 @@ defmodule Meerkat.DecisionTest do
   end
 
   describe "submit_review/3" do
-    # A test that saves answers, which asks git for the repo, is tagged
-    # `:git` and gets a real one.
-    setup ctx do
-      if ctx[:git] do
-        repo = Meerkat.TestHelpers.make_git_repo("meerkat-review-obligations")
-        on_exit(fn -> File.rm_rf!(repo) end)
-        {:ok, repo: repo}
-      else
-        {:ok, repo: Meerkat.TestHelpers.make_state_repo("meerkat-review-obligations")}
-      end
+    setup do
+      {:ok, repo: Meerkat.TestHelpers.make_state_repo("meerkat-review-obligations")}
     end
 
     for {tag, mode} <- [reject: :rejection, approve_with_feedback: :approval_with_feedback] do
@@ -163,17 +155,14 @@ defmodule Meerkat.DecisionTest do
       end
     end
 
-    @tag :git
     test "an answered round's obligations are replaced before its answer banner is cleared", %{
       repo: repo
     } do
       :ok = PendingQuestions.replace(repo, [%{location: "global", question: "Before?"}])
 
-      {:ok, 1} =
-        PendingAnswers.save(
-          repo,
-          ~s({"answers":[{"location":"global","question":"Before?","answer":"Yes."}]})
-        )
+      Meerkat.TestHelpers.put_pending_answers(repo, [
+        %{location: "global", question: "Before?", answer: "Yes."}
+      ])
 
       review = %ReviewState{
         global_comments: [

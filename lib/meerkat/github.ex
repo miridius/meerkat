@@ -66,19 +66,28 @@ defmodule Meerkat.GitHub do
   """
   @spec current_pr(String.t()) :: pr | nil
   def current_pr(repo_path) do
-    case Git.head_branch(repo_path) do
-      {:checked_out, _} ->
-        lookup_current_pr(repo_path, [])
-
-      {:rebasing, branch} ->
-        # gh reads a selector like `28` or `#28` as a PR number, so a
-        # branch named that way would show some other branch's PR.
-        if branch =~ ~r/\A#?[+-]?\d+\z/, do: nil, else: lookup_current_pr(repo_path, [branch])
-
-      :detached ->
-        nil
+    case pr_selector(Git.head_branch(repo_path)) do
+      {:ok, selector} -> lookup_current_pr(repo_path, selector)
+      :none -> nil
     end
   end
+
+  @doc """
+  The arguments naming the branch to `gh pr view`, for HEAD as
+  `Meerkat.Git.head_branch/1` reports it, or `:none` when no PR lookup
+  applies.
+  """
+  @spec pr_selector({:checked_out, String.t()} | {:rebasing, String.t()} | :detached) ::
+          {:ok, [String.t()]} | :none
+  def pr_selector({:checked_out, _}), do: {:ok, []}
+
+  def pr_selector({:rebasing, branch}) do
+    # gh reads a selector like `28` or `#28` as a PR number, so a
+    # branch named that way would show some other branch's PR.
+    if branch =~ ~r/\A#?[+-]?\d+\z/, do: :none, else: {:ok, [branch]}
+  end
+
+  def pr_selector(:detached), do: :none
 
   defp lookup_current_pr(repo_path, extra_args) do
     case run_pr_view(repo_path, extra_args) do

@@ -38,7 +38,7 @@ defmodule Meerkat.PendingAnswers do
           | {:error, :not_a_repo | :invalid_input | :write_failed, String.t()}
   def save(path, input) do
     with {:ok, repo_path} <- toplevel(path),
-         {:ok, answers} <- parse_input(input),
+         {:ok, answers} <- parse(input),
          :ok <- write(repo_path, answers) do
       {:ok, length(answers)}
     end
@@ -130,7 +130,13 @@ defmodule Meerkat.PendingAnswers do
     end
   end
 
-  defp parse_input(input) do
+  @doc """
+  The answers in `input`, the JSON `save/2` takes, as string-keyed maps
+  in their order, or `{:error, :invalid_input, message}`.
+  """
+  @spec parse(binary()) ::
+          {:ok, [%{String.t() => String.t()}]} | {:error, :invalid_input, String.t()}
+  def parse(input) do
     case Jason.decode(input) do
       {:ok, %{"answers" => answers}} when is_list(answers) and answers != [] ->
         validate_answers(answers)
