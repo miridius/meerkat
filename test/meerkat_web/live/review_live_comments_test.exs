@@ -119,7 +119,8 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
         view,
         "inline:0:old:2-3",
         "Why\n\n```clojure\n(defn f [x]\n(inc x))\n```",
-        "suggestion"
+        "suggestion",
+        "clojure"
       )
 
       assert [%{id: id, body: "Why\n\n```clojure\n(defn f [x]\n    (inc x))\n```"}] =
@@ -135,7 +136,8 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
         view,
         "inline:0:old:2-3:edit:#{id}",
         "\n\n```clojure\n(defn f [x]\n(dec x))\n```",
-        "suggestion"
+        "suggestion",
+        "clojure"
       )
 
       assert [%{body: "\n\n```clojure\n(defn f [x]\n    (dec x))\n```"}] =
@@ -153,7 +155,13 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
         "side" => "new"
       })
 
-      submit_comment(view, "inline:0:new:1-1", "\n\n```clojure\n(ns demo)\n```", "suggestion")
+      submit_comment(
+        view,
+        "inline:0:new:1-1",
+        "\n\n```clojure\n(ns demo)\n```",
+        "suggestion",
+        "clojure"
+      )
 
       assert [%{body: "\n\n```clojure\n(ns demo)\n```"}] = ReviewServer.get_state(rid).comments
 
@@ -169,12 +177,62 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
 
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
-      submit_comment(view, "file:0", "```\n\n```clojure\n(inc x)\n```", "suggestion")
+      submit_comment(view, "file:0", "```\n\n```clojure\n(inc x)\n```", "suggestion", "clojure")
 
       assert [%{body: "```\n\n```clojure\n    (inc x)\n```"}] =
                ReviewServer.get_state(rid).file_comments
 
       assert File.read!(calls) == String.duplicate("#{real_path(repo)}\n(inc x)---\n", 2)
+    end
+
+    @tag :capture_log
+    test "keeps the old comment when formatting its edit fails", %{conn: conn} do
+      repo = tmp_git_repo()
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+      Process.flag(:trap_exit, true)
+
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "0",
+        "start_line" => "3",
+        "end_line" => "3",
+        "side" => "old"
+      })
+
+      submit_comment(
+        view,
+        "inline:0:old:3-3",
+        "\n\n```clojure\n(inc x))\n```",
+        "suggestion",
+        "clojure"
+      )
+
+      assert [%{id: id} = old] = ReviewServer.get_state(rid).comments
+      render_click(view, "comment_form.edit", %{"surface" => "inline", "id" => id})
+
+      # A hook that deletes the file it is given, so reading it back raises.
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-cljfmt-rm")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      File.write!(Path.join(dir, "clj-paren-repair-claude-hook"), """
+      #!/bin/sh
+      rm "$(sed 's/.*"file_path":"\\([^"]*\\)".*/\\1/')"
+      """)
+
+      File.chmod!(Path.join(dir, "clj-paren-repair-claude-hook"), 0o755)
+      Meerkat.TestHelpers.put_env("PATH", dir <> ":" <> System.get_env("PATH"))
+
+      catch_exit(
+        submit_comment(
+          view,
+          "inline:0:old:3-3:edit:#{id}",
+          "\n\n```clojure\n(dec x))\n```",
+          "suggestion",
+          "clojure"
+        )
+      )
+
+      assert ReviewServer.get_state(rid).comments == [old]
     end
 
     test "is left alone in other languages, other files, other finding types and global comments",
@@ -192,15 +250,15 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
         "side" => "new"
       })
 
-      submit_comment(view, "inline:1:new:3-3", readme, "suggestion")
+      submit_comment(view, "inline:1:new:3-3", readme, "suggestion", "markdown")
       render_click(view, "comment_form.show_file", %{"file_index" => "1"})
-      submit_comment(view, "file:1", readme, "suggestion")
+      submit_comment(view, "file:1", readme, "suggestion", "markdown")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
-      submit_comment(view, "file:0", "\n\n```rust\n(inc x)\n```", "suggestion")
+      submit_comment(view, "file:0", "\n\n```rust\n(inc x)\n```", "suggestion", "clojure")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
-      submit_comment(view, "file:0", "\n\n```clojure\n(inc x)\n```")
+      submit_comment(view, "file:0", "\n\n```clojure\n(inc x)\n```", "issue", "clojure")
       render_click(view, "comment_form.show_global", %{})
-      submit_comment(view, "global", "\n\n```clojure\n(inc x)\n```", "suggestion")
+      submit_comment(view, "global", "\n\n```clojure\n(inc x)\n```", "suggestion", "clojure")
 
       state = ReviewServer.get_state(rid)
 

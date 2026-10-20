@@ -152,10 +152,11 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
 
   # The event CommentForm.svelte pushes when the submit button of the
   # form keyed `form_key` is pressed.
-  def submit_comment(view, form_key, body, finding_type \\ "issue") do
+  def submit_comment(view, form_key, body, finding_type \\ "issue", language \\ "plaintext") do
     render_hook(view, "comment.submit", %{
       "form_key" => form_key,
       "body" => body,
+      "language" => language,
       "finding_type" => finding_type,
       "correct_instructions" => false,
       "lint_rule" => false

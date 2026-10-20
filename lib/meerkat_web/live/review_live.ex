@@ -498,6 +498,7 @@ defmodule MeerkatWeb.ReviewLive do
     } = payload
 
     flags = %{correct_instructions: instructions?, lint_rule: lint_rule?}
+    language = payload["language"]
     key = payload["form_key"]
     form = OpenForms.find(forms, key)
 
@@ -519,7 +520,7 @@ defmodule MeerkatWeb.ReviewLive do
       Map.get(form, :edit_id) ->
         # Formatted first, so the old comment is gone only once the
         # new one is ready to add.
-        body = format_suggestion(body, finding, form, socket.assigns)
+        body = format_suggestion(body, finding, language, form, socket.assigns)
         # Edit = remove old + add new (no `edit_comment` server call).
         _ = ReviewServer.remove_comment(rid, form.surface, form.edit_id)
         commit_add(rid, form, body, finding, flags)
@@ -529,7 +530,7 @@ defmodule MeerkatWeb.ReviewLive do
         commit_add(
           rid,
           form,
-          format_suggestion(body, finding, form, socket.assigns),
+          format_suggestion(body, finding, language, form, socket.assigns),
           finding,
           flags
         )
@@ -3031,33 +3032,39 @@ defmodule MeerkatWeb.ReviewLive do
   # body, tagged with the file's language.
   @clojure_suggestion ~r/\A[\s\S]*\n```clojure\n([\s\S]*?)\n```\s*\z/
 
-  # The body with a Clojure file's suggestion formatted as it would sit
+  # The body with a Clojure suggestion's code formatted as it would sit
   # in the file around its anchored lines (`Meerkat.Cljfmt`). A file
   # comment's suggestion has no lines in the file, so it is formatted
-  # on its own. Another file's suggestion can hold a `clojure` fence
-  # too, as in a README, so the file's name decides.
-  defp format_suggestion(body, :suggestion, %{surface: surface, anchor: anchor}, assigns)
+  # on its own. The editor's language decides, as another language's
+  # suggestion can end in a `clojure` fence too, as in a README.
+  defp format_suggestion(
+         body,
+         :suggestion,
+         "clojure",
+         %{surface: surface, anchor: anchor},
+         assigns
+       )
        when surface in [:inline, :file] do
-    with %{file_name: name} = file <- Enum.at(assigns.state.files, anchor.file_index),
-         true <- CljHover.clojure_file?(name),
-         [{at, len}] <-
-           Regex.run(@clojure_suggestion, body, return: :index, capture: :all_but_first) do
-      {above, below} = suggestion_context(surface, anchor, file)
-      code = Cljfmt.format(binary_part(body, at, len), above, below, assigns.repo_path)
+    case Regex.run(@clojure_suggestion, body, return: :index, capture: :all_but_first) do
+      [{at, len}] ->
+        {above, below} = suggestion_context(surface, anchor, assigns.state)
+        code = Cljfmt.format(binary_part(body, at, len), above, below, assigns.repo_path)
 
-      binary_part(body, 0, at) <>
-        code <> binary_part(body, at + len, byte_size(body) - at - len)
-    else
-      _ -> body
+        binary_part(body, 0, at) <>
+          code <> binary_part(body, at + len, byte_size(body) - at - len)
+
+      nil ->
+        body
     end
   end
 
-  defp format_suggestion(body, _finding, _form, _assigns), do: body
+  defp format_suggestion(body, _finding, _language, _form, _assigns), do: body
 
-  defp suggestion_context(:file, _anchor, _file), do: {"", ""}
+  defp suggestion_context(:file, _anchor, _state), do: {"", ""}
 
-  defp suggestion_context(:inline, anchor, file) do
-    file
+  defp suggestion_context(:inline, anchor, state) do
+    state.files
+    |> Enum.at(anchor.file_index)
     |> side_content(anchor.side)
     |> Cljfmt.context(anchor.start_line, anchor.end_line)
   end
