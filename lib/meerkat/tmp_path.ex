@@ -5,9 +5,10 @@ defmodule Meerkat.TmpPath do
 
   @doc """
   A path `<tmp dir>/<prefix>-<OS pid>-<unique>` that no other call in
-  any meerkat returns, without creating it. `System.unique_integer/1`
-  is unique only within this BEAM, and every meerkat shares the tmp
-  dir, so the OS pid keeps concurrent meerkats off each other's files.
+  a running meerkat returns, without creating it.
+  `System.unique_integer/1` is unique only within this BEAM, and every
+  meerkat shares the tmp dir, so the OS pid keeps concurrent meerkats
+  off each other's files.
   """
   @spec unique(String.t()) :: Path.t()
   def unique(prefix),

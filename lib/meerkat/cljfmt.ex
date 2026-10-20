@@ -13,7 +13,7 @@ defmodule Meerkat.Cljfmt do
 
   @hook "clj-paren-repair-claude-hook"
 
-  # Whitespace, which cljfmt's indentation adds or removes.
+  # Whitespace, which cljfmt adds or removes.
   @whitespace ~r/[\s,]/u
 
   @doc """

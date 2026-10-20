@@ -219,6 +219,8 @@
         ...extraPayload,
         form_key: formKey,
         body: composedBody(),
+        // The server formats a Clojure suggestion.
+        language,
         finding_type: findingType,
         correct_instructions: correctInstructions,
         lint_rule: lintRule,

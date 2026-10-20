@@ -167,25 +167,15 @@ defmodule Meerkat.TestHelpers do
   defp shell_quote(value), do: "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
 
   @doc """
-  A path `<tmpdir>/<prefix>-<unique>-<os_time>-<rand>` that no other test
-  run uses, without creating it.
-
-  `unique_integer/1` is unique only *within* a BEAM. Each test BEAM has its
-  own TMPDIR, but the `os_time` and random parts keep the path unique when
-  something points TMPDIR at a dir other BEAMs share.
+  A `Meerkat.TmpPath.unique/1` path with `-<os_time>-<rand>` added, that
+  no other test run uses, without creating it. Each test BEAM has its own
+  TMPDIR, but the added parts keep the path unique when something points
+  TMPDIR at a dir that a dead BEAM, whose OS pid was reused, left files in.
   """
   @spec tmp_path(String.t()) :: String.t()
-  def tmp_path(prefix) do
-    suffix =
-      [
-        System.unique_integer([:positive]),
-        System.os_time(:nanosecond),
-        :rand.uniform(1_000_000)
-      ]
-      |> Enum.join("-")
-
-    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
-  end
+  def tmp_path(prefix),
+    do:
+      "#{Meerkat.TmpPath.unique(prefix)}-#{System.os_time(:nanosecond)}-#{:rand.uniform(1_000_000)}"
 
   @doc """
   Build a unique `tmp_path/1` directory with a `.git` subdir so
