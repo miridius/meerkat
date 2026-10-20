@@ -201,16 +201,16 @@ means the review is still open.
 
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
-running. Meerkat notices an exited ancestor within about a second,
-prints the same line with `the process that ran meerkat exited` in
-place of `stopped waiting (SIGTERM)`, and exits 1. It checks with
-the shell's `kill -0`, and relays the server's stderr through a file
-it keeps open, so waiting runs no process. Where
-`ps` is denied, as in Claude Code's sandbox, it knows only its parent
-process and watches that one. A process it may not signal counts as
-live, so where signals are denied too it cannot tell and keeps
-waiting. A decision clicked while no invocation is attached stays
-held for the next invocation.
+running, still attached. When the decision arrives, meerkat checks
+whether a process above it has exited. If one has, it prints the same
+line with `the process that ran meerkat exited` in place of
+`stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
+the next invocation. A rerun before then takes the review over from
+it. Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
+and takes delivery. While it waits, it relays the server's stderr
+through a file it keeps open, so waiting starts no process. A decision
+clicked while no invocation is attached stays held for the next
+invocation.
 
 For `git commit -a` and `git commit <path>`, the review keeps its own
 copy of git's temporary index, so it keeps showing those changes and

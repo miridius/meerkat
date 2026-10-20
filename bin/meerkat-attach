@@ -48,7 +48,6 @@ meerkat_attach() {
   _MA_LOG_FD=""
   _MA_QUIET=0
   _MA_PID_WAIT=0
-  _MA_TICK=0
   _ma_record_ancestors
   trap '_ma_stopped TERM' TERM
   trap '_ma_stopped INT' INT
@@ -133,14 +132,15 @@ meerkat_attach() {
     if [[ -f "$_MA_DIR/port" ]]; then
       _ma_attach
     else
-      _ma_exit_if_orphaned
       sleep 0.2
     fi
   done
 }
 
 # Record every process above the caller, from its parent up to pid 1, so
-# _ma_exit_if_orphaned can detect when one exits.
+# _ma_exit_if_orphaned can detect when one exits. Use ps rather than kill -0:
+# kill -0 reports "operation not permitted" for live root-owned processes such
+# as launchd or a terminal's login process, making them look dead.
 _ma_record_ancestors() {
   local pid=$PPID
   _MA_ANCESTORS=()
@@ -152,29 +152,22 @@ _ma_record_ancestors() {
 }
 
 # A killed git commit can leave its hook (and this caller) running and attached.
-# It would then receive the decision and print it where nobody can read it, so
-# exit once any recorded ancestor exits and leave the decision held for the next
-# invocation. Check at most once a second (every fifth 0.2 s tick).
+# It would then take delivery of the decision where nobody can read it, so on
+# receiving it, exit if any recorded ancestor has exited and leave the decision
+# held for the next invocation. Checked only then: reviews wait hours, and the
+# orphan is harmless until the decision. Where ps cannot tell (a sandbox denies
+# it), assume the ancestors live: taking them for dead would hold every decision.
 _ma_exit_if_orphaned() {
-  ((_MA_TICK++ % 5 == 0)) || return 0
-  local pid
-  for pid in ${_MA_ANCESTORS[@]+"${_MA_ANCESTORS[@]}"}; do
-    _ma_alive "$pid" && continue
+  ((${#_MA_ANCESTORS[@]})) || return 0
+  _ma_ps_works || return 0
+  local joined live
+  joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
+  live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
+  if ((live < ${#_MA_ANCESTORS[@]})); then
     _ma_still_open "the process that ran meerkat exited"
     exit 1
-  done
+  fi
   return 0
-}
-
-# Whether process $1 exists. kill -0 is a shell builtin: forking ps for
-# this every second cost a waiting caller about 0.06 CPU-s a second. It
-# fails with "Operation not permitted" for a live process this caller may
-# not signal, such as launchd or a terminal's root-owned login process, or
-# any process when a sandbox denies signals; only those fork, to read the
-# error. Any other error means the process is gone.
-_ma_alive() {
-  kill -0 "$1" 2>/dev/null && return 0
-  [[ "$(LC_ALL=C kill -0 "$1" 2>&1)" == *"Operation not permitted"* ]]
 }
 
 # Whether ps can see processes at all: it lists this caller.
@@ -483,7 +476,6 @@ _ma_attach() {
       # A read that timed out returns the partial line it got.
       line+="$part"
       _ma_relay_log
-      _ma_exit_if_orphaned
     else
       break
     fi
@@ -491,6 +483,7 @@ _ma_attach() {
   exec {fd}<&-
 
   if [[ -n "$code" ]]; then
+    _ma_exit_if_orphaned
     _ma_request POST "attach/delivered?run=$_MA_RUN" -o /dev/null 2>/dev/null
     _ma_wait_for_exit
     _ma_relay_log
