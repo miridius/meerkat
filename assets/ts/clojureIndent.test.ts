@@ -159,4 +159,15 @@ describe("Enter", () => {
 	test("leaves a line inside a string as it is", () => {
 		expect(enter('  "ab"', 4)).toBe('  "a\n  b"');
 	});
+
+	test("leaves a line inside a string its closer is cut off from as it is", () => {
+		expect(enter('  (println "multi', 17)).toBe('  (println "multi\n  ');
+		expect(enter('  (println "', 12)).toBe('  (println "\n  ');
+		expect(enter('  (re-find #"a', 14)).toBe('  (re-find #"a\n  ');
+	});
+
+	test("indents after a string that closes the line", () => {
+		expect(enter('(println "a"', 12)).toBe('(println "a"\n         ');
+		expect(enter('(re-find #"a"', 13)).toBe('(re-find #"a"\n         ');
+	});
 });
