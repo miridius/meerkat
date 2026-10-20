@@ -1943,7 +1943,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp diff_toolbar(assigns) do
     ~H"""
     <%!-- The Toolbar hook sets `data-squeeze` to the steps the toolbar
-      takes to fit one row; without ignoring it, a re-render would undo them. --%>
+      takes to fit its content; without ignoring it, a re-render would undo them. --%>
     <div
       class="diff-toolbar"
       id="diff-toolbar"

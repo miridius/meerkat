@@ -83,7 +83,7 @@ const hooks = {
         const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
         // Opening the version drop-down marks its updates seen, which
         // narrows the full chip; it keeps its step while open, so the chip
-        // stays gone and the drop-down where it opened.
+        // stays invisible in its place and the drop-down where it opened.
         const keep =
           /\bversion\b/.test(this.el.dataset.squeeze ?? "") &&
           this.el.querySelector(".version-popover:not([hidden])") !== null;
@@ -379,7 +379,9 @@ const hooks = {
       };
       this._refreshBadge = () => {
         const count = nums().filter((n) => n > lastSeen()).length;
-        badge.textContent = String(count);
+        // At the toolbar's version step a hidden badge keeps its box while
+        // the drop-down is open, so it keeps its last count's width too.
+        if (count > 0) badge.textContent = String(count);
         badge.hidden = count === 0;
       };
 
@@ -392,26 +394,42 @@ const hooks = {
       }
       this._refreshBadge();
 
+      // At the toolbar's version step, a chip whose updates are seen goes
+      // once its drop-down closes. Focus on it then moves to the next
+      // toolbar control rather than falling back to the page's start.
+      const close = () => {
+        if (popover.hidden) return;
+        const focused = wrap.contains(document.activeElement);
+        popover.hidden = true;
+        // After the frame's refit, which may give the step back.
+        requestAnimationFrame(() => {
+          if (!focused || btn.checkVisibility()) return;
+          const toolbar = wrap.closest(".diff-toolbar");
+          const next = [...toolbar.querySelectorAll("a[href], button, input, summary")].find(
+            (el) => wrap.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && el.checkVisibility(),
+          );
+          next?.focus();
+        });
+      };
+
       this._onClick = () => {
-        const opening = popover.hidden;
-        popover.hidden = !opening;
-        if (opening) {
-          setSeen(maxPr());
-          this._refreshBadge();
-          // It hangs left from the chip's right edge; a chip near the
-          // window's left edge shifts it right, back into view.
-          popover.style.right = "";
-          const left = popover.getBoundingClientRect().left;
-          if (left < 8) popover.style.right = `${left - 8}px`;
-        }
+        if (!popover.hidden) return close();
+        popover.hidden = false;
+        setSeen(maxPr());
+        this._refreshBadge();
+        // It hangs left from the chip's right edge; a chip near the
+        // window's left edge shifts it right, back into view.
+        popover.style.right = "";
+        const left = popover.getBoundingClientRect().left;
+        if (left < 8) popover.style.right = `${left - 8}px`;
       };
       btn.addEventListener("click", this._onClick);
 
       this._onDocClick = (e) => {
-        if (!wrap.contains(e.target)) popover.hidden = true;
+        if (!wrap.contains(e.target)) close();
       };
       this._onEsc = (e) => {
-        if (e.key === "Escape") popover.hidden = true;
+        if (e.key === "Escape") close();
       };
       document.addEventListener("click", this._onDocClick, true);
       document.addEventListener("keydown", this._onEsc);

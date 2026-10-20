@@ -165,7 +165,7 @@ test("in Split view with Wrap off, an expand lays the diff out a few times, not 
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "many.txt" });
 		await page.getByRole("button", { name: /^Split$/ }).click();
-		await page.locator(".diff-toolbar .wrap-toggle input[type=checkbox]").uncheck();
+		await page.getByRole("checkbox", { name: "Wrap" }).uncheck();
 		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
 		await afterNextFrame(page);
 		expect(await misalignedRows(file)).toEqual([]);

@@ -215,8 +215,9 @@ test("each moved line's arrow sits in the +/− column on screen, clear of code,
 		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
 		for (const wrap of [true, false]) {
 			if (!wrap) {
-				await page.getByLabel("Wrap").click();
-				await expect(page.getByLabel("Wrap")).not.toBeChecked();
+				const wrapBox = page.getByRole("checkbox", { name: "Wrap" });
+				await wrapBox.click();
+				await expect(wrapBox).not.toBeChecked();
 			}
 			for (const view of ["Split", "Unified"]) {
 				await page.getByRole("button", { name: new RegExp(`^${view}$`) }).click();

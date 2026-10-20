@@ -810,9 +810,11 @@ a.chip-link:hover .chip-value {
 /* --- Toolbar squeeze steps ---
    The Toolbar hook (app.js) sets `data-squeeze` to the steps, from
    toolbarSqueeze.ts, that fit the toolbar's content on one row. Until
-   it runs, the toolbar keeps to one row and clips what does not fit, so
-   the height the page published before it ran rarely changes when it
-   does. Once it has, nothing shrinks or wraps until a step lets it, so
+   it runs, the toolbar keeps to one row, so the height the page
+   published before it ran rarely changes when it does: the title and
+   branches give up room first, so the connection pill stays in view if
+   the page never connects, and what still does not fit is clipped.
+   Once it has, nothing shrinks or wraps until a step lets it, so
    overflow tells the hook a step is needed. */
 .diff-toolbar:not([data-squeeze~="wrap"]) {
   flex-wrap: nowrap;
@@ -822,6 +824,10 @@ a.chip-link:hover .chip-value {
 }
 .diff-toolbar:not([data-squeeze]) {
   overflow: hidden;
+}
+.diff-toolbar:not([data-squeeze]) > :is(.toolbar-title, .branch-chip) {
+  flex-shrink: 1;
+  min-width: 0;
 }
 /* The toolbar's width, at no height, for the hook to watch: no step
    changes it. */
@@ -859,6 +865,7 @@ a.chip-link:hover .chip-value {
 }
 .diff-toolbar[data-squeeze~="version"] .version-badge[hidden] {
   display: inline-flex;
+  visibility: hidden;
 }
 /* Unseen, but still there to click again, which closes the drop-down,
    and to keep focus. */
@@ -870,8 +877,9 @@ a.chip-link:hover .chip-value {
   border: none;
   background: none;
 }
-/* Text a step takes off the screen stays in the chip's and the pill's
-   accessible names, and in the pill's live announcements. */
+/* Text a step takes off the screen stays readable to screen readers: in
+   the chip's accessible name, and in the pill's text and live
+   announcements. */
 .diff-toolbar[data-squeeze~="version"] .version-chip-btn > :not(.version-badge),
 .diff-toolbar[data-squeeze~="conn"] .conn-indicator > :not(.conn-dot) {
   position: absolute;

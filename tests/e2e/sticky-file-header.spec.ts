@@ -8,9 +8,9 @@ const TALL_FILE = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join
 
 const ONE_ROW_WIDTH = 1500;
 const ONE_ROW_H = 41; // measured; not --toolbar-h's 40px fallback
-// Narrow enough that the toolbar has moved Split / Unified and Wrap into
-// the ⚙ popover, which changes its height (see toolbar-squeeze.spec.ts),
-// and then that it wraps.
+// Narrow enough that the toolbar takes steps that change its height,
+// such as moving Split / Unified and Wrap into the ⚙ popover, and
+// wrapping.
 const NARROW_WIDTHS = [900, 600, 320];
 
 // A long branch name, with the toolbar still on one row at 1500px.
@@ -94,6 +94,9 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 						toolbarH: Math.round(toolbar.getBoundingClientRect().height),
 						published: document.documentElement.style.getPropertyValue("--toolbar-h").trim(),
 						hookMounted: !!window.liveSocket,
+						pillInView:
+							(document.querySelector(".conn-indicator") as HTMLElement).getBoundingClientRect().right <=
+							toolbar.getBoundingClientRect().right,
 					};
 				});
 
@@ -105,6 +108,10 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 					"before the hook runs the toolbar keeps to one row, the height the hook gives it at most widths",
 				).toBe(ONE_ROW_H);
 				expect(published.toolbarH, "the CSS fallback would be wrong").not.toBe(40);
+				expect(
+					published.pillInView,
+					"the title and branch give up room, so a page that never connects still says so",
+				).toBe(true);
 				expect(published.published, "--toolbar-h already carries the toolbar's real height").toBe(
 					`${published.toolbarH}px`,
 				);
