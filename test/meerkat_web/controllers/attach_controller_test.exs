@@ -15,43 +15,62 @@ defmodule MeerkatWeb.AttachControllerTest do
   @token "test-token"
   @own_run "own-run"
 
-  setup do
-    repo = make_git_repo("meerkat-attach")
+  # The staged review, built once and copied for each test.
+  setup_all do
+    template =
+      fixture_template("meerkat-attach-template", fn repo ->
+        git(repo, ["init", "-q"])
 
-    git(repo, [
-      "-c",
-      "user.email=t@t",
-      "-c",
-      "user.name=t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "init"
-    ])
+        git(repo, [
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "user.name=t",
+          "commit",
+          "-q",
+          "--allow-empty",
+          "-m",
+          "init"
+        ])
 
-    stage(repo, "a.txt", "one\n")
+        stage(repo, "a.txt", "one\n")
+        File.write!(Path.join(repo, "MSG"), "first message\n")
+      end)
+
+    {:ok, template: template}
+  end
+
+  # A test refused before the backend looks at its review is tagged
+  # `:no_review` and gets none.
+  setup ctx do
+    if ctx[:no_review], do: serve_backend([]), else: serve_review(ctx.template)
+  end
+
+  defp serve_review(template) do
+    repo = copy_fixture(template, "meerkat-attach")
     msg = Path.join(repo, "MSG")
-    File.write!(msg, "first message\n")
     target = {:staged, msg}
     {:ok, state} = ReviewState.from_target(target, repo)
+    serve_backend(repo_path: repo, review_target: target, review_state: state)
+    %{repo: repo, msg: msg}
+  end
 
+  defp serve_backend(review_env) do
     env = %{"MEERKAT_SERVE_TOKEN" => @token, "MEERKAT_RUN_ID" => @own_run}
     previous_env = Map.new(env, fn {k, _} -> {k, System.get_env(k)} end)
     Enum.each(env, fn {k, v} -> System.put_env(k, v) end)
 
     test_pid = self()
 
-    app_env = [
-      repo_path: repo,
-      review_id: "attach-test",
-      review_target: target,
-      review_state: state,
-      review_banner: "BANNER line\n",
-      no_open: true,
-      restart_fun: fn code -> send(test_pid, {:halted, code}) end,
-      browser_open_fun: fn url -> send(test_pid, {:opened, url}) end
-    ]
+    app_env =
+      review_env ++
+        [
+          review_id: "attach-test",
+          review_banner: "BANNER line\n",
+          no_open: true,
+          restart_fun: fn code -> send(test_pid, {:halted, code}) end,
+          browser_open_fun: fn url -> send(test_pid, {:opened, url}) end
+        ]
 
     previous_app = Map.new(app_env, fn {k, _} -> {k, Application.fetch_env(:meerkat, k)} end)
     Enum.each(app_env, fn {k, v} -> Application.put_env(:meerkat, k, v) end)
@@ -69,10 +88,9 @@ defmodule MeerkatWeb.AttachControllerTest do
       end)
 
       Application.delete_env(:meerkat, :review_deadline_ms)
-      File.rm_rf(repo)
     end)
 
-    %{repo: repo, msg: msg}
+    :ok
   end
 
   defp attach(conn, run, quiet \\ "0") do
@@ -106,6 +124,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     |> post("/api/attach/delivered?run=#{run}")
   end
 
+  @tag :no_review
   test "frames mark each whole line, and a last line without a newline" do
     assert IO.iodata_to_binary(AttachController.frames("a\n\nb\n")) == "o a\no \no b\n"
     assert IO.iodata_to_binary(AttachController.frames("a\ntail")) == "o a\nn tail\n"
@@ -199,6 +218,7 @@ defmodule MeerkatWeb.AttachControllerTest do
              IO.iodata_to_binary([AttachController.frames("Fix it."), "x 1\n"])
   end
 
+  @tag :no_review
   test "an authorized attach with no run or a non-string run is a bad request", %{conn: conn} do
     for path <- ["/api/attach", "/api/attach?run[]=later-run"] do
       refused = conn |> put_req_header("x-meerkat-token", @token) |> get(path)
@@ -209,11 +229,13 @@ defmodule MeerkatWeb.AttachControllerTest do
     end
   end
 
+  @tag :no_review
   test "a request without the backend's token is refused", %{conn: conn} do
     conn = get(conn, "/api/attach?run=#{@own_run}")
     assert conn.status == 403
   end
 
+  @tag :no_review
   test "a backend started without a token refuses a request carrying an empty one",
        %{conn: conn} do
     System.put_env("MEERKAT_SERVE_TOKEN", "")
@@ -430,6 +452,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert Task.await(first).resp_body =~ ~r/\Ao BANNER line\n(k\n)*o approved\nx 0\n\z/
   end
 
+  @tag :no_review
   test "a run id that is not a launcher run id is refused", %{conn: conn} do
     for run <- ["..", "a%2Fb", "."] do
       assert attach(conn, run).status == 400
