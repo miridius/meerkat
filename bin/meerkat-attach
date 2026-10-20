@@ -376,7 +376,8 @@ _ma_server_alive() {
   fi
   _MA_PID_WAIT_DIR=""
   local pid
-  pid="$(<"$_MA_DIR/pid")"
+  # Another invocation can remove the run since the check above.
+  { pid="$(<"$_MA_DIR/pid")"; } 2>/dev/null
   kill -0 "$pid" 2>/dev/null || return 1
   [[ -f "$_MA_DIR/exit" ]] && return 0
   # The command check stops a reused pid passing for the backend. Where ps
@@ -387,9 +388,9 @@ _ma_server_alive() {
 
 _ma_bury_server() {
   # It exited cleanly after the loop's exit check, or another invocation
-  # removed its run after the loop's dir check (as while this caller was
-  # suspended); the next pass collects the exit code or reports the
-  # removal.
+  # removed its run after _ma_server_alive found its pid file (as while
+  # this caller was suspended); the next pass collects the exit code or
+  # reports the removal.
   [[ -f "$_MA_DIR/exit" || ! -d "$_MA_DIR" ]] && return
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam
