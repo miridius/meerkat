@@ -1033,6 +1033,34 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  # The real-git fixtures below, each built once and copied for each test.
+  setup_all do
+    seeded =
+      fixture_template("meerkat-cli-gate-template", fn dir ->
+        git(dir, ["init", "-q", "-b", "main"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        File.write!(Path.join(dir, "seed.rs"), "fn seed() {}\n")
+        git(dir, ["add", "seed.rs"])
+        git(dir, ["commit", "-qm", "seed"])
+      end)
+
+    # `a.rs` staged on main and approved at its staged OID.
+    approved =
+      fixture_template("meerkat-cli-approved-template", fn dir ->
+        git(dir, ["init", "-q", "-b", "main"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        git(dir, ["commit", "--allow-empty", "-qm", "seed"])
+        stage(dir, "a.rs", "fn a() {}\n")
+        oid = git(dir, ["rev-parse", ":a.rs"])
+        path = ApprovalCache.path_for(dir)
+        {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      end)
+
+    {:ok, seeded_template: seeded, approved_template: approved}
+  end
+
   describe "auto_approve_decision/3 — pending-answers gate (real git fixture)" do
     # Real-git fixture (not async: each test owns a tmp repo and shells
     # out to `git`). A prior review's **question**-type comments leave a
@@ -1041,19 +1069,8 @@ defmodule Meerkat.CLITest do
     # agent's answers get silently discarded (the "meerkat drops answers
     # on a clean tree" bug). The reviewer sees them via a live review
     # instead, and only a terminal decision clears the file.
-    setup do
-      dir =
-        Meerkat.TestHelpers.tmp_path("meerkat-cli-gate")
-
-      File.mkdir_p!(dir)
-      git(dir, ["init", "-q", "-b", "main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      File.write!(Path.join(dir, "seed.rs"), "fn seed() {}\n")
-      git(dir, ["add", "seed.rs"])
-      git(dir, ["commit", "-qm", "seed"])
-      on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, dir: dir}
+    setup ctx do
+      {:ok, dir: copy_fixture(ctx.seeded_template, "meerkat-cli-gate")}
     end
 
     test "empty staged diff + no pending answers → auto-approves (fast path unchanged)",
@@ -1143,19 +1160,10 @@ defmodule Meerkat.CLITest do
     # (restart onto a new version or after a code change, crash retry)
     # would find them all approved and exit 0 with no Approve click,
     # dropping the comments.
-    setup do
-      dir = make_git_repo("meerkat-cli-restart")
-      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
-      stage(dir, "a.rs", "fn a() {}\n")
-      oid = git(dir, ["rev-parse", ":a.rs"])
-      path = ApprovalCache.path_for(dir)
-      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+    setup ctx do
+      dir = copy_fixture(ctx.approved_template, "meerkat-cli-restart")
       serve_dir = Path.join(dir, ".git/run")
       File.mkdir_p!(serve_dir)
-      on_exit(fn -> File.rm_rf!(dir) end)
       {:ok, dir: dir, serve_dir: serve_dir}
     end
 
@@ -1182,18 +1190,8 @@ defmodule Meerkat.CLITest do
     # serve dir. Auto-approving would never deliver those comments.
     @all_approved {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
 
-    setup do
-      dir = make_git_repo("meerkat-cli-crashed")
-      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
-      stage(dir, "a.rs", "fn a() {}\n")
-      oid = git(dir, ["rev-parse", ":a.rs"])
-      path = ApprovalCache.path_for(dir)
-      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
-      on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, dir: dir}
+    setup ctx do
+      {:ok, dir: copy_fixture(ctx.approved_template, "meerkat-cli-crashed")}
     end
 
     # Saves the snapshot the review of the currently staged content writes.

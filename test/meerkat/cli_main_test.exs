@@ -8,18 +8,27 @@ defmodule Meerkat.CLIMainTest do
 
   alias Meerkat.{CLI, PendingAnswers, PendingQuestions}
 
-  setup do
+  # Built once, then copied for each test.
+  setup_all do
+    template =
+      fixture_template("meerkat-cli-main-template", fn repo ->
+        git(repo, ["init", "-q"])
+        git(repo, ["config", "user.email", "t@t.t"])
+        git(repo, ["config", "user.name", "t"])
+        git(repo, ["commit", "--allow-empty", "-qm", "initial"])
+        File.write!(Path.join(repo, "COMMIT_MSG"), "Subject\n")
+      end)
+
+    {:ok, template: template}
+  end
+
+  setup %{template: template} do
     restore_signal_handler_on_exit()
-    repo = make_git_repo("meerkat-cli-main")
-    git(repo, ["config", "user.email", "t@t.t"])
-    git(repo, ["config", "user.name", "t"])
-    git(repo, ["commit", "--allow-empty", "-qm", "initial"])
+    repo = copy_fixture(template, "meerkat-cli-main")
     commit_msg = Path.join(repo, "COMMIT_MSG")
-    File.write!(commit_msg, "Subject\n")
 
     put_env("MEERKAT_PWD", repo)
     put_env("MEERKAT_SERVE_DIR", nil)
-    on_exit(fn -> File.rm_rf!(repo) end)
 
     {:ok, repo: repo, commit_msg: commit_msg}
   end

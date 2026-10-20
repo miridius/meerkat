@@ -11,13 +11,23 @@ defmodule Meerkat.GitHubTest do
   # serialisation path.
   alias Meerkat.GitHub
 
+  # Built once, then copied for each `current_pr/1` test.
+  setup_all do
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-github-template", fn dir ->
+        git(dir, ["init", "-q"])
+        git(dir, ["config", "user.name", "t"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["switch", "-q", "-c", "feature/x"])
+        git(dir, ["commit", "--allow-empty", "-qm", "base"])
+      end)
+
+    {:ok, template: template}
+  end
+
   describe "current_pr/1" do
-    setup do
-      dir = Meerkat.TestHelpers.make_git_repo("meerkat-github")
-      git(dir, ["config", "user.name", "t"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["switch", "-q", "-c", "feature/x"])
-      git(dir, ["commit", "--allow-empty", "-qm", "base"])
+    setup %{template: template} do
+      dir = Meerkat.TestHelpers.copy_fixture(template, "meerkat-github")
 
       # The stub records its arguments, and answers like gh for a
       # branch with a PR.
@@ -35,10 +45,7 @@ defmodule Meerkat.GitHubTest do
       old_path = System.fetch_env!("PATH")
       System.put_env("PATH", bin <> ":" <> old_path)
 
-      on_exit(fn ->
-        System.put_env("PATH", old_path)
-        File.rm_rf!(dir)
-      end)
+      on_exit(fn -> System.put_env("PATH", old_path) end)
 
       {:ok, dir: dir, bin: bin, calls: calls}
     end

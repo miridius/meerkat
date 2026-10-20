@@ -1,7 +1,7 @@
 defmodule MeerkatWeb.ReviewLiveEventsTest do
   # Drives `MeerkatWeb.ReviewLive`'s event handlers hermetically:
   # unbound mode injects state via app env; bound mode starts a real
-  # ReviewServer against a throwaway `git init` dir so the delegation
+  # ReviewServer against a throwaway repo dir so the delegation
   # branches (`if rid != "unbound"`) run for real. These kill the
   # handler mutants muex found once this module's tests were visible
   # to its dependency analysis. async: false — mount reads the global
@@ -26,7 +26,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [make_git_repo: 1, git: 2, stage: 3]
+  import Meerkat.TestHelpers, only: [make_git_repo: 1, make_state_repo: 1, git: 2, stage: 3]
 
   @plain_file %{
     status: :modified,
@@ -99,6 +99,9 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # dir and leave this fixture not-a-repo under the pre-push hook.
     make_git_repo("meerkat-lv")
   end
+
+  # For a bound review that keeps only its own state there, not git's.
+  defp state_repo, do: make_state_repo("meerkat-lv")
 
   defp put_state(state) do
     Application.put_env(:meerkat, :review_state, state)
@@ -710,8 +713,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "a decision made outside any tab puts open tabs on the done view and wipes drafts",
        %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     {:ok, _} = Decision.submit({:timeout, ""})
@@ -722,8 +724,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "a tab that mounts after a decision it missed opens on the done view and wipes drafts",
        %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
     {:ok, _} = Decision.submit({:timeout, ""})
 
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
@@ -733,8 +734,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a tab that mounts before any decision keeps its drafts", %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
 
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
@@ -759,7 +759,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "Cancel wipes the review's comments and submits an empty cancel", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     add_global_comment(view, "wipe me")
     assert [_] = ReviewServer.get_state(rid).global_comments
@@ -782,7 +782,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "post_to_github flashes when gh cannot run", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: nil}],
@@ -809,7 +809,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "Post to GitHub sends the comments through gh api and opens the returned review", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     pr_url = "https://github.com/example/example/pull/456"
     review_url = pr_url <> "#pullrequestreview-12345"
 
@@ -875,7 +875,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "inline forms at different lines stay open together; each submit posts at its own lines",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     for {from, to} <- [{"1", "1"}, {"2", "3"}] do
@@ -925,7 +925,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "commit-msg forms at two ranges are labelled and each posts at its own range",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [@plain_file],
@@ -1032,7 +1032,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "revealing a form in a filtered-out, collapsed file shows and expands it", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     other = %{@plain_file | file_name: "other.ex"}
 
     state = %ReviewState{
@@ -1081,7 +1081,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "revealing a form on a file already shown pins no :show override", %{conn: conn} do
-    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, tmp_git_repo())
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, state_repo())
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     render_click(view, "comment_form.reveal", %{"form_key" => "file:0"})
@@ -1206,7 +1206,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "comment.remove delegates to the ReviewServer in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     comment = %{
       id: "f1",
@@ -1225,7 +1225,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "opening and hiding forms persists to the ReviewServer in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
@@ -1238,7 +1238,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   ## --- Comments ---
 
   test "a global comment is added, edited through a Save form, and removed", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     add_global_comment(view, "first version")
@@ -1267,7 +1267,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "each finding type renders its own card class and badge label", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     types = [
@@ -1287,7 +1287,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a file comment is added from the file's button, edited, and removed", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     body = "#file-0 .note.file-note .comment-body"
 
@@ -1316,7 +1316,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "opening then cancelling a file-comment form keeps the other comments", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     add_global_comment(view, "global baseline")
@@ -1336,7 +1336,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "commit-message comments land in the gutter with their line range", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     msg = String.trim(@commit_msg)
 
     state = %ReviewState{
@@ -1368,7 +1368,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "both agent-instruction checkboxes start off in the form and toggle independently on the rendered comment",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     toggle = ".global-comments .note .flag-toggle"
     instructions = "#{toggle}[data-flag=correct_instructions] input"
@@ -1415,7 +1415,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "a submitted form stores both flags, and editing the comment reopens with them", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     for {instructions?, lint_rule?} <- [{true, false}, {false, true}] do
       {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
@@ -1443,7 +1443,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "a comment added or removed in one tab updates another tab of the same review", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {tab_a, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     {:ok, tab_b, _html} = live_isolated(conn, ReviewLive)
 
@@ -1695,7 +1695,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "filter.show_all clears server-side overrides in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.show_only", %{"file_index" => "0"})
@@ -1706,7 +1706,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "filter.toggle_file writes :hide for a visible file and :show for a hidden one", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
@@ -1717,7 +1717,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "filter.toggle_file shows a file that show-only hides", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -1730,7 +1730,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "filter.toggle_file re-showing the show-only file keeps show-only", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -1744,7 +1744,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "filter.toggle_file ignores unknown file names", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.toggle_file", %{"file_name" => "nope.ex"})
@@ -1752,7 +1752,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "filter.hide_matched / show_matched scope to the substring filter", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
 
@@ -1831,7 +1831,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "file.toggle_expanded flips the collapse set for approved and unapproved files", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     {view, _rid} =
       mount_bound(conn, %ReviewState{files: [%{@plain_file | effective_oid: nil}]}, repo)
@@ -1898,7 +1898,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "post_to_github failure with gh missing pushes no url", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file], pr: %{number: 7, title: "t", url: "u"}}
     {view, _rid} = mount_bound(conn, state, repo)
 

@@ -199,11 +199,38 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  Builds a fixture tree for `copy_fixture/2`: calls `build` on a new
-  `tmp_path/1` dir named with `prefix`, removed when the caller exits, and
-  returns the dir. Each git repo in the tree then keeps its objects in one
-  pack, so a copy holds a few files where each loose object would be a
-  file and often a directory.
+  A `make_tmp_repo/1` dir, removed when the test exits, for a test that
+  needs only a place for meerkat's state, not git. Caches `:meerkat_dir`
+  in the application env as `Meerkat.CLI` does for a review, so
+  `Meerkat.Git.meerkat_dir/1` runs no git; the previous value comes back
+  on exit. Code that asks git itself, such as `Meerkat.ApprovalCache` or
+  `Meerkat.PendingAnswers.save/2`, finds no repo here.
+  """
+  @spec make_state_repo(String.t()) :: String.t()
+  def make_state_repo(prefix) do
+    dir = make_tmp_repo(prefix)
+    previous = Application.fetch_env(:meerkat, :meerkat_dir)
+    Application.put_env(:meerkat, :meerkat_dir, Path.join([dir, ".git", "meerkat-precommit"]))
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:meerkat, :meerkat_dir, value)
+        :error -> Application.delete_env(:meerkat, :meerkat_dir)
+      end
+
+      File.rm_rf(dir)
+    end)
+
+    dir
+  end
+
+  @doc """
+  Builds a fixture tree once, for tests that only read it or that copy it
+  with `copy_fixture/2`: calls `build` on a new `tmp_path/1` dir named
+  with `prefix`, removed when the caller exits, and returns the dir. Each
+  git repo in the tree then keeps its objects in one pack, so a copy
+  holds a few files where each loose object would be a file and often a
+  directory.
   """
   @spec fixture_template(String.t(), (String.t() -> any())) :: String.t()
   def fixture_template(prefix, build) do
@@ -215,8 +242,9 @@ defmodule Meerkat.TestHelpers do
     for objects <- Path.wildcard(Path.join(dir, "**/objects"), match_dot: true),
         git_dir = Path.dirname(objects),
         File.regular?(Path.join(git_dir, "HEAD")) do
-      # -n: no server info, which only dumb HTTP serving reads.
-      git(git_dir, ["--git-dir=.", "repack", "-adqn"])
+      # -n: no server info, which only dumb HTTP serving reads. No bitmap,
+      # which a bare repo's repack writes by default for serving clones.
+      git(git_dir, ["--git-dir=.", "-c", "repack.writeBitmaps=false", "repack", "-adqn"])
     end
 
     dir

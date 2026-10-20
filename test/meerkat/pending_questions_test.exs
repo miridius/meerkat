@@ -4,10 +4,16 @@ defmodule Meerkat.PendingQuestionsTest do
   import Meerkat.TestHelpers
   alias Meerkat.{PendingAnswers, PendingQuestions}
 
-  setup do
-    repo = make_git_repo("meerkat-owed-questions")
-    on_exit(fn -> File.rm_rf!(repo) end)
-    {:ok, repo: repo}
+  # A test that saves answers or resolves paths through git is tagged
+  # `:git` and gets a real repo.
+  setup ctx do
+    if ctx[:git] do
+      repo = make_git_repo("meerkat-owed-questions")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    else
+      {:ok, repo: make_state_repo("meerkat-owed-questions")}
+    end
   end
 
   @questions [
@@ -15,6 +21,7 @@ defmodule Meerkat.PendingQuestionsTest do
     %{location: "file: src/x.rs", question: "why?"}
   ]
 
+  @tag :git
   test "obligations survive repeated reads and replacing the pending answer set", %{repo: repo} do
     assert {:ok, []} = PendingQuestions.unanswered(repo)
     assert :ok = PendingQuestions.replace(repo, @questions)
@@ -34,6 +41,7 @@ defmodule Meerkat.PendingQuestionsTest do
     assert {:ok, @questions} = PendingQuestions.unanswered(repo)
   end
 
+  @tag :git
   test "obligations persist at the stable filename with the versioned schema", %{repo: repo} do
     # Git resolves the physical root even when TMPDIR or the caller is symlinked.
     canonical_repo = git(repo, ["rev-parse", "--show-toplevel"])
@@ -67,6 +75,7 @@ defmodule Meerkat.PendingQuestionsTest do
     assert {:ok, []} = PendingQuestions.unanswered(repo)
   end
 
+  @tag :git
   test "wrong locations, edited question bodies, and blank answers cannot discharge a question",
        %{repo: repo} do
     :ok = PendingQuestions.replace(repo, @questions)
@@ -148,6 +157,7 @@ defmodule Meerkat.PendingQuestionsTest do
     assert error.reason == :enotdir
   end
 
+  @tag :git
   test "obligations follow the worktree across branches and subdirectories, not other worktrees",
        %{repo: repo} do
     git(repo, [

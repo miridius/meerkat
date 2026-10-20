@@ -44,6 +44,7 @@ defmodule Meerkat.TestHelpersTest do
     for repo <- ["work/.git", "nested/remote.git"] do
       objects = Path.join([template, repo, "objects"])
       assert [_] = Path.wildcard(Path.join(objects, "pack/*.pack"))
+      assert Path.wildcard(Path.join(objects, "pack/*.bitmap")) == []
       assert Path.wildcard(Path.join(objects, "??")) == []
     end
 

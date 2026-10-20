@@ -12,6 +12,13 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
 
   @note "Clojure hover off: clj-kondo not found"
 
+  # One staged review that every test only reads.
+  setup_all do
+    dir = Meerkat.TestHelpers.fixture_template("meerkat-lv-clj", &build_fixture/1)
+    {:ok, files} = Git.staged_file_diffs(dir)
+    %{dir: dir, files: files}
+  end
+
   setup do
     prev =
       for key <- [:review_state, :review_id, :repo_path] do
@@ -24,9 +31,10 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
         {key, :error} -> Application.delete_env(:meerkat, key)
       end)
     end)
+  end
 
-    dir = Meerkat.TestHelpers.make_git_repo("meerkat-lv-clj")
-    on_exit(fn -> File.rm_rf!(dir) end)
+  defp build_fixture(dir) do
+    git(dir, ["init", "-q"])
     git(dir, ["config", "user.email", "t@t.t"])
     git(dir, ["config", "user.name", "t"])
     git(dir, ["config", "core.hooksPath", "/dev/null"])
@@ -35,8 +43,6 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     git(dir, ["commit", "-qm", "base"])
     stage(dir, "README.md", "new\n")
     stage(dir, "src/app/core.clj", "(ns app.core)\n\n(defn f\n  \"Doc f.\"\n  []\n  2)\n\n(f)\n")
-    {:ok, files} = Git.staged_file_diffs(dir)
-    %{dir: dir, files: files}
   end
 
   defp mount(conn, files, rid, dir) do

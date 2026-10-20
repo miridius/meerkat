@@ -5,14 +5,21 @@ defmodule Meerkat.GitBinaryTest do
 
   import Meerkat.TestHelpers, only: [stage: 3, intercept_git: 3, git: 2]
 
-  setup do
-    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-binary")
-    git(dir, ["init", "-q"])
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    git(dir, ["config", "core.hooksPath", "/dev/null"])
-    on_exit(fn -> File.rm_rf!(dir) end)
-    {:ok, dir: dir}
+  # Built once, then copied for each test.
+  setup_all do
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-binary-template", fn dir ->
+        git(dir, ["init", "-q"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        git(dir, ["config", "core.hooksPath", "/dev/null"])
+      end)
+
+    {:ok, template: template}
+  end
+
+  setup %{template: template} do
+    {:ok, dir: Meerkat.TestHelpers.copy_fixture(template, "meerkat-binary")}
   end
 
   test "attribute-classified BUILD.bazel remains visible beside text changes", %{dir: dir} do
