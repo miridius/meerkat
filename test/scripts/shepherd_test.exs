@@ -558,6 +558,26 @@ defmodule Meerkat.ShepherdTest do
       assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
     end
 
+    # As when the caller was suspended between the loop's dir check and its
+    # look at the backend, which finished meanwhile, and a rerun removed the
+    # run: the backend did decide, so the next pass says the run was removed.
+    test "a caller whose run is removed after its dir check does not say its backend died" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(runs)
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_OWNED=1; _MA_HELD=1
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+    end
+
     test "a caller that cannot create its run dir exits 2 instead of retrying" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       runs = Path.join(dir, "runs")

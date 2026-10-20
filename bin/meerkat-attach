@@ -386,9 +386,11 @@ _ma_server_alive() {
 }
 
 _ma_bury_server() {
-  # It exited cleanly after the loop's exit check; the next pass collects
-  # the exit code.
-  [[ -f "$_MA_DIR/exit" ]] && return
+  # It exited cleanly after the loop's exit check, or another invocation
+  # removed its run after the loop's dir check (as while this caller was
+  # suspended); the next pass collects the exit code or reports the
+  # removal.
+  [[ -f "$_MA_DIR/exit" || ! -d "$_MA_DIR" ]] && return
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam
     read -r port beam <"$_MA_DIR/port"
