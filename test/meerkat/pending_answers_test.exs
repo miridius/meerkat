@@ -42,7 +42,7 @@ defmodule Meerkat.PendingAnswersTest do
       refute File.exists?(Path.join(subdir, ".git"))
     end
 
-    test "counts every answer and keeps their order", %{git_repo: repo} do
+    test "counts every answer", %{git_repo: repo} do
       input =
         Jason.encode!(%{
           "answers" => [
@@ -52,7 +52,6 @@ defmodule Meerkat.PendingAnswersTest do
         })
 
       assert {:ok, 2} = PendingAnswers.save(repo, input)
-      assert %{answers: [%{question: "q1"}, %{question: "q2"}]} = PendingAnswers.load(repo)
     end
 
     test "a repeated save overwrites the earlier answers", %{git_repo: repo} do
@@ -67,28 +66,6 @@ defmodule Meerkat.PendingAnswersTest do
 
       assert %{answers: [%{location: "global", question: "q2", answer: "a2"}]} =
                PendingAnswers.load(repo)
-    end
-
-    for {label, input} <- [
-          {"invalid JSON", "not json"},
-          {"a JSON array", "[]"},
-          {"an object without answers", ~s({"other": 1})},
-          {"answers that is not a list", ~s({"answers": "x"})},
-          {"an empty answers list", ~s({"answers": []})},
-          {"an answer missing a field", ~s({"answers": [{"location": "a", "question": "q"}]})},
-          {"an answer with a non-string answer",
-           ~s({"answers": [{"location": "a", "question": "q", "answer": 1}]})},
-          {"an answer with a non-string location",
-           ~s({"answers": [{"location": 1, "question": "q", "answer": "a"}]})},
-          {"an answer with a non-string question",
-           ~s({"answers": [{"location": "a", "question": 1, "answer": "a"}]})},
-          {"an answer that is not an object", ~s({"answers": ["a"]})}
-        ] do
-      test "rejects #{label} and writes nothing", %{git_repo: repo} do
-        assert {:error, :invalid_input, message} = PendingAnswers.save(repo, unquote(input))
-        assert is_binary(message) and message != ""
-        refute File.exists?(PendingAnswers.path_for(repo))
-      end
     end
 
     test "a rejected input leaves the earlier file untouched", %{git_repo: repo} do
@@ -110,6 +87,46 @@ defmodule Meerkat.PendingAnswersTest do
       assert {:error, :not_a_repo, message} = PendingAnswers.save(not_a_repo, @valid_input)
       assert message =~ "not a git repository"
       refute File.exists?(PendingAnswers.path_for(not_a_repo))
+    end
+  end
+
+  describe "parse/1" do
+    test "keeps every answer, in order, with only its three fields" do
+      input =
+        Jason.encode!(%{
+          "answers" => [
+            %{"location" => "a", "question" => "q1", "answer" => "a1", "extra" => 1},
+            %{"location" => "b", "question" => "q2", "answer" => "a2"}
+          ]
+        })
+
+      assert PendingAnswers.parse(input) ==
+               {:ok,
+                [
+                  %{"location" => "a", "question" => "q1", "answer" => "a1"},
+                  %{"location" => "b", "question" => "q2", "answer" => "a2"}
+                ]}
+    end
+
+    for {label, input} <- [
+          {"invalid JSON", "not json"},
+          {"a JSON array", "[]"},
+          {"an object without answers", ~s({"other": 1})},
+          {"answers that is not a list", ~s({"answers": "x"})},
+          {"an empty answers list", ~s({"answers": []})},
+          {"an answer missing a field", ~s({"answers": [{"location": "a", "question": "q"}]})},
+          {"an answer with a non-string answer",
+           ~s({"answers": [{"location": "a", "question": "q", "answer": 1}]})},
+          {"an answer with a non-string location",
+           ~s({"answers": [{"location": 1, "question": "q", "answer": "a"}]})},
+          {"an answer with a non-string question",
+           ~s({"answers": [{"location": "a", "question": 1, "answer": "a"}]})},
+          {"an answer that is not an object", ~s({"answers": ["a"]})}
+        ] do
+      test "rejects #{label}" do
+        assert {:error, :invalid_input, message} = PendingAnswers.parse(unquote(input))
+        assert is_binary(message) and message != ""
+      end
     end
   end
 

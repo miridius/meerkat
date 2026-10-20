@@ -201,16 +201,22 @@ defmodule Meerkat.TestHelpers do
   @doc """
   A `make_tmp_repo/1` dir, removed when the test exits, for a test that
   needs only a place for meerkat's state, not git. Caches `:meerkat_dir`
-  in the application env as `Meerkat.CLI` does for a review, so
-  `Meerkat.Git.meerkat_dir/1` runs no git; the previous value comes back
-  on exit. Code that asks git itself, such as `Meerkat.ApprovalCache` or
-  `Meerkat.PendingAnswers.save/2`, finds no repo here.
+  in the application env as `Meerkat.CLI` does for a review, and the
+  dir's approval cache path as `Meerkat.ApprovalCache.path_for/1` keeps
+  the paths it resolves, so neither runs git; the previous values come
+  back on exit. Code that asks git itself, such as
+  `Meerkat.PendingAnswers.save/2` or a staged-blob lookup, finds no repo
+  here.
   """
   @spec make_state_repo(String.t()) :: String.t()
   def make_state_repo(prefix) do
     dir = make_tmp_repo(prefix)
+    state_dir = Path.join([dir, ".git", "meerkat-precommit"])
     previous = Application.fetch_env(:meerkat, :meerkat_dir)
-    Application.put_env(:meerkat, :meerkat_dir, Path.join([dir, ".git", "meerkat-precommit"]))
+    Application.put_env(:meerkat, :meerkat_dir, state_dir)
+    paths = Application.get_env(:meerkat, :approval_cache_paths, %{})
+    approved = Path.join(state_dir, "approved.json")
+    Application.put_env(:meerkat, :approval_cache_paths, Map.put(paths, dir, approved))
 
     on_exit(fn ->
       case previous do
@@ -218,10 +224,25 @@ defmodule Meerkat.TestHelpers do
         :error -> Application.delete_env(:meerkat, :meerkat_dir)
       end
 
+      paths = Application.get_env(:meerkat, :approval_cache_paths, %{})
+      Application.put_env(:meerkat, :approval_cache_paths, Map.delete(paths, dir))
       File.rm_rf(dir)
     end)
 
     dir
+  end
+
+  @doc """
+  Writes the pending-answers file `Meerkat.PendingAnswers.save/2` would
+  for `answers`, maps with `:location`, `:question` and `:answer`,
+  without the git lookup `save/2` makes to find the repo.
+  """
+  @spec put_pending_answers(String.t(), [map()]) :: :ok
+  def put_pending_answers(repo, answers) do
+    path = Meerkat.PendingAnswers.path_for(repo)
+    File.mkdir_p!(Path.dirname(path))
+    payload = %{version: 1, createdAt: "2026-01-01T00:00:00Z", answers: answers}
+    File.write!(path, Jason.encode!(payload))
   end
 
   @doc """

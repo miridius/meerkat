@@ -27,9 +27,30 @@ defmodule Meerkat.ApprovalCache do
   @doc """
   Resolve `<git-common-dir>/meerkat-precommit/approved.json` — shared
   across worktrees of the same repo.
+
+  Each path resolved is kept in `Application.get_env(:meerkat,
+  :approval_cache_paths)`, a map from `repo_path`, so a review's later
+  approvals run no `git rev-parse`.
   """
   @spec path_for(String.t()) :: String.t() | nil
   def path_for(repo_path) do
+    case Application.get_env(:meerkat, :approval_cache_paths, %{}) do
+      %{^repo_path => path} -> path
+      paths -> keep_path(paths, repo_path, resolve_path(repo_path))
+    end
+  end
+
+  # muex:ignore equivalent: swapping ignored arguments changes nothing
+  defp keep_path(_paths, _repo_path, nil), do: nil
+
+  defp keep_path(paths, repo_path, path) do
+    # muex:ignore equivalent: repo_path is not yet a key of paths, so put_new puts it too
+    paths = Map.put(paths, repo_path, path)
+    Application.put_env(:meerkat, :approval_cache_paths, paths)
+    path
+  end
+
+  defp resolve_path(repo_path) do
     case Meerkat.Git.git_common_dir(repo_path) do
       {:ok, common} -> Path.join([common, "meerkat-precommit", "approved.json"])
       {:error, _} -> nil

@@ -54,6 +54,37 @@ defmodule Meerkat.ApprovalCacheTest do
     end
   end
 
+  describe "path_for/1" do
+    setup do
+      repo = Meerkat.TestHelpers.make_git_repo("meerkat-approval-path")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    end
+
+    test "is approved.json in the shared gitdir, kept once resolved", %{repo: repo} do
+      path = ApprovalCache.path_for(repo)
+      assert path == Path.join([repo, ".git", "meerkat-precommit", "approved.json"])
+      File.rm_rf!(Path.join(repo, ".git"))
+      assert ApprovalCache.path_for(repo) == path
+    end
+
+    test "each repo keeps its own", %{repo: repo} do
+      other = Meerkat.TestHelpers.make_git_repo("meerkat-approval-path")
+      on_exit(fn -> File.rm_rf!(other) end)
+      assert ApprovalCache.path_for(repo) != ApprovalCache.path_for(other)
+      assert ApprovalCache.path_for(other) =~ other
+    end
+
+    test "outside a repo is nil, and is looked up again", %{repo: repo} do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-nogit")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      assert ApprovalCache.path_for(dir) == nil
+      File.rename!(Path.join(repo, ".git"), Path.join(dir, ".git"))
+      assert ApprovalCache.path_for(dir) =~ dir
+    end
+  end
+
   describe "prune/2" do
     test "drops branch sub-trees for unknown branches" do
       cache =

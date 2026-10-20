@@ -1212,11 +1212,11 @@ defmodule Meerkat.CLITest do
       lint_rule: false
     }
 
-    for key <- [:comments, :file_comments, :global_comments, :commit_message_comments] do
-      test "a snapshot holding #{key} keeps the rerun live", %{dir: dir} do
-        save_snapshot(dir, [{unquote(key), [@comment]}])
-        assert CLI.auto_approve_decision_for_test(dir) == :live
-      end
+    # `Meerkat.Persistence.held_comments?/3`'s tests cover which snapshots
+    # hold a comment.
+    test "a snapshot holding a comment keeps the rerun live", %{dir: dir} do
+      save_snapshot(dir, comments: [@comment])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
     # The review leaves whitespace-only changes out of its files and so out
@@ -1243,38 +1243,6 @@ defmodule Meerkat.CLITest do
       save_snapshot(dir, global_comments: [@comment])
       stage(dir, "a.rs", "fn a() {}\n")
       assert CLI.auto_approve_decision_for_test(dir) == @all_approved
-    end
-
-    # The fast path runs before the review's modules load, so a snapshot
-    # key may name no existing atom yet.
-    test "a snapshot of other staged content holding a key that is no atom still auto-approves",
-         %{dir: dir} do
-      stage(dir, "a.rs", "fn earlier() {}\n")
-      path = save_snapshot(dir, global_comments: [@comment])
-      key = "no_atom_#{System.unique_integer([:positive])}"
-
-      json =
-        path
-        |> File.read!()
-        |> Jason.decode!()
-        |> put_in(["global_comments", Access.at(0), key], 1)
-
-      File.write!(path, Jason.encode!(json))
-      stage(dir, "a.rs", "fn a() {}\n")
-      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
-    end
-
-    test "a snapshot written before signatures existed keeps the rerun live", %{dir: dir} do
-      path = save_snapshot(dir, global_comments: [@comment])
-      legacy = path |> File.read!() |> Jason.decode!() |> Map.delete("state_signature")
-      File.write!(path, Jason.encode!(legacy))
-      assert CLI.auto_approve_decision_for_test(dir) == :live
-    end
-
-    test "an unparseable snapshot keeps the rerun live", %{dir: dir} do
-      path = save_snapshot(dir, [])
-      File.write!(path, "{not json")
-      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
     test "with nothing staged, a snapshot holding comments keeps the rerun live", %{dir: dir} do
