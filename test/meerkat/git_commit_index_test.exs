@@ -8,16 +8,23 @@ defmodule Meerkat.GitCommitIndexTest do
 
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0, stage: 3]
 
-  setup do
-    dir = Meerkat.TestHelpers.make_git_repo("meerkat-commit-index")
-    on_exit(fn -> File.rm_rf!(dir) end)
+  # Built once, then copied for each test.
+  setup_all do
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-commit-index-template", fn dir ->
+        git(dir, ["init", "-q"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        for name <- ~w(a.txt b.txt c.txt), do: stage(dir, name, "base\n")
+        git(dir, ["commit", "-qm", "base"])
+        install_hook(Path.join(dir, ".git/hooks"))
+      end)
 
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    for name <- ~w(a.txt b.txt c.txt), do: stage(dir, name, "base\n")
-    git(dir, ["commit", "-qm", "base"])
+    {:ok, template: template}
+  end
 
-    install_hook(Path.join(dir, ".git/hooks"))
+  setup %{template: template} do
+    dir = Meerkat.TestHelpers.copy_fixture(template, "meerkat-commit-index")
     {:ok, dir: dir, report: Path.join(dir, ".git/reviewed")}
   end
 

@@ -321,12 +321,20 @@ defmodule Meerkat.GitTest do
     end
   end
 
-  defp git_repo(_context) do
-    dir = make_git_repo("meerkat-git")
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    on_exit(fn -> File.rm_rf!(dir) end)
-    {:ok, dir: dir}
+  # The empty repo `git_repo/1` copies, built once.
+  setup_all do
+    template =
+      fixture_template("meerkat-git-template", fn dir ->
+        git(dir, ["init", "-q"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+      end)
+
+    {:ok, git_template: template}
+  end
+
+  defp git_repo(%{git_template: template}) do
+    {:ok, dir: copy_fixture(template, "meerkat-git")}
   end
 
   defp delete_loose_object!(dir, oid) do
