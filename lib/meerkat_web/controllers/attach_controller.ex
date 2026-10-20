@@ -154,10 +154,9 @@ defmodule MeerkatWeb.AttachController do
     # backend's held copy is the first invocation's index, not this caller's.
     # Other targets do not read the index, so its name is not checked.
     caller_index = if match?({:staged, _}, target), do: caller_index
+    read = Application.get_env(:meerkat, :read_review_fun, &read_review/3)
 
-    case Git.with_index(repo_path, caller_index, fn ->
-           ReviewState.from_target(target, repo_path)
-         end) do
+    case read.(target, repo_path, caller_index) do
       {:ok, now} ->
         if Persistence.state_signature(now) == Persistence.state_signature(base) and
              now.commit_message == base.commit_message,
@@ -167,6 +166,12 @@ defmodule MeerkatWeb.AttachController do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # The review `target` resolves to now, read from the index named
+  # `caller_index` (the repo's own when `nil`).
+  defp read_review(target, repo_path, caller_index) do
+    Git.with_index(repo_path, caller_index, fn -> ReviewState.from_target(target, repo_path) end)
   end
 
   defp await_exits(pids) do

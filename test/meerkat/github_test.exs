@@ -104,10 +104,9 @@ defmodule Meerkat.GitHubTest do
       assert stderr == ""
     end
 
-    test "mid-rebase, a branch whose PR comes from a fork has no PR and no warning",
-         %{dir: dir, bin: bin, calls: calls} do
-      # A bare branch name matches only same-repo PRs, so gh answers
-      # this way for a branch whose PR's head lives on a fork.
+    test "a branch with no PR has no PR and no warning", %{dir: dir, bin: bin, calls: calls} do
+      # As gh answers for a branch whose PR's head lives on a fork, since a
+      # bare branch name matches only same-repo PRs.
       File.write!(Path.join(bin, "gh"), """
       #!/bin/sh
       echo "$*" >> '#{calls}'
@@ -115,63 +114,8 @@ defmodule Meerkat.GitHubTest do
       exit 1
       """)
 
-      git(dir, [
-        "-c",
-        "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
-        "rebase",
-        "-q",
-        "-i",
-        "--root"
-      ])
-
       assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
-      assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
-    end
-
-    test "mid-rebase, a branch gh would read as a PR number is not looked up",
-         %{dir: dir, calls: calls} do
-      for branch <- ["28", "#28", "+28"] do
-        git(dir, ["switch", "-q", "-c", branch, "feature/x"])
-
-        git(dir, [
-          "-c",
-          "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
-          "rebase",
-          "-q",
-          "-i",
-          "--root"
-        ])
-
-        assert Meerkat.Git.head_branch(dir) == {:rebasing, branch}
-        assert GitHub.current_pr(dir) == nil
-        git(dir, ["rebase", "--abort"])
-      end
-
-      refute File.exists?(calls)
-    end
-
-    test "mid-rebase, a branch name mixing digits with other characters is looked up",
-         %{dir: dir, calls: calls} do
-      for branch <- ["28-fix", "fix-28", "#28x"] do
-        git(dir, ["switch", "-q", "-c", branch, "feature/x"])
-
-        git(dir, [
-          "-c",
-          "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
-          "rebase",
-          "-q",
-          "-i",
-          "--root"
-        ])
-
-        assert %{number: 7} = GitHub.current_pr(dir)
-        git(dir, ["rebase", "--abort"])
-      end
-
-      assert File.read!(calls)
-             |> String.split("\n", trim: true)
-             |> Enum.map(&hd(String.split(&1, " --json"))) ==
-               ["pr view 28-fix", "pr view fix-28", "pr view #28x"]
+      assert File.read!(calls) =~ ~r/^pr view --json /
     end
 
     test "a detached HEAD outside a rebase skips the lookup without a warning",
@@ -180,6 +124,26 @@ defmodule Meerkat.GitHubTest do
 
       assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
       refute File.exists?(calls)
+    end
+  end
+
+  describe "pr_selector/1" do
+    test "a checked-out branch lets gh resolve it" do
+      assert GitHub.pr_selector({:checked_out, "feature/x"}) == {:ok, []}
+    end
+
+    test "mid-rebase, the branch being rebased is named, digits and all" do
+      for branch <- ["feature/x", "28-fix", "fix-28", "#28x"],
+          do: assert(GitHub.pr_selector({:rebasing, branch}) == {:ok, [branch]})
+    end
+
+    test "mid-rebase, a branch gh would read as a PR number is not looked up" do
+      for branch <- ["28", "#28", "+28", "-28"],
+          do: assert(GitHub.pr_selector({:rebasing, branch}) == :none)
+    end
+
+    test "a detached HEAD is not looked up" do
+      assert GitHub.pr_selector(:detached) == :none
     end
   end
 
