@@ -76,8 +76,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    label, and the version on a chip that shows only its count, stay
    readable to screen readers. While the page loads, the
    toolbar keeps to one row: the title and branches give up room
-   first, so the connection pill stays in view when the rest fits,
-   and what still does not fit is cut off.
+   first, so the connection pill stays in view while what comes
+   before it fits, and what comes after it, or still does not fit, is
+   cut off.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup

@@ -394,7 +394,7 @@ const hooks = {
       }
       this._refreshBadge();
 
-      // Focus in the chip or its drop-down stays on the chip when the
+      // Focus in the chip or its drop-down goes to the chip when the
       // drop-down closes, rather than falling back to the page's start. At
       // the toolbar's version step, a chip whose updates are seen goes once
       // its drop-down closes; focus then moves to the next toolbar control.
@@ -406,12 +406,11 @@ const hooks = {
         // closed drop-down, which may have given the step back.
         requestAnimationFrame(() => {
           if (!focused) return;
-          if (btn.checkVisibility()) return btn.focus();
-          const toolbar = wrap.closest(".diff-toolbar");
-          const next = [...toolbar.querySelectorAll("a[href], button, input, summary")].find(
-            (el) => wrap.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && el.checkVisibility(),
-          );
-          next?.focus();
+          const next = () =>
+            [...wrap.closest(".diff-toolbar").querySelectorAll("a[href], button, input, summary")].find(
+              (el) => wrap.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && el.checkVisibility(),
+            );
+          (btn.checkVisibility() ? btn : next())?.focus();
         });
       };
 

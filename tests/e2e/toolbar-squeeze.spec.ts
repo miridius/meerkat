@@ -53,14 +53,13 @@ async function trackPageErrors(page: Page) {
 	return errors;
 }
 
-// Whether the version chip shows the version rather than only its count.
-function versionShown(page: Page) {
+// The texts of the version chip's parts on screen; the ones a step takes
+// off it are kept 1px wide for screen readers.
+function chipOnScreen(page: Page) {
 	return page
 		.locator(".version-chip-btn")
 		.evaluate((el) =>
-			[...el.children].some(
-				(c) => !c.matches(".version-badge") && c.getBoundingClientRect().width > 1 && c.textContent?.includes("abc1234"),
-			),
+			[...el.children].filter((c) => c.getBoundingClientRect().width > 1).map((c) => c.textContent?.trim()),
 		);
 }
 
@@ -241,7 +240,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(popover).toBeHidden();
 		// Closed, it gives the step back.
 		await expect.poll(async () => (await toolbarState(page)).steps).toEqual([]);
-		expect(await versionShown(page)).toBe(true);
+		expect(await chipOnScreen(page), "the chip shows the version again").toEqual(["ver", "abc1234"]);
 		await expect(chip, "focus stays on the chip that came back").toBeFocused();
 
 		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
@@ -249,10 +248,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(chip.locator(".version-badge")).toHaveText("11");
 		// Past the version step, so the chip losing its badge cannot give it back.
 		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
-		const onScreen = await chip.evaluate((el) =>
-			[...el.children].filter((c) => c.getBoundingClientRect().width > 1).map((c) => c.textContent),
-		);
-		expect(onScreen).toEqual(["11"]);
+		expect(await chipOnScreen(page)).toEqual(["11"]);
 		await expect(chip, "the version stays in the chip's name").toHaveAccessibleName(/abc1234/);
 
 		// Opening it marks the updates seen, so the chip goes, keeping its box
@@ -290,7 +286,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(page.locator(".toolbar-settings > summary")).toBeFocused();
 
 		await at(page, 2400);
-		expect(await versionShown(page)).toBe(true);
+		expect(await chipOnScreen(page), "the chip shows the version again").toEqual(["ver", "abc1234"]);
 		await chip.click();
 		await expect(popover).toBeVisible();
 		await expect(named, "with room, the chip itself names the version").toBeHidden();
@@ -315,6 +311,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await afterNextFrame(page);
 		await expect(files).toBeFocused();
 		await files.click();
+		await afterNextFrame(page);
 		expect(errors, "no page errors").toEqual([]);
 	} finally {
 		await meerkat.kill();
