@@ -52,6 +52,33 @@ When the UI does open, the reviewer sees, top-to-bottom:
    defaults in force until the next change replaces it; a value that
    is not valid keeps its default, except that a whole-number font
    size is clamped into 9 to 28.
+   When the toolbar's content does not fit on one row, at any window
+   width, it gives up room one step at a time, only as far as it
+   needs: the version chip shows only its count of updates, or
+   nothing when there are none, and its drop-down names the version;
+   `☰ Files` becomes `☰`; the connection pill becomes its
+   dot; the counts drop `showing` and write `/` for `of`; Split /
+   Unified and Wrap move into the `⚙` popover; then the title, the
+   base branch and the head branch truncate with an ellipsis, in that
+   order, each down to its first few characters before the next
+   starts, and each keeping its full text on its tooltip. Only when
+   all that is not enough does the toolbar wrap onto a second row.
+   At the version chip's step, opening its drop-down marks the
+   updates seen, so the chip turns invisible but keeps its place,
+   and the drop-down stays where it opened until it closes, by a
+   click where the chip was, a click elsewhere, or Esc; the toolbar
+   then fits again, with no chip if it still needs that step. A dev
+   build's chip, with no updates or drop-down, is gone at that step
+   too. When the drop-down closes, focus in the chip or the
+   drop-down goes to the chip, or, when the chip is gone, to the next
+   toolbar control. The drop-down opens within the window at any width. Branch names show
+   in full until their step truncates them. The connection pill's
+   label, and the version on a chip that shows only its count, stay
+   readable to screen readers. While the page loads, the
+   toolbar keeps to one row: the title and branches give up room
+   first, so the connection pill stays in view while what comes
+   before it fits, and what comes after it, or still does not fit, is
+   cut off.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup
@@ -132,7 +159,8 @@ is not counted. A binary file shows no counts.
 When every file is shown expanded, the toolbar shows one total for
 the whole diff, `+120 -30`. When the file filter hides a file or a
 file is collapsed, it shows the total of the expanded files the
-filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`.
+filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`,
+or `+40 -10 / +120 -30` when the toolbar is short of room.
 
 ## What state lives where
 

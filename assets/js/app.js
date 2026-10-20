@@ -11,6 +11,7 @@ import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
+import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -70,20 +71,53 @@ const hooks = {
       document.removeEventListener("keydown", this._onKey);
     },
   },
-  // The toolbar wraps onto more rows as the window narrows, so
-  // `.file-section-header` cannot pin itself below it at a fixed offset.
-  ToolbarHeight: {
+  // Takes the fewest steps that fit the toolbar's content on one row
+  // (see toolbarSqueeze.ts), whenever its width or content changes. Its
+  // steps change its height, so `.file-section-header` cannot pin itself
+  // below it at a fixed offset: this publishes its height.
+  Toolbar: {
     mounted() {
-      this._publish = () => {
+      this._fit = () => {
+        // The branch chip can shrink past the part that may truncate, and
+        // then its other part runs out of it.
+        const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
+        // Opening the version drop-down marks its updates seen, which
+        // narrows the full chip; it keeps its step while open, so the chip
+        // stays invisible in its place and the drop-down where it opened.
+        const keep =
+          /\bversion\b/.test(this.el.dataset.squeeze ?? "") &&
+          this.el.querySelector(".version-popover:not([hidden])") !== null;
+        this.el.dataset.squeeze = squeeze((taken) => {
+          if (keep && taken.length === 0) return false;
+          this.el.dataset.squeeze = taken.join(" ");
+          return boxes.every((box) => box.scrollWidth <= box.clientWidth);
+        }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
         document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
       };
-      this._observer = new ResizeObserver(this._publish);
-      this._observer.observe(this.el);
-      this._publish();
+      // A fit resizes the toolbar and its items, so a ResizeObserver on them
+      // would be notified from inside its own callback, which the browser
+      // reports as an error. Instead it watches only the zero-height
+      // `.toolbar-width` for width, and content changes, such as the
+      // version chip gaining its badge or a reconnect relabelling the
+      // connection pill through an ancestor's class, through a
+      // MutationObserver. Neither sees what a fit changes.
+      this._resize = new ResizeObserver(this._fit);
+      this._resize.observe(this.el.querySelector(".toolbar-width"));
+      this._mutation = new MutationObserver(this._fit);
+      this._mutation.observe(this.el, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributeFilter: ["class", "hidden"],
+      });
+      for (let el = this.el.parentElement; el; el = el.parentElement) {
+        this._mutation.observe(el, { attributeFilter: ["class"] });
+      }
     },
     destroyed() {
-      this._observer?.disconnect();
+      this._resize?.disconnect();
+      this._mutation?.disconnect();
       document.documentElement.style.removeProperty("--toolbar-h");
     },
   },
@@ -345,7 +379,9 @@ const hooks = {
       };
       this._refreshBadge = () => {
         const count = nums().filter((n) => n > lastSeen()).length;
-        badge.textContent = String(count);
+        // At the toolbar's version step a hidden badge keeps its box while
+        // the drop-down is open, so it keeps its last count's width too.
+        if (count > 0) badge.textContent = String(count);
         badge.hidden = count === 0;
       };
 
@@ -358,21 +394,44 @@ const hooks = {
       }
       this._refreshBadge();
 
+      // Focus in the chip or its drop-down goes to the chip when the
+      // drop-down closes, rather than falling back to the page's start. At
+      // the toolbar's version step, a chip whose updates are seen goes once
+      // its drop-down closes; focus then moves to the next toolbar control.
+      const close = () => {
+        if (popover.hidden) return;
+        const focused = wrap.contains(document.activeElement);
+        popover.hidden = true;
+        // By now the MutationObserver has refitted the toolbar for the
+        // closed drop-down, which may have given the step back.
+        requestAnimationFrame(() => {
+          if (!focused) return;
+          const next = () =>
+            [...wrap.closest(".diff-toolbar").querySelectorAll("a[href], button, input, summary")].find(
+              (el) => wrap.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && el.checkVisibility(),
+            );
+          (btn.checkVisibility() ? btn : next())?.focus();
+        });
+      };
+
       this._onClick = () => {
-        const opening = popover.hidden;
-        popover.hidden = !opening;
-        if (opening) {
-          setSeen(maxPr());
-          this._refreshBadge();
-        }
+        if (!popover.hidden) return close();
+        popover.hidden = false;
+        setSeen(maxPr());
+        this._refreshBadge();
+        // It hangs left from the chip's right edge; a chip near the
+        // window's left edge shifts it right, back into view.
+        popover.style.right = "";
+        const left = popover.getBoundingClientRect().left;
+        if (left < 8) popover.style.right = `${left - 8}px`;
       };
       btn.addEventListener("click", this._onClick);
 
       this._onDocClick = (e) => {
-        if (!wrap.contains(e.target)) popover.hidden = true;
+        if (!wrap.contains(e.target)) close();
       };
       this._onEsc = (e) => {
-        if (e.key === "Escape") popover.hidden = true;
+        if (e.key === "Escape") close();
       };
       document.addEventListener("click", this._onDocClick, true);
       document.addEventListener("keydown", this._onEsc);
