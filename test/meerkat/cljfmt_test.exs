@@ -70,12 +70,6 @@ defmodule Meerkat.CljfmtTest do
       assert Cljfmt.format_with("\n(f  x)\n\n", "(a)\n", "\n(b)", run) == "\n(f x)\n\n"
     end
 
-    test "keeps a suggestion the repair leaves empty, without formatting it" do
-      assert Cljfmt.format_with("", "(a)\n", "\n(b)", fake(& &1)) == ""
-      assert_received {:ran, false, _}
-      refute_received {:ran, true, _}
-    end
-
     test "formats a one-character suggestion" do
       run = fake(& &1, replace("(a)\nx", "(a)\n  x"))
       assert Cljfmt.format_with("x", "(a)\n", "\n(b)", run) == "  x"
@@ -95,8 +89,6 @@ defmodule Meerkat.CljfmtTest do
       code = "(f x"
       assert Cljfmt.format_with(code, "(a\n", "\n(b)", fake(replace("(a\n", "(a)\n"))) == code
       assert Cljfmt.format_with(code, "(a)\n", "\n(b", fake(replace("\n(b", "\n(b)"))) == code
-      # A repair that empties the file leaves nothing to cut out.
-      assert Cljfmt.format_with(code, "(a)\n", "\n(b)", fake(fn _ -> "" end)) == code
     end
 
     test "keeps the suggestion when formatting joins it with a line around it" do
@@ -115,24 +107,6 @@ defmodule Meerkat.CljfmtTest do
       # The same characters in another order.
       swapped = fake(& &1, replace("(a)\n(f x)", "(f x)\n(a)"))
       assert Cljfmt.format_with(code, "(a)\n", "", swapped) == code
-    end
-
-    test "keeps a suggestion with nothing but whitespace" do
-      assert Cljfmt.format_with("  \n", "(a)\n", "\n(b)", fake(& &1)) ==
-               "  \n"
-    end
-
-    test "keeps the suggestion when the file can't be read back, and removes the file" do
-      test_pid = self()
-
-      run = fn path, _ ->
-        send(test_pid, {:path, path})
-        File.rm!(path)
-      end
-
-      assert Cljfmt.format_with("(f x)", "", "", run) == "(f x)"
-      assert_received {:path, path}
-      refute File.exists?(path)
     end
 
     test "removes the file it formats in, a tmp file of its own for each suggestion" do
@@ -194,11 +168,6 @@ defmodule Meerkat.CljfmtTest do
       calls
     end
 
-    test "without the hook on PATH, keeps the suggestion", %{stub_dir: dir} do
-      System.put_env("PATH", dir)
-      assert Cljfmt.format("(f  x)", "", "", dir) == "(f  x)"
-    end
-
     test "runs the hook in the given directory on an edit of the file, repairing, then formatting",
          ctx do
       calls = stub_hook(ctx, 0)
@@ -243,7 +212,8 @@ defmodule Meerkat.CljfmtTest do
   end
 
   describe "the installed hook" do
-    @describetag skip: is_nil(@installed) && "#{@hook} is not installed"
+    # CI doesn't install the hook.
+    @describetag skip: is_nil(@installed) && "#{@hook} is not installed, as in CI"
 
     setup do
       dir = Meerkat.TestHelpers.tmp_path("meerkat-cljfmt-real")

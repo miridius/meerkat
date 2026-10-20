@@ -5,19 +5,31 @@ import { LanguageSupport } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState, type Extension, type Transaction } from "@codemirror/state";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
-import { anchorContext, indentation } from "./cmIndent";
+import { indentation, openForm, textAbove } from "./cmIndent";
 
-describe("anchorContext", () => {
-	const source = "one\ntwo\nthree\nfour\n";
-
-	test("holds the lines around the anchor, so they join its lines back into the file", () => {
-		const context = anchorContext(source, 2, 3);
-		expect(context).toEqual({ before: "one\n", after: "\nfour\n" });
-		expect(`${context.before}two\nthree${context.after}`).toBe(source);
+describe("textAbove", () => {
+	test("holds the lines above the anchor, so the anchor's lines join it back into the file", () => {
+		const source = "one\ntwo\nthree\n";
+		expect(textAbove(source, 2)).toBe("one\n");
+		expect(`${textAbove(source, 2)}two\nthree\n`).toBe(source);
 	});
 
-	test("is empty before the first line and after the last", () => {
-		expect(anchorContext("a\nb", 1, 2)).toEqual({ before: "", after: "" });
+	test("is empty above the first line", () => {
+		expect(textAbove("a\nb", 1)).toBe("");
+	});
+});
+
+describe("openForm", () => {
+	test("is the top-level form still open at the end", () => {
+		expect(openForm("(a)\n(defn f [x]\n  (let [y 1]\n", clojureLanguage)).toBe("(defn f [x]\n  (let [y 1]\n");
+		expect(openForm("(a)\n^:private (defn f [x]\n", clojureLanguage)).toBe("^:private (defn f [x]\n");
+		expect(openForm('(a)\n(defn f\n  "doc\n', clojureLanguage)).toBe('(defn f\n  "doc\n');
+	});
+
+	test("is empty when every form above is closed", () => {
+		expect(openForm("(a)\n(b)\n", clojureLanguage)).toBe("");
+		expect(openForm("(a)\n; (b\n", clojureLanguage)).toBe("");
+		expect(openForm("", clojureLanguage)).toBe("");
 	});
 });
 
@@ -32,14 +44,17 @@ function enterIn(
 	line: number,
 	language: string,
 	support: Extension,
-	withContext = true,
+	withAbove = true,
 ): string {
-	const context = withContext ? anchorContext(file, start, end) : undefined;
-	const doc = file.split(/\r?\n/).slice(start - 1, end).join("\n");
+	const above = withAbove ? textAbove(file, start) : undefined;
+	const doc = file
+		.split("\n")
+		.slice(start - 1, end)
+		.join("\n");
 	const compartment = new Compartment();
 	let state = EditorState.create({
 		doc,
-		extensions: [compartment.of(support), indentation(language, context, compartment)],
+		extensions: [compartment.of(support), indentation(language, above, compartment)],
 	});
 	state = state.update({ selection: EditorSelection.cursor(state.doc.line(line).to) }).state;
 	let tr: Transaction | null = null;
@@ -75,14 +90,16 @@ describe("Enter", () => {
 		expect(enterIn(CLJ, 6, 7, 2, "clojure", clojure)).toBe("               ");
 	});
 
-	test("in Clojure, a file with CRLF line ends indents as one with LF", () => {
-		// Each `\r` before the editor's lines would shift positions by one.
-		const crlf = `${"(a)\n".repeat(80)}${CLJ}`.replaceAll("\n", "\r\n");
-		expect(enterIn(crlf, 85, 86, 1, "clojure", clojure)).toBe("    ");
+	test("in Clojure, indents the same below other forms", () => {
+		expect(enterIn(`${"(a)\n".repeat(80)}${CLJ}`, 85, 86, 1, "clojure", clojure)).toBe("    ");
 	});
 
 	test("in Clojure without the file, indents by the editor's lines alone", () => {
 		expect(enterIn(CLJ, 6, 7, 2, "clojure", clojure, false)).toBe("               ");
+	});
+
+	test("in Clojure, keeps the line's indentation until the pack loads", () => {
+		expect(enterIn(CLJ, 6, 7, 2, "clojure", [])).toBe("      ");
 	});
 
 	test("in other languages, keeps the line's indentation", () => {

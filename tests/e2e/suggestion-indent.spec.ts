@@ -4,7 +4,7 @@ import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // The browser seam of the suggestion editor's indentation: DiffViewer.svelte
-// hands the editor the file's text around the anchored lines. The rules
+// hands the editor the file's text above the anchored lines. The rules
 // themselves are covered by assets/ts/cmIndent.test.ts and
 // assets/ts/clojureIndent.test.ts.
 
