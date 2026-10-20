@@ -394,16 +394,19 @@ const hooks = {
       }
       this._refreshBadge();
 
-      // At the toolbar's version step, a chip whose updates are seen goes
-      // once its drop-down closes. Focus on it then moves to the next
-      // toolbar control rather than falling back to the page's start.
+      // Focus in the chip or its drop-down stays on the chip when the
+      // drop-down closes, rather than falling back to the page's start. At
+      // the toolbar's version step, a chip whose updates are seen goes once
+      // its drop-down closes; focus then moves to the next toolbar control.
       const close = () => {
         if (popover.hidden) return;
         const focused = wrap.contains(document.activeElement);
         popover.hidden = true;
-        // After the frame's refit, which may give the step back.
+        // By now the MutationObserver has refitted the toolbar for the
+        // closed drop-down, which may have given the step back.
         requestAnimationFrame(() => {
-          if (!focused || btn.checkVisibility()) return;
+          if (!focused) return;
+          if (btn.checkVisibility()) return btn.focus();
           const toolbar = wrap.closest(".diff-toolbar");
           const next = [...toolbar.querySelectorAll("a[href], button, input, summary")].find(
             (el) => wrap.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && el.checkVisibility(),

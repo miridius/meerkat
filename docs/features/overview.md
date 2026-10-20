@@ -67,16 +67,17 @@ When the UI does open, the reviewer sees, top-to-bottom:
    updates seen, so the chip turns invisible but keeps its place,
    and the drop-down stays where it opened until it closes, by a
    click where the chip was, a click elsewhere, or Esc; the toolbar
-   then fits again, with no chip if it still needs that step, and
-   focus on the chip moves to the next toolbar control. A dev
+   then fits again, with no chip if it still needs that step. A dev
    build's chip, with no updates or drop-down, is gone at that step
-   too. The drop-down opens within the window at any width. Branch names show
+   too. When the drop-down closes, focus in the chip or the
+   drop-down goes to the chip, or, when the chip is gone, to the next
+   toolbar control. The drop-down opens within the window at any width. Branch names show
    in full until their step truncates them. The connection pill's
    label, and the version on a chip that shows only its count, stay
    readable to screen readers. While the page loads, the
    toolbar keeps to one row: the title and branches give up room
-   first, so the connection pill stays in view, and what still does
-   not fit is cut off.
+   first, so the connection pill stays in view when the rest fits,
+   and what still does not fit is cut off.
    For staged changes, the toolbar shows the current branch and its
    open PR. During a rebase, HEAD is detached, so the toolbar shows
    the branch being rebased and looks up its PR by name. This lookup

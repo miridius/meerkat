@@ -41,17 +41,27 @@ async function at(page: Page, width: number) {
 // checkout; a baked manifest pins it.
 const MANIFEST = ["abc1234567890", "https://github.com/miridius/meerkat"];
 
-// Fitting the toolbar raises no errors, such as a ResizeObserver loop.
+// Fitting the toolbar raises no errors, such as a ResizeObserver loop. They
+// are kept outside the page, so a reload does not drop them.
 async function trackPageErrors(page: Page) {
+	const errors: string[] = [];
+	await page.exposeFunction("reportPageError", (message: string) => errors.push(message));
 	await page.addInitScript(() => {
-		const w = window as unknown as { pageErrors: string[] };
-		w.pageErrors = [];
-		window.addEventListener("error", (e) => w.pageErrors.push(e.message));
+		const w = window as unknown as { reportPageError(message: string): void };
+		window.addEventListener("error", (e) => w.reportPageError(e.message));
 	});
+	return errors;
 }
 
-async function expectNoPageErrors(page: Page) {
-	expect(await page.evaluate(() => (window as unknown as { pageErrors: string[] }).pageErrors)).toEqual([]);
+// Whether the version chip shows the version rather than only its count.
+function versionShown(page: Page) {
+	return page
+		.locator(".version-chip-btn")
+		.evaluate((el) =>
+			[...el.children].some(
+				(c) => !c.matches(".version-badge") && c.getBoundingClientRect().width > 1 && c.textContent?.includes("abc1234"),
+			),
+		);
 }
 
 test("narrowing the window takes the squeeze steps in order, one row until the last, and the ⚙ popover then holds Split / Unified and Wrap", async ({
@@ -70,7 +80,7 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		env: { RELEASE_ROOT: releaseRoot },
 	});
 	try {
-		await trackPageErrors(page);
+		const errors = await trackPageErrors(page);
 		await page.setViewportSize({ width: 2400, height: 800 });
 		await page.goto(meerkat.url);
 		await expect(page.locator(".diff-toolbar")).toHaveAttribute("data-squeeze", "");
@@ -183,7 +193,7 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 		await expect.poll(async () => (await toolbarState(page)).steps).toEqual(["version", "files"]);
 		expect((await toolbarState(page)).overflows).toBe(false);
 
-		await expectNoPageErrors(page);
+		expect(errors, "no page errors").toEqual([]);
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
@@ -204,7 +214,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		env: { RELEASE_ROOT: releaseRoot },
 	});
 	try {
-		await trackPageErrors(page);
+		const errors = await trackPageErrors(page);
 		await page.setViewportSize({ width: 2400, height: 800 });
 		await page.goto(meerkat.url);
 		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
@@ -231,7 +241,8 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(popover).toBeHidden();
 		// Closed, it gives the step back.
 		await expect.poll(async () => (await toolbarState(page)).steps).toEqual([]);
-		await expect(chip).toContainText("abc1234");
+		expect(await versionShown(page)).toBe(true);
+		await expect(chip, "focus stays on the chip that came back").toBeFocused();
 
 		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
 		await page.reload();
@@ -244,7 +255,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		expect(onScreen).toEqual(["11"]);
 		await expect(chip, "the version stays in the chip's name").toHaveAccessibleName(/abc1234/);
 
-		// Opening it marks the update seen, so the chip goes, keeping its box
+		// Opening it marks the updates seen, so the chip goes, keeping its box
 		// so the drop-down stays where it opened.
 		const box = await wrap.boundingBox();
 		await chip.click();
@@ -252,6 +263,7 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(named).toHaveText(/^\s*meerkat\s+abc1234\s*$/);
 		await expect(chip).toHaveCSS("opacity", "0");
 		expect(await wrap.boundingBox()).toEqual(box);
+		await expect(chip, "the count it keeps for its width is not read out").not.toHaveAccessibleName(/11/);
 		// Clicking it again closes the drop-down, and the chip goes.
 		await chip.click();
 		await expect(popover).toBeHidden();
@@ -274,10 +286,11 @@ test("at its step the version chip shows only its count of updates, and its drop
 		// Esc closes it too, and focus moves on from the chip as it goes.
 		await page.keyboard.press("Escape");
 		await expect(wrap).toBeHidden();
-		await expect(page.locator(".diff-toolbar :focus")).toBeVisible();
+		// The view controls are in the ⚙ popover at this width, so ⚙ is next.
+		await expect(page.locator(".toolbar-settings > summary")).toBeFocused();
 
 		await at(page, 2400);
-		await expect(chip).toContainText("abc1234");
+		expect(await versionShown(page)).toBe(true);
 		await chip.click();
 		await expect(popover).toBeVisible();
 		await expect(named, "with room, the chip itself names the version").toBeHidden();
@@ -286,10 +299,23 @@ test("at its step the version chip shows only its count of updates, and its drop
 			[wrap, popover].map((el) => el.evaluate((e) => e.getBoundingClientRect().right)),
 		);
 		expect(dropRight).toBeCloseTo(chipRight, 0);
-		// A click elsewhere closes it.
-		await page.locator(".toolbar-title").click();
+		// Esc from one of its links gives focus back to the chip.
+		await chip.focus();
+		await page.keyboard.press("Tab");
+		await expect(popover.getByRole("link").first()).toBeFocused();
+		await page.keyboard.press("Escape");
 		await expect(popover).toBeHidden();
-		await expectNoPageErrors(page);
+		await expect(chip).toBeFocused();
+		await chip.click();
+		await expect(popover).toBeVisible();
+		// A click elsewhere closes it, leaving focus where the click put it.
+		const files = page.getByRole("button", { name: "Toggle file list" });
+		await files.click();
+		await expect(popover).toBeHidden();
+		await afterNextFrame(page);
+		await expect(files).toBeFocused();
+		await files.click();
+		expect(errors, "no page errors").toEqual([]);
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });
@@ -311,7 +337,7 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 		env: { RELEASE_ROOT: releaseRoot },
 	});
 	try {
-		await trackPageErrors(page);
+		const errors = await trackPageErrors(page);
 		await page.setViewportSize({ width: 2400, height: 800 });
 		await page.goto(meerkat.url);
 		await expect(page.locator(".diff-toolbar")).toHaveAttribute("data-squeeze", "");
@@ -354,7 +380,7 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 		// steps truncate the other branch.
 		while (!(await at(page, width)).steps.includes("head")) width -= 20;
 		expect(await base.evaluate((el) => el.getBoundingClientRect().width)).toBeCloseTo(natural, 0);
-		await expectNoPageErrors(page);
+		expect(errors, "no page errors").toEqual([]);
 	} finally {
 		await meerkat.kill();
 		rmSync(releaseRoot, { recursive: true, force: true });

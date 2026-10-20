@@ -811,9 +811,10 @@ a.chip-link:hover .chip-value {
    The Toolbar hook (app.js) sets `data-squeeze` to the steps, from
    toolbarSqueeze.ts, that fit the toolbar's content on one row. Until
    it runs, the toolbar keeps to one row, so the height the page
-   published before it ran rarely changes when it does: the title and
-   branches give up room first, so the connection pill stays in view if
-   the page never connects, and what still does not fit is clipped.
+   published before it ran rarely changes when it does. The title and
+   branches give up room first, so the connection pill stays in view
+   when the rest fits, as on a page that never connects; what still
+   does not fit is clipped.
    Once it has, nothing shrinks or wraps until a step lets it, so
    overflow tells the hook a step is needed. */
 .diff-toolbar:not([data-squeeze~="wrap"]) {

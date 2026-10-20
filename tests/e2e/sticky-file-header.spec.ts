@@ -110,7 +110,7 @@ test.describe("the file header stays readable while its diff scrolls", () => {
 				expect(published.toolbarH, "the CSS fallback would be wrong").not.toBe(40);
 				expect(
 					published.pillInView,
-					"the title and branch give up room, so a page that never connects still says so",
+					"the title and branch give up room, so the connection pill stays in view",
 				).toBe(true);
 				expect(published.published, "--toolbar-h already carries the toolbar's real height").toBe(
 					`${published.toolbarH}px`,
