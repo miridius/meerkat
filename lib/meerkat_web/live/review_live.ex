@@ -3029,7 +3029,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   # CommentForm.svelte puts a suggestion's code in a fence last in the
-  # body, tagged with the file's language.
+  # body, tagged with the editor's language.
   @clojure_suggestion ~r/\A[\s\S]*\n```clojure\n([\s\S]*?)\n```\s*\z/
 
   # The body with a Clojure suggestion's code formatted as it would sit
