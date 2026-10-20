@@ -159,7 +159,8 @@ defmodule Meerkat.GitBinaryTest do
 
   for {failure, action} <- [
         {"fails", "exit 1"},
-        {"is cut short", "printf 'abc123 blob 99\\nshort\\n'; exit 0"}
+        {"is cut short", "printf 'abc123 blob 99\\nshort\\n'; exit 0"},
+        {"answers out of form", "echo garbage; exit 0"}
       ] do
     test "a -diff file stays binary when its content read #{failure}", %{dir: dir} do
       stage(dir, ".gitattributes", "*.gen -diff\n")
@@ -182,12 +183,15 @@ defmodule Meerkat.GitBinaryTest do
     stage(dir, "cr.gen", "text\n")
     stage(dir, "cr.gen\r", "nul" <> <<0>>)
     stage(dir, "plain.gen", "text\n")
+    # Git reads a CR inside a name as it is.
+    stage(dir, "mid\rcr.gen", "text\n")
 
     assert {:ok, files} = Git.staged_file_diffs(dir)
     by_name = Map.new(files, &{&1.file_name, &1})
     assert by_name["new\nline.gen"].is_binary
     assert by_name["cr.gen\r"].is_binary
     refute by_name["cr.gen"].is_binary
+    refute by_name["mid\rcr.gen"].is_binary
     refute by_name["plain.gen"].is_binary
   end
 
@@ -212,6 +216,12 @@ defmodule Meerkat.GitBinaryTest do
     assert by_name["b.sub"].is_binary
     refute by_name["z.gen"].is_binary
     assert Enum.join(by_name["z.gen"].hunks) =~ "-old\n+new"
+
+    git(dir, ["commit", "-qm", "head"])
+    assert {:ok, files} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+    by_name = Map.new(files, &{&1.file_name, &1})
+    assert by_name["a.sub"].is_binary
+    refute by_name["z.gen"].is_binary
   end
 
   test "the staged text patch names only the -diff text files", %{dir: dir} do

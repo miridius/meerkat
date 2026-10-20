@@ -739,17 +739,17 @@ defmodule Meerkat.Git do
   # `%{object => content}` for each blob one `git cat-file --batch` reads.
   # `System.cmd` can't write to stdin, so `sh` feeds it the names, one
   # per line. Git splits a name at a newline and drops a trailing CR, so
-  # a name holding either is left out, and its file stays binary.
+  # such a name is left out, and its file stays binary.
   # An object missing from the answer reads as no content.
   defp read_blobs(repo_path, objects) do
-    case Enum.reject(objects, &String.contains?(&1, ["\n", "\r"])) do
+    case Enum.reject(objects, &(&1 =~ "\n" or String.ends_with?(&1, "\r"))) do
       [] ->
         %{}
 
       objects ->
         script = ~s(printf '%s\\n' "$0" "$@" | exec git cat-file --batch)
 
-        # muex:ignore equivalent: `-cx` only adds a shell trace on meerkat's stderr, which the parse never reads
+        # muex:ignore equivalent: `-cx` only traces to stderr; other mutants here break every read
         sh_args = ["-c", script]
 
         case System.cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
@@ -759,10 +759,10 @@ defmodule Meerkat.Git do
     end
   end
 
-  # Each answer is `<oid> <type> <size>\n<content>\n`, or a single line
-  # such as `<oid> submodule` or `<object> missing` when there is no
-  # object to show. Only a blob's content counts; an answer cut short
-  # ends the parse, so the objects after it read as no content.
+  # Each answer is `<oid> <type> <size>\n<content>\n`, or `<oid>
+  # submodule` for a submodule side whose commit this repo lacks. Only a
+  # blob's content counts. Any other answer ends the parse, so it and the
+  # objects after it read as no content.
   defp parse_batch(output, [object | objects], acc) do
     with [header, rest] <- :binary.split(output, "\n"),
          {:ok, content, rest} <- batch_answer(header, rest) do
@@ -775,9 +775,16 @@ defmodule Meerkat.Git do
   defp parse_batch(_output, [], acc), do: acc
 
   defp batch_answer(header, rest) do
-    case Regex.run(~r/^[0-9a-f]+ (\w+) (\d+)$/, header, capture: :all_but_first) do
-      [type, size] -> split_object(rest, type, String.to_integer(size))
-      nil -> {:ok, nil, rest}
+    cond do
+      header =~ ~r/^[0-9a-f]+ submodule$/ ->
+        {:ok, nil, rest}
+
+      answer = Regex.run(~r/^[0-9a-f]+ (\w+) (\d+)$/, header, capture: :all_but_first) ->
+        [type, size] = answer
+        split_object(rest, type, String.to_integer(size))
+
+      true ->
+        :error
     end
   end
 
