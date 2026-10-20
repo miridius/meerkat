@@ -127,12 +127,14 @@ defmodule Meerkat.GitBinaryTest do
     assert Enum.join(big.hunks) =~ "+end"
   end
 
-  test "a staged -diff text file ignores whitespace changes and may name a stage", %{dir: dir} do
+  test "a staged -diff text file ignores whitespace changes, and one named like a stage reads",
+       %{dir: dir} do
     stage(dir, ".gitattributes", "*.gen -diff\n")
     stage(dir, "space.gen", "keep\nspace here\n")
     git(dir, ["commit", "-qm", "base"])
     stage(dir, "space.gen", "keep\nspace  here\nadded\n")
-    # `:1:a.gen` would name a merge stage, not this file.
+    # With a bare `:` prefix, `1:a.gen`'s index side would read as merge
+    # stage 1 of `a.gen`; the probe must use `:0:`.
     stage(dir, "1:a.gen", "text\n")
 
     assert {:ok, [stage_like, space]} = Git.staged_file_diffs(dir)
@@ -155,7 +157,10 @@ defmodule Meerkat.GitBinaryTest do
     assert_binary(nul, :added)
   end
 
-  for {failure, action} <- [{"fails", "exit 1"}, {"answers out of form", "echo garbage; exit 0"}] do
+  for {failure, action} <- [
+        {"fails", "exit 1"},
+        {"is cut short", "printf 'abc123 blob 99\\nshort\\n'; exit 0"}
+      ] do
     test "a -diff file stays binary when its content read #{failure}", %{dir: dir} do
       stage(dir, ".gitattributes", "*.gen -diff\n")
       stage(dir, "a.gen", "text\n")
@@ -168,15 +173,75 @@ defmodule Meerkat.GitBinaryTest do
     end
   end
 
-  test "a -diff text file whose name holds a newline stays binary", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
+  test "a -diff text file whose name holds a newline or a carriage return stays binary", %{
+    dir: dir
+  } do
+    stage(dir, ".gitattributes", "*.gen -diff\ncr.gen? -diff\n")
     stage(dir, "new\nline.gen", "text\n")
+    # cat-file would read `:0:cr.gen`, this blob, for `:0:cr.gen\r`.
+    stage(dir, "cr.gen", "text\n")
+    stage(dir, "cr.gen\r", "nul" <> <<0>>)
     stage(dir, "plain.gen", "text\n")
 
     assert {:ok, files} = Git.staged_file_diffs(dir)
     by_name = Map.new(files, &{&1.file_name, &1})
     assert by_name["new\nline.gen"].is_binary
+    assert by_name["cr.gen\r"].is_binary
+    refute by_name["cr.gen"].is_binary
     refute by_name["plain.gen"].is_binary
+  end
+
+  test "a submodule side stays binary and leaves later -diff files' probes intact", %{dir: dir} do
+    File.write!(Path.join(dir, ".git/info/attributes"), "* -diff\n")
+    stage(dir, "z.gen", "old\n")
+    git(dir, ["commit", "-qm", "first"])
+    commit = String.trim(git(dir, ["rev-parse", "HEAD"]))
+    # One submodule commit this repo's objects lack, and one they hold.
+    git(dir, ["update-index", "--add", "--cacheinfo", "160000,#{String.duplicate("1", 40)},a.sub"])
+
+    git(dir, ["update-index", "--add", "--cacheinfo", "160000,#{commit},b.sub"])
+    git(dir, ["commit", "-qm", "base"])
+    git(dir, ["rm", "-q", "--cached", "a.sub", "b.sub"])
+    stage(dir, "a.sub", "now a file\n")
+    stage(dir, "b.sub", "now a file\n")
+    stage(dir, "z.gen", "new\n")
+
+    assert {:ok, files} = Git.staged_file_diffs(dir)
+    by_name = Map.new(files, &{&1.file_name, &1})
+    assert by_name["a.sub"].is_binary
+    assert by_name["b.sub"].is_binary
+    refute by_name["z.gen"].is_binary
+    assert Enum.join(by_name["z.gen"].hunks) =~ "-old\n+new"
+  end
+
+  test "the staged text patch names only the -diff text files", %{dir: dir} do
+    stage(dir, ".gitattributes", "*.gen -diff\n")
+    stage(dir, "a.gen", "text\n")
+    stage(dir, "logo.bin", <<0, 1>>)
+    stage(dir, "plain.txt", "text\n")
+    log = Path.join(dir, "text-diff.log")
+    intercept_git(dir, "--text", "echo \"$*\" >> '#{log}'")
+
+    assert {:ok, [_attributes, a, logo, _plain]} = Git.staged_file_diffs(dir)
+    refute a.is_binary
+    assert logo.is_binary
+    assert File.read!(log) =~ "--text -- a.gen"
+    refute File.read!(log) =~ "logo.bin"
+  end
+
+  test "a failed staged text patch shows on each -diff text file", %{dir: dir} do
+    stage(dir, ".gitattributes", "*.gen -diff\n")
+    stage(dir, "a.gen", "text\n")
+    stage(dir, "plain.txt", "text\n")
+    intercept_git(dir, "--text", "echo text-diff-failed >&2; exit 1")
+
+    ExUnit.CaptureIO.capture_io(:stderr, fn ->
+      assert {:ok, [_attributes, a, plain]} = Git.staged_file_diffs(dir)
+      refute a.is_binary
+      assert a.hunks == []
+      assert Enum.join(a.read_errors) =~ "text-diff-failed"
+      assert plain.read_errors == []
+    end)
   end
 
   for {what, arg, flag} <- [
