@@ -195,10 +195,20 @@ and saving its comments; a review with neither
 [ends](#when-nothing-waits-on-the-review).
 
 An invocation stopped by SIGTERM, SIGINT or SIGHUP before it has the
-decision tells whoever ran it so, printing
-`meerkat: stopped waiting (SIGTERM) before the review completed. The review stays open at <url> if it has comments or an open comment form; run the same command again to wait for its outcome.`
-(naming the signal it got, and leaving out ` at <url>` while the
-server is still starting), then dies of that signal. The pause
+decision first detaches from the server, which
+[judges the review](#when-nothing-waits-on-the-review) at once and
+answers whether that ended it. The invocation then tells whoever ran
+it the outcome, naming the signal it got, and dies of that signal:
+
+- The review stays open:
+  `meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
+- The review ended:
+  `meerkat: stopped waiting (SIGTERM) before the review completed. The review had no comments or open comment form, so it ended; run the same command again to start a new one.`
+- The server gave no answer within 2 seconds, or is still starting:
+  `meerkat: stopped waiting (SIGTERM) before the review completed. The review stays open at <url> if it has comments or an open comment form; run the same command again to wait for its outcome.`
+  It leaves out ` at <url>` while the server is still starting.
+
+The pause
 banner covers an invocation killed without a chance to print, as by
 SIGKILL: it says an output that ends after the banner with no outcome
 line means the review stays open if it has comments or an open
@@ -207,8 +217,8 @@ comment form.
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
 running. Meerkat notices an exited ancestor within about a second,
-prints the same line with `the process that ran meerkat exited` in
-place of `stopped waiting (SIGTERM)`, and exits 1. Where `ps` is
+detaches and prints the same outcome line with `the process that ran
+meerkat exited` in place of `stopped waiting (SIGTERM)`, and exits 1. Where `ps` is
 denied, as in Claude Code's sandbox, it cannot tell and keeps
 waiting. A decision clicked while no invocation is attached stays
 held for the next invocation.
@@ -255,8 +265,11 @@ not passed.
 A review left with no invocation waiting on it and no decision is
 judged once, when the server learns the invocation is gone:
 
-- An attached invocation is gone once its attach stream drops, about
-  1.5 seconds after it dies.
+- An invocation that [tells whoever ran it](#when-the-caller-exits)
+  is gone once it detaches. The server judges the review before
+  answering it.
+- Any other attached invocation is gone once its attach stream drops,
+  about 1.5 seconds after it dies.
 - An invocation that died before it attached, for example while the
   dev launcher compiled or the BEAM booted, is gone once the run dir's
   `caller` file names a process that `ps` shows is not a running

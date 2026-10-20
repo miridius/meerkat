@@ -30,6 +30,10 @@ defmodule MeerkatWeb.AttachController do
 
   `POST /api/attach/delivered?run=<run>` reports that the caller printed
   the outcome.
+
+  `POST /api/attach/leave?run=<run>` detaches a caller that is exiting
+  before the outcome and answers `ended` if the review ended, judged at
+  once when no caller is left, or `open` if it is still open.
   """
 
   use Phoenix.Controller, formats: []
@@ -119,6 +123,12 @@ defmodule MeerkatWeb.AttachController do
   end
 
   def delivered(conn, _params), do: send_resp(conn, 400, "bad request\n")
+
+  def leave(conn, %{"run" => run}) when is_binary(run) do
+    send_resp(conn, 200, "#{Decision.leave(run)}\n")
+  end
+
+  def leave(conn, _params), do: send_resp(conn, 400, "bad request\n")
 
   defp require_token(conn, _opts) do
     token = System.get_env("MEERKAT_SERVE_TOKEN")

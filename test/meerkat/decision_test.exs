@@ -745,6 +745,98 @@ defmodule Meerkat.DecisionTest do
       assert Decision.current() == {:approve, ""}
     end
 
+    test "a caller that leaves a review with no comments ends it at once and is not judged again when it exits",
+         %{serve_dir: serve_dir} do
+      decision = trace_judgements()
+      await_in_background()
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      {first, _} = spawn_caller("run-a")
+      {second, _} = spawn_caller("run-a")
+      assert Decision.leave("run-a") == :ended
+      assert_receive {:awaited, {:ended, ""}}
+      assert_receive {:meerkat_deadline, nil}
+      refute File.exists?(Path.join(serve_dir, "kept"))
+
+      # Decision has stopped watching the callers, so their exits reach it
+      # as no message at all, not as unexpected ones it logs.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          for pid <- [first, second] do
+            ref = Process.monitor(pid)
+            Process.exit(pid, :kill)
+            assert_receive {:DOWN, ^ref, :process, _, _}
+          end
+
+          :sys.get_state(Decision)
+        end)
+
+      assert log == ""
+      refute_judged(decision, 0)
+      assert Decision.leave("run-a") == :ended
+    end
+
+    test "a caller that leaves for a run not attached leaves the attached caller its deadline and judges nothing",
+         %{serve_dir: serve_dir} do
+      System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
+      on_exit(fn -> System.delete_env("MEERKAT_REVIEW_TIMEOUT") end)
+      Phoenix.PubSub.subscribe(Meerkat.PubSub, Decision.deadline_topic())
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      assert_receive {:meerkat_deadline, deadline} when is_integer(deadline)
+      assert Decision.leave("run-b") == :open
+      refute_received {:meerkat_deadline, nil}
+      refute File.exists?(Path.join(serve_dir, "kept"))
+      assert Decision.current() == nil
+      Process.exit(pid, :kill)
+      assert_receive {:meerkat_deadline, nil}
+      # Left running, the judgement would end the next test's review.
+      assert_judged(decision, :ended)
+    end
+
+    test "a caller that leaves a review with a comment is told it is open, and the review is kept",
+         %{repo: repo, review_id: review_id, serve_dir: serve_dir} do
+      start_review(review_id, repo)
+      ReviewServer.add_comment(review_id, :global, comment())
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      assert Decision.leave("run-a") == :open
+      assert File.exists?(Path.join(serve_dir, "kept"))
+      assert Decision.current() == nil
+
+      Process.exit(pid, :kill)
+      refute_judged(decision, 0)
+    end
+
+    test "a caller that leaves before attaching stops the checks for the recorded caller" do
+      assert is_reference(:sys.get_state(Decision).caller_check)
+      assert Decision.leave("run-a") == :ended
+      assert :sys.get_state(Decision).caller_check == nil
+    end
+
+    test "a caller that leaves a decided review is told it is open, and the decision stands",
+         %{serve_dir: serve_dir} do
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      {:ok, _} = Decision.submit({:approve, ""})
+      assert Decision.leave("run-a") == :open
+      # Judging it would mark it kept.
+      refute File.exists?(Path.join(serve_dir, "kept"))
+      Process.exit(pid, :kill)
+      refute_judged(decision, 0)
+      assert Decision.current() == {:approve, ""}
+    end
+
+    test "without a launcher, a caller that leaves is told the review is open, judging nothing" do
+      Application.delete_env(:meerkat, :serve_dir)
+      Decision.reset()
+      decision = trace_judgements()
+      {pid, _} = spawn_caller("run-a")
+      assert Decision.leave("run-a") == :open
+      Process.exit(pid, :kill)
+      refute_judged(decision, 0)
+      assert Decision.current() == nil
+    end
+
     test "a caller that died before attaching ends the review", %{serve_dir: serve_dir} do
       decision = trace_judgements()
       File.write!(Path.join(serve_dir, "caller"), exited_pid())

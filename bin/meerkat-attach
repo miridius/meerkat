@@ -168,7 +168,7 @@ _ma_exit_if_orphaned() {
   joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
   live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
   if ((live < ${#_MA_ANCESTORS[@]})); then
-    _ma_still_open "the process that ran meerkat exited"
+    _ma_leave "the process that ran meerkat exited"
     exit 1
   fi
   return 0
@@ -179,22 +179,35 @@ _ma_ps_works() {
   [[ -n "$(ps -o pid= -p $$ 2>/dev/null)" ]]
 }
 
-# A caller stopped before the decision says the review lives on, so whoever
-# ran it learns to rerun instead of reading only an exit status. It then dies
-# of the signal, as it would have untrapped.
+# A caller stopped before the decision says how the review stands, so whoever
+# ran it learns whether to rerun instead of reading only an exit status. It
+# then dies of the signal, as it would have untrapped.
 _ma_stopped() {
-  _ma_still_open "stopped waiting (SIG$1)"
+  _ma_leave "stopped waiting (SIG$1)"
   trap - "$1"
   kill -s "$1" $$
 }
 
-_ma_still_open() {
+# Detach from the backend, which judges the review at once, and print what
+# it answers: whether the review ended or is still open. A backend still
+# starting, or one that does not answer within 2 s, gets the line that says
+# when it stays open.
+_ma_leave() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
-  local IFS=$' \t\n' port beam at=""
-  # No port while a BEAM starts; the review stays open then too.
-  read -r port beam 2>/dev/null <"$_MA_DIR/port" && at=" at http://127.0.0.1:$port/"
-  echo "meerkat: $1 before the review completed. The review stays open$at if it has comments or an open comment form; run the same command again to wait for its outcome." >&2
+  local IFS=$' \t\n' port beam token at="" standing=""
+  if read -r port beam 2>/dev/null <"$_MA_DIR/port"; then
+    at=" at http://127.0.0.1:$port/"
+    token="$(cat "$_MA_DIR/token" 2>/dev/null)"
+    standing="$(curl -sf --max-time 2 -X POST -H "x-meerkat-token: $token" \
+      "http://127.0.0.1:$port/api/attach/leave?run=$_MA_RUN" 2>/dev/null)"
+  fi
+  local said="meerkat: $1 before the review completed."
+  case "$standing" in
+    ended) echo "$said The review had no comments or open comment form, so it ended; run the same command again to start a new one." >&2 ;;
+    open) echo "$said The review is still open$at; run the same command again to wait for its outcome." >&2 ;;
+    *) echo "$said The review stays open$at if it has comments or an open comment form; run the same command again to wait for its outcome." >&2 ;;
+  esac
 }
 
 _ma_log_size() {
