@@ -97,8 +97,8 @@ defmodule Meerkat.TestHelpers do
   def intercept_git(dir, arg, action) do
     old_path = System.fetch_env!("PATH")
     bin = Path.join(dir, "bin")
-    # Skip `bin` so a second intercept doesn't wrap the first, which
-    # would then exec itself forever.
+    # Skip `bin`: otherwise a second intercept takes the wrapper it is
+    # about to overwrite for the real git, and execs itself forever.
     search = old_path |> String.split(":") |> Enum.reject(&(&1 == bin)) |> Enum.join(":")
     real_git = List.to_string(:os.find_executable(~c"git", String.to_charlist(search)))
     File.mkdir_p!(bin)

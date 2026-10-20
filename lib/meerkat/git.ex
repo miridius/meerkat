@@ -523,8 +523,8 @@ defmodule Meerkat.Git do
   end
 
   # Shared by the staged patch and its binary classification, so both
-  # see the same diff. Textconv and external diff are off: both must
-  # match index bytes.
+  # see the same diff. Textconv and external diff are off, so both read
+  # the index's bytes.
   @staged_diff_args ["-w", "-M", "--no-textconv", "--no-ext-diff"]
 
   @doc """
@@ -591,18 +591,18 @@ defmodule Meerkat.Git do
 
   # The batched patch shows a `-diff` file as binary; one more batched
   # patch, with `--text` and limited to those files' paths, gets their
-  # lines. A failure lands in each of those files' `read_errors`.
+  # lines. A file that patch gives no hunks gets its failure, if any.
+  # With no files, the empty pathspec would select every staged file.
   defp staged_text_hunks(repo_path, entries, text_paths) do
-    paths =
-      for entry <- entries,
-          MapSet.member?(text_paths, entry.file_name),
-          path <- [entry.old_file_name || entry.file_name, entry.file_name],
-          do: path
-
-    # With no paths, the pathspec would select every staged file.
-    if paths == [] do
+    if MapSet.size(text_paths) == 0 do
       %{}
     else
+      paths =
+        for entry <- entries,
+            MapSet.member?(text_paths, entry.file_name),
+            path <- [entry.old_file_name || entry.file_name, entry.file_name],
+            do: path
+
       {map, errors} = staged_hunks_or_error(repo_path, ["--text", "--" | paths])
       Map.new(text_paths, &{&1, Map.get(map, &1, {[], errors})})
     end
@@ -697,8 +697,7 @@ defmodule Meerkat.Git do
           into: %{},
           do: {entry.file_name, file_sides(entry, old_ref, new_ref)}
 
-    # muex:ignore equivalent: git answers a repeated path with the same rows; this only shortens argv
-    paths = sides |> Map.values() |> Enum.concat() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    paths = sides |> Map.values() |> Enum.concat() |> Enum.map(&elem(&1, 1))
 
     candidates =
       case check_attrs(repo_path, ["diff", "binary"], paths) do
@@ -739,34 +738,35 @@ defmodule Meerkat.Git do
 
   # `%{object => content}` for each blob one `git cat-file --batch` reads.
   # `System.cmd` can't write to stdin, so `sh` feeds it the names, one
-  # per line; a name holding a newline would split, so it is left out.
+  # per line. Git splits a name at a newline and drops a trailing CR, so
+  # a name holding either is left out, and its file stays binary.
   # An object missing from the answer reads as no content.
   defp read_blobs(repo_path, objects) do
-    case Enum.reject(objects, &String.contains?(&1, "\n")) do
+    case Enum.reject(objects, &String.contains?(&1, ["\n", "\r"])) do
       [] ->
         %{}
 
       objects ->
-        # muex:ignore equivalent: `-x` traces only to stderr, which the parse never reads
-        sh_args = ["-c", ~s(printf '%s\\n' "$0" "$@" | exec git cat-file --batch)]
+        script = ~s(printf '%s\\n' "$0" "$@" | exec git cat-file --batch)
+
+        # muex:ignore equivalent: `-cx` only adds a shell trace on meerkat's stderr, which the parse never reads
+        sh_args = ["-c", script]
 
         case System.cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
-          {output, 0} -> parse_batch(output, objects, %{})
+          {output, 0} -> output |> parse_batch(objects, []) |> Map.new()
           _ -> %{}
         end
     end
   end
 
-  # Each answer is `<oid> blob <size>\n<content>\n`. Any other answer
-  # ends the parse, so it and the objects after it read as no content.
+  # Each answer is `<oid> <type> <size>\n<content>\n`, or a single line
+  # such as `<oid> submodule` or `<object> missing` when there is no
+  # object to show. Only a blob's content counts; an answer cut short
+  # ends the parse, so the objects after it read as no content.
   defp parse_batch(output, [object | objects], acc) do
     with [header, rest] <- :binary.split(output, "\n"),
-         [size] <- Regex.run(~r/^[0-9a-f]+ blob (\d+)$/, header, capture: :all_but_first),
-         size = String.to_integer(size),
-         # muex:ignore equivalent: `binary-size` and `size-binary` are one segment type
-         <<content::binary-size(^size), "\n", rest::binary>> <- rest do
-      # muex:ignore equivalent: one object name always reads as the same blob, so put_new changes nothing
-      parse_batch(rest, objects, Map.put(acc, object, content))
+         {:ok, content, rest} <- batch_answer(header, rest) do
+      parse_batch(rest, objects, [{object, content} | acc])
     else
       _ -> acc
     end
@@ -774,7 +774,30 @@ defmodule Meerkat.Git do
 
   defp parse_batch(_output, [], acc), do: acc
 
-  # Batched `git diff --cached -U3 -w -M` for the whole staged set.
+  defp batch_answer(header, rest) do
+    case Regex.run(~r/^[0-9a-f]+ (\w+) (\d+)$/, header, capture: :all_but_first) do
+      [type, size] -> split_object(rest, type, String.to_integer(size))
+      nil -> {:ok, nil, rest}
+    end
+  end
+
+  defp split_object(rest, type, size) do
+    case rest do
+      <<
+        # muex:ignore equivalent: `binary-size` and `size-binary` name one segment type
+        content::binary-size(^size),
+        "\n",
+        rest::binary
+      >> ->
+        {:ok, if(type == "blob", do: content), rest}
+
+      _ ->
+        :error
+    end
+  end
+
+  # Batched `git diff --cached -U3 -w -M` for the staged set, or for the
+  # paths `extra_args` names.
   # Returns `{:ok, %{file_name => {hunks, errors}}}` when every block
   # parsed, `{:partial, map, reason}` when some parsed, `{:error, reason}`
   # when none did.
