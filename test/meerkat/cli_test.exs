@@ -1080,7 +1080,7 @@ defmodule Meerkat.CLITest do
     # A binary diff shows no content, but it is still an unreviewed file,
     # so it must reach the UI whether attributes or its bytes make it binary.
     for {classification, attrs, old, new} <- [
-          {"attributes", "BUILD.bazel -diff\n", "old target\n", "new target\n"},
+          {"attributes", "BUILD.bazel binary\n", "old target\n", "new target\n"},
           {"bytes", nil, <<0, 255, 1>>, <<0, 254, 2>>}
         ] do
       test "staged binary-only change (#{classification}) + no pending answers → live review",

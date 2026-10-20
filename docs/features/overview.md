@@ -93,7 +93,14 @@ When the UI does open, the reviewer sees, top-to-bottom:
    Each file header shows that file's line counts on the right, just
    left of its buttons.
    In every review mode, a binary file shows a notice in place of its
-   diff, and meerkat never reads its content.
+   diff, and meerkat never reads its content. The exception is a file
+   git calls binary only because its `diff` attribute is unset
+   (`-diff`, as for generated files), not through git's `binary`
+   macro. Meerkat reads each side and, when no side has a NUL byte in
+   its first 8000 bytes (git's own test) and every side is valid
+   UTF-8, which the page needs, shows the file's diff and line counts
+   like any text file's. A file whose name holds a newline or ends in
+   a carriage return, or whose sides can't be read, stays binary.
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
    The exception is a hunk meerkat splits where a run both removes
@@ -132,7 +139,8 @@ is not counted. A binary file shows no counts.
 When every file is shown expanded, the toolbar shows one total for
 the whole diff, `+120 -30`. When the file filter hides a file or a
 file is collapsed, it shows the total of the expanded files the
-filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`.
+filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`,
+unless the two totals are equal, when it shows the one total.
 
 ## What state lives where
 
