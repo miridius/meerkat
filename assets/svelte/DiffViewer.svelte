@@ -573,10 +573,14 @@
           // A getter, so the open form follows ruler setting changes.
           props: {
             ...desc.props,
-            textAbove: textAbove(
-              (side === "old" ? file.old_content : file.new_content) ?? "",
-              desc.anchor.start_line,
-            ),
+            // Only Clojure's indentation reads the text above.
+            textAbove:
+              fileLanguage === "clojure"
+                ? textAbove(
+                    (side === "old" ? file.old_content : file.new_content) ?? "",
+                    desc.anchor.start_line,
+                  )
+                : undefined,
             live,
             get rulerColumns() {
               return ruler_columns;

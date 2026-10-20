@@ -74,14 +74,7 @@ defmodule Meerkat.PlantUML do
     if is_nil(plantuml) do
       {:error, "plantuml binary not found on PATH"}
     else
-      # System.unique_integer/1 is unique only within this BEAM, and
-      # every meerkat process shares the tmp dir, so the OS pid keeps
-      # concurrent meerkats off each other's files.
-      base =
-        Path.join(
-          System.tmp_dir!(),
-          "meerkat-puml-#{System.pid()}-#{System.unique_integer([:positive])}"
-        )
+      base = Meerkat.TmpPath.unique("meerkat-puml")
 
       src_path = base <> ".puml"
       svg_path = base <> ".svg"

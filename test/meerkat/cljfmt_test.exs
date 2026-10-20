@@ -134,20 +134,14 @@ defmodule Meerkat.CljfmtTest do
     setup do
       stub_dir = Meerkat.TestHelpers.tmp_path("meerkat-cljfmt")
       File.mkdir_p!(stub_dir)
-      prev_path = System.get_env("PATH")
-
-      on_exit(fn ->
-        System.put_env("PATH", prev_path)
-        File.rm_rf!(stub_dir)
-      end)
-
-      %{stub_dir: stub_dir, prev_path: prev_path}
+      on_exit(fn -> File.rm_rf!(stub_dir) end)
+      %{stub_dir: stub_dir}
     end
 
     # A hook on PATH that records its working directory, arguments,
     # stdin and whether the payload file sits beside the file it names,
     # writes to stderr, then exits with `code`.
-    defp stub_hook(%{stub_dir: dir, prev_path: prev_path}, code) do
+    defp stub_hook(%{stub_dir: dir}, code) do
       path = Path.join(dir, @hook)
       calls = Path.join(dir, "calls")
 
@@ -164,7 +158,7 @@ defmodule Meerkat.CljfmtTest do
       """)
 
       File.chmod!(path, 0o755)
-      System.put_env("PATH", dir <> ":" <> prev_path)
+      Meerkat.TestHelpers.put_env("PATH", dir <> ":" <> System.get_env("PATH"))
       calls
     end
 

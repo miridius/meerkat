@@ -36,8 +36,8 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
 	c: () => import("@codemirror/lang-cpp").then((m) => m.cpp()),
 	php: () => import("@codemirror/lang-php").then((m) => m.php()),
 	vue: () => import("@codemirror/lang-vue").then((m) => m.vue()),
-	// The pack's own rule indents every list's arguments two spaces; ours
-	// follows cljfmt's defaults.
+	// The pack's own rule puts arguments one column past the opener, or two
+	// after def-like and special-form heads; ours follows cljfmt's defaults.
 	clojure: () =>
 		Promise.all([import("@nextjournal/lang-clojure"), import("./clojureIndent.js")]).then(
 			([m, indent]) => new LanguageSupport(m.clojureLanguage, indent.clojureIndent),

@@ -76,12 +76,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-cljfmt")
       File.mkdir_p!(dir)
       calls = Path.join(dir, "calls")
-      prev_path = System.get_env("PATH")
-
-      on_exit(fn ->
-        System.put_env("PATH", prev_path)
-        File.rm_rf!(dir)
-      end)
+      on_exit(fn -> File.rm_rf!(dir) end)
 
       # A hook that records its working directory and each file it is
       # given, and formats by putting `(inc x)` and `(dec x)` at column 4.
@@ -98,7 +93,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       """)
 
       File.chmod!(Path.join(dir, "clj-paren-repair-claude-hook"), 0o755)
-      System.put_env("PATH", dir <> ":" <> prev_path)
+      Meerkat.TestHelpers.put_env("PATH", dir <> ":" <> System.get_env("PATH"))
       %{calls: calls}
     end
 
@@ -147,6 +142,28 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
                ReviewServer.get_state(rid).comments
     end
 
+    test "on the new side is formatted inside the new file", %{conn: conn, calls: calls} do
+      repo = tmp_git_repo()
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "0",
+        "start_line" => "1",
+        "end_line" => "1",
+        "side" => "new"
+      })
+
+      submit_comment(view, "inline:0:new:1-1", "\n\n```clojure\n(ns demo)\n```", "suggestion")
+
+      assert [%{body: "\n\n```clojure\n(ns demo)\n```"}] = ReviewServer.get_state(rid).comments
+
+      assert File.read!(calls) ==
+               String.duplicate(
+                 "#{real_path(repo)}\n(ns demo)\n(defn f [x]\n  (dec x))\n---\n",
+                 2
+               )
+    end
+
     test "on a file comment is formatted on its own", %{conn: conn, calls: calls} do
       repo = tmp_git_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
@@ -160,11 +177,24 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       assert File.read!(calls) == String.duplicate("#{real_path(repo)}\n(inc x)---\n", 2)
     end
 
-    test "is left alone in other languages, other finding types and global comments",
+    test "is left alone in other languages, other files, other finding types and global comments",
          %{conn: conn, calls: calls} do
       repo = tmp_git_repo()
-      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
+      {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file, @md_file]}, repo)
 
+      # A README's suggestion that ends in a Clojure example.
+      readme = "\n\n```markdown\nSee:\n```clojure\n(inc x)\n```\n```"
+
+      render_hook(view, "comment_form.show_at_line", %{
+        "file_index" => "1",
+        "start_line" => "3",
+        "end_line" => "3",
+        "side" => "new"
+      })
+
+      submit_comment(view, "inline:1:new:3-3", readme, "suggestion")
+      render_click(view, "comment_form.show_file", %{"file_index" => "1"})
+      submit_comment(view, "file:1", readme, "suggestion")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
       submit_comment(view, "file:0", "\n\n```rust\n(inc x)\n```", "suggestion")
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
@@ -174,7 +204,10 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
       state = ReviewServer.get_state(rid)
 
+      assert [%{body: ^readme}] = state.comments
+
       assert Enum.map(state.file_comments, & &1.body) == [
+               readme,
                "\n\n```rust\n(inc x)\n```",
                "\n\n```clojure\n(inc x)\n```"
              ]
