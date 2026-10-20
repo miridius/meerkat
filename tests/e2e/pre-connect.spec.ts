@@ -6,9 +6,13 @@
 import { expect, test } from "@playwright/test";
 import { startMeerkat } from "./lib/runner";
 
-test("the page takes no clicks until LiveView connects, and says it is connecting", async ({ page }) => {
+test("the page takes no clicks until LiveView connects, and says whether it is connecting", async ({ page }) => {
 	const meerkat = await startMeerkat();
 	try {
+		// Refusing both LiveView transports makes the first connect fail.
+		let refuse = true;
+		await page.routeWebSocket(/\/live\/websocket/, (ws) => (refuse ? ws.close() : ws.connectToServer()));
+		await page.route(/\/live\/longpoll/, (route) => (refuse ? route.abort() : route.continue()));
 		// Holding back the app bundle holds the page at its first paint.
 		let release = () => {};
 		const held = new Promise<void>((resolve) => {
@@ -20,6 +24,7 @@ test("the page takes no clicks until LiveView connects, and says it is connectin
 		});
 		await page.goto(meerkat.url, { waitUntil: "commit" });
 
+		const root = page.locator("[data-phx-main]");
 		const pill = page.locator(".conn-indicator");
 		const approved = page.locator(".file-section").first().getByRole("checkbox", { name: "Approved" });
 		const addGlobal = page.getByRole("button", { name: /^\+ Add global comment$/ });
@@ -27,15 +32,24 @@ test("the page takes no clicks until LiveView connects, and says it is connectin
 
 		// Real mouse clicks: Playwright's own `click` waits until the
 		// element can take the click.
-		for (const control of [approved, addGlobal]) {
-			const box = await control.boundingBox();
-			if (!box) throw new Error("control has no box");
-			await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-		}
+		const clickThrough = async () => {
+			for (const control of [approved, addGlobal]) {
+				const box = await control.boundingBox();
+				if (!box) throw new Error("control has no box");
+				await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+			}
+		};
+		await clickThrough();
 		await expect(approved, "the click does not tick a box the server never hears of").not.toBeChecked();
 
 		release();
-		await expect(page.locator("[data-phx-main]")).toHaveClass(/phx-connected/);
+		await expect(root).toHaveClass(/phx-client-error/);
+		await expect(pill).toHaveText("disconnected", { useInnerText: true });
+		await clickThrough();
+		await expect(approved, "a failed connect leaves the page refusing clicks").not.toBeChecked();
+
+		refuse = false;
+		await expect(root).toHaveClass(/phx-connected/);
 		await expect(pill).toHaveText("connected", { useInnerText: true });
 		await expect(approved).not.toBeChecked();
 		await expect(page.locator(".global-comments .comment-form")).toHaveCount(0);
