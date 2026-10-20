@@ -28,6 +28,7 @@
     initialLintRule = false,
     initialCode = "",
     fileName = "",
+    textAbove,
     draftKey,
     formKey,
     rulerColumns,
@@ -43,6 +44,9 @@
     initialLintRule?: boolean;
     initialCode?: string;
     fileName?: string;
+    // The file's text above the anchored lines, so the suggestion
+    // editor indents new lines as they would sit in the file.
+    textAbove?: string;
     draftKey?: string;
     // Names this form to the server, so submit and cancel act on it
     // and not on another open form.
@@ -167,6 +171,7 @@
       doc: code,
       language,
       rulerColumns: untrack(() => rulerColumns),
+      textAbove: untrack(() => textAbove),
       onChange: (v) => (code = v),
       onSubmit: () => submit(),
       onCancel: () => cancel(),
@@ -214,6 +219,8 @@
         ...extraPayload,
         form_key: formKey,
         body: composedBody(),
+        // The server formats a Clojure suggestion.
+        language,
         finding_type: findingType,
         correct_instructions: correctInstructions,
         lint_rule: lintRule,

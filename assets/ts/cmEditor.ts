@@ -5,6 +5,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
+import { indentation } from "./cmIndent.js";
 import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
 import { rulerBackground } from "./rulers.js";
 
@@ -192,6 +193,9 @@ export interface CmEditorOptions {
 	language: string;
 	/** Columns to draw a ruler after; `setCmRulers` changes them later. */
 	rulerColumns: number[];
+	/** The file's text above `doc`, when it is lines of a file: new lines
+	 *  indent as they would in the file. */
+	textAbove?: string;
 	/** Fires on every doc change with the new full text. */
 	onChange: (value: string) => void;
 	/** Fires on Ctrl/Cmd+Enter. Used as the form's submit shortcut. */
@@ -206,6 +210,7 @@ export interface CmEditorOptions {
  *  multi-cursor, active line highlight, selection-match highlight) plus
  *  Tab-indents-selection, Rose Pine Moon theming, rulers, and the
  *  language's pack. Lines don't wrap, so the rulers sit at true columns.
+ *  Enter indents as `indentation` says.
  *
  *  Returns the EditorView; destroy it with `.destroy()` on unmount. */
 export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): EditorView {
@@ -213,6 +218,7 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 	const extensions: Extension[] = [
 		basicSetup,
 		language.of(getLoadedLanguage(options.language) ?? []),
+		indentation(options.language, options.textAbove, language),
 		rosePineChrome,
 		rulers.of(rulersTheme(options.rulerColumns)),
 		syntaxHighlighting(rosePineHighlight),

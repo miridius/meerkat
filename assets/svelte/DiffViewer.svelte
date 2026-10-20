@@ -100,6 +100,7 @@
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import CljHoverPopup from "./CljHoverPopup.svelte";
   import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
+  import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground } from "../ts/rulers";
   import { unifiedDiff } from "../ts/unifiedDiff";
@@ -572,6 +573,14 @@
           // A getter, so the open form follows ruler setting changes.
           props: {
             ...desc.props,
+            // Only Clojure's indentation reads the text above.
+            textAbove:
+              fileLanguage === "clojure"
+                ? textAbove(
+                    (side === "old" ? file.old_content : file.new_content) ?? "",
+                    desc.anchor.start_line,
+                  )
+                : undefined,
             live,
             get rulerColumns() {
               return ruler_columns;

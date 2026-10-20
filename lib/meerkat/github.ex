@@ -182,8 +182,8 @@ defmodule Meerkat.GitHub do
   def post_review(repo_path, pr_number, payload) do
     body_json = Jason.encode!(payload)
 
-    tmp =
-      Path.join(System.tmp_dir!(), "meerkat-gh-#{System.unique_integer([:positive])}.json")
+    # muex:ignore equivalent: any name no other run uses serves, and gh reads --input by path
+    tmp = Meerkat.TmpPath.unique("meerkat-gh") <> ".json"
 
     try do
       case File.write(tmp, body_json) do
