@@ -159,9 +159,6 @@ test.describe("a review outlives the process that invoked it", () => {
 		try {
 			await page.goto(first.url);
 			await first.killParent();
-			expect(await first.awaitClose(), "the orphaned caller says the review lives on").toContain(
-				`meerkat: the process that ran meerkat exited before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
-			);
 			rmSync(firstIndex);
 
 			const approved = page
@@ -176,6 +173,10 @@ test.describe("a review outlives the process that invoked it", () => {
 			await addGlobalComment(page, "sent after git was killed");
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
+			// The caller left attached checks its ancestors only once the decision arrives.
+			expect(await first.awaitClose(), "the orphaned caller leaves the decision held").toContain(
+				`meerkat: the process that ran meerkat exited before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
+			);
 
 			const retryIndex = temporaryIndex(fixture.dir, "next-index-2.lock");
 			second = await startMeerkat({
@@ -297,11 +298,11 @@ test.describe("a review outlives the process that invoked it", () => {
 			const heldBackend = backendPid(first);
 			await page.goto(first.url);
 			await first.killParent();
-			await first.awaitClose();
 
 			await addGlobalComment(page, "held for the old message");
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
+			await first.awaitClose();
 
 			writeFileSync(fixture.commitMsgPath, "A different subject\n");
 			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });

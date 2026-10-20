@@ -252,21 +252,55 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
-  # A caller exits once a process above it has gone, and must not take a
-  # live one it may not signal, such as root-owned launchd, for gone.
-  test "a caller's liveness check tells a gone process from a live one, signalable or not" do
-    script = ~S"""
-    source "$1"
-    sleep 0 &
-    gone=$!
-    wait "$gone"
-    for pid in "$gone" $$ 1; do
-      if _ma_alive "$pid"; then echo live; else echo gone; fi
-    done
-    """
+  # A killed git commit can leave its hook's caller attached. Once the
+  # decision arrives, that caller leaves it held for the next invocation
+  # instead of taking delivery where nobody reads it.
+  for ancestor <- ["gone", "live"] do
+    test "a caller given the decision takes delivery only while its ancestors live: #{ancestor}" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
 
-    assert {"gone\nlive\nlive\n", 0} =
-             System.cmd("bash", ["-c", script, "alive", Path.expand("bin/meerkat-attach")])
+      script = ~S"""
+      source "$1"
+      exec 2>&1
+      sleep 0 &
+      gone=$!
+      wait "$gone"
+      if [[ "$3" == gone ]]; then _MA_ANCESTORS=("$gone"); else _MA_ANCESTORS=($$); fi
+      _MA_LINK="$2/run"
+      _MA_DIR="$2/run.1"
+      mkdir "$_MA_DIR"
+      echo "4242 1" >"$_MA_DIR/port"
+      echo token >"$_MA_DIR/token"
+      echo 1 >"$_MA_DIR/exit"
+      _ma_request() {
+        case "$2" in
+          attach/delivered*) echo delivered ;;
+          *) printf 'k\no outcome\nx 1\ns 200\n' ;;
+        esac
+      }
+      _ma_attach
+      """
+
+      {output, 1} =
+        System.cmd("bash", [
+          "-c",
+          script,
+          "orphan",
+          Path.expand("bin/meerkat-attach"),
+          dir,
+          unquote(ancestor)
+        ])
+
+      if unquote(ancestor) == "live" do
+        assert output == "outcome\ndelivered\n"
+      else
+        assert output ==
+                 "outcome\nmeerkat: the process that ran meerkat exited before the review " <>
+                   "completed. The review is still open at http://127.0.0.1:4242/; run the " <>
+                   "same command again to wait for its outcome.\n"
+      end
+    end
   end
 
   # A caller relays its backend's log as it grows: from the start for a run
@@ -302,9 +336,9 @@ defmodule Meerkat.ShepherdTest do
              System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
   end
 
-  # A waiting caller checks every second that the process that ran it
-  # lives, and relays its backend's log every 0.2 s. Forking ps for the
-  # one, and wc, tail and head for the other, cost about 0.1 CPU-s a second.
+  # A waiting caller relays its backend's log every 0.2 s and checks its
+  # ancestors only once the decision arrives: forking wc, tail and head
+  # every 0.2 s, and ps every second, cost about 0.1 CPU-s a second.
   test "a caller waiting on a decision runs no process while it relays the backend's log" do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
