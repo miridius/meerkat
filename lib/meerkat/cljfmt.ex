@@ -13,7 +13,7 @@ defmodule Meerkat.Cljfmt do
 
   @hook "clj-paren-repair-claude-hook"
 
-  # What cljfmt may add or remove: it changes nothing else.
+  # Whitespace, which cljfmt's indentation adds or removes.
   @whitespace ~r/[\s,]/u
 
   @doc """
@@ -42,11 +42,7 @@ defmodule Meerkat.Cljfmt do
   # repairing its delimiters, and with `cljfmt?` formatting it.
   @doc false
   def format_with(code, above, below, run) do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "meerkat-cljfmt-#{System.pid()}-#{System.unique_integer([:positive])}.clj"
-      )
+    path = Meerkat.TmpPath.unique("meerkat-cljfmt") <> ".clj"
 
     try do
       # Parinfer keeps every line, so the repaired suggestion is what
@@ -79,9 +75,10 @@ defmodule Meerkat.Cljfmt do
       else: :error
   end
 
-  # cljfmt changes only whitespace, so the suggestion's lines in
-  # `formatted` are those holding its non-whitespace characters. They
-  # must hold none of the text around it.
+  # When cljfmt changed only whitespace, which the first clause checks,
+  # the suggestion's lines in `formatted` are those holding its
+  # non-whitespace characters. They must hold none of the text around
+  # it.
   defp cut(formatted, above, code, below) do
     first = significant(above)
     last = first + significant(code)

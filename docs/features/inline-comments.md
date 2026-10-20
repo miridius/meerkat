@@ -108,7 +108,7 @@ When `finding_type === "suggestion"`:
   by cljfmt's default indentation. That indentation depends only on
   the text before the line from the start of its top-level form, so
   the editor finds where that form starts once, then indents over
-  that form alone. In other languages, Enter keeps the line's
+  that form and the editor's lines. In other languages, Enter keeps the line's
   indentation.
 - The caret is a 2px gold bar. The selection is a purple tint drawn
   under the text, visible on the caret's line too, and dimmer while
@@ -118,8 +118,8 @@ When `finding_type === "suggestion"`:
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it
   as a suggested change.
-- On save, the server formats a Clojure suggestion as it would sit
-  in the file around the anchored lines, using
+- On save, the server formats a suggestion on a Clojure file
+  (`.clj`, `.cljc`, `.cljs`, `.edn`) as it would sit in the file around the anchored lines, using
   `clj-paren-repair-claude-hook` from
   [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light)
   run in the reviewed repo. First it repairs unbalanced delimiters

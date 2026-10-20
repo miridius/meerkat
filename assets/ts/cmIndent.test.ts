@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { insertNewlineAndIndent } from "@codemirror/commands";
+import { indentSelection, insertNewlineAndIndent } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { LanguageSupport } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState, type Extension, type Transaction } from "@codemirror/state";
@@ -96,6 +96,34 @@ describe("Enter", () => {
 
 	test("in Clojure without the file, indents by the editor's lines alone", () => {
 		expect(enterIn(CLJ, 6, 7, 2, "clojure", clojure, false)).toBe("               ");
+	});
+
+	test("in Clojure, indents by the text as it is after an edit", () => {
+		const compartment = new Compartment();
+		let state = EditorState.create({
+			doc: CLJ.split("\n").slice(5, 7).join("\n"),
+			extensions: [compartment.of(clojure), indentation("clojure", textAbove(CLJ, 6), compartment)],
+		});
+		const enter = () => {
+			insertNewlineAndIndent({ state, dispatch: (t) => (state = t.state) });
+		};
+		state = state.update({ selection: EditorSelection.cursor(state.doc.length) }).state;
+		enter();
+		state = state.update(state.replaceSelection("(foo bar")).state;
+		enter();
+		expect(state.doc.line(4).text).toBe(" ".repeat(20));
+	});
+
+	test("in Clojure, re-indents selected lines as inside the form in the file", () => {
+		const compartment = new Compartment();
+		let state = EditorState.create({
+			doc: '(when (pos? x)\n(println "x" x\ny)',
+			extensions: [compartment.of(clojure), indentation("clojure", textAbove(CLJ, 6), compartment)],
+		});
+		state = state.update({ selection: EditorSelection.range(0, state.doc.length) }).state;
+		indentSelection({ state, dispatch: (t) => (state = t.state) });
+		// Each line after the first indents by the first's new indentation.
+		expect(state.doc.toString()).toBe('    (when (pos? x)\n      (println "x" x\n               y)');
 	});
 
 	test("in Clojure, keeps the line's indentation until the pack loads", () => {

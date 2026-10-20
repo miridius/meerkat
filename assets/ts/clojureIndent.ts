@@ -2,8 +2,9 @@ import { type IndentContext, indentService, syntaxTree } from "@codemirror/langu
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
- *  `@nextjournal/lang-clojure`. That pack's own rule indents every list's
- *  arguments two spaces; cljfmt aligns a call's arguments with its first
+ *  `@nextjournal/lang-clojure`. That pack's own rule puts arguments one
+ *  column past the opener, or two after def-like and special-form heads;
+ *  cljfmt aligns a call's arguments with its first
  *  argument and keeps two spaces for the bodies of forms like `defn` and
  *  `let`.
  *

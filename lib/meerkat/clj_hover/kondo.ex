@@ -54,10 +54,8 @@ defmodule Meerkat.CljHover.Kondo do
   """
   @spec analyse_texts(String.t(), %{optional(String.t()) => String.t()}) :: analysis
   def analyse_texts(root, texts) do
-    # The OS pid keeps concurrent meerkats off each other's dirs.
     # muex:ignore equivalent: any name no other run uses serves
-    name = "meerkat-kondo-#{System.pid()}-#{System.unique_integer([:positive])}"
-    dir = Path.join(System.tmp_dir!(), name)
+    dir = Meerkat.TmpPath.unique("meerkat-kondo")
 
     try do
       for {path, text} <- texts do
