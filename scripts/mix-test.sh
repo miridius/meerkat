@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compile once with MIX_ENV=test, then run each test/**/*_test.exs file as
-# its own `mix test --no-compile` BEAM, with parallelism capped at half the
-# online cores (minimum one).
+# its own `mix test --no-compile` BEAM through scripts/run-test-file.sh,
+# with parallelism capped at half the online cores (minimum one).
 #
 # Many modules are `async: false` because they change process-wide state:
 # environment variables, application env, or singleton processes. One `mix
@@ -9,13 +9,15 @@
 # files can run together. Half the cores took as long as all of them and
 # loads the machine less.
 #
-# Each test BEAM runs four schedulers that do not busy-wait (`+S 4 +sbwt
-# none`); ELIXIR_ERL_OPTIONS already set comes after them, so it wins. Timed
-# file by file, that used a fifth to a third less CPU in no more wall time.
+# Each file also takes one of as many test-file slots, which all runs in all
+# worktrees share, so two gates at once run no more files together than one.
+# Test files contend for more than the CPU: with 9 at once on 18 cores, the
+# CPU stayed half idle, yet the files took 1.7 times as long in all as with 2.
 #
 # Each file's wall time is kept, in whole seconds; scripts/test-file-times.ts
-# fails a file over the limit in scripts/test-file-limit.json that has no
-# entry there with a reason.
+# runs each passing file over the limit in scripts/test-file-limit.json that
+# has no entry there with a reason again on its own, and fails it if it is
+# still over.
 #
 # On failure, print each failing file's output, list the failing files, and
 # exit non-zero. CI and the pre-commit gate both run this script, so each
@@ -42,6 +44,7 @@ fi
 # many processes as possible, clamp the worker count to 1.
 jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
 ((jobs >= 1)) || jobs=1
+export jobs
 
 # Each job writes its exit status beside its log; these status files, not
 # xargs' exit status, determine success. Files xargs never runs have no
@@ -50,10 +53,7 @@ xargs -P "$jobs" -n 1 bash -c '
   log="$logs/$1"
   mkdir -p "$(dirname "$log")"
   status=0
-  start=$(date +%s)
-  ELIXIR_ERL_OPTIONS="+S 4 +sbwt none ${ELIXIR_ERL_OPTIONS:-}" \
-    mix test --no-compile "$1" >"$log" 2>&1 || status=$?
-  echo $(($(date +%s) - start)) >"$log.secs"
+  bash scripts/run-test-file.sh "$jobs" "$1" "$log.secs" >"$log" 2>&1 || status=$?
   echo "$status" >"$log.status"
 ' _ <<<"$files" || true
 
@@ -72,9 +72,9 @@ for file in $files; do
   fi
 done
 
-# Fails a file over the per-file time limit.
+# Fails a file still over the per-file time limit when run on its own.
 # shellcheck disable=SC2086
-bun scripts/test-file-times.ts "$logs" $files && slow=0 || slow=1
+bun scripts/test-file-times.ts "$logs" "$jobs" $files && slow=0 || slow=1
 
 count=$(wc -l <<<"$files" | tr -d ' ')
 if [[ ${#failed[@]} -gt 0 ]]; then
