@@ -168,7 +168,7 @@ _ma_exit_if_orphaned() {
   joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
   live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
   if ((live < ${#_MA_ANCESTORS[@]})); then
-    _ma_still_open "the process that ran meerkat exited"
+    _ma_leave "the process that ran meerkat exited"
     exit 1
   fi
   return 0
@@ -179,22 +179,36 @@ _ma_ps_works() {
   [[ -n "$(ps -o pid= -p $$ 2>/dev/null)" ]]
 }
 
-# A caller stopped before the decision says the review lives on, so whoever
-# ran it learns to rerun instead of reading only an exit status. It then dies
-# of the signal, as it would have untrapped.
+# A caller stopped before the decision says how the review stands, so whoever
+# ran it learns whether to rerun instead of reading only an exit status. It
+# then dies of the signal, as it would have untrapped.
 _ma_stopped() {
-  _ma_still_open "stopped waiting (SIG$1)"
+  _ma_leave "stopped waiting (SIG$1)"
   trap - "$1"
   kill -s "$1" $$
 }
 
-_ma_still_open() {
+# Detach from the backend, which judges the review at once, and print what
+# it answers: whether the review ended or is still open. A backend still
+# starting, or one that does not answer within 2 s, is stopped.
+_ma_leave() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
-  local IFS=$' \t\n' port beam at=""
-  # No port while a BEAM starts; the review is still open then too.
-  read -r port beam 2>/dev/null <"$_MA_DIR/port" && at=" at http://127.0.0.1:$port/"
-  echo "meerkat: $1 before the review completed. The review is still open$at; run the same command again to wait for its outcome." >&2
+  local IFS=$' \t\n' port beam token standing=""
+  if read -r port beam 2>/dev/null <"$_MA_DIR/port"; then
+    token="$(cat "$_MA_DIR/token" 2>/dev/null)"
+    standing="$(curl -sf --max-time 2 -X POST -H "x-meerkat-token: $token" \
+      "http://127.0.0.1:$port/api/attach/leave?run=$_MA_RUN" 2>/dev/null)"
+  fi
+  local said="meerkat: $1 before the review completed."
+  case "$standing" in
+    ended) echo "$said Run the same command again to start a new one." >&2 ;;
+    open) echo "$said The review is still open at http://127.0.0.1:$port/; run the same command again to wait for its outcome." >&2 ;;
+    *)
+      [[ -f "$_MA_DIR/pid" ]] && _ma_server_alive && kill -TERM "$(<"$_MA_DIR/pid")" 2>/dev/null
+      echo "$said Run the same command again." >&2
+      ;;
+  esac
 }
 
 _ma_log_size() {
@@ -491,8 +505,9 @@ _ma_attach() {
     exit "$code"
   fi
 
-  # 409 means the review changed and 503 means another caller took delivery;
-  # either way, the backend is exiting and this caller starts a fresh one.
+  # 409 means the review changed, and 503 that another caller took delivery
+  # or the review ended with nothing waiting on it; either way, the backend
+  # is exiting and this caller starts a fresh one.
   # 502 means this rerun could not resolve its review target or named an
   # index that no longer exists; the error was
   # printed from its o frames, the backend keeps its review, and this caller
