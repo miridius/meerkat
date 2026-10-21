@@ -51,34 +51,60 @@ async function numberInsets(cell: Locator): Promise<{ fromBar: number; fromPaddi
 	});
 }
 
-// The rulers a code cell draws: the columns in its ruler variable.
-async function rulersOn(cell: Locator): Promise<string[]> {
-	return cell.evaluate((td) => {
-		const side = td.classList.contains("diff-line-old-content")
-			? "old"
-			: td.classList.contains("diff-line-new-content")
-				? "new"
-				: "unified";
-		const value = getComputedStyle(td).getPropertyValue(`--meerkat-rulers-${side}`);
-		return [...value.matchAll(/transparent calc\(2em \+ (\d+)ch\),/g)].map((m) => m[1]);
+type RulerProbe = {
+	// The rulers a code cell draws: the columns in its ruler variable.
+	rulersOn: (td: Element) => string[];
+	// The rulers a code cell draws in its right padding, past where its
+	// text wraps.
+	rulersPastText: (td: Element) => number[];
+	// Resolves once the browser has rendered a frame, as `afterNextFrame` does.
+	nextFrame: () => Promise<void>;
+};
+
+declare global {
+	interface Window {
+		rulerProbe: RulerProbe;
+	}
+}
+
+// Installs `window.rulerProbe` in every page the test loads, so each step
+// of a width sweep takes two round trips to the browser, a resize and one
+// read after the next frame, rather than four or five: at load 100-140
+// each took 70-90 ms, and the sweeps take over a hundred steps.
+async function installRulerProbe(page: Page) {
+	await page.addInitScript(() => {
+		const rulersOn = (td: Element) => {
+			const side = td.classList.contains("diff-line-old-content")
+				? "old"
+				: td.classList.contains("diff-line-new-content")
+					? "new"
+					: "unified";
+			const value = getComputedStyle(td).getPropertyValue(`--meerkat-rulers-${side}`);
+			return [...value.matchAll(/transparent calc\(2em \+ (\d+)ch\),/g)].map((m) => m[1]);
+		};
+		window.rulerProbe = {
+			rulersOn,
+			rulersPastText: (td) => {
+				const probe = document.createElement("span");
+				probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
+				td.append(probe);
+				const ch = probe.getBoundingClientRect().width / 100;
+				probe.style.width = "2em";
+				const offset = probe.getBoundingClientRect().width;
+				probe.remove();
+				const textRight = td.getBoundingClientRect().width - Number.parseFloat(getComputedStyle(td).paddingRight);
+				return rulersOn(td)
+					.map(Number)
+					.filter((n) => offset + n * ch > textRight);
+			},
+			nextFrame: () =>
+				new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+		};
 	});
 }
 
-// The rulers a code cell draws in its right padding, past where its
-// text wraps.
-async function rulersPastText(cell: Locator): Promise<number[]> {
-	const columns = (await rulersOn(cell)).map(Number);
-	return cell.evaluate((td, columns) => {
-		const probe = document.createElement("span");
-		probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
-		td.append(probe);
-		const ch = probe.getBoundingClientRect().width / 100;
-		probe.style.width = "2em";
-		const offset = probe.getBoundingClientRect().width;
-		probe.remove();
-		const textRight = td.getBoundingClientRect().width - Number.parseFloat(getComputedStyle(td).paddingRight);
-		return columns.filter((n) => offset + n * ch > textRight);
-	}, columns);
+async function rulersOn(cell: Locator): Promise<string[]> {
+	return cell.evaluate((td) => window.rulerProbe.rulersOn(td));
 }
 
 async function openSettings(page: Page) {
@@ -91,6 +117,7 @@ test("diff rulers show only where the visible code column fits them and follow t
 }) => {
 	const meerkat = await startMeerkat({ fixture: wideFixture() });
 	try {
+		await installRulerProbe(page);
 		await page.setViewportSize({ width: 2000, height: 800 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
@@ -131,8 +158,15 @@ test("diff rulers show only where the visible code column fits them and follow t
 		// draws the same rulers; 10px steps cross each ruler's threshold.
 		for (let width = 1300; width <= 2000; width += 10) {
 			await page.setViewportSize({ width, height: 800 });
-			await afterNextFrame(page);
-			expect(await rulersOn(newCell), `at ${width}px`).toEqual(await rulersOn(oldCell));
+			const sides = await file.evaluate(async (section) => {
+				await window.rulerProbe.nextFrame();
+				const first = (selector: string) => section.querySelector(selector) as Element;
+				return {
+					old: window.rulerProbe.rulersOn(first("td.diff-line-old-content")),
+					new: window.rulerProbe.rulersOn(first("td.diff-line-new-content")),
+				};
+			});
+			expect(sides.new, `at ${width}px`).toEqual(sides.old);
 		}
 
 		// Each half of a 1000px page is too narrow for either.
@@ -152,9 +186,12 @@ test("diff rulers show only where the visible code column fits them and follow t
 		let crossed = false;
 		for (let width = 951; width <= 1010; width += 1) {
 			await page.setViewportSize({ width, height: 800 });
-			await afterNextFrame(page);
-			expect(await rulersPastText(unifiedCell), `at ${width}px`).toEqual([]);
-			crossed ||= (await rulersOn(unifiedCell)).includes("110");
+			const cell = await unifiedCell.evaluate(async (td) => {
+				await window.rulerProbe.nextFrame();
+				return { pastText: window.rulerProbe.rulersPastText(td), drawn: window.rulerProbe.rulersOn(td) };
+			});
+			expect(cell.pastText, `at ${width}px`).toEqual([]);
+			crossed ||= cell.drawn.includes("110");
 		}
 		expect(crossed, "the sweep reaches the width where 110 fits").toBe(true);
 		await page.setViewportSize({ width: 950, height: 800 });
