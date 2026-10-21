@@ -105,8 +105,7 @@ defmodule Meerkat.GitHubTest do
     end
 
     test "a branch with no PR has no PR and no warning", %{dir: dir, bin: bin, calls: calls} do
-      # As gh answers for a branch whose PR's head lives on a fork, since a
-      # bare branch name matches only same-repo PRs.
+      # As gh answers for a branch it finds no PR for.
       File.write!(Path.join(bin, "gh"), """
       #!/bin/sh
       echo "$*" >> '#{calls}'

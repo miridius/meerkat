@@ -58,8 +58,9 @@ defmodule Meerkat.Case do
 
   # Decision's deadline sets :review_deadline_ms to nil when it disarms, so a
   # nil value counts as unset. `Meerkat.ApprovalCache.path_for/1` keeps each
-  # path it resolves in :approval_cache_paths, which stays true for the
-  # repo it names, so a path kept there is no leak.
+  # path it resolves in :approval_cache_paths, keyed by the repo's dir, and
+  # each test's repo is a dir of its own, so a path kept there is never
+  # read by another test and is no leak.
   @doc false
   def global_state do
     %{

@@ -704,6 +704,11 @@ defmodule Meerkat.PrePushHookTest do
       [:append]
     )
 
+    # The remote reads them as refs.
+    assert git(remote, ["for-each-ref", "--count=3001", "refs/pull"])
+           |> String.split("\n", trim: true)
+           |> length() == 3000
+
     remote_ahead(ctx.work)
     commit(ctx.work, "b.txt", "b\n", "add b")
 

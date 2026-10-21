@@ -177,7 +177,12 @@ defmodule Meerkat.PendingAnswers do
     end
   end
 
-  defp write(repo_path, answers) do
+  @doc """
+  Store `answers`, as `parse/1` returns them, as the pending-answers file
+  of the repo at `repo_path`, replacing any earlier one.
+  """
+  @spec write(String.t(), [map()]) :: :ok | {:error, :write_failed, String.t()}
+  def write(repo_path, answers) do
     created_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     payload = %{"version" => @version, "createdAt" => created_at, "answers" => answers}
     path = path_for(repo_path)

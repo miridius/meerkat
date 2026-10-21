@@ -238,12 +238,7 @@ defmodule Meerkat.TestHelpers do
   without the git lookup `save/2` makes to find the repo.
   """
   @spec put_pending_answers(String.t(), [map()]) :: :ok
-  def put_pending_answers(repo, answers) do
-    path = Meerkat.PendingAnswers.path_for(repo)
-    File.mkdir_p!(Path.dirname(path))
-    payload = %{version: 1, createdAt: "2026-01-01T00:00:00Z", answers: answers}
-    File.write!(path, Jason.encode!(payload))
-  end
+  def put_pending_answers(repo, answers), do: :ok = Meerkat.PendingAnswers.write(repo, answers)
 
   @doc """
   Builds a fixture tree once, for tests that only read it or that copy it
