@@ -231,8 +231,8 @@ defmodule Meerkat.CLIMainTest do
   test "a review opens the browser at the port it bound",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")
-    # The test BEAM has no Vite build until `bun run build` runs, and the
-    # layout cannot render without a manifest.
+    # A checkout that has never built its assets has no Vite manifest, and
+    # the layout cannot render without one.
     manifest = Path.join(repo, "manifest.json")
     File.write!(manifest, ~s({"js/app.js": {"file": "assets/app.js", "isEntry": true}}))
 
@@ -303,8 +303,12 @@ defmodule Meerkat.CLIMainTest do
           "--no-start",
           "--no-compile",
           "-e",
+          # As test_helper.exs does, which this BEAM does not load: a page
+          # it renders reads no settings from the user's config dir.
           "{:ok, _} = :timer.apply_after(150_000, System, :halt, [124]); " <>
             ~s|System.put_env("MEERKAT_TEST_BEAM", System.pid()); | <>
+            "Application.put_env(:meerkat, :settings_path, " <>
+            "#{inspect(Path.join(repo, "settings.json"))}); " <>
             setup <> "System.halt(Meerkat.CLI.main(System.argv()))",
           "--" | argv
         ],

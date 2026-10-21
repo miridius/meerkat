@@ -861,8 +861,8 @@ defmodule Meerkat.CLI do
     System.get_env("SECRET_KEY_BASE") || Base.encode64(:crypto.strong_rand_bytes(48))
   end
 
-  # `:vite_manifest_path` lets a test BEAM, which has no Vite build until
-  # `bun run build` runs, serve a page from a fixture manifest.
+  # `:vite_manifest_path` lets a test serve a page from a fixture manifest,
+  # whether or not this checkout has built its assets.
   defp vite_manifest_path do
     Application.get_env(
       :meerkat,

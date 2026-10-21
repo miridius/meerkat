@@ -652,16 +652,12 @@ defmodule Meerkat.CLITest do
 
   describe "endpoint_config/2's Vite manifest" do
     test "serves the parse the layout uses, and maps every file it names to itself" do
-      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-manifest")
-      on_exit(fn -> File.rm_rf!(dir) end)
-      path = Path.join(dir, "manifest.json")
-
       json = ~s({
         "js/app.js": {"file": "assets/app-A1.js", "css": ["assets/app-B2.css"], "isEntry": true},
         "_dist-C3.js": {"file": "assets/dist-C3.js"}
       })
 
-      File.write!(path, json)
+      path = manifest_file!(json)
       config = CLI.endpoint_config_for_test(0, path)
 
       assert config[:vite_manifest] == PhoenixVite.Manifest.parse(json)
@@ -687,16 +683,22 @@ defmodule Meerkat.CLITest do
     end
 
     test "is read from :vite_manifest_path when it is set" do
-      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-manifest")
-      on_exit(fn -> File.rm_rf!(dir) end)
-      path = Path.join(dir, "manifest.json")
       json = ~s({"js/app.js": {"file": "assets/app-A1.js", "isEntry": true}})
-      File.write!(path, json)
-      Application.put_env(:meerkat, :vite_manifest_path, path)
+      Application.put_env(:meerkat, :vite_manifest_path, manifest_file!(json))
       on_exit(fn -> Application.delete_env(:meerkat, :vite_manifest_path) end)
 
       assert CLI.endpoint_config_for_test(0)[:vite_manifest] == PhoenixVite.Manifest.parse(json)
     end
+  end
+
+  # A manifest holding `json`, removed when the test exits.
+  defp manifest_file!(json) do
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-manifest")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    path = Path.join(dir, "manifest.json")
+    File.write!(path, json)
+    path
   end
 
   describe "port_in_use?/1" do
