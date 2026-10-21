@@ -61,7 +61,10 @@ Each row in the file-entries list shows:
   the status.
 - The file's name is a link showing its full path on one line with no
   truncation; the directory part is dimmed and the base name has
-  medium weight (`font-weight: 500`), not bold.
+  medium weight (`font-weight: 500`), not bold. Clicking it scrolls
+  the file's section into view without changing the URL or adding a
+  browser history entry, so the tab can still close itself after the
+  decision (see [multi-tab.md](multi-tab.md#tab-close)).
 - A hover-revealed `only` button (shows ONLY this file in the
   main list via `filter.show_only`).
 - A hover-revealed `hide *.<ext>` button (hides all files of this
