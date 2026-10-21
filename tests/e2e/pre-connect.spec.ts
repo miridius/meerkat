@@ -8,16 +8,16 @@ import { startMeerkat } from "./lib/runner";
 
 test("the page takes no clicks until LiveView connects, and says whether it is connecting", async ({ page }) => {
 	const meerkat = await startMeerkat();
+	// Holding back the app bundle holds the page at its first paint.
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
 	try {
 		// Refusing both LiveView transports makes the first connect fail.
 		let refuse = true;
 		await page.routeWebSocket(/\/live\/websocket/, (ws) => (refuse ? ws.close() : ws.connectToServer()));
 		await page.route(/\/live\/longpoll/, (route) => (refuse ? route.abort() : route.continue()));
-		// Holding back the app bundle holds the page at its first paint.
-		let release = () => {};
-		const held = new Promise<void>((resolve) => {
-			release = resolve;
-		});
 		await page.route(/\/assets\/app-[^/]*\.js$/, async (route) => {
 			await held;
 			await route.continue();
@@ -57,6 +57,8 @@ test("the page takes no clicks until LiveView connects, and says whether it is c
 		await addGlobal.click();
 		await expect(page.locator(".global-comments .comment-form")).toHaveCount(1);
 	} finally {
+		// A failure before the release would leave the bundle's route waiting.
+		release();
 		await meerkat.kill();
 	}
 });

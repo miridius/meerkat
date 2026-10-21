@@ -180,8 +180,8 @@ button.active {
 }
 
 /* Connection status pill. Phoenix's LiveSocket client adds
-   `.phx-connected`, `.phx-loading`, `.phx-error`, `.phx-server-error`,
-   `.phx-client-error`, `.phx-disconnected` to an ancestor wrapper.
+   `.phx-connected`, `.phx-loading`, `.phx-error`, `.phx-server-error`
+   or `.phx-client-error` to an ancestor wrapper.
    The page paints with none of those before the socket joins, so
    only `.phx-connected` shows connected. */
 .conn-indicator {

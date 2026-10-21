@@ -1285,11 +1285,6 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
-  # Connection status pill — the Phoenix LV client toggles
-  # `.phx-loading`, `.phx-error`, `.phx-server-error`,
-  # `.phx-client-error` on a wrapper above the LV. CSS targets
-  # those ancestor classes to flip the dot colour + label without
-  # any LV-side JS hook.
   attr :version, :map, required: true
 
   defp version_chip(assigns) do
@@ -1330,6 +1325,10 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # Connection status pill. The LiveView client puts `.phx-connected`,
+  # `.phx-loading` or the error classes on a wrapper above the view, and
+  # CSS keys the dot and label on them, so it shows connected only under
+  # `.phx-connected`.
   defp connection_indicator(assigns) do
     ~H"""
     <span class="conn-indicator" title="Connection to meerkat server" aria-live="polite">
