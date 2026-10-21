@@ -248,8 +248,9 @@ defmodule Meerkat.ShepherdTest do
 
   # A killed git commit can leave its hook's caller attached. Once the
   # decision arrives, that caller leaves it held for the next invocation
-  # instead of taking delivery where nobody reads it.
-  for ancestor <- ["gone", "live"] do
+  # instead of taking delivery where nobody reads it. Where ps is denied
+  # ("unseen"), it cannot tell, so it takes delivery.
+  for ancestor <- ["gone", "live", "unseen"] do
     test "a caller given the decision takes delivery only while its ancestors live: #{ancestor}" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
@@ -260,7 +261,8 @@ defmodule Meerkat.ShepherdTest do
       sleep 0 &
       gone=$!
       wait "$gone"
-      if [[ "$3" == gone ]]; then _MA_ANCESTORS=("$gone"); else _MA_ANCESTORS=($$); fi
+      if [[ "$3" == live ]]; then _MA_ANCESTORS=($$); else _MA_ANCESTORS=("$gone"); fi
+      [[ "$3" == unseen ]] && ps() { return 1; }
       _MA_LINK="$2/run"
       _MA_DIR="$2/run.1"
       mkdir "$_MA_DIR"
@@ -286,7 +288,7 @@ defmodule Meerkat.ShepherdTest do
           unquote(ancestor)
         ])
 
-      if unquote(ancestor) == "live" do
+      if unquote(ancestor) in ["live", "unseen"] do
         assert output == "outcome\ndelivered\n"
       else
         assert output ==
@@ -330,9 +332,37 @@ defmodule Meerkat.ShepherdTest do
              System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
   end
 
+  # After a 409 or 503 the caller starts a fresh backend, whose stderr it
+  # relays rather than the last run's log.
+  test "a caller relays the log of the backend it starts, not the last run's" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.write!(Path.join(dir, "self"), "#!/bin/sh\necho new >&2\n")
+    File.chmod!(Path.join(dir, "self"), 0o755)
+
+    script = ~S"""
+    source "$1"
+    exec 2>&1
+    _MA_LOG_FD=""
+    _MA_RUN=run
+    _MA_LINK="$2/run"
+    _MA_DIR="$2/old"
+    mkdir "$_MA_DIR"
+    printf 'old\n' >"$_MA_DIR/log"
+    _ma_open_log && _ma_read_log >/dev/null
+    _ma_start_server "$2/self"
+    until [[ -s "$_MA_DIR/log" ]]; do sleep 0.05; done
+    _ma_relay_log
+    """
+
+    assert {"new\n", 0} =
+             System.cmd("bash", ["-c", script, "restart", Path.expand("bin/meerkat-attach"), dir])
+  end
+
   # A waiting caller relays its backend's log every 0.2 s and checks its
-  # ancestors only once the decision arrives: forking wc, tail and head
-  # every 0.2 s, and ps every second, cost about 0.1 CPU-s a second.
+  # ancestors only once the decision arrives: forking wc and tr every
+  # 0.2 s tick, and ps every fifth, cost about 0.1 CPU-s a second. A quiet
+  # stretch of 2.2 s spans more than five ticks.
   test "a caller waiting on a decision runs no process while it relays the backend's log" do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -348,9 +378,8 @@ defmodule Meerkat.ShepherdTest do
 
     fake_release(dir, ~S"""
     echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
-    sleep 0.5
     printf 'warn' >&2
-    sleep 0.5
+    sleep 0.3
     printf 'ing\n' >&2
     for _ in {1..600}; do
       [[ -f "$DELIVERED" ]] && exit 0
@@ -359,17 +388,15 @@ defmodule Meerkat.ShepherdTest do
     exit 1
     """)
 
-    # The attach stream sends only heartbeats for 3 s, then an approval.
+    # The attach stream is quiet for 2.2 s, then sends an approval.
     curl = ~S"""
     #!/usr/bin/env bash
     case "$*" in
       *attach/delivered*) touch "$DELIVERED"; exit 0 ;;
     esac
     echo start >> "$CALLS"
-    for _ in 1 2 3 4 5 6; do
-      printf 'k\n'
-      sleep 0.5
-    done
+    printf 'k\n'
+    sleep 2.2
     echo end >> "$CALLS"
     printf 'x 0\ns 200\n'
     """

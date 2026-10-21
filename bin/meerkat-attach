@@ -154,8 +154,9 @@ _ma_record_ancestors() {
 # A killed git commit can leave its hook (and this caller) running and attached.
 # It would then take delivery of the decision where nobody can read it, so on
 # receiving it, exit if any recorded ancestor has exited and leave the decision
-# held for the next invocation. Checked only then: reviews wait hours, and the
-# orphan is harmless until the decision. Where ps cannot tell (a sandbox denies
+# held for the next invocation. Checked only then: reviews wait hours, and a
+# killed commit is rare. Until then the orphan stays attached, so the
+# deadline keeps running for it. Where ps cannot tell (a sandbox denies
 # it), assume the ancestors live: taking them for dead would hold every decision.
 _ma_exit_if_orphaned() {
   ((${#_MA_ANCESTORS[@]})) || return 0
@@ -195,12 +196,12 @@ _ma_still_open() {
 
 # Open the run's log on _MA_LOG_FD, closing the last run's, and fail when
 # it has none yet. The open file keeps the caller's place, so relaying
-# forks nothing: sizing and slicing it with wc, tail and head on every
-# 0.2 s tick cost a waiting caller about 0.05 CPU-s a second.
+# forks nothing: sizing it with wc and tr on every 0.2 s tick cost a
+# waiting caller about 0.05 CPU-s a second.
 _ma_open_log() {
   [[ -n "$_MA_LOG_FD" ]] && exec {_MA_LOG_FD}<&-
   _MA_LOG_FD=""
-  { exec {_MA_LOG_FD}<"$_MA_DIR/log"; } 2>/dev/null || { _MA_LOG_FD="" && return 1; }
+  { exec {_MA_LOG_FD}<"$_MA_DIR/log"; } 2>/dev/null || return 1
 }
 
 # Print the log written since the last read, a partial last line included.
