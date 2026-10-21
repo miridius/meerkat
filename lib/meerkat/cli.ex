@@ -1096,9 +1096,7 @@ defmodule Meerkat.CLI do
   end
 
   defp exit_code({:ended, _payload}, _review_id, _feedback_path) do
-    {1,
-     "meerkat: no invocation was waiting on this review and it had no comments, " <>
-       "so it ended.\n"}
+    {1, "meerkat: the review ended.\n"}
   end
 
   defp decision_atom(:approve_with_feedback), do: :approve

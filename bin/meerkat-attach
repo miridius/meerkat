@@ -202,7 +202,7 @@ _ma_leave() {
   fi
   local said="meerkat: $1 before the review completed."
   case "$standing" in
-    ended) echo "$said The review had no comments or open comment form, so it ended; run the same command again to start a new one." >&2 ;;
+    ended) echo "$said Run the same command again to start a new one." >&2 ;;
     open) echo "$said The review is still open at http://127.0.0.1:$port/; run the same command again to wait for its outcome." >&2 ;;
     *)
       [[ -f "$_MA_DIR/pid" ]] && _ma_server_alive && kill -TERM "$(<"$_MA_DIR/pid")" 2>/dev/null

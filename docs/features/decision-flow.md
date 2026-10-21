@@ -203,7 +203,7 @@ it the outcome, naming the signal it got, and dies of that signal:
 - The review stays open:
   `meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
 - The review ended:
-  `meerkat: stopped waiting (SIGTERM) before the review completed. The review had no comments or open comment form, so it ended; run the same command again to start a new one.`
+  `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again to start a new one.`
 - The server is still starting or gave no answer within 2 seconds: the
   invocation stops the server and prints
   `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
@@ -286,7 +286,7 @@ ends:
   the notice. A tab opened later also shows it, until the BEAM exits.
 - The review log records `decision: ended`.
 - The BEAM exits **1**, printing
-  `meerkat: no invocation was waiting on this review and it had no comments, so it ended.`
+  `meerkat: the review ended.`
   to its log, and frees its port. Its run dir stays until the next
   invocation with the same arguments in the same directory removes
   it, as for any finished run whose caller is gone.

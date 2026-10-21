@@ -910,11 +910,8 @@ defmodule Meerkat.CLITest do
       assert err =~ "Review cancelled — commit aborted, no feedback to act on."
     end
 
-    test "an ended review exits 1 and says why it ended", %{path: path} do
-      assert exit_code({:ended, ""}, path) ==
-               {1,
-                "meerkat: no invocation was waiting on this review and it had no comments, " <>
-                  "so it ended.\n"}
+    test "an ended review exits 1 and says it ended", %{path: path} do
+      assert exit_code({:ended, ""}, path) == {1, "meerkat: the review ended.\n"}
     end
   end
 

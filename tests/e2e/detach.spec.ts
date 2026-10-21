@@ -212,7 +212,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible();
 			meerkat.signalGroup("SIGTERM");
 			expect(await meerkat.awaitClose(), "the caller says the review ended").toContain(
-				"meerkat: stopped waiting (SIGTERM) before the review completed. The review had no comments or open comment form, so it ended; run the same command again to start a new one.\n",
+				"meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again to start a new one.\n",
 			);
 			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
 			await expect.poll(() => alive(backend), { message: "the backend exits" }).toBe(false);
