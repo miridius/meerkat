@@ -12,10 +12,8 @@ defmodule MeerkatWeb.LiveSocketTest do
   # socket, as a browser's would.
 
   setup do
-    put_endpoint_config(
-      check_origin: Meerkat.CLI.endpoint_config_for_test(0)[:check_origin],
-      vite_manifest: PhoenixVite.Manifest.parse(~s({"js/app.js": {"file": "assets/app.js"}}))
-    )
+    put_endpoint_config(check_origin: Meerkat.CLI.endpoint_config_for_test(0)[:check_origin])
+    put_test_vite_manifest()
 
     server = start_supervised!({Bandit, plug: Endpoint, ip: {127, 0, 0, 1}, port: 0})
     {:ok, {_ip, port}} = ThousandIsland.listener_info(server)

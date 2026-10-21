@@ -26,6 +26,18 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   @plain_file plain_file()
   @commit_msg commit_msg()
 
+  ## --- Connection ---
+
+  test "the page takes no input until LiveView connects", %{conn: conn} do
+    put_test_vite_manifest()
+    put_state(%ReviewState{files: [@plain_file]})
+    dead = conn |> get("/") |> html_response(200) |> LazyHTML.from_document()
+    assert dead |> LazyHTML.query("main#meerkat-root[inert]") |> Enum.count() == 1
+
+    view = mount_unbound(conn)
+    assert has_element?(view, "main#meerkat-root:not([inert])")
+  end
+
   ## --- Toolbar ---
 
   test "toolbar.set_font_size accepts an integer and ignores junk", %{conn: conn} do

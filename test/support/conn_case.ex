@@ -45,4 +45,15 @@ defmodule MeerkatWeb.ConnCase do
     MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, new}], [])
     on_exit(fn -> MeerkatWeb.Endpoint.config_change([{MeerkatWeb.Endpoint, old}], []) end)
   end
+
+  @doc """
+  Gives the endpoint an asset manifest, which the test config lacks, so a
+  page's layout renders, as `put_endpoint_config/1` does.
+  """
+  def put_test_vite_manifest do
+    put_endpoint_config(
+      vite_manifest:
+        PhoenixVite.Manifest.parse(~s({"js/app.js": {"file": "assets/app.js", "isEntry": true}}))
+    )
+  end
 end

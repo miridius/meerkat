@@ -1,7 +1,7 @@
 // Spec entry point. Extends `@playwright/test`'s `page` with overrides
 // for both `goto` and `reload`. After navigation, each waits for the
 // LiveView channel to join (the root view gets `phx-connected`) before
-// returning. A phx-click sent before the join is silently dropped.
+// returning: the page takes no input until then.
 
 import { test as base, expect, type Page } from "@playwright/test";
 
