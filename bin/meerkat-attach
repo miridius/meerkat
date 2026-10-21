@@ -377,7 +377,7 @@ _ma_server_alive() {
   _MA_PID_WAIT_DIR=""
   local pid
   # Another invocation can remove the run since the check above.
-  { pid="$(<"$_MA_DIR/pid")"; } 2>/dev/null
+  read -r pid 2>/dev/null <"$_MA_DIR/pid"
   kill -0 "$pid" 2>/dev/null || return 1
   [[ -f "$_MA_DIR/exit" ]] && return 0
   # The command check stops a reused pid passing for the backend. Where ps
@@ -388,18 +388,20 @@ _ma_server_alive() {
 
 _ma_bury_server() {
   # It exited cleanly after the loop's exit check, or another invocation
-  # removed its run after _ma_server_alive found its pid file (as while
-  # this caller was suspended); the next pass collects the exit code or
-  # reports the removal.
+  # removed its run since _ma_server_alive found its pid file (as while
+  # this caller was suspended); the next pass handles either as the main
+  # loop does.
   [[ -f "$_MA_DIR/exit" || ! -d "$_MA_DIR" ]] && return
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam
-    read -r port beam <"$_MA_DIR/port"
+    read -r port beam 2>/dev/null <"$_MA_DIR/port"
     # A BEAM whose shepherd died still holds the review's port.
     if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi
   fi
+  # The removal can also land while the BEAM is checked.
+  [[ -d "$_MA_DIR" ]] || return
   if ((_MA_OWNED)); then
     _ma_relay_log
     echo "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)." >&2
