@@ -578,8 +578,30 @@ defmodule Meerkat.ShepherdTest do
       assert out == "next pass\n"
     end
 
-    # An unreadable pid file fails the read as one removed after the check
-    # does, and that caller's output is the next pass's message alone.
+    # The same removal, landing while the caller checks what runs on the
+    # BEAM's pid.
+    test "a caller whose run is removed while it checks the BEAM does not say its backend died" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(Path.join(runs, "key.r"))
+      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_OWNED=1; _MA_HELD=1
+          _ma_runs_meerkat() { rm -rf "$_MA_DIR"; return 1; }
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+    end
+
+    # An unreadable pid file fails the read the way one removed after the
+    # check does, so the caller takes the backend for dead without a bash
+    # error.
     test "a caller whose pid file cannot be read after its check takes the backend for dead quietly" do
       run = Meerkat.TestHelpers.tmp_path("meerkat-pid-read")
       on_exit(fn -> File.rm_rf!(run) end)
