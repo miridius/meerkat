@@ -3,16 +3,15 @@ defmodule Meerkat.BumpDepsCase do
   Shared fixture and helpers for the tests that commit or rebase through the
   repo's real lefthook.yml, scripts/bump-deps.sh, scripts/deps-common.sh,
   scripts/bump-hex-requirements.exs, scripts/rebase-bump.ts and
-  scripts/check.sh. Only mix, pnpm, bun and bunx are replaced, by stubs on
-  PATH: they log each run, report the outdated packages a test sets up, and
-  record an update by appending a line to the lockfile or manifest it would
-  change. The tests are split across files so each file's BEAM stays under
-  the per-file time limit.
+  scripts/check.sh. Only mix, pnpm, bun, bunx and curl are replaced, by stubs
+  on PATH, plus the fixture's own mix-test.sh, mutate.sh and
+  dep-exemptions.json: the stubs log each run, report the outdated packages
+  a test sets up, and record an update by appending a line to the lockfile or
+  manifest it would change. The tests are split across files to keep each
+  file's BEAM time down.
   """
 
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0]
-
-  @root File.cwd!()
 
   @mix_exs """
   defmodule Fixture.MixProject do
@@ -87,32 +86,38 @@ defmodule Meerkat.BumpDepsCase do
   end
 
   def build_fixture(base) do
-    work = Path.join(base, "work")
-    stubs = Path.join(base, "stubs")
-    log = Path.join(base, "log")
-    hex_out = Path.join(base, "hex.out")
-    pnpm_out = Path.join(base, "pnpm.json")
-    seen = Path.join(base, "seen")
-    fail_update = Path.join(base, "fail-update")
-    npm_latest = Path.join(base, "npm-latest")
-    refuse = Path.join(base, "refuse")
-    fail_get = Path.join(base, "fail-deps-get")
-    fail_install = Path.join(base, "fail-pnpm-install")
-    git_env = Path.join(base, "git-env")
-    hex_api = Path.join(base, "hex-api")
+    %{
+      work: work,
+      stubs: stubs,
+      log: log,
+      hex_out: hex_out,
+      pnpm_out: pnpm_out,
+      seen: seen,
+      fail_update: fail_update,
+      npm_latest: npm_latest,
+      refuse: refuse,
+      fail_get: fail_get,
+      fail_install: fail_install,
+      git_env: git_env,
+      hex_api: hex_api
+    } = Map.new(fixture_paths(base))
+
     synced = Path.join(base, "deps-synced")
+    # Read at run time, not compile time: a compiled module copied from
+    # another checkout's _build would otherwise copy that checkout's scripts.
+    root = File.cwd!()
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
     git(work, ["config", "user.email", "t@t.t"])
     git(work, ["config", "user.name", "t"])
 
-    File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
+    File.cp!(Path.join(root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
           ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
              deps-common.sh gate-lock.sh hex-cooldown.ts rebase-bump.ts) do
-      File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
+      File.cp!(Path.join([root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
     # Fixed rather than copied, so a new upstream release cannot change it.
@@ -121,7 +126,7 @@ defmodule Meerkat.BumpDepsCase do
       ~s({"shiki": {"version": "4.4.3", "reason": "upstream needs shiki 3"}})
     )
 
-    # This test covers the dependency bump, not the runner; keep the fixture's
+    # These tests cover the dependency bump, not the runner; keep the fixture's
     # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
     # test/scripts/pre_commit_test.exs covers the mutation gate.

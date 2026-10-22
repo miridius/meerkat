@@ -14,7 +14,7 @@ const run = (cmd: string[]) => Bun.spawnSync(cmd, { stdio: ["ignore", "inherit",
 
 function fail(what: string): never {
 	console.error(`post-rewrite: ${what}, so the rebase was left without a dependency bump commit.`);
-	const left = Bun.spawnSync(["git", "status", "--porcelain"]).stdout.toString();
+	const left = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.toString();
 	if (left) console.error("  The bump's changes are left in the worktree; `git status` lists them.");
 	console.error("  The pre-push gate refuses the push while dependencies are outdated.");
 	process.exit(1);

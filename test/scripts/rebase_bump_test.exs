@@ -43,6 +43,8 @@ defmodule Meerkat.RebaseBumpHookTest do
     test "whose bump fails is left done, saying so", ctx do
       File.write!(ctx.hex_out, @hex_behind)
       File.touch!(ctx.fail_update)
+      # Untracked, so not the bump's.
+      File.write!(Path.join(ctx.work, "scratch.txt"), "mine\n")
 
       assert {out, 0} = hooked(ctx, ["rebase", "main"])
 
@@ -51,7 +53,7 @@ defmodule Meerkat.RebaseBumpHookTest do
 
       refute out =~ "left in the worktree"
       assert subjects(ctx) == ["feature work", "main moves", "base"]
-      assert git(ctx.work, ["status", "--porcelain"]) == ""
+      assert git(ctx.work, ["status", "--porcelain"]) == "?? scratch.txt"
     end
 
     test "whose bump commit the checks refuse leaves the bump staged, saying so", ctx do
