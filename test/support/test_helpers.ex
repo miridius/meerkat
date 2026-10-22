@@ -8,12 +8,15 @@ defmodule Meerkat.TestHelpers do
 
   # Git reads only test.gitconfig, never the caller's or the system's
   # config. The caller's identity variables would override the fixture's
-  # user.email.
+  # user.email. A non-interactive rebase exports GIT_SEQUENCE_EDITOR=: to
+  # its hooks, so the checks a hook runs would override the editor of every
+  # interactive rebase a test sets with `-c sequence.editor`.
   @git_config_env %{
     "GIT_CONFIG_GLOBAL" => Path.expand("test.gitconfig", __DIR__),
     "GIT_CONFIG_NOSYSTEM" => "1",
     "GIT_CONFIG_COUNT" => "0",
     "GIT_CONFIG_PARAMETERS" => nil,
+    "GIT_SEQUENCE_EDITOR" => nil,
     "GIT_AUTHOR_NAME" => nil,
     "GIT_AUTHOR_EMAIL" => nil,
     "GIT_COMMITTER_NAME" => nil,

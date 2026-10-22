@@ -10,14 +10,12 @@
 // commit goes through the pre-commit hook too, which checks it. Git ignores
 // this hook's exit status, so a failure leaves the rebase done and says so.
 
-// A rebase exports GIT_SEQUENCE_EDITOR=: to its hooks. Left set, it would
-// override the editor of every interactive rebase the pre-commit checks run,
-// such as the tests' own.
-const { GIT_SEQUENCE_EDITOR: _, ...env } = process.env;
-const run = (cmd: string[]) => Bun.spawnSync(cmd, { env, stdio: ["ignore", "inherit", "inherit"] }).exitCode;
+const run = (cmd: string[]) => Bun.spawnSync(cmd, { stdio: ["ignore", "inherit", "inherit"] }).exitCode;
 
 function fail(what: string): never {
-	console.error(`post-rewrite: ${what}, so the rebase was left without the dependency bump.`);
+	console.error(`post-rewrite: ${what}, so the rebase was left without a dependency bump commit.`);
+	const left = Bun.spawnSync(["git", "status", "--porcelain"]).stdout.toString();
+	if (left) console.error("  The bump's changes are left in the worktree; `git status` lists them.");
 	console.error("  The pre-push gate refuses the push while dependencies are outdated.");
 	process.exit(1);
 }

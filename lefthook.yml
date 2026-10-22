@@ -28,6 +28,8 @@ pre-commit:
 
 # A rebase skips pre-commit, so its dependency bump is committed after it.
 post-rewrite:
+  # As for pre-commit, whose checks the bump's commit runs.
+  follow: true
   commands:
     rebase-bump:
       run: bun scripts/rebase-bump.ts {1}
