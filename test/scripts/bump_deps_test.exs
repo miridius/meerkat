@@ -84,6 +84,7 @@ defmodule Meerkat.BumpDepsHookTest do
     fail_install = Path.join(base, "fail-pnpm-install")
     git_env = Path.join(base, "git-env")
     hex_api = Path.join(base, "hex-api")
+    synced = Path.join(base, "deps-synced")
 
     File.mkdir_p!(Path.join(work, "scripts"))
     git(base, ["init", "-q", "--initial-branch=main", work])
@@ -94,7 +95,7 @@ defmodule Meerkat.BumpDepsHookTest do
 
     for script <-
           ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
-             deps-common.sh gate-lock.sh hex-cooldown.ts) do
+             deps-common.sh gate-lock.sh hex-cooldown.ts rebase-bump.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -133,6 +134,8 @@ defmodule Meerkat.BumpDepsHookTest do
     File.mkdir_p!(npm_latest)
     File.mkdir_p!(refuse)
 
+    # Like real deps/ right after mix.lock moves, hex.outdated aborts until
+    # deps.get has fetched the locked versions.
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
     cmd="$(basename "$0") $*"
@@ -141,8 +144,15 @@ defmodule Meerkat.BumpDepsHookTest do
       "mix deps.get --check-locked" | "pnpm install --frozen-lockfile "*)
         echo "$cmd: ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
         if [[ "$1" == deps.get && -e '#{fail_get}' ]]; then echo "** (Mix) lock would change"; exit 1; fi
-        if [[ "$1" == install && -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi ;;
-      "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
+        if [[ "$1" == install && -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi
+        if [[ "$1" == deps.get ]]; then touch '#{synced}'; fi ;;
+      "mix hex.outdated")
+        if [[ ! -e '#{synced}' ]]; then
+          echo "  lock mismatch: the dependency is out of date. To fetch locked version run \\"mix deps.get\\""
+          echo "** (Mix) Can't continue due to errors on dependencies"
+          exit 1
+        fi
+        cat '#{hex_out}'; exit 1 ;;
       "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
       "mix deps.update "*)
         [[ -e '#{fail_update}' ]] && exit 1
@@ -164,12 +174,15 @@ defmodule Meerkat.BumpDepsHookTest do
         echo "updated $names" >> package.json
         echo "updated $names" >> assets/package.json
         echo "updated $names" >> pnpm-lock.yaml ;;
-      "mix compile --warnings-as-errors") cp mix.lock '#{seen}' ;;
+      "mix compile --warnings-as-errors")
+        cp mix.lock '#{seen}'
+        echo "${GIT_SEQUENCE_EDITOR-unset}" > '#{base}/sequence-editor' ;;
       "bun scripts/hex-cooldown.ts "*)
         # Run outside the work tree, whose placeholder package.json bun
         # would fail to parse.
         cp "$1" '#{base}/hex-cooldown.ts' && cd '#{base}' &&
           exec '#{System.find_executable("bun")}' hex-cooldown.ts "${@:2}" ;;
+      "bun scripts/rebase-bump.ts "*) exec '#{System.find_executable("bun")}' "$@" ;;
       "bun scripts/age-excludes.ts prune")
         if [[ -e '#{base}/fail-age-excludes.ts' ]]; then echo "$1 failed"; exit 1; fi
         if [[ -e '#{base}/excludes-stale' ]]; then echo "pruned" >> pnpm-workspace.yaml; fi ;;
@@ -244,6 +257,68 @@ defmodule Meerkat.BumpDepsHookTest do
     refute Enum.any?(run(ctx), &(&1 =~ ~r/deps\.update|pnpm -r update/))
   end
 
+  # A rebase makes its commits without the pre-commit hook, so a release
+  # that came out since they were made is bumped by post-rewrite.
+  describe "a rebase" do
+    setup ctx do
+      no_hooks(ctx.work, ["switch", "-q", "main"])
+      stage(ctx.work, "main.txt", "main\n")
+      no_hooks(ctx.work, ["commit", "-qm", "main moves"])
+      no_hooks(ctx.work, ["switch", "-q", "feature"])
+      stage(ctx.work, "code.txt", "feature\n")
+      no_hooks(ctx.work, ["commit", "-qm", "feature work"])
+      :ok
+    end
+
+    test "while dependencies are behind commits their bump on top, checked", ctx do
+      File.write!(ctx.hex_out, @hex_behind)
+
+      assert {out, 0} = hooked(ctx, ["rebase", "main"])
+      assert out =~ "committed the dependency bump on top of the rebase"
+
+      assert subjects(ctx) == ["Bump dependencies", "feature work", "main moves", "base"]
+      assert changed_files(ctx) == ["mix.exs", "mix.lock"]
+      assert committed(ctx, "mix.exs") =~ ~s({:bandit, "~> 1.12.5"})
+      assert git(ctx.work, ["branch", "--show-current"]) == "feature"
+      assert git(ctx.work, ["status", "--porcelain"]) == ""
+      # The pre-commit checks ran on the bump commit. Its own bump runs again
+      # there, and the stubbed report still lists the releases behind.
+      assert File.read!(ctx.seen) == committed(ctx, "mix.lock")
+      # Without the editor the rebase sets, so the checks' own rebases keep theirs.
+      assert File.read!(Path.join(Path.dirname(ctx.work), "sequence-editor")) == "unset\n"
+    end
+
+    test "while everything is current adds no commit", ctx do
+      assert {_, 0} = hooked(ctx, ["rebase", "main"])
+      assert subjects(ctx) == ["feature work", "main moves", "base"]
+      assert "mix hex.outdated" in run(ctx)
+    end
+
+    test "whose bump fails is left done, saying so", ctx do
+      File.write!(ctx.hex_out, @hex_behind)
+      File.touch!(ctx.fail_update)
+
+      assert {out, 0} = hooked(ctx, ["rebase", "main"])
+
+      assert out =~
+               "scripts/bump-deps.sh failed, so the rebase was left without the dependency bump"
+
+      assert subjects(ctx) == ["feature work", "main moves", "base"]
+    end
+  end
+
+  # An amend goes through pre-commit, which Lefthook skips when nothing is
+  # staged, so post-rewrite leaves it alone.
+  test "an amend gets no bump commit of its own", ctx do
+    File.write!(ctx.hex_out, @hex_behind)
+    stage(ctx.work, "code.txt", "change\n")
+    no_hooks(ctx.work, ["commit", "-qm", "change code"])
+
+    assert {_, 0} = commit(ctx, ["--amend", "-m", "amended"])
+    assert ctx |> subjects() |> hd() == "amended"
+    refute "mix hex.outdated" in run(ctx)
+  end
+
   test "an unreadable Hex report refuses the commit before the checks", ctx do
     for report <- ["** (Mix) boom\n", @hex_header <> "** (Mix) Could not fetch registry\n"] do
       File.write!(ctx.hex_out, report)
@@ -256,7 +331,8 @@ defmodule Meerkat.BumpDepsHookTest do
   test "the bump syncs Hex then JS dependencies first, without the index Git exports", ctx do
     stage(ctx.work, "code.txt", "change\n")
 
-    assert {_, 0} = commit(ctx, ["-m", "change code"])
+    assert {out, 0} = commit(ctx, ["-m", "change code"])
+    refute out =~ "lock mismatch"
 
     assert Enum.take(run(ctx), 3) == [
              "mix deps.get --check-locked",
@@ -493,10 +569,13 @@ defmodule Meerkat.BumpDepsHookTest do
     assert git(ctx.work, ["status", "--porcelain"]) == ""
   end
 
-  defp commit(ctx, args) do
+  defp commit(ctx, args), do: hooked(ctx, ["commit", "-q" | args])
+
+  # Runs git with the repo's hooks and the stubs on PATH.
+  defp hooked(ctx, args) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
-    System.cmd("git", ["commit", "-q" | args],
+    System.cmd("git", args,
       cd: ctx.work,
       env: [{"PATH", path} | hook_env()],
       stderr_to_stdout: true
@@ -526,6 +605,8 @@ defmodule Meerkat.BumpDepsHookTest do
     |> git(["diff", "--name-only", "HEAD~1", "HEAD", "--" | @dep_files ++ ["code.txt"]])
     |> String.split("\n", trim: true)
   end
+
+  defp subjects(ctx), do: ctx.work |> git(["log", "--format=%s"]) |> String.split("\n")
 
   defp run(ctx) do
     case File.read(ctx.log) do

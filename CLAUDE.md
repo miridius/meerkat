@@ -42,7 +42,8 @@ remove commits a merged PR still references). Before committing:
   A git dependency counts as current when its pinned GitHub commit
   contains the tag of its newest stable Hex release at least 24h old. The gate fails for
   all other git dependencies. None is exempt. The pre-commit
-  hook bumps registry packages; do not bump them by hand. It never
+  hook bumps registry packages, and the post-rewrite hook does after a
+  rebase; do not bump them by hand. Neither ever
   moves git dependencies, so maintain
   their pins by hand. Fix fallout rather than pinning old
   releases. Each `scripts/dep-exemptions.json` entry needs a `version`
@@ -134,6 +135,8 @@ meerkat's own steps for a bug report or feature request:
 `check.sh` records the checked contents, ignoring Markdown, through `scripts/checked-trees.sh` when every step passes and the worktree held exactly those contents, with no untracked file, before and after the steps. `check.sh --head` checks HEAD's contents without the Markdown-only skip.
 
 Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, including Svelte templates and styles. Biome warnings and errors fail the check; infos are printed only.
+
+**Post-rewrite:** A rebase makes its commits without the pre-commit hook, so a release that came out since they were made would reach the pre-push gate unbumped. After a `git rebase`, `git pull --rebase` included, Lefthook runs `scripts/rebase-bump.ts`, which runs `scripts/bump-deps.sh`. When that stages a bump, it commits it on top of the rebased commits as `Bump dependencies`, through the pre-commit hook. It does nothing after `git commit --amend`, whose pre-commit hook already bumped. Git ignores the hook's exit status, so a failed bump or commit leaves the rebase done; the hook says so, and the pre-push gate then refuses the outdated push.
 
 **Pre-push:** `.lefthook/pre-push/pre-push.sh` runs `scripts/no-private-refs.sh` and `scripts/outdated.sh` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked. If both pass, it runs `scripts/verified-push.sh`. `verified-push.sh` first refuses the push if it brings any merge commit that no remote-tracking ref holds; branches take in `main` by rebasing. It then requires `check.sh` and the mutation gate to have recorded each pushed tip's contents: a rebase or cherry-pick makes commits without the pre-commit hook, and a push is the last point git can refuse them. For each record a tip lacks, it runs `check.sh --head`, then `mutate.sh changed` against `origin/main`, stopping at the first failure. It runs them on an unrecorded HEAD when the worktree holds exactly HEAD, with no untracked file. It refuses the push if that run fails or records nothing. It refuses any other unrecorded HEAD. It runs them on an unrecorded tip other than HEAD in a temporary worktree of that tip. It refuses the push if the run fails or records nothing. It refuses any tip git cannot read. `no-private-refs.sh` reads private patterns, one extended regex per line, from the untracked `info/private-refs` in the git common dir and refuses the push if that file is missing or any pattern fails its self-test. It scans commits not already held by the target remote, plus every pushed tip’s full tree, pushed annotated tags, and pushed ref names, rejecting private-pattern matches, Claude Code session URLs, local absolute paths, and all email addresses except placeholder and no-reply addresses. It refuses the push if the remote cannot be queried.
 
