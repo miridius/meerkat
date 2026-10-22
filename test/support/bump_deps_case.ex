@@ -1,14 +1,13 @@
 defmodule Meerkat.BumpDepsCase do
   @moduledoc """
   Shared fixture and helpers for the tests that commit or rebase through the
-  repo's real lefthook.yml, scripts/bump-deps.sh, scripts/deps-common.sh,
-  scripts/bump-hex-requirements.exs, scripts/rebase-bump.ts and
-  scripts/check.sh. Only mix, pnpm, bun, bunx and curl are replaced, by stubs
-  on PATH, plus the fixture's own mix-test.sh, mutate.sh and
-  dep-exemptions.json: the stubs log each run, report the outdated packages
-  a test sets up, and record an update by appending a line to the lockfile or
-  manifest it would change. The tests are split across files to keep each
-  file's BEAM time down.
+  repo's real lefthook.yml and the scripts `build_fixture/1` copies. Only mix,
+  pnpm, bun, bunx and curl are replaced, by stubs on PATH (the bun stub hands
+  hex-cooldown.ts and rebase-bump.ts to the real bun), plus the fixture's own
+  mix-test.sh, mutate.sh and dep-exemptions.json: the stubs log each run,
+  report the outdated packages a test sets up, and record an update by
+  appending a line to the lockfile or manifest it would change. The tests are
+  split across files to keep each file's BEAM time down.
   """
 
   import Meerkat.TestHelpers, only: [git: 2, hook_env: 0]
