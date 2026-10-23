@@ -145,8 +145,6 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 `scripts/mix-test.sh` runs each test file in its own BEAM, at most half the online cores' worth at once across all test runs in all worktrees of the repo. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. When every file passes, each one over the limit in `scripts/test-file-limit.json` without an entry there giving a non-empty `reason` is run again, one at a time, and fails the run if it is still over or then fails; a missing or malformed limits file, or an entry without a reason, fails it too. Locally the limit is 10 s of CPU time, which leaves out programs the test BEAM starts; in CI (`CI=true`), 60 s of wall time.
 
-Each BEAM the Playwright suite starts gets two schedulers of each kind that do not busy-wait (`+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none +sbwtdcpu none +sbwtdio none`, set in `tests/e2e/lib/runner.ts`) ahead of any `ELIXIR_ERL_OPTIONS` already set. The suite's time budgets (test, expect and action timeouts, and the specs' own that use `budget`) are what each wait needs on an idle machine, multiplied by the one-minute load average per core when the run starts, clamped to 1-4 (`tests/e2e/lib/budget.ts`), so a loaded machine slows tests without failing them and a hang still fails.
-
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
 When behaviour changes, choose the lowest layer that exercises it:
@@ -163,6 +161,8 @@ When behaviour changes, choose the lowest layer that exercises it:
   list a file in `scripts/test-file-limit.json` only with a reason.
 - In e2e, read state an observer or `requestAnimationFrame` sets only
   through a retrying assertion or after `afterNextFrame`: CI renders late.
+- In e2e, give a timeout its idle-machine value through `budget`
+  (`tests/e2e/lib/budget.ts`), which scales it with the machine's load.
 
 ## Mutation testing
 

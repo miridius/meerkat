@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { budget } from "./lib/budget";
 import { makeFixture, ownedTmpDir } from "./lib/fixture";
 import { type Runner, startMeerkat, startMeerkats } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -71,14 +72,14 @@ test.describe("a review that restarts onto a new version", () => {
 						const pid = servingPid(meerkat);
 						return pid !== undefined && pid !== before ? "restarted" : "waiting";
 					},
-					{ timeout: 90_000 },
+					{ timeout: budget(90_000) },
 				)
 				.toBe("restarted");
 
 			// The open page reconnects by itself, in place: the new BEAM verifies
 			// its LiveView token with the shepherd's secret, and the build's
 			// assets are unchanged, so it does not reload.
-			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: 90_000 });
+			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible({ timeout: budget(90_000) });
 			await expect(page.getByText("kept across the restart")).toBeVisible();
 			await expect(approved).toBeChecked();
 			expect(
