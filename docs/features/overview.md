@@ -153,10 +153,12 @@ When the UI does open, the reviewer sees, top-to-bottom:
    (see [decision-flow.md](decision-flow.md)).
 
 The page paints before it connects to the review server. Until it
-first connects, its controls take no clicks, focus or typing, the
+first connects, and from the moment it loses the connection until it
+reconnects, its controls take no clicks, focus or typing, the
 pointer shows progress over the page, and the connection pill says
-`connecting…`, or `disconnected` once a connection attempt fails, so
-no action is lost to the server not listening yet.
+`connecting…`, or `disconnected` once the connection drops or an
+attempt fails, so no action is lost to the server not listening. On
+reconnecting, the control that had focus gets it back, caret included.
 
 ## Line counts
 
