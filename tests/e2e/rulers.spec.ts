@@ -6,7 +6,7 @@ import { startMeerkat } from "./lib/runner";
 import { afterNextFrame, expect, test } from "./lib/test";
 
 // The browser seam of the ruler setting: DiffViewer.svelte measures each
-// side's visible code width to choose which rulers to draw, and the
+// side's code width to choose which rulers to draw, and the
 // suggestion editor redraws its rulers when the setting changes. Parsing
 // and persisting the setting are covered by the LiveView tests.
 
@@ -112,7 +112,7 @@ async function openSettings(page: Page) {
 	if ((await page.locator(".toolbar-settings[open]").count()) === 0) await summary.click();
 }
 
-test("diff rulers show only where the visible code column fits them and follow the ⚙ setting", async ({
+test("diff rulers show only where the code column fits them and follow the ⚙ setting", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: wideFixture() });
@@ -174,9 +174,7 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await afterNextFrame(page);
 		await expect.poll(() => rulersOn(newCell)).toEqual([]);
 
-		// At 950px, Unified view's one code column fits 80 but not 110, with
-		// wrap on or off; with wrap off the long lines widen the cell past
-		// the view.
+		// At 950px, Unified view's one code column fits 80 but not 110.
 		await page.setViewportSize({ width: 950, height: 800 });
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		const unifiedCell = file.locator("td.diff-line-content").first();
@@ -209,8 +207,21 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await page.getByRole("checkbox", { name: "Wrap" }).click();
 		await expect(page.getByRole("checkbox", { name: "Wrap" })).not.toBeChecked();
 		await afterNextFrame(page);
-		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["80"]);
+		// With wrap off, the 130-character lines widen the cell past the
+		// view, so 110 shows where scrolling reaches it, in Unified view and
+		// on each side of Split view, and never in the right padding.
+		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["80", "110"]);
+		expect(
+			await file
+				.locator("td.diff-line-content")
+				.first()
+				.evaluate((td) => window.rulerProbe.rulersPastText(td)),
+		).toEqual([]);
 		await expectNumbersClear();
+		await page.getByRole("button", { name: /^Split$/ }).click();
+		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
+		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
+		await page.getByRole("button", { name: /^Unified$/ }).click();
 
 		// The ⚙ popover hides them, and sets their columns.
 		await openSettings(page);
@@ -221,14 +232,15 @@ test("diff rulers show only where the visible code column fits them and follow t
 		await expect(page.locator(".toolbar-settings-popover")).toBeVisible();
 		await toggle.click();
 		const columns = page.getByLabel("Ruler columns");
-		await columns.fill("40, 120");
+		// No line reaches column 200, so scrolling can't reach its ruler.
+		await columns.fill("40, 200");
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["40"]);
 
 		// The setting survives a reload.
 		await page.reload();
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["40"]);
 		await openSettings(page);
-		await expect(page.getByLabel("Ruler columns")).toHaveValue("40, 120");
+		await expect(page.getByLabel("Ruler columns")).toHaveValue("40, 200");
 
 		// Rows being drag-selected keep their rulers.
 		await page.locator(".toolbar-settings > summary").click();

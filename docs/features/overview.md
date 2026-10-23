@@ -101,11 +101,13 @@ When the UI does open, the reviewer sees, top-to-bottom:
      the suggestion editor (see
      [inline-comments.md](inline-comments.md)).
    - In the diff, each ruler is a vertical line after its column on
-     code lines, counting tabs at the Tab setting. A ruler shows only
-     when its column fits in the visible width of the code column,
-     judged for each side separately in Split view, with Wrap on or
-     off; otherwise it is not drawn. A wrapped line's continuation
-     rows show it too.
+     code lines, counting tabs at the Tab setting, judged for each
+     side separately in Split view. With Wrap on, a ruler shows only
+     when its column fits in the visible width of the code column;
+     otherwise it is not drawn. A wrapped line's continuation rows
+     show it too. With Wrap off, a ruler shows when its column fits
+     in the code column's full scroll width, so one past the visible
+     width shows once the side is scrolled to it.
 2. **Flash error banner** (only when a handler set `flash_error`,
    e.g. a stale-OID approve or a `gh api` failure).
 3. **Pending answers** banner (only if a prior review had question
