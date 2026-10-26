@@ -50,9 +50,31 @@ GitHub PR.
    comments, stderr prints `The user approved your commit.
    Proceeding.` With comments, stderr prints the formatted feedback
    (so the calling agent sees the approving feedback too). Approve also
-   marks every staged file approved for the branch, which feeds the
+   marks every staged file approved for the branch (see
+   [Approvals carry over](#approvals-carry-over)), which feeds the
    auto-approve fast path below. An Approve clicked after another tab
    already decided the review is ignored and marks no file approved.
+
+## Approvals carry over
+
+In a staged-diff review, ticking a file's Approved checkbox marks the
+file's staged content approved for the branch, and unticking it drops
+the file's approvals for the branch. The next staged-diff review on
+that branch opens with every file whose staged content was approved
+before already ticked, whatever the previous round's decision was. A
+file whose content has changed since opens unticked. During a rebase,
+the branch is the one being rebased.
+
+A detached HEAD behaves exactly like a branch: its approvals belong to
+its worktree, under the key `detached HEAD (<name>)`, where `<name>` is
+the worktree's gitdir name (`.git` for the main worktree). A ref name
+can't contain a space, so the key never clashes with a branch.
+
+Approvals live in `<git-common-dir>/meerkat-precommit/approved.json`,
+shared by all worktrees. Each review that opens the page drops the
+approvals of branches that no longer exist locally and of worktrees
+that no longer exist. PR, range and single-ref reviews neither read nor
+write them.
 
 ## Questions block the next review
 
@@ -92,8 +114,10 @@ meerkat exits **0** before binding the server:
   `meerkat: all <N> staged file(s) already approved — auto-approving.`;
   if any are generated, print
   `meerkat: all <N> staged file(s) already approved (<A>) or linguist-generated (<G>) — auto-approving.`
-  During a rebase, lookup uses the branch being rebased, so split or
-  regrouped commits whose files were approved before still auto-approve.
+  Lookup uses the branch as [Approvals carry over](#approvals-carry-over)
+  defines it, so during a rebase split or regrouped commits whose files
+  were approved before still auto-approve, and on a detached HEAD files
+  approved before in the same worktree do.
 - No staged files at all (e.g. `git commit --amend` for message only)
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 
