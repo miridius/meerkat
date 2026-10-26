@@ -77,7 +77,7 @@ defmodule Meerkat.MixProject do
       # in `lib/` and runs the tests that reach each rewrite. A
       # mutation that every selected test passes = a test gap. See
       # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
-      # that adds, on top of 0.11.3, test-selection fixes (multi-alias
+      # that adds, on top of 0.12.0, test-selection fixes (multi-alias
       # test selection, crediting each test file with only the lines it
       # executed, selecting tests that name a module only as a value,
       # such as `live_isolated(conn, MeerkatWeb.ReviewLive)`), parallel
@@ -88,11 +88,14 @@ defmodule Meerkat.MixProject do
       # UTF-8, no function-call mutants of map literals, `%` structs or
       # `::` in interpolation and bitstring segments, runs of mutants
       # whose compiled code differs only as 4 vs 4.0, which were wrongly
-      # called equivalent, and git diffs that ignore textconv drivers
-      # and diff prefix config.
+      # called equivalent, git diffs that ignore textconv drivers
+      # and diff prefix config, no mutants that never compile (definition
+      # heads, patterns, sigils, guard `in`, module-body calls, macro
+      # bodies), a timeout that counts from the suite's start, and an
+      # escript that finds Mix behind a version-manager shim.
       {:muex,
        github: "agent-for-miridius/muex",
-       ref: "09560dc884b0dff97da545c95ec171c2f727deb1",
+       ref: "31acebe0beb5df95264fec06a72e08097728457f",
        only: [:dev, :test],
        runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}

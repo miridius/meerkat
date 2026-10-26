@@ -364,9 +364,16 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 		await expect(counts.locator(".counts-showing")).toBeHidden();
 		await expect(counts.locator(".counts-of")).toBeHidden();
 		await expect(counts.locator(".counts-slash")).toBeVisible();
-		expect(await counts.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim())).toMatch(
-			/^\+\d+ -\d+ \/ \+\d+ -\d+$/,
-		);
+		// The text of its visible parts only.
+		const shown = await counts.evaluate((el) => {
+			const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+			let text = "";
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+				if (node.parentElement?.checkVisibility()) text += node.textContent;
+			}
+			return text.replace(/\s+/g, " ").trim();
+		});
+		expect(shown).toMatch(/^\+\d+ -\d+ \/ \+\d+ -\d+$/);
 		await at(page, width);
 
 		await file.click();

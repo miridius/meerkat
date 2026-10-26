@@ -361,7 +361,7 @@ defmodule Meerkat.PreCommitHookTest do
     assert "--no-filter" in args
     assert "--no-optimize" in args
     assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
-    assert ["--timeout", "300000"] in Enum.chunk_every(args, 2, 1)
+    assert ["--timeout", "900000"] in Enum.chunk_every(args, 2, 1)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
 
     # The test files that drive scripts in subprocesses are left out.

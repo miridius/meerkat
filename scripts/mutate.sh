@@ -255,14 +255,15 @@ run_mutate() {
   # Every selected line counts, so --no-filter keeps muex from skipping a
   # file it rates too simple to be worth mutating, and --no-optimize from
   # dropping the mutants of a function it rates too simple.
-  # muex gives up on a mutant's `mix test` after --timeout ms without
-  # output. Its 10 s default is shorter than a test BEAM takes to boot on a
-  # loaded machine (35-58 s seen at a load average of 175-317 on 18 cores),
-  # so load timed out mutants no test had judged. Keep it above a silent
-  # boot plus ExUnit's per-test timeout (test/test_helper.exs), so a hang
-  # inside a test fails first, which is a kill.
+  # muex gives up on a mutant's `mix test` once ExUnit has run its tests
+  # for --timeout ms, counted from the suite's start; booting and
+  # compiling get the larger of 60 s and six times --timeout. A line every
+  # test executes runs every file in $tests in one BEAM, which took 129 s
+  # in one run. Keep --timeout well above that plus ExUnit's per-test
+  # timeout (test/test_helper.exs), so under load a hang inside a test
+  # still fails first, which is a kill.
   muex=(mix muex --files "$joined" --test-paths "$tests" --coverage-guided
-    --concurrency "$jobs" --no-filter --no-optimize --timeout 300000
+    --concurrency "$jobs" --no-filter --no-optimize --timeout 900000
     "${scope_args[@]}")
 
   # Every mode judges the run from muex's JSON report rather than its

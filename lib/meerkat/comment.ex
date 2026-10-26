@@ -78,10 +78,10 @@ defmodule Meerkat.Comment do
   @doc "Fresh comment id (RFC4122 v4 UUID). Opaque to consumers."
   @spec new_id() :: id
   def new_id do
-    <<a::32, b::16, _::4, c::12, _::2, d::62>> = :crypto.strong_rand_bytes(16)
+    <<a::48, _::4, c::12, _::2, d::62>> = :crypto.strong_rand_bytes(16)
     # Stamp the version (4) and variant (10xx) bits before formatting
     # so the resulting hex is unambiguously RFC 4122 v4.
-    <<a1::32, b1::16, c1::16, d1::16, e1::48>> = <<a::32, b::16, 4::4, c::12, 2::2, d::62>>
+    <<a1::32, b1::16, c1::16, d1::16, e1::48>> = <<a::48, 4::4, c::12, 2::2, d::62>>
 
     # `:io_lib.format` with zero-padded `~*.16.0b` produces the right
     # width per segment in one pass — no post-hoc String.pad_leading
