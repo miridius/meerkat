@@ -50,7 +50,8 @@ defmodule Meerkat.ReviewLog do
       branch: branch,
       pr: pr_record(state.pr),
       commit_message: state.commit_message,
-      files: Enum.map(state.files, &file_record(&1, repo_path, approval_cache, branch)),
+      files:
+        Enum.map(state.files, &file_record(&1, repo_path, approval_cache, state.approval_key)),
       submission: nil,
       rendered_feedback: nil
     }

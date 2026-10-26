@@ -341,7 +341,7 @@ defmodule MeerkatWeb.ReviewLive do
             repo_path,
             file_name,
             becoming_approved?,
-            state.head_branch,
+            state.approval_key,
             state
           )
 
@@ -915,12 +915,7 @@ defmodule MeerkatWeb.ReviewLive do
   # cache, and only it has blob OIDs to content-address against. A
   # PR, range or single-ref review has neither, and its `head_branch`
   # can name the same branch whose staged approvals the cache holds —
-  # so it leaves the cache alone.
-  defp persist_approval_cache_toggle(_repo_path, _file_name, _approved?, _branch, %ReviewState{
-         precommit?: false
-       }),
-       do: :ok
-
+  # so it has no `approval_key` and leaves the cache alone.
   defp persist_approval_cache_toggle(repo_path, file_name, approved?, branch, state) do
     with path when is_binary(path) <- ApprovalCache.path_for(repo_path),
          branch when is_binary(branch) <- branch do
@@ -976,20 +971,13 @@ defmodule MeerkatWeb.ReviewLive do
   # Approve writes EVERY currently-staged (file_name, oid) into the
   # cache — not just the explicitly-ticked ones — so the next staged-
   # mode hook on this branch can short-circuit the diff for any file
-  # whose content didn't change between approve and re-run.
-  defp bulk_persist_approval_cache(_repo_path, %ReviewState{head_branch: branch})
-       when not is_binary(branch),
-       do: :ok
-
-  defp bulk_persist_approval_cache(repo_path, %ReviewState{head_branch: branch, files: files}) do
-    case ApprovalCache.path_for(repo_path) do
-      nil ->
-        :ok
-
-      path ->
-        ApprovalCache.modify(path, &approve_staged_files(&1, branch, files))
-
-        :ok
+  # whose content didn't change between approve and re-run. Only a
+  # staged review has an `approval_key` (see the toggle above).
+  # muex:ignore equivalent: Decision discards the on_accept callback's result
+  defp bulk_persist_approval_cache(repo_path, %ReviewState{approval_key: branch, files: files}) do
+    with branch when is_binary(branch) <- branch,
+         path when is_binary(path) <- ApprovalCache.path_for(repo_path) do
+      ApprovalCache.modify(path, &approve_staged_files(&1, branch, files))
     end
   end
 

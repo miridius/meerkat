@@ -106,7 +106,8 @@ defmodule Meerkat.Git do
   checked out or being rebased / the lookup fails. Mid-rebase HEAD is detached, so
   the answer is the branch being rebased (see `head_branch/1`). Used by
   the page header chip when the review target doesn't carry an
-  explicit branch (staged mode), and as the approval cache's key.
+  explicit branch (staged mode), and for the approval cache's key
+  (`Meerkat.ApprovalCache.key_for/2`).
   """
   @spec current_branch(String.t()) :: String.t() | nil
   def current_branch(repo_path) do

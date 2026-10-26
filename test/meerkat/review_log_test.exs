@@ -3,6 +3,25 @@ defmodule Meerkat.ReviewLogTest do
 
   alias Meerkat.ReviewLog
 
+  describe "start/2" do
+    test "a detached HEAD logs no branch but reads approvals under its key" do
+      dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      key = "detached HEAD (.git)"
+      approve = &Meerkat.ApprovalCache.approve(&1, key, "a.rs", "oid1")
+      {:ok, _} = Meerkat.ApprovalCache.modify(Meerkat.ApprovalCache.path_for(dir), approve)
+
+      state = %Meerkat.ReviewState{
+        files: [%{file_name: "a.rs", effective_oid: "oid1"}],
+        approval_key: key
+      }
+
+      %ReviewLog{record: record} = ReviewLog.start(dir, state)
+      assert record.branch == nil
+      assert [%{file_name: "a.rs", was_approved: true}] = record.files
+    end
+  end
+
   describe "slugify_branch/1" do
     test "nil + empty string fall back to no-branch" do
       assert ReviewLog.slugify_branch(nil) == "no-branch"
