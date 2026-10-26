@@ -9,11 +9,18 @@ but the diff content + inline comments + file form get hidden.
 ## Toggle override
 
 Clicking the file header (the row containing the caret + status
-badge + file name) toggles a per-file `expanded_approved`
-override. Unapproved files are always expanded — toggling does
-nothing. Approved files start collapsed; clicking expands them
-again. Un-approving and re-approving clears the override (the
-file collapses again).
+badge + file name) flips that file between collapsed and
+expanded. Approved files start collapsed; clicking expands them
+again, through a per-file `expanded_approved` override.
+Un-approving and re-approving clears the override (the file
+collapses again).
+
+Unapproved files start expanded; clicking collapses them, through
+a per-file `collapsed_unapproved` override, and clicking again
+expands them. Approving such a file leaves it collapsed, as any
+approved file starts. Un-approving it brings it back collapsed,
+even if it was expanded while approved: the `collapsed_unapproved`
+override survives approval.
 
 The caret rotates `-90°` to point right when collapsed; back to
 `▾` (pointing down) when expanded. Pure CSS transition (120ms
@@ -36,11 +43,11 @@ approving.
 
 ## State scope
 
-`expanded_approved` is in-LV ephemeral state, NOT persisted to
-`ReviewState`. Reasons:
+`expanded_approved` and `collapsed_unapproved` are in-LV
+ephemeral state, NOT persisted to `ReviewState`. Reasons:
 
-- `expanded_approved` is intentionally ephemeral: a DevWatcher
-  hot reload clears it and the user re-expands files they want to
+- The overrides are intentionally ephemeral: a DevWatcher
+  hot reload clears them and the user re-expands files they want to
   revisit. The trade-off is one click per file vs persisting
   per-session UI state past a BEAM restart — comment-form state
   IS persisted because losing typed content costs more than
@@ -50,8 +57,8 @@ approving.
   keeps the model clean.
 
 If a future iteration shows users repeatedly hate the
-re-expansion cost across hot reloads, the field can graduate to a
-persisted assign at any time — the helper `file_section_collapsed?/3`
+re-expansion cost across hot reloads, the fields can graduate to
+persisted assigns at any time — the helper `file_section_collapsed?/4`
 is the single read path.
 
 ## DOM markers
@@ -60,7 +67,9 @@ is the single read path.
   collapsed state.
 - `<article class="file-section approved">` — approved but
   user-expanded.
+- `<article class="file-section collapsed">` — unapproved but
+  user-collapsed.
 - The `DiffViewer` Svelte component renders only when the section
-  is NOT collapsed — the `:if={not file_section_collapsed?/3}` on
+  is NOT collapsed — the `:if={not file_section_collapsed?/4}` on
   the `<.svelte name="DiffViewer" .../>` controls it. There's no
   DOM cost to a collapsed file beyond the header.
