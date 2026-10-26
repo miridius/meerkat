@@ -202,7 +202,7 @@ defmodule Meerkat.ApprovalCache do
   @doc """
   Prune the cache of the repo holding `repo_path` to the keys still
   live: its local branches, plus the detached-HEAD key of each of its
-  worktrees. A linked worktree's gitdir is
+  worktrees that still exists. A linked worktree's gitdir is
   `<git-common-dir>/worktrees/<name>`, and the main worktree's is the
   common dir. Skips when git or the worktree list can't be read — never
   wipe the cache treating "no branches" as truth.
@@ -221,11 +221,26 @@ defmodule Meerkat.ApprovalCache do
 
   defp worktree_gitdir_names(common) do
     main = Path.basename(common)
+    linked_dir = Path.join(common, "worktrees")
 
-    case File.ls(Path.join(common, "worktrees")) do
-      {:ok, linked} -> {:ok, [main | linked]}
+    case File.ls(linked_dir) do
+      {:ok, linked} -> {:ok, [main | Enum.filter(linked, &worktree_exists?(linked_dir, &1))]}
       {:error, :enoent} -> {:ok, [main]}
       error -> error
+    end
+  end
+
+  # A linked worktree's gitdir keeps a `gitdir` file naming the
+  # worktree's `.git` file, absolute or relative to that gitdir. Git
+  # calls the worktree prunable when that file or its target is gone, as
+  # after an `rm -rf` of the worktree. An unreadable file keeps the key.
+  defp worktree_exists?(linked_dir, name) do
+    gitdir = Path.join(linked_dir, name)
+
+    case File.read(Path.join(gitdir, "gitdir")) do
+      {:ok, target} -> target |> String.trim() |> Path.expand(gitdir) |> File.exists?()
+      {:error, :enoent} -> false
+      {:error, _} -> true
     end
   end
 

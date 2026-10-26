@@ -148,6 +148,50 @@ defmodule Meerkat.ApprovalCacheTest do
       assert keys(dir) == ["detached HEAD (.git)", "main", "side"]
     end
 
+    test "prune_for drops a linked worktree deleted without git", %{dir: dir, linked: linked} do
+      git(dir, ["worktree", "add", "-q", "--detach", linked])
+      linked_key = "detached HEAD (#{Path.basename(linked)})"
+      seed_keys(dir, ["main", linked_key])
+      File.rm_rf!(linked)
+
+      :ok = ApprovalCache.prune_for(dir)
+      assert keys(dir) == ["main"]
+    end
+
+    test "prune_for reads a relative gitdir file, and drops a worktree without one", %{
+      dir: dir,
+      linked: linked
+    } do
+      other = linked <> "2"
+      on_exit(fn -> File.rm_rf!(other) end)
+      git(dir, ["worktree", "add", "-q", "--detach", linked])
+      git(dir, ["worktree", "add", "-q", "--detach", other])
+      gitdir = Path.join([dir, ".git", "worktrees", Path.basename(linked)])
+      relative = Path.relative_to(Path.join(linked, ".git"), gitdir, force: true)
+      File.write!(Path.join(gitdir, "gitdir"), relative <> "\n")
+      File.rm!(Path.join([dir, ".git", "worktrees", Path.basename(other), "gitdir"]))
+      linked_key = "detached HEAD (#{Path.basename(linked)})"
+      seed_keys(dir, ["main", linked_key, "detached HEAD (#{Path.basename(other)})"])
+
+      :ok = ApprovalCache.prune_for(dir)
+      assert keys(dir) == [linked_key, "main"]
+    end
+
+    test "prune_for keeps a worktree whose gitdir file can't be read", %{
+      dir: dir,
+      linked: linked
+    } do
+      git(dir, ["worktree", "add", "-q", "--detach", linked])
+      linked_key = "detached HEAD (#{Path.basename(linked)})"
+      seed_keys(dir, [linked_key])
+      file = Path.join([dir, ".git", "worktrees", Path.basename(linked), "gitdir"])
+      File.chmod!(file, 0o000)
+      on_exit(fn -> File.chmod(file, 0o644) end)
+
+      :ok = ApprovalCache.prune_for(dir)
+      assert keys(dir) == [linked_key]
+    end
+
     test "prune_for prunes nothing when the worktree list can't be read", %{
       dir: dir,
       linked: linked
