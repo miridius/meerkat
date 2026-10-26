@@ -334,7 +334,7 @@ run_mutate() {
   fi
   if [[ -n "$timed_out" ]]; then
     echo
-    echo "scripts/mutate.sh: no test judged these mutants of the $label lib/ lines; their tests printed nothing within muex's --timeout:"
+    echo "scripts/mutate.sh: no test judged these mutants of the $label lib/ lines; their tests ran past muex's timeout:"
     echo
     echo "$timed_out"
     echo
