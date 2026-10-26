@@ -364,9 +364,7 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 		await expect(counts.locator(".counts-showing")).toBeHidden();
 		await expect(counts.locator(".counts-of")).toBeHidden();
 		await expect(counts.locator(".counts-slash")).toBeVisible();
-		expect(await counts.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim())).toMatch(
-			/^\+\d+ -\d+ \/ \+\d+ -\d+$/,
-		);
+		await expect(counts).toHaveText(/^\+\d+\s+-\d+\s+\/\s+\+\d+\s+-\d+$/, { useInnerText: true });
 		await at(page, width);
 
 		await file.click();
