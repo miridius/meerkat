@@ -971,11 +971,12 @@ defmodule MeerkatWeb.ReviewLive do
   # Approve writes EVERY currently-staged (file_name, oid) into the
   # cache — not just the explicitly-ticked ones — so the next staged-
   # mode hook on this branch can short-circuit the diff for any file
-  # whose content didn't change between approve and re-run. Only a
-  # staged review has an `approval_key` (see the toggle above).
+  # whose content didn't change between approve and re-run. A staged
+  # review writes under its `approval_key`, any other review under its
+  # `head_branch`.
   # muex:ignore equivalent: Decision discards the on_accept callback's result
-  defp bulk_persist_approval_cache(repo_path, %ReviewState{approval_key: branch, files: files}) do
-    with branch when is_binary(branch) <- branch,
+  defp bulk_persist_approval_cache(repo_path, %ReviewState{files: files} = state) do
+    with branch when is_binary(branch) <- state.approval_key || state.head_branch,
          path when is_binary(path) <- ApprovalCache.path_for(repo_path) do
       ApprovalCache.modify(path, &approve_staged_files(&1, branch, files))
     end

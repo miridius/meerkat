@@ -563,7 +563,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute Map.has_key?(cache["main"] || %{}, "blank.ex")
   end
 
-  test "approving a PR / range review leaves the approval cache alone", %{conn: conn} do
+  test "approving a PR / range review writes under its head branch", %{conn: conn} do
     repo = tmp_git_repo()
     state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "feature"}
     {view, _rid} = mount_bound(conn, state, repo)
@@ -571,7 +571,33 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     render_click(view, "decision.approve", %{})
 
     assert Decision.current() == {:approve, ""}
+    cache = ApprovalCache.load_for(repo)
+    assert Map.keys(cache) == ["feature"]
+    assert ApprovalCache.approved?(cache, "feature", "src/widget.rs", "oid1")
+  end
+
+  test "approving a review with no branch or key writes no approval", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}]}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_click(view, "decision.approve", %{})
+
+    assert Decision.current() == {:approve, ""}
     refute File.exists?(ApprovalCache.path_for(repo))
+  end
+
+  test "approving on a detached HEAD writes under the worktree's key", %{conn: conn} do
+    repo = tmp_git_repo()
+    key = "detached HEAD (.git)"
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], approval_key: key}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_click(view, "decision.approve", %{})
+
+    cache = ApprovalCache.load_for(repo)
+    assert Map.keys(cache) == [key]
+    assert ApprovalCache.approved?(cache, key, "src/widget.rs", "oid1")
   end
 
   test "an approve after another tab's decision marks no file approved", %{conn: conn} do

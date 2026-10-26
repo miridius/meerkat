@@ -73,8 +73,10 @@ can't contain a space, so the key never clashes with a branch.
 Approvals live in `<git-common-dir>/meerkat-precommit/approved.json`,
 shared by all worktrees. Each review that opens the page drops the
 approvals of branches that no longer exist locally and of worktrees
-that no longer exist. PR, range and single-ref reviews neither read nor
-write them.
+that no longer exist. PR, range and single-ref reviews read no
+approvals, and ticking a file there records none. Their Approve marks
+the reviewed files approved for the head branch, but only files with a
+staged content ID are recorded, and these reviews have none.
 
 ## Questions block the next review
 
