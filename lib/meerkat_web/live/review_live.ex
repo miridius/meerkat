@@ -2615,9 +2615,8 @@ defmodule MeerkatWeb.ReviewLive do
     |> Enum.map(fn {file, _idx} -> file end)
   end
 
-  # Approved files collapse by default; the reviewer can override
-  # per-file via the header click (which toggles
-  # `expanded_approved`). Un-approved files are always expanded.
+  # Approved files collapse by default and un-approved files expand;
+  # the reviewer can override either per-file via the header click.
   # A file is "collapsed" if the user's explicit toggle has put it on
   # the opposite side of its default (approved files default to
   # collapsed, unapproved default to expanded). Either set toggles
