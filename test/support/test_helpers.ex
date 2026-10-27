@@ -393,6 +393,24 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
+  Commit what is staged in `repo`, or nothing, as a throwaway author.
+  """
+  @spec commit(String.t(), String.t()) :: String.t()
+  def commit(repo, message) do
+    git(repo, [
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      message
+    ])
+  end
+
+  @doc """
   Builds a temporary Git repo named with `prefix` via `make_git_repo/1` and
   removes it when the test exits. On branch `feature`, it creates a commit
   changing `one.rs` to `fn one() -> i32 { 1 }\\n` and `two.rs` to

@@ -27,6 +27,9 @@ defmodule Meerkat.ReviewLog do
   @doc """
   Begin a review log entry. Writes the initial `in-progress` JSON to
   `<per-worktree-gitdir>/meerkat-precommit/reviews/<ts>-<slug>-<filetag>.json`.
+  Also prunes the repo's approval cache (`Meerkat.ApprovalCache.prune_for/1`),
+  as each review that opens the page starts here, and logs each file's
+  approval from the pruned cache.
   """
   @spec start(String.t(), ReviewState.t()) :: t
   def start(repo_path, %ReviewState{} = state) do
@@ -38,8 +41,6 @@ defmodule Meerkat.ReviewLog do
     filetag = file_tag(state.files)
     path = Path.join(reviews_dir, "#{fname_ts}-#{slug}-#{filetag}.json")
 
-    # Starting a review is when the cache drops approvals of branches and
-    # worktrees that are gone.
     approval_cache = ApprovalCache.prune_for(repo_path)
     branch = state.head_branch
 

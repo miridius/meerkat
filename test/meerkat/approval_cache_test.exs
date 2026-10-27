@@ -80,25 +80,14 @@ defmodule Meerkat.ApprovalCacheTest do
   end
 
   describe "key_for/2 and prune_for/1 (real git fixture)" do
-    import Meerkat.TestHelpers, only: [git: 2, make_git_repo: 1]
+    import Meerkat.TestHelpers, only: [commit: 2, git: 2, make_git_repo: 1]
 
     setup do
       dir = make_git_repo("meerkat-approval-keys")
       linked = dir <> "-linked"
       on_exit(fn -> Enum.each([dir, linked], &File.rm_rf!/1) end)
       git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-
-      git(dir, [
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "--allow-empty",
-        "-m",
-        "seed"
-      ])
+      commit(dir, "seed")
 
       {:ok, dir: dir, linked: linked}
     end

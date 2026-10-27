@@ -37,18 +37,7 @@ defmodule Meerkat.ReviewLogTest do
       dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log-prune")
       on_exit(fn -> File.rm_rf!(dir) end)
       Meerkat.TestHelpers.git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-
-      Meerkat.TestHelpers.git(dir, [
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "--allow-empty",
-        "-m",
-        "seed"
-      ])
+      Meerkat.TestHelpers.commit(dir, "seed")
 
       approve = fn cache ->
         Enum.reduce(
