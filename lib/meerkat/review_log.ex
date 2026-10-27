@@ -38,7 +38,9 @@ defmodule Meerkat.ReviewLog do
     filetag = file_tag(state.files)
     path = Path.join(reviews_dir, "#{fname_ts}-#{slug}-#{filetag}.json")
 
-    approval_cache = ApprovalCache.load_for(repo_path)
+    # Starting a review is when the cache drops approvals of branches and
+    # worktrees that are gone.
+    approval_cache = ApprovalCache.prune_for(repo_path)
     branch = state.head_branch
 
     record = %{

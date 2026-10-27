@@ -223,11 +223,6 @@ defmodule Meerkat.CLI do
   defp run_live_review(target, opts) do
     case ReviewState.from_target(target, repo_path()) do
       {:ok, state} ->
-        # No in-VM test opens a review, and `:cover` doesn't see the child
-        # BEAM the test named below checks the prune in, so muex finds no
-        # test for this line.
-        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
-        :ok = ApprovalCache.prune_for(repo_path())
         _ = Timeout.prune_stale(repo_path())
         :ok = Timeout.warn_if_unrecognised()
         review_id = ReviewId.derive(repo_path(), target)

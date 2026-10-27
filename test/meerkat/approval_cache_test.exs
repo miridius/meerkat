@@ -127,7 +127,7 @@ defmodule Meerkat.ApprovalCacheTest do
     test "prune_for with no linked worktree keeps the main worktree's key", %{dir: dir} do
       seed_keys(dir, ["main", "gone", "detached HEAD (.git)", "detached HEAD (gone)"])
 
-      assert ApprovalCache.prune_for(dir) == :ok
+      prune!(dir)
       assert keys(dir) == ["detached HEAD (.git)", "main"]
     end
 
@@ -140,15 +140,15 @@ defmodule Meerkat.ApprovalCacheTest do
       live = ["detached HEAD (.git)", linked_key, "main", "side"]
       seed_keys(dir, live ++ ["gone", "detached HEAD (gone)"])
 
-      assert ApprovalCache.prune_for(dir) == :ok
+      prune!(dir)
       assert keys(dir) == Enum.sort(live)
 
       seed_keys(dir, ["gone", "detached HEAD (gone)"])
-      assert ApprovalCache.prune_for(linked) == :ok
+      prune!(linked)
       assert keys(dir) == Enum.sort(live)
 
       git(dir, ["worktree", "remove", linked])
-      :ok = ApprovalCache.prune_for(dir)
+      prune!(dir)
       assert keys(dir) == ["detached HEAD (.git)", "main", "side"]
     end
 
@@ -158,7 +158,7 @@ defmodule Meerkat.ApprovalCacheTest do
       seed_keys(dir, ["main", linked_key])
       File.rm_rf!(linked)
 
-      :ok = ApprovalCache.prune_for(dir)
+      prune!(dir)
       assert keys(dir) == ["main"]
     end
 
@@ -169,7 +169,7 @@ defmodule Meerkat.ApprovalCacheTest do
       seed_keys(dir, [linked_key])
       File.rm_rf!(linked)
 
-      :ok = ApprovalCache.prune_for(dir)
+      prune!(dir)
       assert keys(dir) == [linked_key]
     end
 
@@ -188,7 +188,7 @@ defmodule Meerkat.ApprovalCacheTest do
       linked_key = "detached HEAD (#{Path.basename(linked)})"
       seed_keys(dir, ["main", linked_key, "detached HEAD (#{Path.basename(other)})"])
 
-      :ok = ApprovalCache.prune_for(dir)
+      prune!(dir)
       assert keys(dir) == [linked_key, "main"]
     end
 
@@ -203,7 +203,7 @@ defmodule Meerkat.ApprovalCacheTest do
       File.chmod!(file, 0o000)
       on_exit(fn -> File.chmod(file, 0o644) end)
 
-      :ok = ApprovalCache.prune_for(dir)
+      prune!(dir)
       assert keys(dir) == [linked_key]
     end
 
@@ -217,13 +217,19 @@ defmodule Meerkat.ApprovalCacheTest do
       File.chmod!(worktrees, 0o000)
       on_exit(fn -> File.chmod(worktrees, 0o755) end)
 
-      assert ApprovalCache.prune_for(dir) == :ok
+      prune!(dir)
       assert keys(dir) == ["gone"]
     end
 
     test "prune_for outside a repo does nothing", %{linked: not_a_repo} do
       File.mkdir_p!(not_a_repo)
-      assert ApprovalCache.prune_for(not_a_repo) == :ok
+      assert ApprovalCache.prune_for(not_a_repo) == %{}
+    end
+
+    # The cache prune_for returns is the one it left on disk.
+    defp prune!(dir) do
+      pruned = ApprovalCache.prune_for(dir)
+      assert pruned == ApprovalCache.load_for(dir)
     end
 
     defp keys(dir), do: dir |> ApprovalCache.load_for() |> Map.keys() |> Enum.sort()

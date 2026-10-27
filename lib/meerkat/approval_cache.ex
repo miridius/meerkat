@@ -189,9 +189,9 @@ defmodule Meerkat.ApprovalCache do
   end
 
   @doc """
-  Drop sub-trees for keys not in `known`. `prune_for/1` calls it each
-  time a review opens the page, so deleted branches and worktrees stop
-  taking up space.
+  Drop sub-trees for keys not in `known`. `prune_for/1` calls it as each
+  review that opens the page starts its log, so deleted branches and
+  worktrees stop taking up space.
   """
   @spec prune(t, MapSet.t(branch)) :: t
   def prune(cache, known) do
@@ -205,19 +205,21 @@ defmodule Meerkat.ApprovalCache do
   live: its local branches, plus the detached-HEAD key of each of its
   worktrees that is locked or whose folder still exists. A linked worktree's gitdir is
   `<git-common-dir>/worktrees/<name>`, and the main worktree's is the
-  common dir. Skips when git or the worktree list can't be read — never
-  wipe the cache treating "no branches" as truth.
+  common dir. Returns the pruned cache. Skips the prune when git, the
+  worktree list or the write fails — never wipe the cache treating "no
+  branches" as truth — and then returns the cache as `load_for/1` reads it.
   """
-  @spec prune_for(String.t()) :: :ok
+  @spec prune_for(String.t()) :: t
   def prune_for(repo_path) do
     with {:ok, common} <- Meerkat.Git.git_common_dir(repo_path),
          {:ok, branches} <- Meerkat.Git.local_branches(repo_path),
-         {:ok, names} <- worktree_gitdir_names(common) do
-      keys = Enum.into(Enum.map(names, &detached_key/1), branches)
-      _ = modify(cache_path(common), &prune(&1, keys))
+         {:ok, names} <- worktree_gitdir_names(common),
+         keys = Enum.into(Enum.map(names, &detached_key/1), branches),
+         {:ok, pruned} <- modify(cache_path(common), &prune(&1, keys)) do
+      pruned
+    else
+      _ -> load_for(repo_path)
     end
-
-    :ok
   end
 
   defp worktree_gitdir_names(common) do
