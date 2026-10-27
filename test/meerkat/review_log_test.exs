@@ -8,17 +8,29 @@ defmodule Meerkat.ReviewLogTest do
       dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log")
       on_exit(fn -> File.rm_rf!(dir) end)
       key = "detached HEAD (.git)"
-      approve = &Meerkat.ApprovalCache.approve(&1, key, "a.rs", "oid1")
+      # A file with no staged OID never counts as approved, even against
+      # a cache entry holding an empty OID.
+      approve = fn cache ->
+        cache
+        |> Meerkat.ApprovalCache.approve(key, "a.rs", "oid1")
+        |> Meerkat.ApprovalCache.approve(key, "b.rs", "")
+      end
+
       {:ok, _} = Meerkat.ApprovalCache.modify(Meerkat.ApprovalCache.path_for(dir), approve)
 
       state = %Meerkat.ReviewState{
-        files: [%{file_name: "a.rs", effective_oid: "oid1"}],
+        files: [
+          %{file_name: "a.rs", effective_oid: "oid1"},
+          %{file_name: "b.rs", effective_oid: ""}
+        ],
         approval_key: key
       }
 
       %ReviewLog{record: record} = ReviewLog.start(dir, state)
       assert record.branch == nil
-      assert [%{file_name: "a.rs", was_approved: true}] = record.files
+
+      assert [%{file_name: "a.rs", was_approved: true}, %{file_name: "b.rs", was_approved: false}] =
+               record.files
     end
   end
 

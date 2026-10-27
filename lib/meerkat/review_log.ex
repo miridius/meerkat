@@ -153,12 +153,12 @@ defmodule Meerkat.ReviewLog do
   # audit log shows what state the reviewer walked into. Reads the
   # OID from the already-materialised file_diff rather than
   # re-shelling out to git.
-  defp file_record(file, _repo_path, approval_cache, branch) do
+  defp file_record(file, _repo_path, approval_cache, approval_key) do
     oid = Map.get(file, :effective_oid) || ""
 
     was_approved =
-      not is_nil(branch) and oid != "" and
-        ApprovalCache.approved?(approval_cache, branch, file.file_name, oid)
+      not is_nil(approval_key) and oid != "" and
+        ApprovalCache.approved?(approval_cache, approval_key, file.file_name, oid)
 
     %{
       file_name: file.file_name,

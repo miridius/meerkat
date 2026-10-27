@@ -563,22 +563,9 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute Map.has_key?(cache["main"] || %{}, "blank.ex")
   end
 
-  test "approving a PR / range review writes under its head branch", %{conn: conn} do
+  test "approving a PR / range review leaves the approval cache alone", %{conn: conn} do
     repo = tmp_git_repo()
     state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "feature"}
-    {view, _rid} = mount_bound(conn, state, repo)
-
-    render_click(view, "decision.approve", %{})
-
-    assert Decision.current() == {:approve, ""}
-    cache = ApprovalCache.load_for(repo)
-    assert Map.keys(cache) == ["feature"]
-    assert ApprovalCache.approved?(cache, "feature", "src/widget.rs", "oid1")
-  end
-
-  test "approving a review with no branch or key writes no approval", %{conn: conn} do
-    repo = tmp_git_repo()
-    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}]}
     {view, _rid} = mount_bound(conn, state, repo)
 
     render_click(view, "decision.approve", %{})
@@ -623,6 +610,33 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     render_click(view, "decision.approve", %{})
     assert Decision.current() == {:approve, ""}
+  end
+
+  # Unticking skips the staged-blob check, which outside a repo would
+  # refuse the click before it reached the cache.
+  test "unticking a file outside a git repo skips the approval cache", %{conn: conn} do
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit-untick")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    assert ApprovalCache.path_for(dir) == nil
+
+    Application.put_env(:meerkat, :repo_path, dir)
+
+    state = %ReviewState{
+      files: [%{@plain_file | effective_oid: "oid1"}],
+      approval_key: "main",
+      approved_file_names: MapSet.new(["src/widget.rs"]),
+      precommit?: true
+    }
+
+    view = mount_unbound(conn, state)
+
+    html =
+      view
+      |> element(".approved-toggle input[phx-value-file_name='src/widget.rs']")
+      |> render_click()
+
+    refute html =~ "Approval tick for"
   end
 
   test "editing a comment that no longer exists opens no form", %{conn: conn} do

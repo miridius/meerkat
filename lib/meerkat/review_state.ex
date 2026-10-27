@@ -19,7 +19,8 @@ defmodule Meerkat.ReviewState do
             base_branch: nil,
             # Staged-diff reviews' approval-cache key, from
             # `Meerkat.ApprovalCache.key_for/2`: `head_branch`, or a
-            # per-worktree key on a detached HEAD. `nil` otherwise.
+            # per-worktree key on a detached HEAD. `nil` for other
+            # reviews, or when the detached HEAD's gitdir lookup fails.
             approval_key: nil,
             # Comment surfaces — populated by `Meerkat.ReviewServer`.
             comments: [],

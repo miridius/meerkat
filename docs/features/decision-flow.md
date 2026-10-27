@@ -65,18 +65,18 @@ before already ticked, whatever the previous round's decision was. A
 file whose content has changed since opens unticked. During a rebase,
 the branch is the one being rebased.
 
-A detached HEAD behaves exactly like a branch: its approvals belong to
-its worktree, under the key `detached HEAD (<name>)`, where `<name>` is
-the worktree's gitdir name (`.git` for the main worktree). A ref name
+A detached HEAD behaves like a branch: its approvals belong to its
+worktree, whatever commit it is on, under the key
+`detached HEAD (<name>)`, where `<name>` is the basename of the
+worktree's gitdir (`.git` for an ordinary main worktree). A ref name
 can't contain a space, so the key never clashes with a branch.
 
 Approvals live in `<git-common-dir>/meerkat-precommit/approved.json`,
 shared by all worktrees. Each review that opens the page drops the
-approvals of branches that no longer exist locally and of worktrees
-that no longer exist. PR, range and single-ref reviews read no
-approvals, and ticking a file there records none. Their Approve marks
-the reviewed files approved for the head branch, but only files with a
-staged content ID are recorded, and these reviews have none.
+approvals of branches that no longer exist locally and of worktrees git
+would prune; a locked worktree keeps its approvals. PR, range and
+single-ref reviews read no approvals, and neither ticking a file nor
+Approve there records any.
 
 ## Questions block the next review
 

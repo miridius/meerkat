@@ -143,6 +143,10 @@ defmodule Meerkat.ApprovalCacheTest do
       assert ApprovalCache.prune_for(dir) == :ok
       assert keys(dir) == Enum.sort(live)
 
+      seed_keys(dir, ["gone", "detached HEAD (gone)"])
+      assert ApprovalCache.prune_for(linked) == :ok
+      assert keys(dir) == Enum.sort(live)
+
       git(dir, ["worktree", "remove", linked])
       :ok = ApprovalCache.prune_for(dir)
       assert keys(dir) == ["detached HEAD (.git)", "main", "side"]
@@ -156,6 +160,17 @@ defmodule Meerkat.ApprovalCacheTest do
 
       :ok = ApprovalCache.prune_for(dir)
       assert keys(dir) == ["main"]
+    end
+
+    test "prune_for keeps a locked worktree whose folder is gone", %{dir: dir, linked: linked} do
+      git(dir, ["worktree", "add", "-q", "--detach", linked])
+      git(dir, ["worktree", "lock", linked])
+      linked_key = "detached HEAD (#{Path.basename(linked)})"
+      seed_keys(dir, [linked_key])
+      File.rm_rf!(linked)
+
+      :ok = ApprovalCache.prune_for(dir)
+      assert keys(dir) == [linked_key]
     end
 
     test "prune_for reads a relative gitdir file, and drops a worktree without one", %{
