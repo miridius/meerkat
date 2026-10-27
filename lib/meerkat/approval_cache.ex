@@ -203,7 +203,7 @@ defmodule Meerkat.ApprovalCache do
   @doc """
   Prune the cache of the repo holding `repo_path` to the keys still
   live: its local branches, plus the detached-HEAD key of each of its
-  worktrees git wouldn't prune. A linked worktree's gitdir is
+  worktrees that is locked or whose folder still exists. A linked worktree's gitdir is
   `<git-common-dir>/worktrees/<name>`, and the main worktree's is the
   common dir. Skips when git or the worktree list can't be read — never
   wipe the cache treating "no branches" as truth.
@@ -239,7 +239,7 @@ defmodule Meerkat.ApprovalCache do
   defp worktree_kept?(linked_dir, name) do
     gitdir = Path.join(linked_dir, name)
 
-    File.exists?(Path.join(gitdir, "locked")) or gitdir_target_exists?(gitdir)
+    gitdir_target_exists?(gitdir) or File.exists?(Path.join(gitdir, "locked"))
   end
 
   defp gitdir_target_exists?(gitdir) do

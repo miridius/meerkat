@@ -73,8 +73,8 @@ can't contain a space, so the key never clashes with a branch.
 
 Approvals live in `<git-common-dir>/meerkat-precommit/approved.json`,
 shared by all worktrees. Each review that opens the page drops the
-approvals of branches that no longer exist locally and of worktrees git
-would prune; a locked worktree keeps its approvals. PR, range and
+approvals of branches that no longer exist locally and of worktrees
+whose folder is gone; a locked worktree keeps its approvals. PR, range and
 single-ref reviews read no approvals, and neither ticking a file nor
 Approve there records any.
 

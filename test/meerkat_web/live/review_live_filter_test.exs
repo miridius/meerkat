@@ -139,7 +139,12 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit")
     File.mkdir_p!(dir)
 
-    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}], precommit?: true})
+    put_state(%ReviewState{
+      files: [%{@plain_file | effective_oid: nil}],
+      approval_key: "main",
+      precommit?: true
+    })
+
     Application.put_env(:meerkat, :repo_path, dir)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
@@ -610,33 +615,6 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     render_click(view, "decision.approve", %{})
     assert Decision.current() == {:approve, ""}
-  end
-
-  # Unticking skips the staged-blob check, which outside a repo would
-  # refuse the click before it reached the cache.
-  test "unticking a file outside a git repo skips the approval cache", %{conn: conn} do
-    dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit-untick")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf!(dir) end)
-    assert ApprovalCache.path_for(dir) == nil
-
-    Application.put_env(:meerkat, :repo_path, dir)
-
-    state = %ReviewState{
-      files: [%{@plain_file | effective_oid: "oid1"}],
-      approval_key: "main",
-      approved_file_names: MapSet.new(["src/widget.rs"]),
-      precommit?: true
-    }
-
-    view = mount_unbound(conn, state)
-
-    html =
-      view
-      |> element(".approved-toggle input[phx-value-file_name='src/widget.rs']")
-      |> render_click()
-
-    refute html =~ "Approval tick for"
   end
 
   test "editing a comment that no longer exists opens no form", %{conn: conn} do
