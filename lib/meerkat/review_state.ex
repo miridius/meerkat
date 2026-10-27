@@ -17,6 +17,11 @@ defmodule Meerkat.ReviewState do
             pr: nil,
             head_branch: nil,
             base_branch: nil,
+            # Staged-diff reviews' approval-cache key, from
+            # `Meerkat.ApprovalCache.key_for/2`: `head_branch`, or a
+            # per-worktree key on a detached HEAD. `nil` for other
+            # reviews, or when the detached HEAD's gitdir lookup fails.
+            approval_key: nil,
             # Comment surfaces — populated by `Meerkat.ReviewServer`.
             comments: [],
             file_comments: [],
@@ -52,8 +57,7 @@ defmodule Meerkat.ReviewState do
             # flow and a plain `meerkat` run. False for ad-hoc PR /
             # range / single-ref reviews. Drives "is Approve blocking
             # a commit?" copy + hides the Post-to-GitHub button, which
-            # doesn't make sense before the commit even exists. Also
-            # gates approval-cache writes on Approved toggles.
+            # doesn't make sense before the commit even exists.
             precommit?: false,
             # SHA-256 over `(file_name, effective_oid)` per file —
             # computed once at construction so Persistence.save/3
@@ -80,6 +84,7 @@ defmodule Meerkat.ReviewState do
           pr: pr_info | nil,
           head_branch: String.t() | nil,
           base_branch: String.t() | nil,
+          approval_key: String.t() | nil,
           comments: [Comment.inline()],
           file_comments: [Comment.file()],
           global_comments: [Comment.global()],
@@ -105,7 +110,8 @@ defmodule Meerkat.ReviewState do
     with {:ok, files} <- Git.staged_file_diffs(repo_path) do
       msg = read_commit_msg(commit_msg_path)
       branch = Git.current_branch(repo_path)
-      approved = hydrate_approved_from_cache(repo_path, branch, files)
+      approval_key = Meerkat.ApprovalCache.key_for(repo_path, branch)
+      approved = hydrate_approved_from_cache(repo_path, approval_key, files)
       pr_full = Meerkat.GitHub.current_pr(repo_path)
 
       {:ok,
@@ -115,6 +121,7 @@ defmodule Meerkat.ReviewState do
          pr: compact_pr(pr_full),
          head_branch: branch,
          base_branch: base_of(pr_full),
+         approval_key: approval_key,
          approved_file_names: approved,
          precommit?: true
        )}
@@ -323,6 +330,7 @@ defmodule Meerkat.ReviewState do
       pr: Keyword.get(opts, :pr),
       head_branch: Keyword.get(opts, :head_branch),
       base_branch: Keyword.get(opts, :base_branch),
+      approval_key: Keyword.get(opts, :approval_key),
       approved_file_names: Keyword.get(opts, :approved_file_names, MapSet.new()),
       precommit?: Keyword.get(opts, :precommit?, false)
     }
@@ -331,9 +339,9 @@ defmodule Meerkat.ReviewState do
   end
 
   # Pre-populate the approved set from the per-branch approval cache.
-  # If a file's current staged blob OID matches one this branch
-  # already approved, tick it on mount so the reviewer doesn't have
-  # to re-tick on every round.
+  # If a file's current staged blob OID matches one this branch (or, on
+  # a detached HEAD, this worktree) already approved, tick it on mount
+  # so the reviewer doesn't have to re-tick on every round.
   defp hydrate_approved_from_cache(_repo_path, nil, _files), do: MapSet.new()
 
   defp hydrate_approved_from_cache(repo_path, branch, files) do

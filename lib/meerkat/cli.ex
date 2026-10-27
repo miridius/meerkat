@@ -223,7 +223,6 @@ defmodule Meerkat.CLI do
   defp run_live_review(target, opts) do
     case ReviewState.from_target(target, repo_path()) do
       {:ok, state} ->
-        prune_approval_cache(repo_path())
         _ = Timeout.prune_stale(repo_path())
         :ok = Timeout.warn_if_unrecognised()
         review_id = ReviewId.derive(repo_path(), target)
@@ -293,20 +292,6 @@ defmodule Meerkat.CLI do
 
       _pid ->
         Decision.await()
-    end
-  end
-
-  # Drop approval-cache entries for branches that no longer exist
-  # locally. Runs once per hook invocation. On git failure (e.g.
-  # corrupt repo) skip — never wipe the cache treating "no branches"
-  # as truth.
-  defp prune_approval_cache(repo_path) do
-    with path when is_binary(path) <- ApprovalCache.path_for(repo_path),
-         {:ok, branches} <- Git.local_branches(repo_path) do
-      _ = ApprovalCache.modify(path, &ApprovalCache.prune(&1, branches))
-      :ok
-    else
-      _ -> :ok
     end
   end
 
@@ -459,7 +444,7 @@ defmodule Meerkat.CLI do
 
       {:ok, files} ->
         cache = ApprovalCache.load_for(repo_path)
-        branch = Git.current_branch(repo_path)
+        branch = ApprovalCache.key_for(repo_path, Git.current_branch(repo_path))
         names = Enum.map(files, & &1.file_name)
 
         generated_map = Git.linguist_generated_many(repo_path, names)
@@ -548,10 +533,11 @@ defmodule Meerkat.CLI do
   # per file so a transient git failure can't fake `:generated`.
   #
   # `:approved` checks the file's effective OID (index blob for present
-  # files, HEAD pre-image for deletions) against the per-branch cache so
-  # a flip-flopping file keeps its tick and a re-deletion of changed
-  # content is re-reviewed. `nil` branch (detached HEAD) -> can't match
-  # an approval, but `:generated` is branch-independent and still fires.
+  # files, HEAD pre-image for deletions) against the cache under `branch`,
+  # the key from `ApprovalCache.key_for/2`, so a flip-flopping file keeps
+  # its tick and a re-deletion of changed content is re-reviewed. `nil`
+  # (the gitdir lookup failed) -> can't match an approval, but
+  # `:generated` is branch-independent and still fires.
   defp classify_for_auto_approve(
          %{file_name: name},
          cache,

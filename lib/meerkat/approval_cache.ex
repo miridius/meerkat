@@ -1,7 +1,8 @@
 defmodule Meerkat.ApprovalCache do
   @moduledoc """
   Per-branch, per-file approval cache, shared across worktrees of the
-  same repo via `<gitdir>/meerkat-precommit/approved.json`.
+  same repo via `<gitdir>/meerkat-precommit/approved.json`. A detached
+  HEAD keys its approvals by worktree instead of branch (`key_for/2`).
 
   Approvals are content-addressed via git blob OIDs — a file's effective
   OID changes iff its content changes, so an approval matches only when
@@ -31,10 +32,31 @@ defmodule Meerkat.ApprovalCache do
   @spec path_for(String.t()) :: String.t() | nil
   def path_for(repo_path) do
     case Meerkat.Git.git_common_dir(repo_path) do
-      {:ok, common} -> Path.join([common, "meerkat-precommit", "approved.json"])
+      {:ok, common} -> cache_path(common)
       {:error, _} -> nil
     end
   end
+
+  defp cache_path(common), do: Path.join([common, "meerkat-precommit", "approved.json"])
+
+  @doc """
+  The cache key for the staged work in `repo_path`: `branch`, the
+  worktree's branch from `Meerkat.Git.current_branch/1`, or on a detached
+  HEAD (`nil`) `detached HEAD (<name>)`, where `<name>` is the basename of
+  the worktree's gitdir. A ref name can't contain a space, so the two never clash.
+  `nil` when the gitdir lookup fails.
+  """
+  @spec key_for(String.t(), branch | nil) :: branch | nil
+  def key_for(_repo_path, branch) when is_binary(branch), do: branch
+
+  def key_for(repo_path, nil) do
+    case Meerkat.Git.git_dir(repo_path) do
+      {:ok, git_dir} -> detached_key(Path.basename(git_dir))
+      {:error, _} -> nil
+    end
+  end
+
+  defp detached_key(gitdir_name), do: "detached HEAD (#{gitdir_name})"
 
   @doc """
   Resolve + load in one call. Returns `%{}` when the git-common-dir
@@ -167,14 +189,67 @@ defmodule Meerkat.ApprovalCache do
   end
 
   @doc """
-  Drop sub-trees for branches not in `known`. Called at hook-run time
-  so deleted branches stop taking up space.
+  Drop sub-trees for keys not in `known`. `prune_for/1` calls it as each
+  review that opens the page starts its log, so deleted branches and
+  worktrees stop taking up space.
   """
   @spec prune(t, MapSet.t(branch)) :: t
   def prune(cache, known) do
     cache
     |> Enum.filter(fn {branch, _} -> MapSet.member?(known, branch) end)
     |> Map.new()
+  end
+
+  @doc """
+  Prune the cache of the repo holding `repo_path` to the keys still
+  live: its local branches, plus the detached-HEAD key of each of its
+  worktrees that is locked or whose folder still exists. A linked worktree's gitdir is
+  `<git-common-dir>/worktrees/<name>`, and the main worktree's is the
+  common dir. Returns the pruned cache. Skips the prune when git, the
+  worktree list or the write fails — never wipe the cache treating "no
+  branches" as truth — and then returns the cache as `load_for/1` reads it.
+  """
+  @spec prune_for(String.t()) :: t
+  def prune_for(repo_path) do
+    with {:ok, common} <- Meerkat.Git.git_common_dir(repo_path),
+         {:ok, branches} <- Meerkat.Git.local_branches(repo_path),
+         {:ok, names} <- worktree_gitdir_names(common),
+         keys = Enum.into(Enum.map(names, &detached_key/1), branches),
+         {:ok, pruned} <- modify(cache_path(common), &prune(&1, keys)) do
+      pruned
+    else
+      _ -> load_for(repo_path)
+    end
+  end
+
+  defp worktree_gitdir_names(common) do
+    main = Path.basename(common)
+    linked_dir = Path.join(common, "worktrees")
+
+    case File.ls(linked_dir) do
+      {:ok, linked} -> {:ok, [main | Enum.filter(linked, &worktree_kept?(linked_dir, &1))]}
+      {:error, :enoent} -> {:ok, [main]}
+      error -> error
+    end
+  end
+
+  # A linked worktree's gitdir keeps a `gitdir` file naming the
+  # worktree's `.git` file, absolute or relative to that gitdir. Git
+  # calls an unlocked worktree prunable when that file or its target is
+  # gone, as after an `rm -rf` of the worktree, and never prunes a locked
+  # one, as on a drive that isn't mounted. An unreadable file keeps the key.
+  defp worktree_kept?(linked_dir, name) do
+    gitdir = Path.join(linked_dir, name)
+
+    gitdir_target_exists?(gitdir) or File.exists?(Path.join(gitdir, "locked"))
+  end
+
+  defp gitdir_target_exists?(gitdir) do
+    case File.read(Path.join(gitdir, "gitdir")) do
+      {:ok, target} -> target |> String.trim() |> Path.expand(gitdir) |> File.exists?()
+      {:error, :enoent} -> false
+      {:error, _} -> true
+    end
   end
 
   @doc """

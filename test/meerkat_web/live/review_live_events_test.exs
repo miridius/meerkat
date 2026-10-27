@@ -526,7 +526,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: "oid1", file_name: "src/widget.rs"}],
-      head_branch: "main"
+      approval_key: "main"
     }
 
     {view, _rid} = mount_bound(conn, state, repo)

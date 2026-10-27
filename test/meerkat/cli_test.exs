@@ -1150,6 +1150,25 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "auto_approve_decision/3 — detached HEAD (real git fixture)" do
+    test "files approved in this worktree's detached HEAD auto-approve" do
+      dir = make_git_repo("meerkat-cli-detached")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      git(dir, ["config", "user.email", "t@t.t"])
+      git(dir, ["config", "user.name", "t"])
+      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
+      git(dir, ["checkout", "-q", "--detach"])
+      stage(dir, "a.rs", "fn a() {}\n")
+      oid = git(dir, ["rev-parse", ":a.rs"])
+      path = ApprovalCache.path_for(dir)
+      approve = &ApprovalCache.approve(&1, "detached HEAD (.git)", "a.rs", oid)
+      {:ok, _} = ApprovalCache.modify(path, approve)
+
+      assert CLI.auto_approve_decision_for_test(dir) ==
+               {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
+    end
+  end
+
   describe "auto_approve_decision/3 — restarted review (real git fixture)" do
     # Ticking a file Approved records it in the approval cache at once, so
     # once every file is ticked, a BEAM respawned for the same review

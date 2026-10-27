@@ -3,6 +3,63 @@ defmodule Meerkat.ReviewLogTest do
 
   alias Meerkat.ReviewLog
 
+  describe "start/2" do
+    test "a detached HEAD logs no branch but reads approvals under its key" do
+      dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      key = "detached HEAD (.git)"
+      # A file with no staged OID never counts as approved, even against
+      # a cache entry holding an empty OID.
+      approve = fn cache ->
+        cache
+        |> Meerkat.ApprovalCache.approve(key, "a.rs", "oid1")
+        |> Meerkat.ApprovalCache.approve(key, "b.rs", "")
+      end
+
+      {:ok, _} = Meerkat.ApprovalCache.modify(Meerkat.ApprovalCache.path_for(dir), approve)
+
+      state = %Meerkat.ReviewState{
+        files: [
+          %{file_name: "a.rs", effective_oid: "oid1"},
+          %{file_name: "b.rs", effective_oid: ""}
+        ],
+        approval_key: key
+      }
+
+      %ReviewLog{record: record} = ReviewLog.start(dir, state)
+      assert record.branch == nil
+
+      assert [%{file_name: "a.rs", was_approved: true}, %{file_name: "b.rs", was_approved: false}] =
+               record.files
+    end
+
+    test "starting a log prunes the approvals of a deleted branch, then reads the pruned cache" do
+      dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log-prune")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      Meerkat.TestHelpers.git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
+      Meerkat.TestHelpers.commit(dir, "seed")
+
+      approve = fn cache ->
+        Enum.reduce(
+          ["main", "gone"],
+          cache,
+          &Meerkat.ApprovalCache.approve(&2, &1, "a.rs", "oid1")
+        )
+      end
+
+      {:ok, _} = Meerkat.ApprovalCache.modify(Meerkat.ApprovalCache.path_for(dir), approve)
+
+      state = %Meerkat.ReviewState{
+        files: [%{file_name: "a.rs", effective_oid: "oid1"}],
+        approval_key: "gone"
+      }
+
+      %ReviewLog{record: record} = ReviewLog.start(dir, state)
+      assert [%{file_name: "a.rs", was_approved: false}] = record.files
+      assert dir |> Meerkat.ApprovalCache.load_for() |> Map.keys() == ["main"]
+    end
+  end
+
   describe "slugify_branch/1" do
     test "nil + empty string fall back to no-branch" do
       assert ReviewLog.slugify_branch(nil) == "no-branch"

@@ -27,6 +27,9 @@ defmodule Meerkat.ReviewLog do
   @doc """
   Begin a review log entry. Writes the initial `in-progress` JSON to
   `<per-worktree-gitdir>/meerkat-precommit/reviews/<ts>-<slug>-<filetag>.json`.
+  Also prunes the repo's approval cache (`Meerkat.ApprovalCache.prune_for/1`),
+  as each review that opens the page starts here, and logs each file's
+  approval from the pruned cache.
   """
   @spec start(String.t(), ReviewState.t()) :: t
   def start(repo_path, %ReviewState{} = state) do
@@ -38,7 +41,7 @@ defmodule Meerkat.ReviewLog do
     filetag = file_tag(state.files)
     path = Path.join(reviews_dir, "#{fname_ts}-#{slug}-#{filetag}.json")
 
-    approval_cache = ApprovalCache.load_for(repo_path)
+    approval_cache = ApprovalCache.prune_for(repo_path)
     branch = state.head_branch
 
     record = %{
@@ -50,7 +53,8 @@ defmodule Meerkat.ReviewLog do
       branch: branch,
       pr: pr_record(state.pr),
       commit_message: state.commit_message,
-      files: Enum.map(state.files, &file_record(&1, repo_path, approval_cache, branch)),
+      files:
+        Enum.map(state.files, &file_record(&1, repo_path, approval_cache, state.approval_key)),
       submission: nil,
       rendered_feedback: nil
     }
@@ -152,12 +156,12 @@ defmodule Meerkat.ReviewLog do
   # audit log shows what state the reviewer walked into. Reads the
   # OID from the already-materialised file_diff rather than
   # re-shelling out to git.
-  defp file_record(file, _repo_path, approval_cache, branch) do
+  defp file_record(file, _repo_path, approval_cache, approval_key) do
     oid = Map.get(file, :effective_oid) || ""
 
     was_approved =
-      not is_nil(branch) and oid != "" and
-        ApprovalCache.approved?(approval_cache, branch, file.file_name, oid)
+      not is_nil(approval_key) and oid != "" and
+        ApprovalCache.approved?(approval_cache, approval_key, file.file_name, oid)
 
     %{
       file_name: file.file_name,

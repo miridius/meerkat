@@ -23,7 +23,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "src_widget.rs", effective_oid: oid}],
-      head_branch: "main",
+      approval_key: "main",
       precommit?: true
     }
 
@@ -67,6 +67,29 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute has_element?(view, ".approved-toggle input[phx-value-file_name='keep.rs'][checked]")
   end
 
+  test "on a detached HEAD, an approved file stays approved in the next review round", %{
+    conn: conn
+  } do
+    repo = tmp_git_repo()
+    commit(repo, "seed")
+    git(repo, ["checkout", "-q", "--detach"])
+    stage(repo, "a.txt", "alpha\n")
+    stage(repo, "b.txt", "bravo\n")
+
+    {:ok, round1} = ReviewState.from_target({:staged, nil}, repo)
+    assert round1.head_branch == nil
+    {view, _rid} = mount_bound(conn, round1, repo)
+
+    view
+    |> element(".approved-toggle input[phx-value-file_name='a.txt']")
+    |> render_click()
+
+    stage(repo, "b.txt", "bravo v2\n")
+    {:ok, round2} = ReviewState.from_target({:staged, nil}, repo)
+    assert round2.approved_file_names == MapSet.new(["a.txt"])
+    assert Map.keys(ApprovalCache.load_for(repo)) == ["detached HEAD (.git)"]
+  end
+
   test "approving a file with no effective_oid flashes instead of silently not persisting", %{
     conn: conn
   } do
@@ -76,7 +99,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     view =
       mount_unbound(conn, %ReviewState{
         files: [%{@plain_file | effective_oid: nil}],
-        head_branch: "main",
+        approval_key: "main",
         precommit?: true
       })
 
@@ -116,7 +139,12 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit")
     File.mkdir_p!(dir)
 
-    put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}], precommit?: true})
+    put_state(%ReviewState{
+      files: [%{@plain_file | effective_oid: nil}],
+      approval_key: "main",
+      precommit?: true
+    })
+
     Application.put_env(:meerkat, :repo_path, dir)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
@@ -150,7 +178,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: oid}],
-      head_branch: "main",
+      approval_key: "main",
       precommit?: true
     }
 
@@ -527,7 +555,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
         %{@plain_file | file_name: "staged.ex", effective_oid: "oid1"},
         %{@plain_file | file_name: "blank.ex", effective_oid: ""}
       ],
-      head_branch: "main"
+      approval_key: "main"
     }
 
     {view, _rid} = mount_bound(conn, state, repo)
@@ -540,9 +568,33 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute Map.has_key?(cache["main"] || %{}, "blank.ex")
   end
 
+  test "approving a PR / range review leaves the approval cache alone", %{conn: conn} do
+    repo = tmp_git_repo()
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "feature"}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_click(view, "decision.approve", %{})
+
+    assert Decision.current() == {:approve, ""}
+    refute File.exists?(ApprovalCache.path_for(repo))
+  end
+
+  test "approving on a detached HEAD writes under the worktree's key", %{conn: conn} do
+    repo = tmp_git_repo()
+    key = "detached HEAD (.git)"
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], approval_key: key}
+    {view, _rid} = mount_bound(conn, state, repo)
+
+    render_click(view, "decision.approve", %{})
+
+    cache = ApprovalCache.load_for(repo)
+    assert Map.keys(cache) == [key]
+    assert ApprovalCache.approved?(cache, key, "src/widget.rs", "oid1")
+  end
+
   test "an approve after another tab's decision marks no file approved", %{conn: conn} do
     repo = tmp_git_repo()
-    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "main"}
+    state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], approval_key: "main"}
     {view, _rid} = mount_bound(conn, state, repo)
     {:ok, _} = Decision.submit({:reject, "feedback"})
 
@@ -559,7 +611,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert ApprovalCache.path_for(dir) == nil
 
     Application.put_env(:meerkat, :repo_path, dir)
-    view = mount_unbound(conn, %ReviewState{files: [@plain_file], head_branch: "main"})
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file], approval_key: "main"})
 
     render_click(view, "decision.approve", %{})
     assert Decision.current() == {:approve, ""}

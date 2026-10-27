@@ -11,7 +11,7 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
   import Phoenix.LiveViewTest
-  import Meerkat.TestHelpers, only: [make_git_repo: 1, git: 2]
+  import Meerkat.TestHelpers, only: [make_git_repo: 1]
 
   alias MeerkatWeb.ReviewLive
 
@@ -130,19 +130,7 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
     {view, rid}
   end
 
-  def commit(repo, message) do
-    git(repo, [
-      "-c",
-      "user.email=t@t",
-      "-c",
-      "user.name=t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      message
-    ])
-  end
+  defdelegate commit(repo, message), to: Meerkat.TestHelpers
 
   def count(view, selector) do
     view |> render() |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> Enum.count()

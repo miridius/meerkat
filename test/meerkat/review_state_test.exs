@@ -224,6 +224,8 @@ defmodule Meerkat.ReviewStateTest do
       assert state.pr == %{number: 123, title: pr.title, url: pr.url}
       assert state.commit_message == pr.body
       assert {state.head_branch, state.base_branch} == {"feat/the-feature", "main"}
+      # Its head branch may name a local branch, whose staged approvals it must not touch.
+      assert state.approval_key == nil
       refute state.precommit?
     end
 

@@ -6,7 +6,7 @@ defmodule Meerkat.CLIMainTest do
 
   import Meerkat.TestHelpers
 
-  alias Meerkat.{CLI, PendingAnswers, PendingQuestions}
+  alias Meerkat.{ApprovalCache, CLI, PendingAnswers, PendingQuestions}
 
   setup do
     restore_signal_handler_on_exit()
@@ -231,6 +231,16 @@ defmodule Meerkat.CLIMainTest do
   test "a review opens the browser at the port it bound",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")
+    branch = git(repo, ["branch", "--show-current"])
+    live = [branch, "detached HEAD (.git)"]
+
+    {:ok, _} =
+      ApprovalCache.modify(ApprovalCache.path_for(repo), fn cache ->
+        Enum.reduce(live ++ ["gone", "detached HEAD (gone)"], cache, fn key, acc ->
+          ApprovalCache.approve(acc, key, "a.txt", "oid")
+        end)
+      end)
+
     # A checkout that has never built its assets has no Vite manifest, and
     # the layout cannot render without one.
     manifest = Path.join(repo, "manifest.json")
@@ -250,6 +260,8 @@ defmodule Meerkat.CLIMainTest do
     assert {:ok, record} = opened
     assert String.split(record) == [url, "200"]
     assert code == 143
+    # Starting the review pruned approvals of a deleted branch and worktree.
+    assert repo |> ApprovalCache.load_for() |> Map.keys() |> Enum.sort() == Enum.sort(live)
   end
 
   # As in `test_helper.exs`, the endpoint is already running under the
