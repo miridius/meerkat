@@ -1,7 +1,7 @@
 // Run by scripts/mix-test.sh once all its test files have passed: runs each file that took longer than the limit
 // in scripts/test-file-limit.json, without an entry there giving a reason, again, one at a time, and fails when
-// that run is also over the limit or fails. This run's other files slow a file down, so only the second run judges
-// its speed; other runs' files may still run beside it.
+// that run is also over the limit or fails. This run's other files slow a file down, most in wall time, so only the
+// second run judges its speed; other runs' files may still run beside it.
 //
 // Locally a file's time is its CPU time, user and system, which outside load barely moves, judged against
 // cpu_limit_seconds; in CI (CI=true) it is its wall time, which also counts waiting, judged against limit_seconds.

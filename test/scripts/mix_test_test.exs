@@ -223,10 +223,10 @@ defmodule Meerkat.MixTestScriptTest do
 
       assert {out, 1} = run(ctx)
 
-      assert out =~ ~r/  test\/web\/b_test.exs: [\d.]+ s beside others, [\d.]+ s run again\n/
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+\.\d s beside others, \d+\.\d s run again\n/
 
       assert out =~
-               ~r/test files over the 1 s CPU-time limit for one file, run again:\n  test\/web\/b_test.exs: [\d.]+ s\n/
+               ~r/test files over the 1 s CPU-time limit for one file, run again:\n  test\/web\/b_test.exs: \d+\.\d s\n/
 
       refute out =~ "all 3 test files passed"
     end
@@ -246,7 +246,7 @@ defmodule Meerkat.MixTestScriptTest do
       assert {out, 1} = run(ctx, [{"CI", "true"}])
 
       assert out =~
-               ~r/test files over the 2 s wall-time limit for one file, run again:\n  test\/web\/b_test.exs: [\d.]+ s\n/
+               ~r/test files over the 2 s wall-time limit for one file, run again:\n  test\/web\/b_test.exs: \d+\.\d s\n/
     end
 
     test "a file over the limit only beside others passes, run again", ctx do
@@ -254,7 +254,7 @@ defmodule Meerkat.MixTestScriptTest do
       write_limits(ctx.base, @over_limits)
 
       assert {out, 0} = run(ctx)
-      assert out =~ ~r/  test\/web\/b_test.exs: [\d.]+ s beside others, [\d.]+ s run again\n/
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+\.\d s beside others, \d+\.\d s run again\n/
       assert out =~ "all 3 test files passed"
 
       assert Enum.count(runs(ctx), &(&1 == "test mix test --no-compile test/web/b_test.exs")) == 2
@@ -269,7 +269,7 @@ defmodule Meerkat.MixTestScriptTest do
       write_limits(ctx.base, @over_limits)
 
       assert {out, 1} = run(ctx)
-      assert out =~ ~r/  test\/web\/b_test.exs: [\d.]+ s beside others; failed when run again\n/
+      assert out =~ ~r/  test\/web\/b_test.exs: \d+\.\d s beside others; failed when run again\n/
 
       assert out =~
                "=== mix test test/web/b_test.exs, run again ===\nran test/web/b_test.exs"
@@ -331,19 +331,26 @@ defmodule Meerkat.MixTestScriptTest do
 
     test "times written with a decimal comma are read and add up exactly", ctx do
       # Added as floats, 1.1 and 0.1 show as 1.3.
-      assert {out, 1} = file_times(ctx, "0,5 1,1 0,1")
-      assert out =~ "  test/web/b_test.exs: 1.2 s beside others, "
-      assert out =~ "test files over the 1 s CPU-time limit for one file, run again:"
+      assert {out, 0} = file_times(ctx, "0,5 1,1 0,1")
+
+      assert out =~
+               "over the 1 s CPU-time limit beside them:\n  test/web/b_test.exs: 1.2 s beside others, "
+    end
+
+    test "a time exactly at the limit passes", ctx do
+      assert {out, 0} = file_times(ctx, "0 0.5 0.5")
+      refute out =~ "running again"
     end
 
     test "a fraction of a second over the limit counts, and shows rounded up", ctx do
-      assert {out, 1} = file_times(ctx, "0 0.5 0.504")
-      assert out =~ "  test/web/b_test.exs: 1.1 s beside others, "
-      assert out =~ "test files over the 1 s CPU-time limit for one file, run again:"
+      assert {out, 0} = file_times(ctx, "0 0.5 0.504")
+
+      assert out =~
+               "over the 1 s CPU-time limit beside them:\n  test/web/b_test.exs: 1.1 s beside others, "
     end
 
     test "times that cannot be read fail the run", ctx do
-      for times <- ["", "1.5 x 0.1", "1.5 0.1"] do
+      for times <- ["", "1.5 x 0.1", "1.5 0.1", "1 1.5 0.1 0.1"] do
         assert {out, 1} = file_times(ctx, times)
         assert out =~ "cannot read the times in"
       end
@@ -377,38 +384,32 @@ defmodule Meerkat.MixTestScriptTest do
     File.write!(Path.join(base, file), "")
   end
 
+  defp run(ctx, env \\ []), do: cmd(ctx, "bash", ["scripts/mix-test.sh"], env)
+
+  # Runs test-file-times.ts on its own over test/web/b_test.exs, whose first
+  # run's times file holds `times`; its run again is quick.
+  defp file_times(ctx, times) do
+    write_limits(ctx.base, @over_limits)
+    logs = Path.join(ctx.base, "logs")
+    File.mkdir_p!(Path.join(logs, "test/web"))
+    File.write!(Path.join(logs, "test/web/b_test.exs.secs"), times)
+    cmd(ctx, "bun", ["scripts/test-file-times.ts", logs, "1", "test/web/b_test.exs"])
+  end
+
   # This suite's own runner may have set ELIXIR_ERL_OPTIONS and
   # MIX_OS_CONCURRENCY_LOCK, and CI sets CI. hook_env/0 keeps the test-file
   # slots in the fixture's repo when this suite runs in a hook.
-  defp run(ctx, env \\ []) do
+  defp cmd(ctx, command, args, env \\ []) do
     env =
       Map.merge(
         %{"ELIXIR_ERL_OPTIONS" => nil, "MIX_OS_CONCURRENCY_LOCK" => nil, "CI" => nil},
         Map.new(env)
       )
 
-    System.cmd("bash", ["scripts/mix-test.sh"],
+    System.cmd(command, args,
       cd: ctx.base,
       env:
         [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")} | Enum.to_list(env)] ++
-          Meerkat.TestHelpers.hook_env(),
-      stderr_to_stdout: true
-    )
-  end
-
-  # Runs test-file-times.ts on its own over test/web/b_test.exs, whose first
-  # run's times file holds `times`; its run again spends two seconds of CPU.
-  defp file_times(ctx, times) do
-    File.write!(ctx.slow, "test/web/b_test.exs\n")
-    write_limits(ctx.base, @over_limits)
-    logs = Path.join(ctx.base, "logs")
-    File.mkdir_p!(Path.join(logs, "test/web"))
-    File.write!(Path.join(logs, "test/web/b_test.exs.secs"), times)
-
-    System.cmd("bun", ["scripts/test-file-times.ts", logs, "1", "test/web/b_test.exs"],
-      cd: ctx.base,
-      env:
-        [{"PATH", ctx.stubs <> ":" <> System.fetch_env!("PATH")}, {"CI", nil}] ++
           Meerkat.TestHelpers.hook_env(),
       stderr_to_stdout: true
     )
@@ -422,8 +423,7 @@ defmodule Meerkat.MixTestScriptTest do
 
   defp most_at_once(ctx) do
     ctx.spans
-    |> File.read!()
-    |> String.split("\n", trim: true)
+    |> lines()
     |> Enum.scan(0, fn
       "start", running -> running + 1
       "end", running -> running - 1
