@@ -41,3 +41,13 @@ patchedDependencies:
   # cleanup of a second row watching an already-watched element, which
   # upstream drops.
   "@git-diff-view/svelte": patches/@git-diff-view__svelte.patch
+  # GHSA-gcqx-w48m-w2h4: merge() lets a `__proto__` key set the
+  # prototype of the object it returns when the target has a null
+  # prototype or a null placeholder. No release fixes it. The patch
+  # drops `__proto__` and `constructor` keys outright.
+  deepmerge: patches/deepmerge.patch
+
+auditConfig:
+  ignoreGhsas:
+    # Closed by deepmerge's patch above.
+    - GHSA-gcqx-w48m-w2h4
