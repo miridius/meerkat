@@ -663,11 +663,19 @@ defmodule Meerkat.ShepherdTest do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       emptied_run(dir)
-      # Every `sleep` takes a second, so a wait that counted polls would
-      # outlast the 20 s bound below.
+      # Every `sleep` takes a second and is logged, so a wait that counted
+      # its 0.2 s polls would sleep 50 times; one by the clock sleeps about
+      # 10 times, and fewer under load. Load only lengthens the wait, so
+      # its time has a lower bound only.
       stubs = Path.join(dir, "stubs")
+      sleeps = Path.join(dir, "sleeps")
       File.mkdir_p!(stubs)
-      File.write!(Path.join(stubs, "sleep"), "#!/bin/sh\nexec /bin/sleep 1\n")
+
+      File.write!(
+        Path.join(stubs, "sleep"),
+        "#!/bin/sh\necho slept >> '#{sleeps}'\nexec /bin/sleep 1\n"
+      )
+
       File.chmod!(Path.join(stubs, "sleep"), 0o755)
 
       port =
@@ -681,7 +689,8 @@ defmodule Meerkat.ShepherdTest do
       started = System.monotonic_time(:millisecond)
       assert {2, output} = await_result(port, dir)
       # Whole-second SECONDS makes the 10 s wait 9-10 s.
-      assert (System.monotonic_time(:millisecond) - started) in 8_000..20_000
+      assert System.monotonic_time(:millisecond) - started >= 8_000
+      assert sleeps |> File.read!() |> String.split("\n", trim: true) |> length() <= 12
 
       assert output =~
                "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."

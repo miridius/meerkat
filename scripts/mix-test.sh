@@ -9,15 +9,16 @@
 # files can run together. Half the cores took as long as all of them and
 # loads the machine less.
 #
-# Each file also takes one of as many test-file slots, which all runs in all
-# worktrees share, so two gates at once run no more files together than one.
-# Test files contend for more than the CPU: with 9 at once on 18 cores, the
-# CPU stayed half idle, yet the files took 1.7 times as long in all as with 2.
+# Each file also takes one of as many test-file slots, which all runs of this
+# script in all worktrees share, so two at once run no more files together
+# than one. Test files contend for more than the CPU: with 9 at once on 18
+# cores, the CPU stayed half idle, yet the files took 1.7 times as long in all
+# as with 2.
 #
-# Each file's wall time is kept, in whole seconds; scripts/test-file-times.ts
-# runs each passing file over the limit in scripts/test-file-limit.json that
-# has no entry there with a reason again on its own, and fails it if it is
-# still over.
+# Each file's wall and CPU time is kept. Once every file has passed,
+# scripts/test-file-times.ts runs each file over the limit in
+# scripts/test-file-limit.json that has no entry there with a reason again,
+# and fails it if it is still over.
 #
 # On failure, print each failing file's output, list the failing files, and
 # exit non-zero. CI and the pre-commit gate both run this script, so each
@@ -72,10 +73,6 @@ for file in $files; do
   fi
 done
 
-# Fails a file still over the per-file time limit when run on its own.
-# shellcheck disable=SC2086
-bun scripts/test-file-times.ts "$logs" "$jobs" $files && slow=0 || slow=1
-
 count=$(wc -l <<<"$files" | tr -d ' ')
 if [[ ${#failed[@]} -gt 0 ]]; then
   echo
@@ -83,5 +80,8 @@ if [[ ${#failed[@]} -gt 0 ]]; then
   printf '  %s\n' "${failed[@]}"
   exit 1
 fi
-((slow == 0)) || exit 1
+
+# Fails a file still over the per-file time limit when run again.
+# shellcheck disable=SC2086
+bun scripts/test-file-times.ts "$logs" "$jobs" $files
 echo "mix test: all $count test files passed."

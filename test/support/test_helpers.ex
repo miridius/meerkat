@@ -293,7 +293,8 @@ defmodule Meerkat.TestHelpers do
   delivers its output, stderr included, line by line, and its exit status.
   Closing the port closes the gate's stdin. A gate that gets no slot gives
   up after `:timeout` seconds (default 60). `:bash` is the bash that runs
-  it (default the one on PATH).
+  it (default the one on PATH). `:lock` is the gate-lock.sh call that takes
+  the slot (default `gate_lock`).
   """
   @spec gate_lock_port(String.t(), String.t(), keyword()) :: port()
   def gate_lock_port(repo, command, opts \\ []) do
@@ -311,7 +312,11 @@ defmodule Meerkat.TestHelpers do
       :exit_status,
       :stderr_to_stdout,
       {:line, 4096},
-      args: ["-c", ~s(set -e; source "$0"; gate_lock; #{command}), lib],
+      args: [
+        "-c",
+        ~s(set -e; source "$0"; #{Keyword.get(opts, :lock, "gate_lock")}; #{command}),
+        lib
+      ],
       cd: repo,
       env: env
     ])

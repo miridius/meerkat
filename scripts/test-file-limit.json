@@ -1,5 +1,6 @@
 {
   "limit_seconds": 60,
+  "cpu_limit_seconds": 10,
   "exempt": {
     "test/scripts/pre_push_test.exs": {
       "reason": "Took 97 s in a full suite run with its fixture built once per module: 74 tests run the real no-private-refs.sh, most pushing through the real lefthook. Split the file or cut its pushes, then drop this entry."

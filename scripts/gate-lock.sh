@@ -11,10 +11,12 @@
 # fd 9 first: a child that outlives a killed gate cannot keep the slot.
 #
 # test_file_lock: the same for one of the given number of test-file slots,
-# in meerkat-gate-lock/files, waiting silently.
+# in meerkat-gate-lock/files, waiting silently, and taking a free slot
+# without a ticket while no ticket waits.
 #
-# Bash rather than TypeScript only until check.sh and mutate.sh move to
-# TypeScript: the lock must be held by the gate's own process.
+# Bash rather than TypeScript only until check.sh, mutate.sh and
+# run-test-file.sh move to TypeScript: the lock must be held by the process
+# that sourced this file.
 #
 # Gates wait their turn first come, first served. Each takes a ticket in
 # meerkat-gate-lock/waiting, named for the microsecond it started waiting
@@ -38,7 +40,8 @@ gate_lock() {
   gate_lock_slots meerkat-gate-lock 2 "gate slots" true
 }
 
-# test_file_lock <slot count>: scripts/mix-test.sh passes its parallelism.
+# test_file_lock <slot count>: the slot count is scripts/mix-test.sh's
+# parallelism.
 test_file_lock() {
   gate_lock_slots meerkat-gate-lock/files "$1" "" false
 }
