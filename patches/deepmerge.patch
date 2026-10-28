@@ -1,0 +1,32 @@
+diff --git a/dist/cjs.js b/dist/cjs.js
+index 7c36cbdd06cc22c92d590be3f87a08a91ca06b40..8b5c16bf396f973501e836169facb992f87faa8b 100644
+--- a/dist/cjs.js
++++ b/dist/cjs.js
+@@ -69,6 +69,11 @@ function propertyIsOnObject(object, property) {
+ 	}
+ }
+ 
++// Judged by name alone, whatever the target's shape (GHSA-gcqx-w48m-w2h4).
++function propertyIsForbidden(key) {
++	return key === '__proto__' || key === 'constructor'
++}
++
+ // Protects from prototype poisoning and unexpected merging up the prototype chain.
+ function propertyIsUnsafe(target, key) {
+ 	return propertyIsOnObject(target, key) // Properties are safe to merge if they don't exist in the target yet,
+@@ -80,11 +85,14 @@ function mergeObject(target, source, options) {
+ 	var destination = {};
+ 	if (options.isMergeableObject(target)) {
+ 		getKeys(target).forEach(function(key) {
++			if (propertyIsForbidden(key)) {
++				return
++			}
+ 			destination[key] = cloneUnlessOtherwiseSpecified(target[key], options);
+ 		});
+ 	}
+ 	getKeys(source).forEach(function(key) {
+-		if (propertyIsUnsafe(target, key)) {
++		if (propertyIsForbidden(key) || propertyIsUnsafe(target, key)) {
+ 			return
+ 		}
+ 

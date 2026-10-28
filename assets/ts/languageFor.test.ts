@@ -21,6 +21,8 @@ describe("languageFor", () => {
 		expect(languageFor("a.ex")).toBe("elixir");
 		expect(languageFor("a.exs")).toBe("elixir");
 		expect(languageFor("a.cljs")).toBe("clojure");
+		expect(languageFor("a.cljc")).toBe("clojure");
+		expect(languageFor("a.bb")).toBe("clojure");
 		expect(languageFor("a.h")).toBe("c");
 	});
 

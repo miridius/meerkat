@@ -64,7 +64,10 @@ a specific line). Submit pushes via `comment.submit` with the form's
 `file_index` from that form's anchor.
 
 Per-file language is wired through to the form's `language` prop
-so Suggestion mode's CodeMirror picks the right syntax pack.
+so Suggestion mode's CodeMirror picks the right syntax pack. A
+Clojure suggestion is formatted on save as in
+[inline-comments.md](inline-comments.md), on its own rather than
+inside the file.
 
 ## Commit-message comments
 

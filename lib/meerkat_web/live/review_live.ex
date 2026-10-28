@@ -19,6 +19,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   alias Meerkat.{
     ApprovalCache,
+    Cljfmt,
     CljHover,
     Comment,
     Decision,
@@ -497,6 +498,7 @@ defmodule MeerkatWeb.ReviewLive do
     } = payload
 
     flags = %{correct_instructions: instructions?, lint_rule: lint_rule?}
+    language = payload["language"]
     key = payload["form_key"]
     form = OpenForms.find(forms, key)
 
@@ -516,13 +518,23 @@ defmodule MeerkatWeb.ReviewLive do
         {:noreply, close_form(socket, key)}
 
       Map.get(form, :edit_id) ->
+        # Formatted first, so the old comment is gone only once the
+        # new one is ready to add.
+        body = format_suggestion(body, finding, language, form, socket.assigns)
         # Edit = remove old + add new (no `edit_comment` server call).
         _ = ReviewServer.remove_comment(rid, form.surface, form.edit_id)
         commit_add(rid, form, body, finding, flags)
         {:noreply, close_form(socket, key)}
 
       true ->
-        commit_add(rid, form, body, finding, flags)
+        commit_add(
+          rid,
+          form,
+          format_suggestion(body, finding, language, form, socket.assigns),
+          finding,
+          flags
+        )
+
         {:noreply, close_form(socket, key)}
     end
   end
@@ -2956,22 +2968,8 @@ defmodule MeerkatWeb.ReviewLive do
   # the given side. Seeds the Suggestion-mode CodeMirror so the user
   # can edit-toward instead of starting from a blank slate. Returns
   # "" if the file or content is missing.
-  defp extract_snippet(nil, _, _, _), do: ""
-
-  defp extract_snippet(%{} = file, from, to, side) do
-    source =
-      case side do
-        "new" -> Map.get(file, :new_content, "")
-        :new -> Map.get(file, :new_content, "")
-        "old" -> Map.get(file, :old_content, "")
-        :old -> Map.get(file, :old_content, "")
-        _ -> ""
-      end
-
-    case source do
-      nil ->
-        ""
-
+  defp extract_snippet(file, from, to, side) do
+    case side_content(file, side) do
       "" ->
         ""
 
@@ -2982,6 +2980,16 @@ defmodule MeerkatWeb.ReviewLive do
         |> Enum.join("\n")
     end
   end
+
+  # The file's content on `side`, or "" if the file or content is missing.
+  defp side_content(%{} = file, side) when side in ["new", :new],
+    do: Map.get(file, :new_content) || ""
+
+  defp side_content(%{} = file, side) when side in ["old", :old],
+    do: Map.get(file, :old_content) || ""
+
+  # muex:ignore equivalent: swapping the two ignored arguments changes nothing
+  defp side_content(_file, _side), do: ""
 
   # Draft key shape: `meerkat:draft:<review_id>:<surface>:<anchor>[:edit:<id>]`.
   # Scoping by review_id prevents one review's drafts from bleeding into
@@ -3018,6 +3026,47 @@ defmodule MeerkatWeb.ReviewLive do
 
     comment = Map.merge(base, anchor_extras(surface, anchor))
     ReviewServer.add_comment(review_id, surface, comment)
+  end
+
+  # CommentForm.svelte puts a suggestion's code in a fence last in the
+  # body, tagged with the editor's language.
+  @clojure_suggestion ~r/\A[\s\S]*\n```clojure\n([\s\S]*?)\n```\s*\z/
+
+  # The body with a Clojure suggestion's code formatted as it would sit
+  # in the file around its anchored lines (`Meerkat.Cljfmt`). A file
+  # comment's suggestion has no lines in the file, so it is formatted
+  # on its own. The editor's language decides, as another language's
+  # suggestion can end in a `clojure` fence too, as in a README.
+  defp format_suggestion(
+         body,
+         :suggestion,
+         "clojure",
+         %{surface: surface, anchor: anchor},
+         assigns
+       )
+       when surface in [:inline, :file] do
+    case Regex.run(@clojure_suggestion, body, return: :index, capture: :all_but_first) do
+      [{at, len}] ->
+        {above, below} = suggestion_context(surface, anchor, assigns.state)
+        code = Cljfmt.format(binary_part(body, at, len), above, below, assigns.repo_path)
+
+        binary_part(body, 0, at) <>
+          code <> binary_part(body, at + len, byte_size(body) - at - len)
+
+      nil ->
+        body
+    end
+  end
+
+  defp format_suggestion(body, _finding, _language, _form, _assigns), do: body
+
+  defp suggestion_context(:file, _anchor, _state), do: {"", ""}
+
+  defp suggestion_context(:inline, anchor, state) do
+    state.files
+    |> Enum.at(anchor.file_index)
+    |> side_content(anchor.side)
+    |> Cljfmt.context(anchor.start_line, anchor.end_line)
   end
 
   defp anchor_extras(:global, _), do: %{}
