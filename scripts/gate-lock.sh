@@ -1,5 +1,7 @@
 # Sourced by scripts/check.sh and scripts/mutate.sh, so at most two gates in
-# all worktrees of a repo run their heavy checks at once.
+# all worktrees of a repo run their heavy checks at once, and by
+# scripts/run-test-file.sh, so all test runs in those worktrees together run
+# at most half the online cores' worth of test files at once.
 #
 # gate_lock: returns once this shell holds one of the gate's two slots, an
 # flock(2) taken with macOS lockf(1) on a file in meerkat-gate-lock in the
@@ -8,8 +10,13 @@
 # fd 9's file open. So the gate runs its checks in a subshell that closes
 # fd 9 first: a child that outlives a killed gate cannot keep the slot.
 #
-# Bash rather than TypeScript only until check.sh and mutate.sh move to
-# TypeScript: the lock must be held by the gate's own process.
+# test_file_lock: the same for one of the given number of test-file slots,
+# in meerkat-gate-lock/files, waiting silently, and taking a free slot
+# without a ticket while no ticket waits.
+#
+# Bash rather than TypeScript only until check.sh, mutate.sh and
+# run-test-file.sh move to TypeScript: the lock must be held by the process
+# that sourced this file.
 #
 # Gates wait their turn first come, first served. Each takes a ticket in
 # meerkat-gate-lock/waiting, named for the microsecond it started waiting
@@ -28,12 +35,35 @@
 # with the earliest ticket also takes that lock when it is free, on fd 6,
 # and holds it until it gets a slot, stops being the earliest, or gives
 # up; while one of those gates holds it, the two race for the slots. This
-# can go once no branch predates #90.
+# can go once no branch predates #90. Test-file slots have no such lock.
 gate_lock() {
+  gate_lock_slots meerkat-gate-lock 2 "gate slots" true
+}
+
+# test_file_lock <slot count>: the slot count is scripts/mix-test.sh's
+# parallelism.
+test_file_lock() {
+  gate_lock_slots meerkat-gate-lock/files "$1" "" false
+}
+
+# gate_lock_slots <dir in the git common dir> <slot count> <what to call the
+# slots when waiting, or "" to wait silently> <whether to take the queue lock>
+gate_lock_slots() {
   local dir ticket slot status queued=false waited=false start=$SECONDS
+  local count=$2 noun=$3 legacy=$4
   local timeout=${MEERKAT_GATE_LOCK_TIMEOUT:-3600}
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/meerkat-gate-lock"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/$1"
   mkdir -p "$dir/waiting"
+
+  # With no ticket waiting, a free slot overtakes no one, so slots without
+  # the old script's lock are tried at once, without a ticket: tickets taken
+  # together would otherwise each wait a second behind the one before.
+  if [[ "$legacy" == false ]] && ! compgen -G "$dir/waiting/[0-9]*" >/dev/null; then
+    status=0
+    gate_lock_take || status=$?
+    ((status == 75)) || return "$status"
+  fi
+
   gate_lock_ticket || return 1
 
   while true; do
@@ -42,18 +72,14 @@ gate_lock() {
     ((status != 1)) || { gate_lock_leave; return 1; }
     if ((status == 0)); then
       gate_lock_queue || { gate_lock_leave; return 1; }
-      for slot in 1 2; do
-        exec 9>>"$dir/slot$slot"
-        status=0
-        gate_lock_try 9 "$dir/slot$slot" || status=$?
-        ((status != 1)) || { gate_lock_leave; return 1; }
-        if ((status == 0)); then
-          gate_lock_leave
-          [[ "$waited" == false ]] || echo "gate-lock: got a slot after $((SECONDS - start))s." >&2
-          return 0
-        fi
-      done
-      exec 9>&-
+      status=0
+      gate_lock_take || status=$?
+      ((status != 1)) || { gate_lock_leave; return 1; }
+      if ((status == 0)); then
+        gate_lock_leave
+        [[ "$waited" == false ]] || echo "gate-lock: got a slot after $((SECONDS - start))s." >&2
+        return 0
+      fi
     elif [[ "$queued" == true ]]; then
       # A ticket that sorts ahead of this one has appeared since.
       exec 6>&-
@@ -67,6 +93,21 @@ gate_lock() {
     fi
     sleep 1
   done
+}
+
+# Tries each slot once, keeping the first it locks open on fd 9. Returns 0
+# once it holds one, 75 while every slot is taken, and 1 when one cannot be
+# locked.
+gate_lock_take() {
+  local status
+  for ((slot = 1; slot <= count; slot++)); do
+    exec 9>>"$dir/slot$slot"
+    status=0
+    gate_lock_try 9 "$dir/slot$slot" || status=$?
+    ((status == 75)) || return "$status"
+  done
+  exec 9>&-
+  return 75
 }
 
 # Takes this gate's ticket: locks a file on fd 8 under a name no ticket
@@ -110,11 +151,11 @@ gate_lock_first() {
 }
 
 # Takes the lock gates on the old script wait for, unless this gate holds
-# it already. Returns 0 once it holds it or while one of those gates does,
-# and 1 when it cannot be locked.
+# it already or these slots have none. Returns 0 once it holds it or while
+# one of those gates does, and 1 when it cannot be locked.
 gate_lock_queue() {
   local status=0
-  [[ "$queued" == false ]] || return 0
+  [[ "$legacy" == true && "$queued" == false ]] || return 0
   exec 6>>"$dir/queue"
   gate_lock_try 6 "$dir/queue" || status=$?
   ((status != 1)) || return 1
@@ -139,7 +180,7 @@ gate_lock_try() {
 }
 
 gate_lock_waiting() {
-  [[ "$waited" == false ]] || return 0
+  [[ -n "$noun" && "$waited" == false ]] || return 0
   waited=true
-  echo "gate-lock: waiting for one of this repo's 2 gate slots, behind any gates that started waiting first." >&2
+  echo "gate-lock: waiting for one of this repo's $count $noun, behind any gates that started waiting first." >&2
 }

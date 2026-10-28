@@ -237,6 +237,42 @@ defmodule Meerkat.GateLockTest do
     assert tickets(ctx.repo) == []
   end
 
+  describe "test-file slots" do
+    test "a test file takes a free slot at once without a ticket", ctx do
+      # Unwritable, so a test file that took a ticket would fail.
+      waiting = Path.join(ctx.repo, ".git/meerkat-gate-lock/files/waiting")
+      File.mkdir_p!(waiting)
+      File.chmod!(waiting, 0o500)
+      on_exit(fn -> File.chmod(waiting, 0o700) end)
+
+      file = test_file_port(ctx.repo, "echo ran")
+      assert_receive {^file, {:data, {:eol, "ran"}}}
+      assert_receive {^file, {:exit_status, 0}}
+    end
+
+    test "a test file waits silently behind a live ticket, even with a slot free", ctx do
+      holder = hold_ticket(ctx.repo, "1000000000000000.1", "files/waiting")
+
+      file = test_file_port(ctx.repo, "echo ran")
+      assert eventually(fn -> length(tickets(ctx.repo, "files/waiting")) == 2 end, [])
+
+      Port.close(holder)
+      assert_receive {^file, {:data, {:eol, line}}}
+      assert line == "ran"
+    end
+
+    test "test-file slots are apart from the gate slots", ctx do
+      _first = hold_gate_slot(ctx.repo)
+      _second = hold_gate_slot(ctx.repo)
+
+      file = test_file_port(ctx.repo, "echo ran")
+      assert_receive {^file, {:data, {:eol, "ran"}}}
+    end
+  end
+
+  defp test_file_port(repo, command),
+    do: gate_lock_port(repo, command, lock: "test_file_lock 1")
+
   # Waits, as a gate on the script from before tickets does, for the `queue`
   # lock, then prints and holds it until the returned port is closed.
   defp old_script_waiter(repo) do
@@ -278,10 +314,12 @@ defmodule Meerkat.GateLockTest do
     end
   end
 
-  # Holds, until the returned port is closed, a locked ticket named `name`,
-  # locking it before it gets its name, as a waiting gate does.
-  defp hold_ticket(repo, name) do
-    path = Path.join(repo, ".git/meerkat-gate-lock/waiting/#{name}")
+  # Holds, until the returned port is closed, a locked ticket named `name` in
+  # `waiting`, locking it before it gets its name, as a waiting gate does.
+  defp hold_ticket(repo, name, waiting \\ "waiting") do
+    dir = Path.join(repo, ".git/meerkat-gate-lock/#{waiting}")
+    File.mkdir_p!(dir)
+    path = Path.join(dir, name)
 
     port =
       Port.open({:spawn_executable, System.find_executable("bash")}, [
@@ -298,7 +336,8 @@ defmodule Meerkat.GateLockTest do
     port
   end
 
-  defp tickets(repo), do: File.ls!(Path.join(repo, ".git/meerkat-gate-lock/waiting"))
+  defp tickets(repo, waiting \\ "waiting"),
+    do: File.ls!(Path.join(repo, ".git/meerkat-gate-lock/#{waiting}"))
 
   defp kill(port) do
     {:os_pid, pid} = Port.info(port, :os_pid)

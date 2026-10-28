@@ -143,7 +143,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It opens no issues.
 
-`scripts/mix-test.sh` runs each test file in its own BEAM, half the online cores' worth at once. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. It times each file's BEAM in whole seconds of wall time. It fails when a file takes longer than the limit in `scripts/test-file-limit.json` (60 s) unless that file has an entry there with a non-empty `reason`; a missing or malformed file, or an entry without a reason, fails it too. The pre-commit gate and CI enforce the same limit.
+`scripts/mix-test.sh` runs each test file in its own BEAM, at most half the online cores' worth at once across all test runs in all worktrees of the repo. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. When every file passes, each one over the limit in `scripts/test-file-limit.json` without an entry there giving a non-empty `reason` is run again, one at a time, and fails the run if it is still over or then fails; a missing or malformed limits file, or an entry without a reason, fails it too. Locally the limit is 10 s of CPU time, which leaves out programs the test BEAM starts; in CI (`CI=true`), 60 s of wall time.
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
