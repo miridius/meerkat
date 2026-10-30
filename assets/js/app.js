@@ -10,7 +10,7 @@ import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
-import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
+import { isSendFeedbackShortcut, onMac, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
 import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
@@ -58,7 +58,7 @@ const hooks = {
   },
   SendFeedbackShortcut: {
     mounted() {
-      const mac = isMacPlatform(navigator.userAgentData?.platform || navigator.platform);
+      const mac = onMac();
       this.el.querySelector(".shortcut-hint").textContent = sendFeedbackHint(mac);
       this._onKey = (e) => {
         if (!isSendFeedbackShortcut(e, mac)) return;
