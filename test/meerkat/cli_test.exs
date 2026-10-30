@@ -580,14 +580,13 @@ defmodule Meerkat.CLITest do
 
     # A process killed by SIGKILL, or read before it finished, shows the
     # banner with no outcome line after it.
-    test "says an output ending without an outcome line means the review is still open" do
+    test "says to rerun when the output ends without an outcome line" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         flat = target |> CLI.pause_banner_for_test(@url) |> String.replace(~r/\s+/, " ")
 
         assert flat =~
                  "If the output ends with no outcome line, this process stopped before " <>
-                   "the review completed and " <>
-                   "the review is still open: run the same command again to wait for its outcome."
+                   "the review completed: run the same command again."
       end
     end
 
@@ -595,7 +594,7 @@ defmodule Meerkat.CLITest do
     test "ends with its last sentence and a newline" do
       for target <- [{:staged, "/tmp/MSG"}, {:pr, "1"}] do
         banner = CLI.pause_banner_for_test(target, @url)
-        assert String.ends_with?(banner, "wait for its outcome.\n")
+        assert String.ends_with?(banner, "run the same command again.\n")
       end
     end
   end
@@ -923,13 +922,28 @@ defmodule Meerkat.CLITest do
       assert code == 1
       assert err =~ "Review cancelled — commit aborted, no feedback to act on."
     end
+
+    test "an ended review exits 1 and says it ended", %{path: path} do
+      assert exit_code({:ended, ""}, path) == {1, "meerkat: the review ended.\n"}
+    end
+  end
+
+  describe "settle/2" do
+    test "an ended review keeps its snapshot and delivers to nobody; any other decision deletes it and delivers to the serve dir" do
+      assert CLI.settle_for_test(:ended, "/run/dir") == {false, nil}
+
+      for tag <- [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
+        assert CLI.settle_for_test(tag, "/run/dir") == {true, "/run/dir"}
+        assert CLI.settle_for_test(tag, nil) == {true, nil}
+      end
+    end
   end
 
   describe "decision_atom/1" do
     test "the review log records approve-with-feedback as an approval, every other decision as itself" do
       assert CLI.decision_atom_for_test(:approve_with_feedback) == :approve
 
-      for tag <- [:approve, :reject, :cancel, :timeout] do
+      for tag <- [:approve, :reject, :cancel, :timeout, :ended] do
         assert CLI.decision_atom_for_test(tag) == tag
       end
     end

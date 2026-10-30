@@ -15,7 +15,8 @@ defmodule MeerkatWeb.AttachController do
   a caller sending none is read from the repo's own index. Before the
   409 is sent, every attached caller
   gets a `d <line>` frame; a displaced caller prints `<line>` to stderr
-  and exits 1. Once a caller has taken delivery, others get 503. `quiet=1`
+  and exits 1. Once a caller has taken delivery, or the review has ended with
+  no caller waiting on it, others get 503. `quiet=1`
   skips the banner, for a caller that already printed it. A later
   invocation whose review target cannot be resolved, or whose staged
   review names an index that no longer exists, gets 502 with the error
@@ -29,6 +30,10 @@ defmodule MeerkatWeb.AttachController do
 
   `POST /api/attach/delivered?run=<run>` reports that the caller printed
   the outcome.
+
+  `POST /api/attach/leave?run=<run>` detaches a caller that is exiting
+  before the outcome and answers `ended` if the review ended, judged at
+  once when no caller is left, or `open` if it is still open.
   """
 
   use Phoenix.Controller, formats: []
@@ -118,6 +123,12 @@ defmodule MeerkatWeb.AttachController do
   end
 
   def delivered(conn, _params), do: send_resp(conn, 400, "bad request\n")
+
+  def leave(conn, %{"run" => run}) when is_binary(run) do
+    send_resp(conn, 200, "#{Decision.leave(run)}\n")
+  end
+
+  def leave(conn, _params), do: send_resp(conn, 400, "bad request\n")
 
   defp require_token(conn, _opts) do
     token = System.get_env("MEERKAT_SERVE_TOKEN")

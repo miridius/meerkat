@@ -12,7 +12,7 @@ defmodule Meerkat.Decision do
   `decision_topic/0`, so every open tab switches to the done view.
 
   Decision shape:
-  `{:approve | :approve_with_feedback | :reject | :cancel | :timeout, payload}`,
+  `{:approve | :approve_with_feedback | :reject | :cancel | :timeout | :ended, payload}`,
   where `payload` is the formatted feedback string for approve-with-
   feedback, reject and timeout, and the empty string otherwise.
 
@@ -20,9 +20,9 @@ defmodule Meerkat.Decision do
 
   The process that invoked meerkat (a blocked `git commit`, say) is a
   caller, and it reaches this BEAM through `MeerkatWeb.AttachController`.
-  A caller can exit at any time without ending the review: the review
-  keeps serving, and a later invocation of the same review attaches in
-  its place. So under a launcher the CLI does not print the outcome. It
+  A caller can exit at any time; unless the review then ends (see
+  below), it keeps serving, and a later invocation of the same review
+  attaches in its place. So under a launcher the CLI does not print the outcome. It
   publishes it with `publish/1`, every attached caller is sent it, and
   the CLI halts only once a caller reports it delivered. An outcome
   published with nobody attached is held for the next caller. A caller
@@ -38,14 +38,29 @@ defmodule Meerkat.Decision do
   to release a caller that is waiting. An attach arms it only when no
   decision exists, and it is disarmed when the last caller detaches or
   `replace/1` is called.
+
+  ## Ending a review nothing waits on
+
+  Under a launcher (`:serve_dir` set), an undecided review is judged once
+  its last attached caller detaches (at once through `leave/1`, for a
+  caller that says how the review stands), or, until a caller first attaches,
+  once a check every `caller_check_ms/0` finds the launcher's
+  recorded caller gone (`Meerkat.Caller.gone?/1`). Judging runs
+  `Meerkat.ReviewServer.end_if_unused/1` outside this server, in a process
+  it starts or in `leave/1`'s caller, since ReviewServer calls this server. If the review has no comments and no
+  open forms, that calls `end_unattended/0`, which stores the decision
+  `{:ended, ""}` only while there is still no decision and no caller. An
+  ended review turns later callers away with `:closing`. A kept review is
+  marked `kept` in the serve dir, which every BEAM respawned for the review
+  shares, so a respawned BEAM does not check for its dead caller again.
   """
 
   use GenServer
 
   require Logger
 
-  @typedoc "Tag identifying the user's choice."
-  @type tag :: :approve | :approve_with_feedback | :reject | :cancel | :timeout
+  @typedoc "Tag identifying the user's choice, or `:ended` for a review nothing waited on."
+  @type tag :: :approve | :approve_with_feedback | :reject | :cancel | :timeout | :ended
 
   @typedoc "Decision tuple stored once the review is decided."
   @type decision :: {tag, term()}
@@ -56,6 +71,7 @@ defmodule Meerkat.Decision do
   @deadline_topic "meerkat:deadline"
   @decision_topic "meerkat:decision"
   @taken_over "meerkat: a later invocation of this review took it over — aborting."
+  @caller_check_ms 1_000
 
   ## Public API
 
@@ -132,6 +148,21 @@ defmodule Meerkat.Decision do
   end
 
   @doc """
+  Detach launcher run `run_id`'s callers for a caller that is exiting, and
+  judge the review at once if that leaves it undecided with no caller, so
+  the caller can say how the review stands. Returns `:ended` if the review
+  has ended, and `:open` otherwise. Judges in the calling process, since
+  ReviewServer calls this server.
+  """
+  @spec leave(String.t()) :: :ended | :open
+  def leave(run_id) do
+    case GenServer.call(__MODULE__, {:leave, run_id}) do
+      :judge -> if judge_now() == :ended, do: :ended, else: :open
+      standing -> standing
+    end
+  end
+
+  @doc """
   Displace every attached caller by sending it
   `{:meerkat_displaced, text}`, where `text` is the line to print. Stop
   tracking them and disarm the deadline. Returns the pids of the callers
@@ -140,6 +171,17 @@ defmodule Meerkat.Decision do
   @spec replace(String.t()) :: [pid()]
   def replace(text) when is_binary(text) do
     GenServer.call(__MODULE__, {:replace, text})
+  end
+
+  @doc """
+  End the review with the decision `{:ended, ""}` if it is still undecided
+  and no caller is attached; returns `:ended`, or `:kept` otherwise. Called
+  by `Meerkat.ReviewServer.end_if_unused/1` once it finds the review has no
+  comments and no open forms.
+  """
+  @spec end_unattended() :: :ended | :kept
+  def end_unattended do
+    GenServer.call(__MODULE__, :end_unattended)
   end
 
   @doc """
@@ -180,24 +222,30 @@ defmodule Meerkat.Decision do
   @spec decision_topic() :: String.t()
   def decision_topic, do: @decision_topic
 
+  @doc """
+  How often, in milliseconds, the recorded caller is checked until one
+  attaches: `:caller_check_ms`, or once a second by default.
+  """
+  @spec caller_check_ms() :: pos_integer()
+  def caller_check_ms, do: Application.get_env(:meerkat, :caller_check_ms, @caller_check_ms)
+
   ## GenServer callbacks
 
   @impl true
-  def init(:no_decision) do
-    {:ok, schedule_deadline_check(initial_state())}
-  end
+  def init(:no_decision), do: {:ok, fresh_state()}
 
-  defp initial_state do
-    %{
+  defp fresh_state do
+    schedule_deadline_check(%{
       decision: nil,
       waiters: [],
       outcome: nil,
       callers: %{},
       deadline_run: nil,
       deadline_tick: nil,
+      caller_check: first_caller_check(),
       delivered_to: nil,
       delivery_waiters: []
-    }
+    })
   end
 
   @impl true
@@ -255,11 +303,15 @@ defmodule Meerkat.Decision do
   def handle_call(:reset, _from, %{callers: callers, deadline_tick: tick}) do
     Enum.each(Map.keys(callers), &Process.demonitor(&1, [:flush]))
     if tick, do: Process.cancel_timer(tick)
-    {:reply, :ok, schedule_deadline_check(initial_state())}
+    {:reply, :ok, fresh_state()}
   end
 
   def handle_call({:attach, _pid, _run_id}, _from, %{delivered_to: run} = state)
       when is_binary(run) do
+    {:reply, :closing, state}
+  end
+
+  def handle_call({:attach, _pid, _run_id}, _from, %{decision: {:ended, _}} = state) do
     {:reply, :closing, state}
   end
 
@@ -271,8 +323,36 @@ defmodule Meerkat.Decision do
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
     callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
-    {:reply, {:ok, state.outcome}, %{state | callers: callers}}
+    # The attached caller is watched from here on, not the recorded one.
+    {:reply, {:ok, state.outcome}, %{state | callers: callers, caller_check: nil}}
   end
+
+  def handle_call({:leave, run_id}, _from, state) do
+    {leaving, staying} =
+      Enum.split_with(state.callers, fn {_ref, {_pid, run}} -> run == run_id end)
+
+    for {ref, _caller} <- leaving, do: Process.demonitor(ref, [:flush])
+    callers = Map.new(staying)
+    if callers == %{}, do: set_deadline(nil)
+    # The caller judged here is not checked for again.
+    state = %{state | callers: callers, caller_check: nil}
+
+    standing =
+      cond do
+        match?({:ended, _}, state.decision) -> :ended
+        is_nil(state.decision) and callers == %{} and serve_dir() -> :judge
+        true -> :open
+      end
+
+    {:reply, standing, state}
+  end
+
+  def handle_call(:end_unattended, _from, %{decision: nil, callers: callers} = state)
+      when callers == %{} do
+    {:reply, :ended, put_decision(state, {:ended, ""})}
+  end
+
+  def handle_call(:end_unattended, _from, state), do: {:reply, :kept, state}
 
   def handle_call({:replace, text}, _from, state) do
     displace(state.callers, text)
@@ -319,10 +399,22 @@ defmodule Meerkat.Decision do
 
   def handle_info(:check_deadline, state), do: {:noreply, %{state | deadline_tick: nil}}
 
+  def handle_info({:check_caller, check}, %{caller_check: check} = state) do
+    {:noreply, %{state | caller_check: check_caller(state)}}
+  end
+
+  # A check scheduled before a caller attached or the state was reset.
+  def handle_info({:check_caller, _check}, state), do: {:noreply, state}
+
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{callers: callers} = state)
       when is_map_key(callers, ref) do
     callers = Map.delete(callers, ref)
-    if callers == %{}, do: set_deadline(nil)
+
+    if callers == %{} do
+      set_deadline(nil)
+      if is_nil(state.decision) and serve_dir(), do: judge()
+    end
+
     {:noreply, %{state | callers: callers}}
   end
 
@@ -350,6 +442,60 @@ defmodule Meerkat.Decision do
     else
       state
     end
+  end
+
+  # A review an earlier BEAM kept is judged again only once a caller has
+  # attached and gone, so its dead caller is not checked.
+  defp first_caller_check do
+    dir = serve_dir()
+    if dir && File.exists?(kept_marker(dir)), do: nil, else: schedule_caller_check()
+  end
+
+  # Only a launcher records a caller to check. Returns the check's tag, which
+  # `caller_check` holds while that check is the one due, or nil.
+  defp schedule_caller_check do
+    if serve_dir() do
+      check = make_ref()
+      Process.send_after(self(), {:check_caller, check}, caller_check_ms())
+      check
+    end
+  end
+
+  # Judges the review once the recorded caller is gone, and otherwise checks
+  # again, until a decision is made. Returns the next check's tag, or nil. An
+  # attach drops the check that is due, so no caller is attached here.
+  defp check_caller(%{decision: nil}) do
+    dir = serve_dir()
+
+    if dir && Meerkat.Caller.gone?(dir) do
+      judge()
+      nil
+    else
+      schedule_caller_check()
+    end
+  end
+
+  defp check_caller(_decided), do: nil
+
+  defp serve_dir, do: Application.get_env(:meerkat, :serve_dir)
+
+  # The launcher's serve dir outlives each BEAM its shepherd respawns.
+  defp kept_marker(dir), do: Path.join(dir, "kept")
+
+  # ReviewServer calls this server while saving, so judging from inside it
+  # could deadlock.
+  defp judge do
+    {:ok, _} = Task.start(&judge_now/0)
+  end
+
+  # Runs outside this server. Returns `:ended` or `:kept`.
+  defp judge_now do
+    marker = kept_marker(serve_dir())
+    judgement = Meerkat.ReviewServer.end_if_unused(Application.fetch_env!(:meerkat, :review_id))
+    # A serve dir deleted meanwhile takes its `caller` file with it, so a
+    # respawned BEAM has no caller to check and the marker is not needed.
+    if judgement == :kept, do: _ = File.touch(marker)
+    judgement
   end
 
   defp expire(state, :wait) do

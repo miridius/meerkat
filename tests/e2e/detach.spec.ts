@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	copyFileSync,
+	existsSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
@@ -66,7 +67,7 @@ test.describe("a review outlives the process that invoked it", () => {
 	// The backend leaves the caller's process group and session with setsid,
 	// which keeps every signal to the group from reaching it, so one signal
 	// stands for SIGINT, SIGTERM and SIGHUP alike.
-	test("a SIGTERM to the caller's whole process group stops the countdown and leaves the review, with comments typed meanwhile, for a rerun that prints its warnings once, before the banner", async ({
+	test("a SIGTERM to the caller's whole process group stops the countdown and leaves the review, which has a comment, for a rerun that prints its warnings once, before the banner", async ({
 		page,
 	}) => {
 		const fixture = makeFixture();
@@ -80,17 +81,16 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.goto(first.url);
 			const countdown = page.locator(".review-countdown");
 			await expect(countdown).toBeVisible();
+			await addGlobalComment(page, "typed before the caller died");
 
 			const backend = backendPid(first);
 			first.signalGroup("SIGTERM");
-			expect(await first.awaitClose(), "the caller says the review lives on").toContain(
+			expect(await first.awaitClose(), "the caller says the review, which has a comment, is still open").toContain(
 				`meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
 			);
 			expect((await first.awaitExit()).code, "the caller dies of the signal").toBeNull();
 			await expect(countdown, "the deadline is disarmed once no caller is attached").toHaveCount(0);
 			expect(alive(backend), "the backend survives the signal to its caller's group").toBe(true);
-
-			await addGlobalComment(page, "typed after the caller died");
 
 			const deadlines = join(fixture.dir, ".git", "meerkat-precommit", "deadlines");
 			await expect
@@ -104,7 +104,7 @@ test.describe("a review outlives the process that invoked it", () => {
 				backend,
 			);
 			await expect(page.locator(".global-comments .note")).toContainText(
-				"typed after the caller died",
+				"typed before the caller died",
 			);
 
 			// Each launcher run passes its own run id, so the rerun's deadline
@@ -121,7 +121,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			const { code, stderr } = await second.awaitExit();
 			expect(code, "the rerun exits with the decision's code").toBe(1);
 			expect(stderr).toContain("User rejected the commit");
-			expect(stderr).toContain("typed after the caller died");
+			expect(stderr).toContain("typed before the caller died");
 
 			// The warning from resolving the review reaches the rerun through
 			// the backend's log and its attach stream; it is printed once.
@@ -142,6 +142,85 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
+	// Which reviews end, and when, is covered by test/meerkat/decision_test.exs;
+	// here the caller's death reaches the server, the tabs and the backend.
+	test("a review with no comments ends once its caller is killed: a tab with one history entry closes itself, another shows the Review ended notice, and the backend exits, keeping its Approved ticks", async ({
+		page,
+		context,
+	}) => {
+		const fixture = makeFixture();
+		const meerkat = await startMeerkat({ fixture, keepFixture: true });
+		const backend = backendPid(meerkat);
+		try {
+			// Like the tab `open <url>` gives meerkat: created at the URL, so
+			// its history holds one entry. A Playwright page starts at
+			// about:blank, which would make it two.
+			const cdp = await context.newCDPSession(page);
+			const { targetInfo } = await cdp.send("Target.getTargetInfo");
+			const opened = context.waitForEvent("page");
+			await cdp.send("Target.createTarget", {
+				url: meerkat.url,
+				browserContextId: targetInfo.browserContextId,
+			});
+			const fresh = await opened;
+			await expect(fresh.locator("[data-phx-main].phx-connected")).toBeVisible();
+			expect(await fresh.evaluate(() => history.length), "the fresh tab has one history entry").toBe(1);
+
+			await page.goto(meerkat.url);
+			// Following an in-page link adds a history entry, after which the
+			// browser refuses to let the page close its tab.
+			await page.evaluate(() => {
+				location.hash = "#file-0";
+			});
+			expect(await page.evaluate(() => history.length)).toBeGreaterThan(1);
+			await page.getByRole("checkbox", { name: "Approved" }).first().check();
+			const snapshots = join(fixture.dir, ".git", "meerkat-precommit", "in-progress");
+			await expect
+				.poll(() => (existsSync(snapshots) ? readdirSync(snapshots).length : 0), {
+					message: "the tick is saved in a snapshot",
+				})
+				.toBe(1);
+
+			const closed = fresh.waitForEvent("close");
+			await meerkat.killCaller();
+
+			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
+			await expect(page.locator("main.review.done")).toContainText(
+				"Nothing was waiting on this review and it had no comments, so meerkat ended it.",
+			);
+			await closed;
+			await expect.poll(() => alive(backend), { message: "the backend exits" }).toBe(false);
+			const [dir] = readdirSync(meerkat.runsDir).filter((name) => !name.includes("."));
+			expect(
+				readFileSync(join(meerkat.runsDir, dir, "exit"), "utf8").trim(),
+				"the ended review exits 1",
+			).toBe("1");
+			expect(readdirSync(snapshots), "the snapshot keeps the tick for a rerun").toHaveLength(1);
+		} finally {
+			await meerkat.kill();
+			rmSync(fixture.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a caller stopped by SIGTERM before anyone comments says the review ended, and the backend exits", async ({
+		page,
+	}) => {
+		const meerkat = await startMeerkat({ ownGroup: true });
+		const backend = backendPid(meerkat);
+		try {
+			await page.goto(meerkat.url);
+			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible();
+			meerkat.signalGroup("SIGTERM");
+			expect(await meerkat.awaitClose(), "the caller says the review ended").toContain(
+				"meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again to start a new one.\n",
+			);
+			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
+			await expect.poll(() => alive(backend), { message: "the backend exits" }).toBe(false);
+		} finally {
+			await meerkat.kill();
+		}
+	});
+
 	// Git exports GIT_INDEX_FILE to the hook: `.git/index` for `git commit`, a temporary
 	// file holding what `git commit -a` or `git commit <path>` will commit otherwise.
 	test("a decision clicked after the process that ran meerkat is killed is replayed whole to a retried `git commit <path>`, whose temporary index has a new name", async ({
@@ -158,8 +237,9 @@ test.describe("a review outlives the process that invoked it", () => {
 		let second: Runner | undefined;
 		try {
 			await page.goto(first.url);
+			await addGlobalComment(page, "typed before git was killed");
 			await first.killParent();
-			expect(await first.awaitClose(), "the orphaned caller says the review lives on").toContain(
+			expect(await first.awaitClose(), "the orphaned caller says the review, which has a comment, is still open").toContain(
 				`meerkat: the process that ran meerkat exited before the review completed. The review is still open at ${first.url}; run the same command again to wait for its outcome.\n`,
 			);
 			rmSync(firstIndex);
@@ -173,7 +253,6 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.reload();
 			await expect(approved).toBeChecked();
 
-			await addGlobalComment(page, "sent after git was killed");
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
 
@@ -196,7 +275,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			);
 			expect(banner, "the replayed outcome names the saved feedback file").not.toBeNull();
 			const payload = readFileSync(banner?.[2] ?? "", "utf8");
-			expect(payload).toContain("sent after git was killed");
+			expect(payload).toContain("typed before git was killed");
 			expect(
 				stderr.endsWith(`── ${banner?.[1]} ──\n${payload}\n── ${banner?.[1]} ──\n`),
 				"the replay prints the outcome the decision produced, whole and last, verdict banner on both sides",
@@ -296,10 +375,10 @@ test.describe("a review outlives the process that invoked it", () => {
 		try {
 			const heldBackend = backendPid(first);
 			await page.goto(first.url);
+			await addGlobalComment(page, "held for the old message");
 			await first.killParent();
 			await first.awaitClose();
 
-			await addGlobalComment(page, "held for the old message");
 			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
 			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
 

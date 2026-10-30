@@ -876,6 +876,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp done_view({:timeout, _}), do: :approve
   defp done_view({:reject, _}), do: :reject
   defp done_view({:cancel, _}), do: :cancel
+  defp done_view({:ended, _}), do: :ended
 
   # Reject an Approve transition if the index blob OID has changed
   # since the UI rendered the file. Un-approve always proceeds —
@@ -1072,6 +1073,9 @@ defmodule MeerkatWeb.ReviewLive do
     ~H"""
     <main class="review done">
       <h1>{done_heading(@done)}</h1>
+      <p :if={@done == :ended}>
+        Nothing was waiting on this review and it had no comments, so meerkat ended it.
+      </p>
       <p>You can close this tab.</p>
       <div id="window-close-host" phx-hook="WindowClose"></div>
     </main>
@@ -2361,6 +2365,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp done_heading(:approve), do: "Approved"
   defp done_heading(:reject), do: "Feedback sent"
   defp done_heading(:cancel), do: "Cancelled"
+  defp done_heading(:ended), do: "Review ended"
 
   defp countdown_title(:approve),
     do: "Time left before the review times out and the commit is auto-approved unread"

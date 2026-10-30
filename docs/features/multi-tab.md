@@ -71,7 +71,10 @@ auto-approved timeout—`Meerkat.Decision` broadcasts
 topic and assigns the done view when it receives the decision, so all
 open tabs switch to done. Each also pushes `drafts:wipe`; the
 window-level `phx:drafts:wipe` listener removes every
-`meerkat:draft:<review_id>:` key from `localStorage`.
+`meerkat:draft:<review_id>:` key from `localStorage`. A review that
+[ends with nothing waiting on it](decision-flow.md#when-nothing-waits-on-the-review)
+is stored and broadcast the same way, as `{:ended, ""}`, and every tab
+switches to the **Review ended** done view.
 
 A tab mounted after a decision reads it via `Decision.current/0` and
 opens on the done view. It also pushes `drafts:wipe`, covering
