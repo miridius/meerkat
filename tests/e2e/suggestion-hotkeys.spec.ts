@@ -69,6 +69,19 @@ test("Escape closes the Keys cheat sheet and leaves the form open", async ({ pag
 		await form.locator(".code-host .cm-content").focus();
 		await page.keyboard.press("Escape");
 		await expect(sheet).toHaveCount(0);
+
+		// A click outside closes it too.
+		await form.getByRole("button", { name: "Keys" }).click();
+		await expect(sheet).toBeVisible();
+		await form.locator(".code-host .cm-line").click();
+		await expect(sheet).toHaveCount(0);
+
+		// The server handles events in order, so once a form opened on
+		// another line shows, a cancel the Escape sent would have closed
+		// this one.
+		const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
+		await newLine(fileSection, 3).click();
+		await expect(fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="3"] .comment-form')).toBeVisible();
 		await expect(form).toBeVisible();
 	} finally {
 		await meerkat.kill();

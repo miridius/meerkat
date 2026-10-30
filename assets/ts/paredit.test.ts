@@ -91,6 +91,30 @@ describe("slurpForward", () => {
 	});
 });
 
+describe("structural commands with several carets", () => {
+	test("change a list once when two carets share it", () => {
+		const state = stateOf("(a b) c");
+		const two = state.update({
+			selection: EditorSelection.create([EditorSelection.cursor(2), EditorSelection.cursor(4)]),
+		}).state;
+		for (const command of [slurpForward, barfForward, splice, raise]) {
+			const next = two.update(command(two) as TransactionSpec).state.doc.toString();
+			expect([command.name, next]).toEqual([
+				command.name,
+				{ slurpForward: "(a b c)", barfForward: "(a) b c", splice: "a b c", raise: "a c" }[command.name],
+			]);
+		}
+	});
+});
+
+describe("cut-off lists", () => {
+	test("barf, splice and raise leave a list cut off from its closer alone", () => {
+		for (const command of [barfForward, barfBackward, splice, raise]) {
+			expect([command.name, run(command, "(a b| c")]).toEqual([command.name, null]);
+		}
+	});
+});
+
 describe("barfForward", () => {
 	test("pushes the last form out", () => {
 		expect(run(barfForward, "(a |b c)")).toBe("(a |b) c");
@@ -247,6 +271,14 @@ describe("deleteGuarded", () => {
 	test("deletes an empty set or anonymous function with its #", () => {
 		expect(back("x #{|} y")).toBe("x | y");
 		expect(fwd("#(|)")).toBe("|");
+	});
+
+	test("steps over a # prefix with its opener", () => {
+		expect(back("x #{|a b}")).toBe("x |#{a b}");
+		expect(back("x #|{a b}")).toBe("x |#{a b}");
+		expect(back("#?(|:clj a)")).toBe("|#?(:clj a)");
+		expect(fwd("x |#{a b}")).toBe("x #{|a b}");
+		expect(fwd("|#?(:clj a)")).toBe("#?(|:clj a)");
 	});
 
 	test("lets an unmatched bracket be deleted", () => {
