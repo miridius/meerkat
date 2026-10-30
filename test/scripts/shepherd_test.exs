@@ -558,6 +558,63 @@ defmodule Meerkat.ShepherdTest do
       assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
     end
 
+    # As when the caller was suspended after _ma_server_alive found the pid
+    # file, and meanwhile the backend finished and a rerun removed the run:
+    # the backend did decide, so the next pass says the run was removed.
+    test "a caller whose run is removed after its pid check does not say its backend died" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(runs)
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_OWNED=1; _MA_HELD=1
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+    end
+
+    # The same removal, landing while the caller checks what runs on the
+    # BEAM's pid.
+    test "a caller whose run is removed while it checks the BEAM does not say its backend died" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(Path.join(runs, "key.r"))
+      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_OWNED=1; _MA_HELD=1
+          _ma_runs_meerkat() { rm -rf "$_MA_DIR"; return 1; }
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+    end
+
+    # An unreadable pid file fails the read the way one removed after the
+    # check does, so the caller takes the backend for dead without a bash
+    # error.
+    test "a caller whose pid file cannot be read after its check takes the backend for dead quietly" do
+      run = Meerkat.TestHelpers.tmp_path("meerkat-pid-read")
+      on_exit(fn -> File.rm_rf!(run) end)
+      File.mkdir_p!(run)
+      File.write!(Path.join(run, "pid"), "#{System.pid()}\n")
+      File.chmod!(Path.join(run, "pid"), 0o000)
+
+      {out, 0} =
+        attach_shell(~S(_MA_DIR="$2"; _ma_server_alive 2>&1; echo "alive=$?"), run)
+
+      assert out == "alive=1\n"
+    end
+
     test "a caller that cannot create its run dir exits 2 instead of retrying" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       runs = Path.join(dir, "runs")
