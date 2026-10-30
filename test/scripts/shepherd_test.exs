@@ -252,6 +252,261 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  @orphaned "outcome\nmeerkat: the process that ran meerkat exited before the review " <>
+              "completed. The review is still open at http://127.0.0.1:4242/; run the " <>
+              "same command again to wait for its outcome.\n"
+
+  # Stubs a server whose attach stream sends an outcome with exit code 1,
+  # then has the caller attach to it.
+  @attach_to_decision ~S"""
+  _MA_LINK="$2/run"
+  _MA_DIR="$2/run.1"
+  mkdir "$_MA_DIR"
+  echo "4242 1" >"$_MA_DIR/port"
+  echo token >"$_MA_DIR/token"
+  echo 1 >"$_MA_DIR/exit"
+  _ma_request() {
+    case "$2" in
+      attach/delivered*) echo delivered ;;
+      *) printf 'k\no outcome\nx 1\ns 200\n' ;;
+    esac
+  }
+  _ma_attach
+  """
+
+  # A killed git commit can leave its hook's caller attached. Once the
+  # decision arrives, that caller leaves it held for the next invocation
+  # instead of taking delivery where nobody reads it. An ancestor whose pid
+  # a live process has since taken ("reused") is gone too. Where ps is
+  # denied ("unseen"), it cannot tell, so it takes delivery.
+  for ancestor <- ["reused", "live", "unseen"] do
+    test "a caller given the decision takes delivery only while its ancestors live: #{ancestor}" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      script =
+        ~S"""
+        source "$1"
+        exec 2>&1
+        _ma_record_ancestors
+        case "$3" in
+          reused)
+            sleep 30 &
+            reused=$!
+            trap 'kill "$reused"' EXIT
+            _MA_ANCESTORS=("$reused" "${_MA_ANCESTORS[@]}")
+            ;;
+          unseen)
+            sleep 0 &
+            gone=$!
+            wait "$gone"
+            _MA_ANCESTORS=("$gone") && ps() { return 1; }
+            ;;
+        esac
+        """ <> @attach_to_decision
+
+      {output, 1} =
+        System.cmd("bash", [
+          "-c",
+          script,
+          "orphan",
+          Path.expand("bin/meerkat-attach"),
+          dir,
+          unquote(ancestor)
+        ])
+
+      if unquote(ancestor) in ["live", "unseen"] do
+        assert output == "outcome\ndelivered\n"
+      else
+        assert output == @orphaned
+      end
+    end
+  end
+
+  # The caller's parent really exits, as a killed git commit does, so the
+  # caller is reparented and the chain above it changes.
+  test "a caller given the decision after its parent exited leaves the decision held" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    caller =
+      ~S"""
+      source "$1"
+      exec 2>&1
+      _ma_record_ancestors
+      parent=$PPID
+      touch "$2/recorded"
+      while [[ "$(ps -o ppid= -p $$ | tr -d ' ')" == "$parent" ]]; do
+        ((SECONDS < 60)) || { echo "the parent never exited"; exit 1; }
+        sleep 0.05
+      done
+      """ <> @attach_to_decision
+
+    # The parent starts the caller, waits for it to record its ancestors,
+    # and exits. System.cmd still collects the caller's output: it waits for
+    # EOF on the stdout the caller inherited.
+    parent = ~S"""
+    bash -c "$1" caller "$2" "$3" &
+    c=$!
+    until [[ -f "$3/recorded" ]] || ! kill -0 "$c" 2>/dev/null; do
+      ((SECONDS < 60)) || exit 1
+      sleep 0.05
+    done
+    [[ -f "$3/recorded" ]] || { echo "the caller died before recording"; exit 1; }
+    """
+
+    {output, 0} =
+      System.cmd("bash", [
+        "-c",
+        parent,
+        "parent",
+        caller,
+        Path.expand("bin/meerkat-attach"),
+        dir
+      ])
+
+    assert output == @orphaned
+  end
+
+  # A caller relays its backend's log as it grows: from the start for a run
+  # it started, even one with no log yet, and from the end on reattach.
+  test "a caller relays each part of its backend's log once" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    script = ~S"""
+    source "$1"
+    exec 2>&1
+    _MA_LOG_FD=""
+    _MA_DIR="$2/started"
+    mkdir "$_MA_DIR"
+    _ma_open_log || echo "no log yet"
+    _ma_relay_log
+    printf '%s\n%s' ' a\b' part >"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'ial\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    _ma_relay_log
+    _MA_DIR="$2/reattached"
+    mkdir "$_MA_DIR"
+    printf 'seen\n' >"$_MA_DIR/log"
+    _ma_open_log && _ma_read_log >/dev/null
+    printf 'b\n' >>"$_MA_DIR/log"
+    _ma_relay_log
+    printf 'a\npartial\n' >>"$2/started/log"
+    _ma_relay_log
+    """
+
+    assert {"no log yet\n a\\b\npartial\nb\n", 0} =
+             System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
+  end
+
+  # After a 409 or 503 the caller starts a fresh backend, whose stderr it
+  # relays rather than the last run's log.
+  test "a caller relays the log of the backend it starts, not the last run's" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.write!(Path.join(dir, "self"), "#!/bin/sh\necho new >&2\n")
+    File.chmod!(Path.join(dir, "self"), 0o755)
+
+    script = ~S"""
+    source "$1"
+    exec 2>&1
+    _MA_LOG_FD=""
+    _MA_RUN=run
+    _MA_LINK="$2/run"
+    _MA_DIR="$2/old"
+    mkdir "$_MA_DIR"
+    printf 'old\n' >"$_MA_DIR/log"
+    _ma_open_log && _ma_read_log >/dev/null
+    _ma_start_server "$2/self"
+    until [[ -s "$_MA_DIR/log" ]]; do sleep 0.05; done
+    _ma_relay_log
+    """
+
+    assert {"new\n", 0} =
+             System.cmd("bash", ["-c", script, "restart", Path.expand("bin/meerkat-attach"), dir])
+  end
+
+  # A waiting caller relays its backend's log every 0.2 s tick and checks
+  # its ancestors only once the decision arrives, so it forks nothing per
+  # tick. The backend writes each next line only once the test has seen
+  # the last one relayed, so the quiet stream spans at least five relays,
+  # each on its own tick.
+  test "a caller waiting on a decision runs no process while it relays the backend's log" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    stubs = Path.join(dir, "stubs")
+    File.mkdir_p!(stubs)
+
+    for tool <- ~w(ps wc tr tail head) do
+      real = System.find_executable(tool)
+      stub = Path.join(stubs, tool)
+      File.write!(stub, ~s(#!/bin/sh\necho #{tool} >> "$CALLS"\nexec #{real} "$@"\n))
+      File.chmod!(stub, 0o755)
+    end
+
+    fake_release(dir, ~S"""
+    echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+    # The backend runs in its own session, so a failed test cannot kill it;
+    # it exits once the test's own waits (@timeout_ms) are surely over.
+    for k in {1..6}; do
+      echo "tick $k" >&2
+      until [[ -f "$ACKS/$k" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
+    done
+    until [[ -f "$DELIVERED" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
+    """)
+
+    # The attach stream stays quiet until the test has seen every tick.
+    curl = ~S"""
+    #!/usr/bin/env bash
+    case "$*" in
+      *attach/delivered*) touch "$DELIVERED"; exit 0 ;;
+    esac
+    echo start >> "$CALLS"
+    printf 'k\n'
+    until [[ -f "$ACKS/6" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
+    echo end >> "$CALLS"
+    printf 'x 0\ns 200\n'
+    """
+
+    calls = Path.join(dir, "calls")
+    acks = Path.join(dir, "acks")
+    File.mkdir_p!(acks)
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"},
+          {"CALLS", calls},
+          {"ACKS", acks},
+          {"DELIVERED", Path.join(dir, "delivered")},
+          {"PATH", stubs <> ":" <> System.get_env("PATH")}
+        ],
+        curl: curl
+      )
+
+    for k <- 1..6 do
+      await_output(port, dir, "tick #{k}\n")
+      File.touch!(Path.join(acks, "#{k}"))
+    end
+
+    assert {0, _} = await_result(port, dir)
+
+    idle =
+      calls
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.drop_while(&(&1 != "start"))
+      |> Enum.take_while(&(&1 != "end"))
+
+    assert idle == ["start"]
+  end
+
   # macOS deletes files in $TMPDIR more than three days old, and the
   # shepherd writes `token` and `pid` only once. A caller reattaching after
   # a restart then could not authenticate, took the backend for dead,
@@ -1198,7 +1453,8 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Starts a launcher as `run_launcher/4` does and returns its port;
-  # `opts[:cd]` sets its working directory.
+  # `opts[:cd]` sets its working directory, and `opts[:curl]` replaces the
+  # refusing curl below with a script of its own.
   defp open_launcher(launcher, args, dir, env, opts \\ []) do
     base = [
       {"MEERKAT_PORT", "44444"},
@@ -1233,14 +1489,17 @@ defmodule Meerkat.ShepherdTest do
     http = Path.join(dir, "http")
     File.mkdir_p!(http)
 
-    File.write!(Path.join(http, "curl"), ~S"""
-    #!/usr/bin/env bash
-    if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
-      printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
-    fi
-    printf 's 000\n'
-    exit 7
-    """)
+    File.write!(
+      Path.join(http, "curl"),
+      Keyword.get(opts, :curl, ~S"""
+      #!/usr/bin/env bash
+      if [[ -n "${SHEPHERD_TEST_ATTACH_FIFO:-}" ]] && mkdir "$SHEPHERD_TEST_ATTACH_FIFO.sent" 2>/dev/null; then
+        printf 'attach\n' 1<> "$SHEPHERD_TEST_ATTACH_FIFO"
+      fi
+      printf 's 000\n'
+      exit 7
+      """)
+    )
 
     File.chmod!(Path.join(http, "curl"), 0o755)
     env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))

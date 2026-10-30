@@ -45,11 +45,11 @@ meerkat_attach() {
   # Whether this caller started its run or has heard from its server.
   _MA_HELD=0
   _MA_PREV_CALLER=""
-  _MA_OFFSET=0
+  # While owned, empty or open on $_MA_DIR/log.
+  _MA_LOG_FD=""
   _MA_QUIET=0
   # The run dir whose pid _MA_PID_WAIT is the deadline for.
   _MA_PID_WAIT_DIR=""
-  _MA_TICK=0
   _ma_record_ancestors
   trap '_ma_stopped TERM' TERM
   trap '_ma_stopped INT' INT
@@ -125,7 +125,7 @@ meerkat_attach() {
     if ((!_MA_OWNED)); then
       _MA_OWNED=1
       _MA_HELD=0
-      _MA_OFFSET=$(_ma_log_size)
+      _ma_open_log && _ma_read_log >/dev/null
       _MA_PREV_CALLER="$(cat "$_MA_DIR/caller" 2>/dev/null)"
       _ma_write_caller
     fi
@@ -134,40 +134,44 @@ meerkat_attach() {
     if [[ -f "$_MA_DIR/port" ]]; then
       _ma_attach
     else
-      _ma_exit_if_orphaned
       sleep 0.2
     fi
   done
 }
 
-# Record every process above the caller, from its parent up to pid 1, so
-# _ma_exit_if_orphaned can detect when one exits. Use ps rather than kill -0:
-# kill -0 reports "operation not permitted" for live root-owned processes such
-# as launchd or a terminal's login process, making them look dead.
+# Record the chain of processes above the caller, so _ma_exit_if_orphaned
+# can tell when one exits.
 _ma_record_ancestors() {
-  local pid=$PPID
-  _MA_ANCESTORS=()
-  while ((pid > 1)); do
-    _MA_ANCESTORS+=("$pid")
+  read -ra _MA_ANCESTORS <<<"$(_ma_ancestors)"
+}
+
+# Print the pids above the caller, from its parent up to but not including
+# pid 1. Read the parent from ps, not $PPID, which bash fixes at startup.
+# Use ps, not kill -0, which takes live root-owned processes such as a
+# terminal's login process for dead.
+_ma_ancestors() {
+  local pid chain=""
+  pid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')
+  while [[ -n "$pid" ]] && ((pid > 1)); do
+    chain+="${chain:+ }$pid"
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-    [[ -n "$pid" ]] || break
   done
+  echo "$chain"
 }
 
 # A killed git commit can leave its hook (and this caller) running and attached.
-# It would then receive the decision and print it where nobody can read it, so
-# exit once any recorded ancestor exits and leave the decision held for the next
-# invocation. Check at most once a second (every fifth 0.2 s tick). Where ps
-# cannot tell (a sandbox denies it), assume the ancestors live: taking them
-# for dead would end every review the moment it started.
+# It would then take delivery of the decision where nobody can read it, so on
+# receiving it, exit if the chain above the caller has changed and leave the
+# decision held for the next invocation. A process that exits reparents the
+# one below it, so the chain changes even once its pid is reused. Checked only
+# then: reviews wait hours, and a killed commit is rare. Until the decision or
+# a rerun's takeover, the orphan stays attached, so the deadline keeps running
+# for it. Where ps cannot tell (a sandbox denies it), assume the
+# ancestors live: taking them for dead would hold every decision.
 _ma_exit_if_orphaned() {
-  ((_MA_TICK++ % 5 == 0)) || return 0
   ((${#_MA_ANCESTORS[@]})) || return 0
   _ma_ps_works || return 0
-  local joined live
-  joined=$(IFS=,; echo "${_MA_ANCESTORS[*]}")
-  live=$(ps -o pid= -p "$joined" 2>/dev/null | wc -l | tr -d ' ')
-  if ((live < ${#_MA_ANCESTORS[@]})); then
+  if [[ "$(_ma_ancestors)" != "${_MA_ANCESTORS[*]}" ]]; then
     _ma_still_open "the process that ran meerkat exited"
     exit 1
   fi
@@ -197,17 +201,25 @@ _ma_still_open() {
   echo "meerkat: $1 before the review completed. The review is still open$at; run the same command again to wait for its outcome." >&2
 }
 
-_ma_log_size() {
-  if [[ -f "$_MA_DIR/log" ]]; then wc -c <"$_MA_DIR/log" | tr -d ' '; else echo 0; fi
+# Open the run's log on _MA_LOG_FD, closing the last run's, and fail when
+# it has none yet. The open file keeps the caller's place, so relaying
+# forks nothing.
+_ma_open_log() {
+  [[ -n "$_MA_LOG_FD" ]] && exec {_MA_LOG_FD}<&-
+  _MA_LOG_FD=""
+  { exec {_MA_LOG_FD}<"$_MA_DIR/log"; } 2>/dev/null || return 1
+}
+
+# Print the log written since the last read, a partial last line included.
+_ma_read_log() {
+  local line
+  while IFS= read -r line <&"$_MA_LOG_FD"; do printf '%s\n' "$line"; done
+  printf '%s' "$line"
 }
 
 _ma_relay_log() {
-  local size
-  size=$(_ma_log_size)
-  if ((size > _MA_OFFSET)); then
-    tail -c +$((_MA_OFFSET + 1)) "$_MA_DIR/log" | head -c $((size - _MA_OFFSET)) >&2
-    _MA_OFFSET=$size
-  fi
+  [[ -n "$_MA_LOG_FD" ]] || _ma_open_log || return 0
+  _ma_read_log >&2
 }
 
 # Set _MA_DIR to the run dir the key currently names and succeed, or to
@@ -342,7 +354,9 @@ _ma_start_server() {
   fi
   _MA_OWNED=1
   _MA_HELD=1
-  _MA_OFFSET=0
+  # This closes the last run's log; with none here yet, the first relay
+  # opens this one's from its start.
+  _ma_open_log
   # fork + setsid take the backend out of the caller's process group and
   # session, so a signal to the caller's whole tree (the app that ran it
   # restarting) leaves the review running.
@@ -481,7 +495,6 @@ _ma_attach() {
       # A read that timed out returns the partial line it got.
       line+="$part"
       _ma_relay_log
-      _ma_exit_if_orphaned
     else
       break
     fi
@@ -489,6 +502,7 @@ _ma_attach() {
   exec {fd}<&-
 
   if [[ -n "$code" ]]; then
+    _ma_exit_if_orphaned
     _ma_request POST "attach/delivered?run=$_MA_RUN" -o /dev/null 2>/dev/null
     _ma_wait_for_exit
     _ma_relay_log
