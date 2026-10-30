@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { budget } from "./tests/e2e/lib/budget";
 
 // Each test spawns its own meerkat process against a tmp git fixture
 // (see tests/e2e/lib/runner.ts). There is no global webServer — meerkat
@@ -13,7 +14,10 @@ export default defineConfig({
 	// this run left behind, such as those of a worker killed mid-test.
 	globalSetup: "./tests/e2e/lib/setup.ts",
 	globalTeardown: "./tests/e2e/lib/reap.ts",
-	timeout: 60_000,
+	// Each budget here and in the specs is what its wait takes on an idle
+	// machine, stretched to allow for a heavily loaded one (see
+	// tests/e2e/lib/budget.ts).
+	timeout: budget(60_000),
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
 	// One retry locally + in CI absorbs the cold-start variance — first
@@ -30,7 +34,7 @@ export default defineConfig({
 	// Playwright's 5s default for expect ran out on a loaded machine. A
 	// condition that is met ends the wait, so a passing test is no slower;
 	// set no shorter wait on an expect.
-	expect: { timeout: 20_000 },
+	expect: { timeout: budget(20_000) },
 	use: {
 		// 20s per action (Playwright's default `actionTimeout` is 0
 		// / unbounded). Bounds individual interactions so a hung
@@ -40,7 +44,7 @@ export default defineConfig({
 		// module loading) + 1.7MB JS bundle download + parse +
 		// LiveSvelte hydration. Cumulative sequential runs can hit
 		// ~10s on a busy machine; 20s leaves headroom.
-		actionTimeout: 20_000,
+		actionTimeout: budget(20_000),
 		// Recording a trace and a video costs every passing test, so record
 		// them on the retry a failure gets; its screenshot is kept either way.
 		trace: "on-first-retry",

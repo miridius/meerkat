@@ -103,13 +103,18 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 
 		// The pointer can move onto the popup and switch to the docs tab.
 		// Its new height re-places it, at its symbol though the page has
-		// scrolled since it opened.
+		// scrolled since it opened. The pointer is on the popup before the
+		// scroll: left on the diff, the scroll would rest it on another line,
+		// which moves or closes the popup if the click comes later than the
+		// hover delay, as on a loaded machine.
+		const docsTab = popup.getByRole("tab", { name: "app.util/helper" });
+		await docsTab.hover();
 		const scrolled = await page.evaluate(() => {
 			window.scrollBy(0, 40);
 			return window.scrollY;
 		});
 		expect(scrolled).toBeGreaterThan(0);
-		await popup.getByRole("tab", { name: "app.util/helper" }).click();
+		await docsTab.click();
 		await expect(popup.locator(".clj-hover-source")).toHaveCount(0);
 		await expect(popup.locator(".clj-hover-doc")).toHaveText("New doc.");
 		// Below the symbol its top is just under it; above, its bottom just
