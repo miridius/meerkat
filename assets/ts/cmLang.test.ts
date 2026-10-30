@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { EditorState } from "@codemirror/state";
 import { classHighlighter, highlightTree } from "@lezer/highlight";
 import { getLoadedLanguage, preloadLanguages, SUPPORTED_LANGUAGES } from "./cmLang";
 
@@ -28,5 +29,11 @@ describe("language packs", () => {
 		expect(classes).toContain("tok-keyword");
 		expect(classes).toContain("tok-string");
 		expect(classes).toContain("tok-number");
+	});
+
+	test("clojure leaves bracket pairing but for quotes to paredit, and `'` unpaired", async () => {
+		await preloadLanguages(["clojure"]);
+		const state = EditorState.create({ doc: "(a)", extensions: getLoadedLanguage("clojure") });
+		expect(state.languageDataAt("closeBrackets", 1)).toEqual([{ brackets: ['"'] }]);
 	});
 });

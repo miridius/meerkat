@@ -146,7 +146,7 @@ since Chrome takes Ctrl+J for Downloads.
 | Key | Does |
 |---|---|
 | ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
-| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Each line break and the whitespace around it become one space, or nothing when either line is blank; in Clojure, no space follows an opener or precedes a closer |
+| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Blank lines go. Between two lines that are not blank, the line break and the whitespace around it become one space; in Clojure, no space follows an opener or precedes a closer. Blank lines before the first line that is not blank go, and that line keeps its indentation |
 
 **Every language with a syntax grammar** (every language in
 `assets/ts/cmLang.ts`):
@@ -157,9 +157,12 @@ since Chrome takes Ctrl+J for Downloads.
 | ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, map or dict entry) past its previous / next sibling |
 
 ⌥↑ first selects the word at the caret, then each enclosing node,
-the inside of its brackets before the node itself. In a file with no
-grammar, ⌥↑ and ⌥↓ do nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's
-select to the start / end.
+the inside of its brackets before the node itself. In a Clojure map,
+a key moves with its value. A node move never moves a node holding a
+syntax error, such as a list the seeded lines cut off from its closer,
+or past one. In a file with no grammar, ⌥↑ and ⌥↓ do nothing, and
+⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key (on macOS, select
+to the start / end).
 
 **Clojure only:**
 
@@ -172,24 +175,27 @@ select to the start / end.
 | ⌥S | Splice: remove the enclosing brackets (also works where ⌥S types ß) |
 
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
-move by word. ⌥⇧← / ⌥⇧→ select by word everywhere, as in Cursive,
-which has no selecting form move. The Clojure keys leave a list
-the seeded lines cut off from its closer alone, and never move a
-bracket past one cut off from its partner.
+keep CodeMirror's own binding (on macOS, move by word). ⌥⇧← / ⌥⇧→
+keep CodeMirror's own binding everywhere (on macOS, select by word),
+as in Cursive, which has no selecting form move. The Clojure keys
+leave a list the seeded lines cut off from its closer alone, and
+never move a bracket past one cut off from its partner. With several
+carets, a structural key changes each list once.
 
 **Structural typing in Clojure:**
 
 - Typing an opening bracket inserts its closer, around the selection
   if there is one. Typing a closer just before the same matched closer
   steps over it. `'` is a quote and gets no partner.
-- Backspace or Delete on one bracket of a matched pair is blocked: the
-  caret steps over it. Inside an empty pair, either deletes both,
-  with any `#` before the opener.
+- Backspace or Delete on one bracket of a matched pair, or on the `#`
+  prefix of its opener (`#{`, `#(`, `#?(`, `#:ns{`), is blocked: the
+  caret steps over the bracket, with any prefix. Inside an empty pair,
+  either deletes both, with any prefix.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.
-- Lines that a structural key or a paste changes re-indent, as Enter
-  indents them.
+- Lines that slurp, barf, raise, splice, a node move or a paste
+  changes re-indent, as Enter indents them.
 
 **Keys cheat sheet:** a "Keys" link in the editor's corner opens the
 list of keys for this file's language, ⌃J join lines included,

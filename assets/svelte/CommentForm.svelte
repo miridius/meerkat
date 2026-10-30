@@ -8,10 +8,9 @@
 
   import { onDestroy, untrack } from "svelte";
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
-  import { SUPPORTED_LANGUAGES } from "../ts/cmLang";
   import { cheatSheet } from "../ts/editorKeys";
   import { languageFor } from "../ts/languageFor";
-  import { isMacPlatform } from "../ts/sendFeedbackShortcut";
+  import { onMac } from "../ts/sendFeedbackShortcut";
   import type { EditorView } from "@codemirror/view";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
@@ -192,21 +191,14 @@
   // The suggestion editor's keys cheat sheet.
   let keysOpen = $state(false);
   let keysHost: HTMLDivElement | null = $state(null);
-  const keyRows = $derived(
-    cheatSheet(
-      language,
-      SUPPORTED_LANGUAGES.includes(language),
-      isMacPlatform(
-        (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ||
-          navigator.platform,
-      ),
-    ),
-  );
+  const keyRows = $derived(cheatSheet(language, onMac()));
 
   // While open, Escape closes the cheat sheet and not the form: the
   // capture-phase listener runs before the editor's and the textarea's
-  // Escape handlers. A click outside it closes it too.
+  // Escape handlers. A click outside it closes it too. Leaving the
+  // suggestion type closes it with the editor.
   $effect(() => {
+    if (findingType !== "suggestion") keysOpen = false;
     if (!keysOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;

@@ -25,8 +25,8 @@ function marked(state: EditorState): string {
 
 /** Press `key` (CodeMirror's name for it, as bound off macOS) in a file
  *  in `language`: the text after, and whether the key was claimed. */
-function press(key: string, language: string, hasGrammar: boolean, state: EditorState) {
-	const binding = hotkeyBindings(language, hasGrammar).find((b) => b.key === key);
+function press(key: string, language: string, state: EditorState) {
+	const binding = hotkeyBindings(language).find((b) => b.key === key);
 	if (!binding?.run) return { claimed: false, text: marked(state) };
 	let next = state;
 	const view = {
@@ -42,64 +42,70 @@ function press(key: string, language: string, hasGrammar: boolean, state: Editor
 describe("hotkeyBindings", () => {
 	test("Clojure gets the structural keys", () => {
 		const state = stateOf("(a |b) c", [clojure]);
-		expect(press("Mod-Shift-k", "clojure", true, state)).toEqual({ claimed: true, text: "(a |b c)" });
-		expect(press("Ctrl-Alt-k", "clojure", true, state)).toEqual({ claimed: true, text: "a (|b) c" });
-		expect(press("Alt-ArrowRight", "clojure", true, state)).toEqual({ claimed: true, text: "(a b|) c" });
+		expect(press("Mod-Shift-k", "clojure", state)).toEqual({ claimed: true, text: "(a |b c)" });
+		expect(press("Ctrl-Alt-k", "clojure", state)).toEqual({ claimed: true, text: "a (|b) c" });
+		expect(press("Alt-ArrowRight", "clojure", state)).toEqual({ claimed: true, text: "(a b|) c" });
 	});
 
 	test("⌥S splices, under either name macOS gives it", () => {
 		const state = stateOf("(a |b)", [clojure]);
-		expect(press("Alt-s", "clojure", true, state).text).toBe("a |b");
-		expect(press("Alt-ß", "clojure", true, state).text).toBe("a |b");
+		expect(press("Alt-s", "clojure", state).text).toBe("a |b");
+		expect(press("Alt-ß", "clojure", state).text).toBe("a |b");
 	});
 
 	test("a Clojure key that does nothing still claims the key", () => {
 		const state = stateOf("a |b", [clojure]);
-		expect(press("Mod-Shift-k", "clojure", true, state)).toEqual({ claimed: true, text: "a |b" });
+		expect(press("Mod-Shift-k", "clojure", state)).toEqual({ claimed: true, text: "a |b" });
 	});
 
 	test("outside Clojure ⇧⌘K is left to CodeMirror's delete line", () => {
-		const keys = hotkeyBindings("javascript", true).map((b) => b.key);
+		const keys = hotkeyBindings("javascript").map((b) => b.key);
 		expect(keys).not.toContain("Mod-Shift-k");
 		expect(keys).toContain("Mod-Shift-ArrowUp");
 	});
 
 	test("⌥⇧↑ moves the line in a file with no grammar, and ⌥↑ does nothing", () => {
 		const state = stateOf("a\nb|", []);
-		expect(press("Alt-Shift-ArrowUp", "text", false, state)).toEqual({ claimed: true, text: "b|\na" });
-		expect(press("Alt-ArrowUp", "text", false, state)).toEqual({ claimed: true, text: "a\nb|" });
-		expect(hotkeyBindings("text", false).map((b) => b.key)).not.toContain("Mod-Shift-ArrowUp");
+		expect(press("Alt-Shift-ArrowUp", "text", state)).toEqual({ claimed: true, text: "b|\na" });
+		expect(press("Alt-ArrowUp", "text", state)).toEqual({ claimed: true, text: "a\nb|" });
+		expect(hotkeyBindings("text").map((b) => b.key)).not.toContain("Mod-Shift-ArrowUp");
 	});
 
 	test("join lines leaves no space after an opener in Clojure only", () => {
-		expect(press("Alt-j", "clojure", true, stateOf("(|\n a)", [clojure])).text).toBe("(|a)");
-		expect(press("Alt-j", "javascript", true, stateOf("f(|\n a)", [javascript()])).text).toBe("f(| a)");
+		expect(press("Alt-j", "clojure", stateOf("(|\n a)", [clojure])).text).toBe("(|a)");
+		expect(press("Alt-j", "javascript", stateOf("f(|\n a)", [javascript()])).text).toBe("f(| a)");
 	});
 
 	test("join lines is ⌃J on macOS", () => {
-		const join = hotkeyBindings("text", false).find((b) => b.key === "Alt-j");
+		const join = hotkeyBindings("text").find((b) => b.key === "Alt-j");
 		expect(join?.mac).toBe("Ctrl-j");
 	});
 
 	test("moving a Clojure form re-indents it", () => {
 		const state = stateOf("(do\n  |(foo a\n       b)\n  (bar))", [clojure]);
-		expect(press("Mod-Shift-ArrowDown", "clojure", true, state).text).toBe("(do\n  (bar)\n  |(foo a\n       b))");
+		expect(press("Mod-Shift-ArrowDown", "clojure", state).text).toBe("(do\n  (bar)\n  |(foo a\n       b))");
 		const nested = stateOf("(let [x (a\n         b)]\n  |(c))", [clojure]);
-		expect(press("Mod-Shift-ArrowUp", "clojure", true, nested).text).toBe("(let |(c)\n  [x (a\n      b)])");
+		expect(press("Mod-Shift-ArrowUp", "clojure", nested).text).toBe("(let |(c)\n  [x (a\n      b)])");
 	});
 
 	test("Backspace beside a matched bracket steps over it, and falls through elsewhere", () => {
-		expect(press("Backspace", "clojure", true, stateOf("(a)|", [clojure]))).toEqual({
+		expect(press("Backspace", "clojure", stateOf("(a)|", [clojure]))).toEqual({
 			claimed: true,
 			text: "(a|)",
 		});
-		expect(press("Backspace", "clojure", true, stateOf("a)|", [clojure])).claimed).toBe(false);
+		expect(press("Backspace", "clojure", stateOf("a)|", [clojure])).claimed).toBe(false);
+	});
+
+	test("⇧⌘↑/↓ move a Clojure map entry, key with value", () => {
+		expect(press("Mod-Shift-ArrowDown", "clojure", stateOf("{:a| 1 :b 2}", [clojure])).text).toBe("{:b 2 :a| 1}");
+		expect(press("Mod-Shift-ArrowUp", "clojure", stateOf("#:x{:a 1 :b| 2}", [clojure])).text).toBe("#:x{:b| 2 :a 1}");
+		expect(press("Mod-Shift-ArrowDown", "clojure", stateOf("#{|a b}", [clojure])).text).toBe("#{b |a}");
 	});
 });
 
 describe("editorKeys", () => {
 	test("a paste into Clojure re-indents its lines", () => {
-		const state = stateOf("(let [x 1]\n  |)", [clojure, editorKeys("clojure", true)]);
+		const state = stateOf("(let [x 1]\n  |)", [clojure, editorKeys("clojure")]);
 		const next = state.update({
 			changes: { from: state.selection.main.head, insert: "(foo a\nb)" },
 			userEvent: "input.paste",
@@ -108,7 +114,7 @@ describe("editorKeys", () => {
 	});
 
 	test("typing elsewhere is left alone", () => {
-		const state = stateOf("(let [x 1]\n  |)", [clojure, editorKeys("clojure", true)]);
+		const state = stateOf("(let [x 1]\n  |)", [clojure, editorKeys("clojure")]);
 		const next = state.update({ changes: { from: 13, insert: "\nb" }, userEvent: "input.type" }).state;
 		expect(next.doc.toString()).toBe("(let [x 1]\n  \nb)");
 	});
@@ -131,10 +137,10 @@ describe("keyLabel", () => {
 
 describe("cheatSheet", () => {
 	test("lists the keys for the file's language", () => {
-		const keys = (language: string, grammar: boolean) => cheatSheet(language, grammar, true).map((r) => r.keys);
-		expect(keys("text", false)).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J"]);
-		expect(keys("python", true)).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J", "⌥↑ / ⌥↓", "⇧⌘↑ / ⇧⌘↓"]);
-		expect(keys("clojure", true)).toEqual([
+		const keys = (language: string) => cheatSheet(language, true).map((r) => r.keys);
+		expect(keys("text")).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J"]);
+		expect(keys("python")).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J", "⌥↑ / ⌥↓", "⇧⌘↑ / ⇧⌘↓"]);
+		expect(keys("clojure")).toEqual([
 			"⌥⇧↑ / ⌥⇧↓",
 			"⌃J",
 			"⌥↑ / ⌥↓",

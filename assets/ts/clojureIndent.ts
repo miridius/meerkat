@@ -1,4 +1,5 @@
 import { type IndentContext, indentService, syntaxTree } from "@codemirror/language";
+import { CLOSERS, forms, isColl, type SyntaxNode } from "./clojureTree.js";
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
@@ -11,8 +12,6 @@ import { type IndentContext, indentService, syntaxTree } from "@codemirror/langu
  *  The rule names below are cljfmt's (`cljfmt/core.cljc`): `zloc` is the
  *  element that starts the line being indented, and its index counts the
  *  list's head as 0. */
-
-type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
 
 type Spec = { kind: "inner"; depth: number; index?: number } | { kind: "block"; index: number };
 
@@ -126,26 +125,8 @@ const SORTED_INDENTS = DEFAULT_INDENTS.map((entry) => ({ entry, order: indentOrd
 	})
 	.map(({ entry }) => entry);
 
-const CLOSERS: Record<string, string> = { List: ")", Vector: "]", Map: "}" };
 const STRINGS = new Set(["String", "RegExp"]);
-const BRACKETS = new Set(["(", ")", "[", "]", "{", "}"]);
 const SYMBOLS = new Set(["Symbol", "Operator", "DefLike", "NS"]);
-
-function isColl(node: SyntaxNode): boolean {
-	return node.name in CLOSERS;
-}
-
-/** The forms in `coll`, `#_` forms included, as rewrite-clj's zipper
- *  steps through them: comments are skipped. */
-function forms(coll: SyntaxNode): SyntaxNode[] {
-	const out: SyntaxNode[] = [];
-	for (let child = coll.firstChild; child; child = child.nextSibling) {
-		if (!BRACKETS.has(child.name) && child.name !== "LineComment" && !child.type.isError) {
-			out.push(child);
-		}
-	}
-	return out;
-}
 
 /** The forms cljfmt's `index-of` counts: `#_` forms are left out. */
 function elements(coll: SyntaxNode): SyntaxNode[] {

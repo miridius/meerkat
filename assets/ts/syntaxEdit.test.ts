@@ -141,6 +141,11 @@ describe("moveNode", () => {
 		expect(move("(a |(b c) d)", clojure(), 1)).toBe("(a d |(b c))");
 	});
 
+	test("leaves a Clojure list cut off from its closer alone", () => {
+		expect(move("|x\n(let [b", clojure(), 1)).toBeNull();
+		expect(move("x\n(let [|b", clojure(), -1)).toBeNull();
+	});
+
 	test("moves the node a selection covers", () => {
 		expect(move("(a <(b c)> d)", clojure(), 1)).toBe("(a d <(b c)>)");
 	});
@@ -172,6 +177,12 @@ describe("joinLines", () => {
 	test("drops a blank line and keeps the next one's indentation", () => {
 		expect(join("|\n  a")).toBe("|  a");
 		expect(join("a|\n\nb")).toBe("a|\nb");
+	});
+
+	test("joins selected lines across blank lines with one space", () => {
+		expect(join("<foo\n\nbar>")).toBe("<foo bar>");
+		expect(join("<foo\n  \n  bar>")).toBe("<foo bar>");
+		expect(join("<\n\n  a\nb>")).toBe("<  a b>");
 	});
 
 	test("adds no space where tight says so", () => {

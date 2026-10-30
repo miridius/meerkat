@@ -8,39 +8,23 @@ import {
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { BRACKETS, CLOSERS, forms, isColl, type SyntaxNode } from "./clojureTree.js";
+import { whole } from "./syntaxEdit.js";
 
 /** Structural editing for Clojure, in the style of Cursive's paredit,
- *  over the Lezer tree of `@nextjournal/lang-clojure`. Each command takes
- *  a state and returns the transaction to dispatch, or null when it does
+ *  over the Lezer tree of `@nextjournal/lang-clojure`. Each editing
+ *  command returns the transaction to dispatch, or null when it does
  *  nothing there. Commands leave a collection the editor's lines cut off
  *  from its closer alone, as they cannot see where it ends. */
 
-type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
-
-const CLOSERS: Record<string, string> = { List: ")", Vector: "]", Map: "}" };
 const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
-const BRACKETS = new Set(["(", ")", "[", "]", "{", "}"]);
 /** Forms whose prefix is part of the opener: `#{`, `#(`, `#?(`, `#:a{`. */
 const PREFIXED = new Set(["Set", "AnonymousFunction", "ReaderConditional", "NamespacedMap"]);
-
-function isColl(node: SyntaxNode): boolean {
-	return node.name in CLOSERS;
-}
 
 /** The closing bracket of `coll`, or null when the text lacks it. */
 function closerOf(coll: SyntaxNode): SyntaxNode | null {
 	const last = coll.lastChild;
 	return last && last.name === CLOSERS[coll.name] ? last : null;
-}
-
-/** The forms in a collection or the program: comments, brackets and
- *  stray tokens left out; `#_` forms in. */
-function forms(parent: SyntaxNode): SyntaxNode[] {
-	const out: SyntaxNode[] = [];
-	for (let child = parent.firstChild; child; child = child.nextSibling) {
-		if (!BRACKETS.has(child.name) && child.name !== "LineComment" && !child.type.isError) out.push(child);
-	}
-	return out;
 }
 
 /** The form that stands for `node` among its parent's forms: `node`
@@ -68,14 +52,6 @@ function enclosing(state: EditorState, pos: number): SyntaxNode | null {
 	return null;
 }
 
-/** Whether `node` holds no stray bracket and no collection cut off from
- *  its closer. */
-function whole(node: SyntaxNode): boolean {
-	if (node.type.isError) return false;
-	for (let child = node.firstChild; child; child = child.nextSibling) if (!whole(child)) return false;
-	return true;
-}
-
 /** The form after `el` among its parent's forms, or before it. Null past
  *  a bracket, stray or not, and when the form is not whole. */
 function sibling(el: SyntaxNode, dir: -1 | 1): SyntaxNode | null {
@@ -88,19 +64,26 @@ function sibling(el: SyntaxNode, dir: -1 | 1): SyntaxNode | null {
 }
 
 /** The changes, and the selection mapped through them, for each range's
- *  head: `edit` returns the changes for one caret, or null. Lines the
- *  changes reach re-indent. Null when no range changes. */
+ *  head: `edit` returns the changes for one caret, or null. A caret whose
+ *  changes touch text an earlier caret's change, such as a second caret
+ *  in the same list, is left as it is. Lines the changes reach re-indent.
+ *  Null when no range changes. */
 function edit(
 	state: EditorState,
 	userEvent: string,
 	command: (pos: number) => { changes: ChangeSpec[]; cursor?: number; assoc?: -1 | 1 } | null,
 ): TransactionSpec | null {
 	let changed = false;
+	const touched: [number, number][] = [];
 	const spec = state.changeByRange((range: SelectionRange) => {
 		const result = command(range.head);
 		if (!result) return { range };
-		changed = true;
 		const set = state.changes(result.changes);
+		const spans: [number, number][] = [];
+		set.iterChangedRanges((from, to) => spans.push([from, to]));
+		if (spans.some(([from, to]) => touched.some(([a, b]) => from <= b && a <= to))) return { range };
+		touched.push(...spans);
+		changed = true;
 		return {
 			changes: set,
 			range: result.cursor === undefined ? range.map(set, result.assoc) : EditorSelection.cursor(result.cursor),
@@ -141,8 +124,9 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-/** Pull the form after the caret's collection into it; past the last
- *  form, the form after the nearest enclosing collection that has one. */
+/** Pull the form after the caret's collection into it; when no form
+ *  follows it, the form after the nearest enclosing collection that has
+ *  one. */
 export function slurpForward(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.slurp", (pos) => {
 		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
@@ -181,8 +165,9 @@ export function barfForward(state: EditorState): TransactionSpec | null {
 	});
 }
 
-/** Pull the form before the caret's collection into it; before the first
- *  form, the form before the nearest enclosing collection that has one. */
+/** Pull the form before the caret's collection into it; when no form
+ *  precedes it, the form before the nearest enclosing collection that has
+ *  one. */
 export function slurpBackward(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.slurp", (pos) => {
 		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
@@ -255,6 +240,18 @@ export function raise(state: EditorState): TransactionSpec | null {
 	});
 }
 
+/** The entries of a map, each from its key to its value, so ⇧⌘↑/⇧⌘↓
+ *  move a key with its value. Null for any other node, and for a map
+ *  without a value for each key or that is not whole. */
+export function mapEntries(_state: EditorState, list: SyntaxNode): { from: number; to: number }[] | null {
+	if (list.name !== "Map" || list.parent?.name === "Set" || !whole(list)) return null;
+	const all = forms(list).filter((node) => node.name !== "Discard");
+	if (all.length % 2 !== 0) return null;
+	const entries = [];
+	for (let i = 0; i < all.length; i += 2) entries.push({ from: all[i].from, to: all[i + 1].to });
+	return entries;
+}
+
 /** Where moving one form from `pos` lands: past the next form, or out
  *  past the closer after the last one (`dir` 1); before the previous
  *  form, or out before the opener ahead of the first one (`dir` -1). */
@@ -298,16 +295,35 @@ function bracketAt(state: EditorState, from: number): { node: SyntaxNode; matche
 	return { node, matched: node.name in PAIRS ? closer !== null : closer?.from === node.from };
 }
 
+/** The matched collection whose `#` prefix holds the character at `at`,
+ *  as `#` does in `#{`. */
+function prefixOf(state: EditorState, at: number): SyntaxNode | null {
+	if (at < 0 || at >= state.doc.length) return null;
+	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(at, 1); node; node = node.parent) {
+		if (!PREFIXED.has(node.name)) continue;
+		const coll = node.lastChild;
+		return coll && isColl(coll) && at < coll.from && closerOf(coll) ? coll : null;
+	}
+	return null;
+}
+
 /** Backspace (`dir` -1) or Delete (`dir` 1) at a caret beside a bracket
- *  of a matched pair: steps over it, or deletes the pair when the caret
- *  sits inside it and it is empty. Null when no caret is beside one, so
- *  the editor's own deletion runs; a selection always deletes. */
+ *  of a matched pair, or its `#` prefix: steps over it, or deletes the
+ *  pair when the caret sits inside it and it is empty. Null when no caret
+ *  is beside one, so the editor's own deletion runs; a selection always
+ *  deletes. While any caret is guarded, the other carets delete one
+ *  character here, not through the editor's own deletion. */
 export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec | null {
 	if (state.selection.ranges.some((r) => !r.empty)) return null;
 	let guarded = false;
 	const spec = state.changeByRange((range) => {
 		const pos = range.head;
 		const at = dir < 0 ? pos - 1 : pos;
+		const prefixed = prefixOf(state, at);
+		if (prefixed?.firstChild) {
+			guarded = true;
+			return { range: EditorSelection.cursor(dir < 0 ? openStart(prefixed) : prefixed.firstChild.to) };
+		}
 		const bracket = bracketAt(state, at);
 		if (!bracket?.matched) {
 			const line = state.doc.lineAt(pos);
@@ -327,14 +343,16 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 			const set = state.changes({ from, to: closer.to });
 			return { changes: set, range: EditorSelection.cursor(from) };
 		}
-		return { range: EditorSelection.cursor(pos + dir) };
+		// Backspace steps over a `#` prefix with its opener.
+		const to = dir < 0 && bracket.node.from === opener.from ? openStart(parent) : pos + dir;
+		return { range: EditorSelection.cursor(to) };
 	});
 	if (!guarded) return null;
 	return { ...spec, scrollIntoView: true, userEvent: dir < 0 ? "delete.backward" : "delete.forward" };
 }
 
-/** Whether `pos` sits in a string, a comment or a character literal,
- *  where brackets are text. */
+/** Whether `pos` sits in a string, a regex, a comment or a character
+ *  literal, or just after a `\`, where brackets are text. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.name === "String" || node.name === "RegExp") return node.from < pos && pos < node.to;
@@ -347,7 +365,7 @@ function inText(state: EditorState, pos: number): boolean {
 /** Typing `text`: an opener inserts its closer too, around a selection if
  *  there is one; a closer before the same matched closer steps over it.
  *  Null, so the editor types `text` itself, for anything else and for
- *  brackets in strings and comments. */
+ *  brackets where `inText` says they are text. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
