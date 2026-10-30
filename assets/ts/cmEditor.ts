@@ -6,7 +6,7 @@ import { tags as t } from "@lezer/highlight";
 import { variantColors } from "@rose-pine/palette";
 import { basicSetup } from "codemirror";
 import { indentation } from "./cmIndent.js";
-import { getLoadedLanguage, preloadLanguages, SUPPORTED_LANGUAGES } from "./cmLang.js";
+import { getLoadedLanguage, preloadLanguages } from "./cmLang.js";
 import { editorKeys } from "./editorKeys.js";
 import { rulerBackground } from "./rulers.js";
 
@@ -228,7 +228,7 @@ export function createCmEditor(parent: HTMLElement, options: CmEditorOptions): E
 		keymap.of([indentWithTab]),
 		// The IDE-style hotkeys replace basicSetup's bindings for the
 		// same keys, such as ⌥↑ move line.
-		Prec.high(editorKeys(options.language, SUPPORTED_LANGUAGES.includes(options.language))),
+		Prec.high(editorKeys(options.language)),
 		// Form-level shortcuts (submit / cancel) need `Prec.high` so they
 		// beat basicSetup's defaultKeymap, which binds Mod-Enter to
 		// `insertBlankLine` and Escape to `simplifySelection` — both of

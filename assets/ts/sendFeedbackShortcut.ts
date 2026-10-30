@@ -11,6 +11,12 @@ export function isMacPlatform(platform: string): boolean {
 	return /mac|iphone|ipad|ipod/i.test(platform);
 }
 
+/** Whether this browser runs on macOS or iOS. */
+export function onMac(): boolean {
+	const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+	return isMacPlatform(nav.userAgentData?.platform || nav.platform);
+}
+
 export function isSendFeedbackShortcut(e: ShortcutKey, mac: boolean): boolean {
 	return (
 		e.key === "Enter" &&

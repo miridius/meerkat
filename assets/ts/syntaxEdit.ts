@@ -10,8 +10,8 @@ import {
 } from "@codemirror/state";
 
 /** Editing commands over any language's syntax tree, and joining lines,
- *  which needs none. Each takes a state and returns the transaction to
- *  dispatch, or null when it does nothing there. */
+ *  which needs none. Each command returns the transaction to dispatch, or
+ *  null when it does nothing there. */
 
 type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
 
@@ -92,10 +92,19 @@ export function shrinkSelection(state: EditorState): TransactionSpec | null {
 
 const SEPARATORS = new Set([",", ";"]);
 
+/** Whether `node` holds no error node, such as a stray bracket or a
+ *  collection the editor's lines cut off from its closer. */
+export function whole(node: SyntaxNode): boolean {
+	if (node.type.isError) return false;
+	for (let child = node.firstChild; child; child = child.nextSibling) if (!whole(child)) return false;
+	return true;
+}
+
 /** Whether `node` is a unit worth moving: a named node that is not a
- *  comment, an error, a keyword or bracket token, or an operator. */
+ *  comment, a keyword or bracket token, or an operator, and holds no
+ *  error. */
 function movable(state: EditorState, node: SyntaxNode): boolean {
-	if (node.type.isError || !/^[A-Z]/.test(node.name) || /Comment/.test(node.name)) return false;
+	if (!/^[A-Z]/.test(node.name) || /Comment/.test(node.name) || !whole(node)) return false;
 	return node.firstChild !== null || !/^[^\w\s"'`]+$/.test(state.doc.sliceString(node.from, node.to));
 }
 
@@ -146,11 +155,16 @@ function commaItems(state: EditorState, list: SyntaxNode): Span[] | null {
 	return commas ? items : null;
 }
 
+/** The entries of `list` when its items go in key-value pairs, such as a
+ *  Clojure map, each spanning its key and value; null otherwise. */
+export type Entries = (state: EditorState, list: SyntaxNode) => Span[] | null;
+
 /** `node`'s span and the span it swaps with moving by `dir`: in a comma
- *  list, its item and the next item; elsewhere, the node and its swap
- *  partner. Null when it has nothing to swap with. */
-function swapPair(state: EditorState, node: SyntaxNode, dir: -1 | 1): [Span, Span] | null {
-	const items = node.parent && commaItems(state, node.parent);
+ *  list or one `entries` pairs, its item and the neighbouring item in
+ *  `dir`; elsewhere, the node and its swap partner. Null when it has
+ *  nothing to swap with. */
+function swapPair(state: EditorState, node: SyntaxNode, dir: -1 | 1, entries: Entries): [Span, Span] | null {
+	const items = node.parent && (commaItems(state, node.parent) ?? entries(state, node.parent));
 	if (!items) {
 		const partner = swapPartner(state, node, dir);
 		return partner && [span(state, node), partner];
@@ -178,11 +192,11 @@ function nodeAtSelection(state: EditorState): SyntaxNode {
  *  next sibling: the smallest enclosing node that has one, such as a
  *  statement, a list element, an argument or an object property. The
  *  selection moves with the node. */
-export function moveNode(state: EditorState, dir: -1 | 1): TransactionSpec | null {
+export function moveNode(state: EditorState, dir: -1 | 1, entries: Entries = () => null): TransactionSpec | null {
 	if (syntaxTree(state).length === 0) return null;
 	for (let node: SyntaxNode | null = nodeAtSelection(state); node?.parent; node = node.parent) {
 		if (!movable(state, node)) continue;
-		const pair = swapPair(state, node, dir);
+		const pair = swapPair(state, node, dir, entries);
 		if (!pair) continue;
 		const [own, partner] = pair;
 		const [a, b] = dir > 0 ? [own, partner] : [partner, own];
@@ -210,8 +224,10 @@ export function moveNode(state: EditorState, dir: -1 | 1): TransactionSpec | nul
 export type Tight = (state: EditorState, end: number, start: number) => boolean;
 
 /** Join the line after each caret's line onto it, or all the lines a
- *  selection touches. Each line break and the whitespace around it become
- *  one space, or nothing when either line is blank or `tight` says so. */
+ *  selection touches. Blank lines go. Between two lines that are not
+ *  blank, the line break and the whitespace around it become one space,
+ *  or nothing when `tight` says so. Blank lines before the first line
+ *  that is not blank go with its indentation kept. */
 export function joinLines(state: EditorState, tight: Tight = () => false): TransactionSpec | null {
 	const doc = state.doc;
 	let joined = false;
@@ -222,20 +238,26 @@ export function joinLines(state: EditorState, tight: Tight = () => false): Trans
 		joined = true;
 		const changes = [];
 		let caret = range.from;
-		for (let n = first; n < last; n++) {
+		// Where the text of the last line that is not blank ends.
+		let end: number | null = null;
+		for (let n = first; n <= last; n++) {
 			const line = doc.line(n);
-			const next = doc.line(n + 1);
-			const end = line.from + line.text.trimEnd().length;
-			const start = next.to - next.text.trimStart().length;
-			if (end === line.from) {
-				// A blank line goes, and the next keeps its indentation.
-				changes.push({ from: line.from, to: next.from });
-				caret = line.from;
+			if (line.text.trim() === "") continue;
+			const start = line.to - line.text.trimStart().length;
+			if (end === null) {
+				if (n > first) changes.push({ from: doc.line(first).from, to: line.from });
+				caret = doc.line(first).from;
 			} else {
-				const insert = start === next.to || tight(state, end, start) ? "" : " ";
-				changes.push({ from: end, to: start, insert });
+				changes.push({ from: end, to: start, insert: tight(state, end, start) ? "" : " " });
 				caret = end;
 			}
+			end = line.from + line.text.trimEnd().length;
+		}
+		if (end === null) {
+			changes.push({ from: doc.line(first).from, to: doc.line(last).from });
+		} else if (doc.line(last).text.trim() === "") {
+			changes.push({ from: end, to: doc.line(last).to });
+			caret = end;
 		}
 		const set = state.changes(changes);
 		return {

@@ -1,11 +1,13 @@
 import { moveLineDown, moveLineUp } from "@codemirror/commands";
 import { type EditorState, type Extension, EditorState as State, type TransactionSpec } from "@codemirror/state";
 import { type Command, type KeyBinding, keymap } from "@codemirror/view";
+import { SUPPORTED_LANGUAGES } from "./cmLang.js";
 import {
 	barfBackward,
 	barfForward,
 	bracketTyping,
 	deleteGuarded,
+	mapEntries,
 	moveByForm,
 	raise,
 	reindent,
@@ -85,8 +87,8 @@ export const HOTKEYS: Hotkey[] = [
 		keys: ["Mod-Shift-ArrowUp", "Mod-Shift-ArrowDown"],
 		does: "Move the statement, element or argument up / down",
 		run: [
-			(clojure) => claim(indented((state) => moveNode(state, -1), clojure)),
-			(clojure) => claim(indented((state) => moveNode(state, 1), clojure)),
+			(clojure) => claim(indented((state) => moveNode(state, -1, clojure ? mapEntries : undefined), clojure)),
+			(clojure) => claim(indented((state) => moveNode(state, 1, clojure ? mapEntries : undefined), clojure)),
 		],
 	},
 	{
@@ -127,9 +129,9 @@ export const HOTKEYS: Hotkey[] = [
 ];
 
 /** The scopes that apply to a file in `language`. */
-export function scopesFor(language: string, hasGrammar: boolean): Scope[] {
+export function scopesFor(language: string): Scope[] {
 	if (language === "clojure") return ["all", "grammar", "clojure"];
-	return hasGrammar ? ["all", "grammar"] : ["all"];
+	return SUPPORTED_LANGUAGES.includes(language) ? ["all", "grammar"] : ["all"];
 }
 
 function binding(key: Key, run: Command): KeyBinding {
@@ -156,10 +158,9 @@ const reindentPaste = State.transactionFilter.of((tr) => {
 	return spec.changes === tr.changes ? tr : spec;
 });
 
-/** The key bindings for a file in `language`; `hasGrammar` when its
- *  language has a syntax grammar. */
-export function hotkeyBindings(language: string, hasGrammar: boolean): KeyBinding[] {
-	const scopes = scopesFor(language, hasGrammar);
+/** The key bindings for a file in `language`. */
+export function hotkeyBindings(language: string): KeyBinding[] {
+	const scopes = scopesFor(language);
 	const clojure = language === "clojure";
 	const bindings: KeyBinding[] = [];
 	for (const hotkey of HOTKEYS) {
@@ -183,9 +184,9 @@ export function hotkeyBindings(language: string, hasGrammar: boolean): KeyBindin
 }
 
 /** The hotkeys, and in Clojure the structural typing, for a file in
- *  `language`; `hasGrammar` when its language has a syntax grammar. */
-export function editorKeys(language: string, hasGrammar: boolean): Extension {
-	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language, hasGrammar))];
+ *  `language`. */
+export function editorKeys(language: string): Extension {
+	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
 	if (language === "clojure") extensions.push(bracketTyping, reindentPaste);
 	return extensions;
 }
@@ -217,8 +218,8 @@ export function keyLabel(key: Key, mac: boolean): string {
 }
 
 /** The cheat sheet's rows for a file in `language`. */
-export function cheatSheet(language: string, hasGrammar: boolean, mac: boolean): { keys: string; does: string }[] {
-	const scopes = scopesFor(language, hasGrammar);
+export function cheatSheet(language: string, mac: boolean): { keys: string; does: string }[] {
+	const scopes = scopesFor(language);
 	return HOTKEYS.filter((h) => scopes.includes(h.scope)).map((h) => ({
 		keys: h.keys.map((k) => keyLabel(k, mac)).join(" / "),
 		does: h.does,
