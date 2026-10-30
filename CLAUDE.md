@@ -162,7 +162,7 @@ When behaviour changes, choose the lowest layer that exercises it:
 - In e2e, read state an observer or `requestAnimationFrame` sets only
   through a retrying assertion or after `afterNextFrame`: CI renders late.
 - In e2e, give a timeout its idle-machine value through `budget`
-  (`tests/e2e/lib/budget.ts`), which scales it with the machine's load.
+  (`tests/e2e/lib/budget.ts`), which stretches it for a loaded machine.
 
 ## Mutation testing
 

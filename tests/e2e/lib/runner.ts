@@ -129,7 +129,7 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 	let stderrBuf = "";
 	let abandon: (e: Error) => void = () => {};
 	// No deadline of its own: the boot is bounded by the test's timeout,
-	// which scales with the machine's load, and `stopPendingBoots` stops it
+	// which allows for a heavily loaded machine, and `stopPendingBoots` stops it
 	// if the test ends first.
 	const urlPromise = new Promise<string>((resolve, reject) => {
 		abandon = reject;

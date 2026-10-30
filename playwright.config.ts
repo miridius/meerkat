@@ -15,7 +15,7 @@ export default defineConfig({
 	globalSetup: "./tests/e2e/lib/setup.ts",
 	globalTeardown: "./tests/e2e/lib/reap.ts",
 	// Each budget here and in the specs is what its wait takes on an idle
-	// machine, scaled by the machine's load when the run starts (see
+	// machine, stretched to allow for a heavily loaded one (see
 	// tests/e2e/lib/budget.ts).
 	timeout: budget(60_000),
 	fullyParallel: true,
