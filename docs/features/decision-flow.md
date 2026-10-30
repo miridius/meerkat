@@ -228,14 +228,14 @@ means the review is still open.
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
 running, still attached. When the decision arrives, meerkat checks
-whether a process above it has exited. If one has, it prints the same
+whether a process above it has exited, even one whose process ID has
+since been reused. If one has, it prints the same
 line with `the process that ran meerkat exited` in place of
 `stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
 the next invocation. A rerun before then takes the review over from
 it. Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
-and takes delivery. While it waits on the decision, it relays the
-server's stderr through a file it keeps open, so waiting starts no
-process. A decision
+and takes delivery. While attached, it waits on the decision without
+starting any process. A decision
 clicked while no invocation is attached stays held for the next
 invocation.
 
@@ -275,7 +275,8 @@ A server whose invocation exited stays up until a later invocation
 of the same review attaches to it. The review deadline runs only
 while an invocation is attached, and each one gets the full limit.
 An invocation left by a killed `git commit` stays attached until the
-decision, so the deadline keeps running for it.
+decision or a rerun takes the review over, so the deadline keeps
+running for it.
 A waiting invocation that reattaches opens the browser if no tab is
 already connected and `--no-open` was not passed.
 

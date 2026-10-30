@@ -254,9 +254,10 @@ defmodule Meerkat.ShepherdTest do
 
   # A killed git commit can leave its hook's caller attached. Once the
   # decision arrives, that caller leaves it held for the next invocation
-  # instead of taking delivery where nobody reads it. Where ps is denied
-  # ("unseen"), it cannot tell, so it takes delivery.
-  for ancestor <- ["gone", "live", "unseen"] do
+  # instead of taking delivery where nobody reads it. An ancestor whose pid
+  # a live process has since taken ("reused") is gone too. Where ps is
+  # denied ("unseen"), it cannot tell, so it takes delivery.
+  for ancestor <- ["gone", "reused", "live", "unseen"] do
     test "a caller given the decision takes delivery only while its ancestors live: #{ancestor}" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
@@ -267,8 +268,15 @@ defmodule Meerkat.ShepherdTest do
       sleep 0 &
       gone=$!
       wait "$gone"
-      if [[ "$3" == live ]]; then _MA_ANCESTORS=($$); else _MA_ANCESTORS=("$gone"); fi
-      [[ "$3" == unseen ]] && ps() { return 1; }
+      sleep 30 &
+      reused=$!
+      trap 'kill "$reused"' EXIT
+      _ma_record_ancestors
+      case "$3" in
+        gone) _MA_ANCESTORS=("$gone" "${_MA_ANCESTORS[@]}") ;;
+        reused) _MA_ANCESTORS=("$reused" "${_MA_ANCESTORS[@]}") ;;
+        unseen) _MA_ANCESTORS=("$gone") && ps() { return 1; } ;;
+      esac
       _MA_LINK="$2/run"
       _MA_DIR="$2/run.1"
       mkdir "$_MA_DIR"
@@ -319,7 +327,7 @@ defmodule Meerkat.ShepherdTest do
     mkdir "$_MA_DIR"
     _ma_open_log || echo "no log yet"
     _ma_relay_log
-    printf 'a\npart' >"$_MA_DIR/log"
+    printf '%s\n%s' ' a\b' part >"$_MA_DIR/log"
     _ma_relay_log
     printf 'ial\n' >>"$_MA_DIR/log"
     _ma_relay_log
@@ -334,7 +342,7 @@ defmodule Meerkat.ShepherdTest do
     _ma_relay_log
     """
 
-    assert {"no log yet\na\npartial\nb\n", 0} =
+    assert {"no log yet\n a\\b\npartial\nb\n", 0} =
              System.cmd("bash", ["-c", script, "relay", Path.expand("bin/meerkat-attach"), dir])
   end
 
@@ -365,10 +373,11 @@ defmodule Meerkat.ShepherdTest do
              System.cmd("bash", ["-c", script, "restart", Path.expand("bin/meerkat-attach"), dir])
   end
 
-  # A waiting caller relays its backend's log every 0.2 s and checks its
-  # ancestors only once the decision arrives: forking wc and tr every
-  # 0.2 s tick, and ps every fifth, cost about 0.1 CPU-s a second. A quiet
-  # stretch of 2.2 s spans more than five ticks.
+  # A waiting caller relays its backend's log every 0.2 s tick and checks
+  # its ancestors only once the decision arrives, so it forks nothing per
+  # tick. The backend writes each next line only once the test has seen
+  # the last one relayed, so the stream stays quiet across six relays,
+  # which span more than five ticks.
   test "a caller waiting on a decision runs no process while it relays the backend's log" do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -384,17 +393,14 @@ defmodule Meerkat.ShepherdTest do
 
     fake_release(dir, ~S"""
     echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
-    printf 'warn' >&2
-    sleep 0.3
-    printf 'ing\n' >&2
-    for _ in {1..600}; do
-      [[ -f "$DELIVERED" ]] && exit 0
-      sleep 0.1
+    for k in {1..6}; do
+      echo "tick $k" >&2
+      until [[ -f "$ACKS/$k" ]]; do sleep 0.05; done
     done
-    exit 1
+    until [[ -f "$DELIVERED" ]]; do sleep 0.05; done
     """)
 
-    # The attach stream is quiet for 2.2 s, then sends an approval.
+    # The attach stream stays quiet until the test has seen every tick.
     curl = ~S"""
     #!/usr/bin/env bash
     case "$*" in
@@ -402,12 +408,14 @@ defmodule Meerkat.ShepherdTest do
     esac
     echo start >> "$CALLS"
     printf 'k\n'
-    sleep 2.2
+    until [[ -f "$ACKS/6" ]]; do sleep 0.05; done
     echo end >> "$CALLS"
     printf 'x 0\ns 200\n'
     """
 
     calls = Path.join(dir, "calls")
+    acks = Path.join(dir, "acks")
+    File.mkdir_p!(acks)
 
     port =
       open_launcher(
@@ -418,14 +426,19 @@ defmodule Meerkat.ShepherdTest do
           {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
           {"INPUT_FILE", "/dev/null"},
           {"CALLS", calls},
+          {"ACKS", acks},
           {"DELIVERED", Path.join(dir, "delivered")},
           {"PATH", stubs <> ":" <> System.get_env("PATH")}
         ],
         curl: curl
       )
 
-    assert {0, output} = await_result(port, dir)
-    assert output =~ "warning\n"
+    for k <- 1..6 do
+      await_output(port, dir, "tick #{k}\n")
+      File.touch!(Path.join(acks, "#{k}"))
+    end
+
+    assert {0, _} = await_result(port, dir)
 
     idle =
       calls
