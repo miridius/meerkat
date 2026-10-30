@@ -234,10 +234,9 @@ line with `the process that ran meerkat exited` in place of
 `stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
 the next invocation. A rerun before then takes the review over from
 it. Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
-and takes delivery. While attached, it waits on the decision without
-starting any process. A decision
-clicked while no invocation is attached stays held for the next
-invocation.
+and takes delivery. Until the decision arrives, it starts no process
+beyond its connection to the server. A decision clicked while no invocation is
+attached stays held for the next invocation.
 
 For `git commit -a` and `git commit <path>`, the review keeps its own
 copy of git's temporary index, so it keeps showing those changes and

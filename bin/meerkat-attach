@@ -145,16 +145,18 @@ _ma_record_ancestors() {
   read -ra _MA_ANCESTORS <<<"$(_ma_ancestors)"
 }
 
-# Print the pids above the caller, from its parent up to pid 1. Read the
-# parent from ps, not $PPID, which bash fixes at startup.
+# Print the pids above the caller, from its parent up to but not including
+# pid 1. Read the parent from ps, not $PPID, which bash fixes at startup.
+# Use ps, not kill -0, which takes live root-owned processes such as a
+# terminal's login process for dead.
 _ma_ancestors() {
-  local pid chain=()
+  local pid chain=""
   pid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')
   while [[ -n "$pid" ]] && ((pid > 1)); do
-    chain+=("$pid")
+    chain+="${chain:+ }$pid"
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
   done
-  echo "${chain[*]}"
+  echo "$chain"
 }
 
 # A killed git commit can leave its hook (and this caller) running and attached.
@@ -162,9 +164,9 @@ _ma_ancestors() {
 # receiving it, exit if the chain above the caller has changed and leave the
 # decision held for the next invocation. A process that exits reparents the
 # one below it, so the chain changes even once its pid is reused. Checked only
-# then: reviews wait hours, and a killed commit is rare. Until then the orphan
-# stays attached until the decision or a rerun's takeover, so the deadline
-# keeps running for it. Where ps cannot tell (a sandbox denies it), assume the
+# then: reviews wait hours, and a killed commit is rare. Until the decision or
+# a rerun's takeover, the orphan stays attached, so the deadline keeps running
+# for it. Where ps cannot tell (a sandbox denies it), assume the
 # ancestors live: taking them for dead would hold every decision.
 _ma_exit_if_orphaned() {
   ((${#_MA_ANCESTORS[@]})) || return 0

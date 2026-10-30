@@ -252,45 +252,58 @@ defmodule Meerkat.ShepherdTest do
     assert await_exit(port, dir) == 0
   end
 
+  @orphaned "outcome\nmeerkat: the process that ran meerkat exited before the review " <>
+              "completed. The review is still open at http://127.0.0.1:4242/; run the " <>
+              "same command again to wait for its outcome.\n"
+
+  # Stubs a server whose attach stream sends an outcome with exit code 1,
+  # then has the caller attach to it.
+  @attach_to_decision ~S"""
+  _MA_LINK="$2/run"
+  _MA_DIR="$2/run.1"
+  mkdir "$_MA_DIR"
+  echo "4242 1" >"$_MA_DIR/port"
+  echo token >"$_MA_DIR/token"
+  echo 1 >"$_MA_DIR/exit"
+  _ma_request() {
+    case "$2" in
+      attach/delivered*) echo delivered ;;
+      *) printf 'k\no outcome\nx 1\ns 200\n' ;;
+    esac
+  }
+  _ma_attach
+  """
+
   # A killed git commit can leave its hook's caller attached. Once the
   # decision arrives, that caller leaves it held for the next invocation
   # instead of taking delivery where nobody reads it. An ancestor whose pid
   # a live process has since taken ("reused") is gone too. Where ps is
   # denied ("unseen"), it cannot tell, so it takes delivery.
-  for ancestor <- ["gone", "reused", "live", "unseen"] do
+  for ancestor <- ["reused", "live", "unseen"] do
     test "a caller given the decision takes delivery only while its ancestors live: #{ancestor}" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
 
-      script = ~S"""
-      source "$1"
-      exec 2>&1
-      sleep 0 &
-      gone=$!
-      wait "$gone"
-      sleep 30 &
-      reused=$!
-      trap 'kill "$reused"' EXIT
-      _ma_record_ancestors
-      case "$3" in
-        gone) _MA_ANCESTORS=("$gone" "${_MA_ANCESTORS[@]}") ;;
-        reused) _MA_ANCESTORS=("$reused" "${_MA_ANCESTORS[@]}") ;;
-        unseen) _MA_ANCESTORS=("$gone") && ps() { return 1; } ;;
-      esac
-      _MA_LINK="$2/run"
-      _MA_DIR="$2/run.1"
-      mkdir "$_MA_DIR"
-      echo "4242 1" >"$_MA_DIR/port"
-      echo token >"$_MA_DIR/token"
-      echo 1 >"$_MA_DIR/exit"
-      _ma_request() {
-        case "$2" in
-          attach/delivered*) echo delivered ;;
-          *) printf 'k\no outcome\nx 1\ns 200\n' ;;
+      script =
+        ~S"""
+        source "$1"
+        exec 2>&1
+        _ma_record_ancestors
+        case "$3" in
+          reused)
+            sleep 30 &
+            reused=$!
+            trap 'kill "$reused"' EXIT
+            _MA_ANCESTORS=("$reused" "${_MA_ANCESTORS[@]}")
+            ;;
+          unseen)
+            sleep 0 &
+            gone=$!
+            wait "$gone"
+            _MA_ANCESTORS=("$gone") && ps() { return 1; }
+            ;;
         esac
-      }
-      _ma_attach
-      """
+        """ <> @attach_to_decision
 
       {output, 1} =
         System.cmd("bash", [
@@ -305,12 +318,54 @@ defmodule Meerkat.ShepherdTest do
       if unquote(ancestor) in ["live", "unseen"] do
         assert output == "outcome\ndelivered\n"
       else
-        assert output ==
-                 "outcome\nmeerkat: the process that ran meerkat exited before the review " <>
-                   "completed. The review is still open at http://127.0.0.1:4242/; run the " <>
-                   "same command again to wait for its outcome.\n"
+        assert output == @orphaned
       end
     end
+  end
+
+  # The caller's parent really exits, as a killed git commit does, so the
+  # caller is reparented and the chain above it changes.
+  test "a caller given the decision after its parent exited leaves the decision held" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    caller =
+      ~S"""
+      source "$1"
+      exec 2>&1
+      _ma_record_ancestors
+      parent=$PPID
+      touch "$2/recorded"
+      while [[ "$(ps -o ppid= -p $$ | tr -d ' ')" == "$parent" ]]; do
+        ((SECONDS < 60)) || { echo "the parent never exited"; exit 1; }
+        sleep 0.05
+      done
+      """ <> @attach_to_decision
+
+    # The parent starts the caller, waits for it to record its ancestors,
+    # and exits. System.cmd still collects the caller's output: it waits for
+    # EOF on the stdout the caller inherited.
+    parent = ~S"""
+    bash -c "$1" caller "$2" "$3" &
+    c=$!
+    until [[ -f "$3/recorded" ]] || ! kill -0 "$c" 2>/dev/null; do
+      ((SECONDS < 60)) || exit 1
+      sleep 0.05
+    done
+    [[ -f "$3/recorded" ]] || { echo "the caller died before recording"; exit 1; }
+    """
+
+    {output, 0} =
+      System.cmd("bash", [
+        "-c",
+        parent,
+        "parent",
+        caller,
+        Path.expand("bin/meerkat-attach"),
+        dir
+      ])
+
+    assert output == @orphaned
   end
 
   # A caller relays its backend's log as it grows: from the start for a run
@@ -376,8 +431,8 @@ defmodule Meerkat.ShepherdTest do
   # A waiting caller relays its backend's log every 0.2 s tick and checks
   # its ancestors only once the decision arrives, so it forks nothing per
   # tick. The backend writes each next line only once the test has seen
-  # the last one relayed, so the stream stays quiet across six relays,
-  # which span more than five ticks.
+  # the last one relayed, so the quiet stream spans at least five relays,
+  # each on its own tick.
   test "a caller waiting on a decision runs no process while it relays the backend's log" do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -393,11 +448,13 @@ defmodule Meerkat.ShepherdTest do
 
     fake_release(dir, ~S"""
     echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+    # The backend runs in its own session, so a failed test cannot kill it;
+    # it exits once the test's own waits (@timeout_ms) are surely over.
     for k in {1..6}; do
       echo "tick $k" >&2
-      until [[ -f "$ACKS/$k" ]]; do sleep 0.05; done
+      until [[ -f "$ACKS/$k" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
     done
-    until [[ -f "$DELIVERED" ]]; do sleep 0.05; done
+    until [[ -f "$DELIVERED" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
     """)
 
     # The attach stream stays quiet until the test has seen every tick.
@@ -408,7 +465,7 @@ defmodule Meerkat.ShepherdTest do
     esac
     echo start >> "$CALLS"
     printf 'k\n'
-    until [[ -f "$ACKS/6" ]]; do sleep 0.05; done
+    until [[ -f "$ACKS/6" ]]; do ((SECONDS < 200)) || exit 1; sleep 0.05; done
     echo end >> "$CALLS"
     printf 'x 0\ns 200\n'
     """
