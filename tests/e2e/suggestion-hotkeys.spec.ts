@@ -83,6 +83,16 @@ test("Escape closes the Keys cheat sheet and leaves the form open", async ({ pag
 		await newLine(fileSection, 3).click();
 		await expect(fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="3"] .comment-form')).toBeVisible();
 		await expect(form).toBeVisible();
+
+		// Leaving the suggestion type by keyboard closes the sheet, so
+		// Escape cancels the form again.
+		await form.getByRole("button", { name: "Keys" }).click();
+		await expect(sheet).toBeVisible();
+		await form.getByRole("button", { name: /^Issue$/ }).focus();
+		await page.keyboard.press("Space");
+		await form.locator("textarea").focus();
+		await page.keyboard.press("Escape");
+		await expect(form).toHaveCount(0);
 	} finally {
 		await meerkat.kill();
 	}

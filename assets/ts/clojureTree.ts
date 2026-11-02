@@ -1,15 +1,22 @@
-import type { syntaxTree } from "@codemirror/language";
+import type { SyntaxNode } from "./syntaxEdit.js";
 
 /** Reading the Lezer tree of `@nextjournal/lang-clojure`, shared by the
  *  indenter and the structural editing commands. */
 
-export type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+export type { SyntaxNode };
 
-export const CLOSERS: Record<string, string> = { List: ")", Vector: "]", Map: "}" };
-export const BRACKETS = new Set(["(", ")", "[", "]", "{", "}"]);
+export const CLOSERS: Readonly<Record<string, string>> = { List: ")", Vector: "]", Map: "}" };
+export const BRACKETS: ReadonlySet<string> = new Set(["(", ")", "[", "]", "{", "}"]);
 
 export function isColl(node: SyntaxNode): boolean {
 	return node.name in CLOSERS;
+}
+
+/** `coll`'s parent, or when `coll` is dereffed, the deref's parent: for
+ *  `#?@(`, which parses as a deref, the reader conditional around the
+ *  `@`. */
+export function holder(coll: SyntaxNode): SyntaxNode | null {
+	return coll.parent?.name === "Deref" ? coll.parent.parent : coll.parent;
 }
 
 /** The forms in a collection or the program, `#_` forms included, as

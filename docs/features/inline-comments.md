@@ -146,7 +146,7 @@ since Chrome takes Ctrl+J for Downloads.
 | Key | Does |
 |---|---|
 | ⌥⇧↑ / ⌥⇧↓ | Move the line up / down (CodeMirror's ⌥↑/↓ default, moved here; copy line is dropped) |
-| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Blank lines go. Between two lines that are not blank, the line break and the whitespace around it become one space; in Clojure, no space follows an opener or precedes a closer. Blank lines before the first line that is not blank go, and that line keeps its indentation |
+| ⌃J | Join the next line onto the caret's line, or join all the selected lines. Blank lines go, but for one when all are blank. Between two lines that are not blank, the line break and the whitespace around it become one space; in Clojure, no space follows an opener or precedes a closer. Blank lines before the first line that is not blank go, and that line keeps its indentation |
 
 **Every language with a syntax grammar** (every language in
 `assets/ts/cmLang.ts`):
@@ -158,11 +158,16 @@ since Chrome takes Ctrl+J for Downloads.
 
 ⌥↑ first selects the word at the caret, then each enclosing node,
 the inside of its brackets before the node itself. In a Clojure map,
-a key moves with its value. A node move never moves a node holding a
-syntax error, such as a list the seeded lines cut off from its closer,
-or past one. In a file with no grammar, ⌥↑ and ⌥↓ do nothing, and
-⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key (on macOS, select
-to the start / end).
+a key moves with its value, along with a `#_` form between them, and
+any other `#_` form moves on its own; in a map without a value for
+each key, no key, value or `#_` form in it moves, only the whole map. Metadata
+(`^:private foo`), a reader tag (`#inst "…"`) and a record literal's
+name (`#my.Rec{…}`) move with their form, never off it. A node move never moves
+a node holding a syntax error, such as a list the seeded lines cut
+off from its closer, or past one, and never moves an item of a comma
+list or map that holds one. In a file with no grammar, ⌥↑ and ⌥↓ do
+nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
+(on macOS, select to the start / end).
 
 **Clojure only:**
 
@@ -175,8 +180,9 @@ to the start / end).
 | ⌥S | Splice: remove the enclosing brackets (also works where ⌥S types ß) |
 
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
-keep CodeMirror's own binding (on macOS, move by word). ⌥⇧← / ⌥⇧→
-keep CodeMirror's own binding everywhere (on macOS, select by word),
+keep CodeMirror's own binding (on macOS, move by word; elsewhere, by
+syntax node). ⌥⇧← / ⌥⇧→ keep CodeMirror's own binding everywhere
+(select by word on macOS, by syntax node elsewhere),
 as in Cursive, which has no selecting form move. The Clojure keys
 leave a list the seeded lines cut off from its closer alone, and
 never move a bracket past one cut off from its partner. With several
@@ -187,15 +193,17 @@ carets, a structural key changes each list once.
 - Typing an opening bracket inserts its closer, around the selection
   if there is one. Typing a closer just before the same matched closer
   steps over it. `'` is a quote and gets no partner.
-- Backspace or Delete on one bracket of a matched pair, or on the `#`
-  prefix of its opener (`#{`, `#(`, `#?(`, `#:ns{`), is blocked: the
-  caret steps over the bracket, with any prefix. Inside an empty pair,
-  either deletes both, with any prefix.
+- Backspace or Delete on one bracket of a matched pair, or on the
+  prefix of its opener (the `#` of `#{` and `#(`, the `#?` of `#?(`,
+  the `#?@` of `#?@(`, the `#:` of `#:ns{`), is blocked: the caret
+  steps over the prefix and bracket on that side. A namespace name
+  stays plain text. Inside an empty pair, either deletes both, with
+  any prefix.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.
 - Lines that slurp, barf, raise, splice, a node move or a paste
-  changes re-indent, as Enter indents them.
+  change re-indent, as Enter indents them.
 
 **Keys cheat sheet:** a "Keys" link in the editor's corner opens the
 list of keys for this file's language, ⌃J join lines included,

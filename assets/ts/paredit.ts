@@ -8,8 +8,8 @@ import {
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { BRACKETS, CLOSERS, forms, isColl, type SyntaxNode } from "./clojureTree.js";
-import { whole } from "./syntaxEdit.js";
+import { BRACKETS, CLOSERS, forms, holder, isColl, type SyntaxNode } from "./clojureTree.js";
+import { type Entries, type Span, whole } from "./syntaxEdit.js";
 
 /** Structural editing for Clojure, in the style of Cursive's paredit,
  *  over the Lezer tree of `@nextjournal/lang-clojure`. Each editing
@@ -18,8 +18,12 @@ import { whole } from "./syntaxEdit.js";
  *  from its closer alone, as they cannot see where it ends. */
 
 const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
-/** Forms whose prefix is part of the opener: `#{`, `#(`, `#?(`, `#:a{`. */
+/** Forms whose prefix is part of the opener: `#{`, `#(`, `#?(`, `#?@(`,
+ *  `#:a{`. */
 const PREFIXED = new Set(["Set", "AnonymousFunction", "ReaderConditional", "NamespacedMap"]);
+/** Forms of a prefix and the form it applies to: `^:private foo`,
+ *  `#inst "…"`, `#my.Rec{…}`. */
+const PREFIX_CONTAINERS = new Set(["Meta", "TaggedLiteral", "ConstructorCall"]);
 
 /** The closing bracket of `coll`, or null when the text lacks it. */
 function closerOf(coll: SyntaxNode): SyntaxNode | null {
@@ -35,9 +39,11 @@ function element(node: SyntaxNode): SyntaxNode {
 	return el;
 }
 
-/** Where `coll`'s opening bracket starts, with a `#` prefix it has. */
+/** Where `coll`'s opening bracket starts, with the prefix that is part
+ *  of its opener (`#`, `#?`, `#?@`, `#:ns`, `#::ns`). */
 function openStart(coll: SyntaxNode): number {
-	return coll.parent && PREFIXED.has(coll.parent.name) ? coll.parent.from : coll.from;
+	const parent = holder(coll);
+	return parent && PREFIXED.has(parent.name) ? parent.from : coll.from;
 }
 
 /** The innermost collection whose brackets hold `pos`, or null at the
@@ -63,26 +69,43 @@ function sibling(el: SyntaxNode, dir: -1 | 1): SyntaxNode | null {
 	return null;
 }
 
+/** Whether two carets' changed spans, each in document order, interfere,
+ *  as `edit` says. A caret's insertion at the start or end of the other's
+ *  change composes as each caret meant unless their changes interleave,
+ *  as when one slurps the other's list. */
+function clash(spans: [number, number][], other: [number, number][]): boolean {
+	const meet = spans.some(([from, to]) =>
+		other.some(([a, b]) => (from < b && a < to) || ((from === to || a === b) && from <= b && a <= to)),
+	);
+	if (!meet) return false;
+	const [from, to] = [spans[0][0], spans[spans.length - 1][1]];
+	const [a, b] = [other[0][0], other[other.length - 1][1]];
+	return from < b && a < to;
+}
+
 /** The changes, and the selection mapped through them, for each range's
- *  head: `edit` returns the changes for one caret, or null. A caret whose
- *  changes touch text an earlier caret's change, such as a second caret
- *  in the same list, is left as it is. Lines the changes reach re-indent.
- *  Null when no range changes. */
+ *  head: `edit` returns the changes for one caret, or null. A caret is
+ *  left as it is when one of its changes overlaps an earlier caret's, or
+ *  inserts at or inside text the other replaces or the other way round,
+ *  and the text from its first change to its last overlaps the earlier
+ *  caret's: a second caret in the same list, or in a list the first
+ *  slurps. Lines the changes reach re-indent. Null when no range
+ *  changes. */
 function edit(
 	state: EditorState,
 	userEvent: string,
 	command: (pos: number) => { changes: ChangeSpec[]; cursor?: number; assoc?: -1 | 1 } | null,
 ): TransactionSpec | null {
 	let changed = false;
-	const touched: [number, number][] = [];
+	const touched: [number, number][][] = [];
 	const spec = state.changeByRange((range: SelectionRange) => {
 		const result = command(range.head);
 		if (!result) return { range };
 		const set = state.changes(result.changes);
 		const spans: [number, number][] = [];
 		set.iterChangedRanges((from, to) => spans.push([from, to]));
-		if (spans.some(([from, to]) => touched.some(([a, b]) => from <= b && a <= to))) return { range };
-		touched.push(...spans);
+		if (touched.some((other) => clash(spans, other))) return { range };
+		touched.push(spans);
 		changed = true;
 		return {
 			changes: set,
@@ -240,17 +263,28 @@ export function raise(state: EditorState): TransactionSpec | null {
 	});
 }
 
-/** The entries of a map, each from its key to its value, so ⇧⌘↑/⇧⌘↓
- *  move a key with its value. Null for any other node, and for a map
- *  without a value for each key or that is not whole. */
-export function mapEntries(_state: EditorState, list: SyntaxNode): { from: number; to: number }[] | null {
-	if (list.name !== "Map" || list.parent?.name === "Set" || !whole(list)) return null;
-	const all = forms(list).filter((node) => node.name !== "Discard");
-	if (all.length % 2 !== 0) return null;
-	const entries = [];
-	for (let i = 0; i < all.length; i += 2) entries.push({ from: all[i].from, to: all[i + 1].to });
-	return entries;
-}
+/** The items ⇧⌘↑/⇧⌘↓ move in Clojure where they are not each child.
+ *  None for metadata, a reader tag or a record literal with its form, so
+ *  neither part moves off the other. A map's items are each entry from
+ *  its key to its value, with any `#_` form between them, and each other
+ *  `#_` form on its own; none for a map without a value for each key.
+ *  Null for any other node, a set's braces included, which parse as a
+ *  map inside the set. */
+export const clojureItems: Entries = (node) => {
+	if (PREFIX_CONTAINERS.has(node.name)) return [];
+	if (node.name !== "Map" || node.parent?.name === "Set") return null;
+	const items: Span[] = [];
+	let key: SyntaxNode | null = null;
+	for (const form of forms(node)) {
+		if (form.name === "Discard") {
+			if (!key) items.push({ from: form.from, to: form.to });
+		} else if (key) {
+			items.push({ from: key.from, to: form.to });
+			key = null;
+		} else key = form;
+	}
+	return key ? [] : items;
+};
 
 /** Where moving one form from `pos` lands: past the next form, or out
  *  past the closer after the last one (`dir` 1); before the previous
@@ -295,20 +329,25 @@ function bracketAt(state: EditorState, from: number): { node: SyntaxNode; matche
 	return { node, matched: node.name in PAIRS ? closer !== null : closer?.from === node.from };
 }
 
-/** The matched collection whose `#` prefix holds the character at `at`,
- *  as `#` does in `#{`. */
+/** The matched collection whose prefix holds the character at `at`, as
+ *  `#` does in `#{`: the `#`, `#?` or `#?@` before its opener, or the
+ *  `#:` or `#::` of a namespaced map, whose namespace stays plain text. */
 function prefixOf(state: EditorState, at: number): SyntaxNode | null {
 	if (at < 0 || at >= state.doc.length) return null;
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(at, 1); node; node = node.parent) {
 		if (!PREFIXED.has(node.name)) continue;
-		const coll = node.lastChild;
-		return coll && isColl(coll) && at < coll.from && closerOf(coll) ? coll : null;
+		const last = node.lastChild;
+		const coll = last?.name === "Deref" ? last.lastChild : last;
+		if (!coll || !isColl(coll) || !closerOf(coll)) return null;
+		if (node.name !== "NamespacedMap") return at < coll.from ? coll : null;
+		const autoResolved = state.doc.sliceString(node.from, node.from + 3) === "#::";
+		return at < node.from + (autoResolved ? 3 : 2) ? coll : null;
 	}
 	return null;
 }
 
 /** Backspace (`dir` -1) or Delete (`dir` 1) at a caret beside a bracket
- *  of a matched pair, or its `#` prefix: steps over it, or deletes the
+ *  of a matched pair, or its opener's prefix: steps over it, or deletes the
  *  pair when the caret sits inside it and it is empty. Null when no caret
  *  is beside one, so the editor's own deletion runs; a selection always
  *  deletes. While any caret is guarded, the other carets delete one
@@ -319,10 +358,10 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 	const spec = state.changeByRange((range) => {
 		const pos = range.head;
 		const at = dir < 0 ? pos - 1 : pos;
-		const prefixed = prefixOf(state, at);
-		if (prefixed?.firstChild) {
+		const coll = prefixOf(state, at);
+		if (coll?.firstChild) {
 			guarded = true;
-			return { range: EditorSelection.cursor(dir < 0 ? openStart(prefixed) : prefixed.firstChild.to) };
+			return { range: EditorSelection.cursor(dir < 0 ? openStart(coll) : coll.firstChild.to) };
 		}
 		const bracket = bracketAt(state, at);
 		if (!bracket?.matched) {
@@ -343,7 +382,7 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 			const set = state.changes({ from, to: closer.to });
 			return { changes: set, range: EditorSelection.cursor(from) };
 		}
-		// Backspace steps over a `#` prefix with its opener.
+		// Backspace steps over a prefix with its opener.
 		const to = dir < 0 && bracket.node.from === opener.from ? openStart(parent) : pos + dir;
 		return { range: EditorSelection.cursor(to) };
 	});

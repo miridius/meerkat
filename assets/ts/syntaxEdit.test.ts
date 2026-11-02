@@ -146,6 +146,11 @@ describe("moveNode", () => {
 		expect(move("x\n(let [|b", clojure(), -1)).toBeNull();
 	});
 
+	test("moves no item of a comma list that holds a syntax error", () => {
+		expect(move("[|1, 2 3]", javascript(), 1)).toBeNull();
+		expect(move("[1, 2 |3]", javascript(), -1)).toBeNull();
+	});
+
 	test("moves the node a selection covers", () => {
 		expect(move("(a <(b c)> d)", clojure(), 1)).toBe("(a d <(b c)>)");
 	});
@@ -183,6 +188,10 @@ describe("joinLines", () => {
 		expect(join("<foo\n\nbar>")).toBe("<foo bar>");
 		expect(join("<foo\n  \n  bar>")).toBe("<foo bar>");
 		expect(join("<\n\n  a\nb>")).toBe("<  a b>");
+	});
+
+	test("keeps one blank line when all are blank", () => {
+		expect(join("|\n\nb")).toBe("|\nb");
 	});
 
 	test("adds no space where tight says so", () => {
