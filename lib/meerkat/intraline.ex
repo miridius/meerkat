@@ -20,8 +20,9 @@ defmodule Meerkat.Intraline do
 
   Context, already-matched runs and runs with only deletions or only
   additions stay in their hunk unsplit. Every hunk's header is rebuilt
-  as `@@ -a,b +c,d @@`, with git's line ranges but without the text
-  git puts after the second `@@`.
+  as `@@ -a,b +c,d @@`, without the text git puts after the second
+  `@@`. The first part's header gives git's range for the whole hunk;
+  each later part's header counts only its own lines.
   """
 
   alias Meerkat.Moves
@@ -54,15 +55,22 @@ defmodule Meerkat.Intraline do
 
     final = walk(Moves.hunk_lines(body), state)
 
-    out =
+    parts =
       case final.current do
         [] -> final.acc
-        cur -> [emit(Enum.reverse(cur), final.cur_old_start, final.cur_new_start) | final.acc]
+        cur -> [{Enum.reverse(cur), final.cur_old_start, final.cur_new_start} | final.acc]
       end
 
-    case out do
-      [] -> [orig_hunk]
-      _ -> Enum.reverse(out)
+    # The parts follow each other with no hidden lines between them, so
+    # the review page shows only the first part's header, which gives
+    # git's range for the whole hunk.
+    case Enum.reverse(parts) do
+      [] ->
+        [orig_hunk]
+
+      [{first, _, _} | rest] ->
+        whole = {old_start, final.old_cur - old_start, new_start, final.new_cur - new_start}
+        [emit(first, whole) | Enum.map(rest, &emit/1)]
     end
   end
 
@@ -105,8 +113,8 @@ defmodule Meerkat.Intraline do
       paired = Enum.reverse(state.current, Enum.concat(paired_dels ++ paired_adds))
 
       acc = [
-        emit(Enum.concat(orphan), state.old_cur + pair_count, state.new_cur + pair_count),
-        emit(paired, state.cur_old_start, state.cur_new_start) | state.acc
+        {Enum.concat(orphan), state.old_cur + pair_count, state.new_cur + pair_count},
+        {paired, state.cur_old_start, state.cur_new_start} | state.acc
       ]
 
       walk(rest, %{
@@ -132,9 +140,13 @@ defmodule Meerkat.Intraline do
 
   defp collect_run(rest, dels, adds), do: {Enum.reverse(dels), Enum.reverse(adds), rest}
 
-  defp emit(body, old_start, new_start) do
+  defp emit({body, old_start, new_start}) do
     old_count = Enum.count(body, &(elem(&1, 0) in [:context, :del]))
     new_count = Enum.count(body, &(elem(&1, 0) in [:context, :add]))
+    emit(body, {old_start, old_count, new_start, new_count})
+  end
+
+  defp emit(body, {old_start, old_count, new_start, new_count}) do
     text = Enum.map_join(body, &(elem(&1, 1) <> "\n"))
     "@@ -#{old_start},#{old_count} +#{new_start},#{new_count} @@\n#{text}"
   end
