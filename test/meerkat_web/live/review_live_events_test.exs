@@ -440,7 +440,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(
              view,
              ".toolbar-line-counts",
-             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\+3\s*-2\s*$/
+             ~r/^\s*showing\s*\+1\s*-1\s*of\s*\/\s*\+3\s*-2\s*$/
            )
   end
 

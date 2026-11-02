@@ -170,8 +170,8 @@ When every file is shown expanded, the toolbar shows one total for
 the whole diff, `+120 -30`. When the file filter hides a file or a
 file is collapsed, it shows the total of the expanded files the
 filter shows, then the whole diff's total: `showing +40 -10 of +120 -30`,
-or `+40 -10 / +120 -30` when the toolbar is short of room, unless the
-two totals are equal, when it shows the one total.
+or `+40 -10 / +120 -30` when the toolbar is short of room. When the two
+totals are equal, it shows the one total.
 
 ## What state lives where
 
