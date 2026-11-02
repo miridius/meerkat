@@ -17,8 +17,12 @@
 //                                    (scripts/bump-deps.sh)
 //
 // Both fail closed: a release list or advisory feed that cannot be read
-// exits 2. HTTP goes through curl, so tests can stub it on PATH. GitHub
-// requests carry GITHUB_TOKEN, or else gh's token, when there is one.
+// exits 2. GitHub sometimes answers a release list with a page that holds
+// none of its releases, so such a page is read again, and is unreadable
+// once GITHUB_READS reads in all have held none. HTTP goes through curl,
+// which tries a request again after a timeout or a 408, 429, 500, 502,
+// 503 or 504 answer; tests stub curl on PATH. GitHub requests carry
+// GITHUB_TOKEN, or else gh's token, when there is one.
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -178,7 +182,8 @@ async function curl(
 ): Promise<Uint8Array> {
 	// Gives up when connecting takes 30s or a transfer stays under 1 KiB/s
 	// for a minute, not after a fixed time: a release archive can take
-	// minutes on a slow link.
+	// minutes on a slow link. Tries again, three times at most, after a
+	// timeout or a 408, 429, 500, 502, 503 or 504 answer.
 	const args = [
 		"curl",
 		"-sSfL",
@@ -188,6 +193,8 @@ async function curl(
 		"1024",
 		"--speed-time",
 		"60",
+		"--retry",
+		"3",
 		"-K",
 		"-",
 	];
@@ -210,7 +217,9 @@ async function curl(
 		new Response(proc.stderr).text(),
 		proc.exited,
 	]);
-	if (code !== 0) throw new Unreadable(`${url}: ${err.trim() || `curl exit ${code}`}`);
+	// curl writes an error line for each try; the last is the one it gave up on.
+	if (code !== 0)
+		throw new Unreadable(`${url}: ${err.trim().split("\n").at(-1) || `curl exit ${code}`}`);
 	return body;
 }
 
@@ -241,17 +250,25 @@ export async function sha256(...urls: string[]): Promise<string> {
 
 // ----------------------------------------------------------- release feeds
 
+// Every repo pinned has releases, so a GitHub release list that holds
+// none is read again, up to this many reads in all.
+const GITHUB_READS = 5;
+
 // githubReleases REPO TAG: REPO's published, non-pre-release GitHub
 // releases whose tag matches TAG, versioned by TAG's first group.
 async function githubReleases(repo: string, tag: RegExp): Promise<Release[]> {
-	const list = await json(
-		`https://api.github.com/repos/${repo}/releases?per_page=100`,
-	);
-	if (!Array.isArray(list)) throw new Unreadable(`${repo} releases: not a list`);
-	return list.flatMap((r) => {
-		const m = !r.draft && !r.prerelease && String(r.tag_name).match(tag);
-		return m ? [{ version: m[1], date: date(r.published_at, `${repo} ${r.tag_name}`) }] : [];
-	});
+	for (let read = 1; read <= GITHUB_READS; read++) {
+		const list = await json(
+			`https://api.github.com/repos/${repo}/releases?per_page=100`,
+		);
+		if (!Array.isArray(list)) throw new Unreadable(`${repo} releases: not a list`);
+		const releases = list.flatMap((r) => {
+			const m = !r.draft && !r.prerelease && String(r.tag_name).match(tag);
+			return m ? [{ version: m[1], date: date(r.published_at, `${repo} ${r.tag_name}`) }] : [];
+		});
+		if (releases.length > 0) return releases;
+	}
+	throw new Unreadable(`${repo}: GitHub listed no release in ${GITHUB_READS} reads`);
 }
 
 // repoAdvisories REPO NAME: the vulnerable ranges of REPO's published
