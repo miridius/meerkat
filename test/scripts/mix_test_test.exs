@@ -329,6 +329,22 @@ defmodule Meerkat.MixTestScriptTest do
       end
     end
 
+    # Why six decimals: see TIMEFORMAT in scripts/run-test-file.sh.
+    test "a file's times are written with all the decimals bash allows", ctx do
+      secs = Path.join(ctx.base, "a.secs")
+
+      assert {_, 0} =
+               cmd(ctx, "bash", ["scripts/run-test-file.sh", "1", "test/a_test.exs", secs])
+
+      assert {version, 0} =
+               cmd(ctx, "bash", ["-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"])
+
+      [major, minor] = version |> String.split() |> Enum.map(&String.to_integer/1)
+      digits = if {major, minor} >= {5, 3}, do: 6, else: 3
+
+      assert File.read!(secs) =~ ~r/\A(\d+[.,]\d{#{digits}} ){2}\d+[.,]\d{#{digits}}\n\z/
+    end
+
     test "times written with a decimal comma are read and add up exactly", ctx do
       # Added as floats, 1.1 and 0.1 show as 1.3.
       assert {out, 0} = file_times(ctx, "0,5 1,1 0,1")

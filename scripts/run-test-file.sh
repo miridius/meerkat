@@ -28,8 +28,12 @@ test_file_lock "$1"
 # <seconds file>; the test's stderr goes on to fd 4. Under `time` a subshell
 # would report from itself, after its own redirections, or not at all if it
 # ends in exec.
+#
+# Each time asks for six decimals: bash 5.3 rounds a time to fewer without
+# carrying into the seconds, so at three it writes x.9995 s or more as
+# "x.:00". Bash before 5.3 writes at most three, and carries.
 exec 4>&2
-TIMEFORMAT='%R %U %S'
+TIMEFORMAT='%6R %6U %6S'
 {
   time MIX_OS_CONCURRENCY_LOCK=0 ELIXIR_ERL_OPTIONS="+S 4 +sbwt none ${ELIXIR_ERL_OPTIONS:-}" \
     mix test --no-compile "$2" 9>&- 2>&4 4>&-
