@@ -18,14 +18,17 @@
 //
 // Both fail closed: a release list or advisory feed that cannot be read
 // exits 2. GitHub sometimes answers a release list with a page that holds
-// none of its releases, so such a page is read again, and is unreadable
-// once GITHUB_READS reads in all have held none. HTTP goes through curl,
-// which tries a request again after a timeout or a 408, 429, 500, 502,
-// 503 or 504 answer; tests stub curl on PATH. GitHub requests carry
-// GITHUB_TOKEN, or else gh's token, when there is one.
+// none of its releases, so a page with none that githubReleases takes is
+// read again, and is unreadable once GITHUB_READS reads in all have held
+// none. HTTP goes through curl, which tries a request again after a
+// timeout, a 408, 429, 500, 502, 503 or 504 answer, or a cancelled HTTP/2
+// stream; tests stub curl on PATH. GitHub requests carry GITHUB_TOKEN, or
+// else gh's token, when there is one.
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { readExcludes, untilAccepted, WORKSPACE } from "./age-excludes";
 
 const DAY_MS = 86_400_000;
@@ -176,14 +179,31 @@ function githubToken(): Promise<string> {
 	return tokenPromise;
 }
 
+// downloadFile: a new file path in one directory for the run's downloads,
+// removed when the process exits, which a failed request can make it do
+// while others are still in flight.
+let downloads = "";
+let downloadCount = 0;
+function downloadFile(): string {
+	if (!downloads) {
+		const dir = mkdtempSync(join(tmpdir(), "toolchain-curl-"));
+		process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
+		downloads = dir;
+	}
+	return join(downloads, String(++downloadCount));
+}
+
+const CURL_RETRIES = 3;
+
 async function curl(
 	url: string,
 	opts: { head?: boolean } = {},
 ): Promise<Uint8Array> {
-	// Gives up when connecting takes 30s or a transfer stays under 1 KiB/s
-	// for a minute, not after a fixed time: a release archive can take
-	// minutes on a slow link. Tries again, three times at most, after a
-	// timeout or a 408, 429, 500, 502, 503 or 504 answer.
+	// Abandons a try when connecting takes 30s or a transfer stays under
+	// 1 KiB/s for a minute, not after a fixed time: a release archive can
+	// take minutes on a slow link. Tries again, CURL_RETRIES times at most,
+	// after a timeout, a 408, 429, 500, 502, 503 or 504 answer, or an
+	// HTTP/2 stream the server cancels (exit 92), which --retry leaves out.
 	const args = [
 		"curl",
 		"-sSfL",
@@ -194,7 +214,7 @@ async function curl(
 		"--speed-time",
 		"60",
 		"--retry",
-		"3",
+		String(CURL_RETRIES),
 		"-K",
 		"-",
 	];
@@ -205,22 +225,28 @@ async function curl(
 		config = 'header = "Accept: application/vnd.github+json"\n';
 		if (token) config += `header = "Authorization: Bearer ${token}"\n`;
 	}
-	args.push(url);
-	// The token goes in a curl config on stdin, kept out of the process list.
-	const proc = Bun.spawn(args, {
-		stdin: new TextEncoder().encode(config),
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [body, err, code] = await Promise.all([
-		new Response(proc.stdout).bytes(),
-		new Response(proc.stderr).text(),
-		proc.exited,
-	]);
-	// curl writes an error line for each try; the last is the one it gave up on.
-	if (code !== 0)
-		throw new Unreadable(`${url}: ${err.trim().split("\n").at(-1) || `curl exit ${code}`}`);
-	return body;
+	// curl empties a file, not a pipe, before trying again, so the body
+	// holds no part of a failed try.
+	const out = downloadFile();
+	args.push("-o", out, url);
+	try {
+		for (let retry = 0; ; retry++) {
+			// The token goes in a curl config on stdin, kept out of the process list.
+			const proc = Bun.spawn(args, {
+				stdin: new TextEncoder().encode(config),
+				stdout: "ignore",
+				stderr: "pipe",
+			});
+			const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+			if (code === 92 && retry < CURL_RETRIES) continue;
+			// curl writes an error line for each try; the last is the one it gave up on.
+			const gaveUp = err.split("\n").findLast((line) => line.startsWith("curl: ("));
+			if (code !== 0) throw new Unreadable(`${url}: ${gaveUp || `curl exit ${code}`}`);
+			return readFileSync(out);
+		}
+	} finally {
+		rmSync(out, { force: true });
+	}
 }
 
 async function text(url: string): Promise<string> {
@@ -250,8 +276,8 @@ export async function sha256(...urls: string[]): Promise<string> {
 
 // ----------------------------------------------------------- release feeds
 
-// Every repo pinned has releases, so a GitHub release list that holds
-// none is read again, up to this many reads in all.
+// Every repo pinned has stable releases whose tags match, so a GitHub
+// release list that holds none is read again, up to this many reads in all.
 const GITHUB_READS = 5;
 
 // githubReleases REPO TAG: REPO's published, non-pre-release GitHub
@@ -268,7 +294,9 @@ async function githubReleases(repo: string, tag: RegExp): Promise<Release[]> {
 		});
 		if (releases.length > 0) return releases;
 	}
-	throw new Unreadable(`${repo}: GitHub listed no release in ${GITHUB_READS} reads`);
+	throw new Unreadable(
+		`${repo}: GitHub listed no stable release whose tag matches ${tag} in ${GITHUB_READS} reads`,
+	);
 }
 
 // repoAdvisories REPO NAME: the vulnerable ranges of REPO's published
