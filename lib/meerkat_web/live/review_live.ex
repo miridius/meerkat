@@ -326,9 +326,13 @@ defmodule MeerkatWeb.ReviewLive do
 
     case stale_oid_check(repo_path, rendered_file, becoming_approved?) do
       :ok ->
-        if rid != "unbound" do
-          _ = ReviewServer.set_approved(rid, file_name, becoming_approved?)
-        end
+        # The new state goes out with the reply, so the section has
+        # collapsed when the client handles the scroll pushed below.
+        socket =
+          if rid != "unbound",
+            do:
+              assign(socket, state: ReviewServer.set_approved(rid, file_name, becoming_approved?)),
+            else: socket
 
         # In a staged review, mirror into the global per-branch
         # approval cache so future hook runs on this branch can
@@ -359,13 +363,11 @@ defmodule MeerkatWeb.ReviewLive do
               assign(socket, flash_error: nil)
           end
 
-        # On approve, the file section collapses — without this the
-        # following file leaps up by ~viewport height. Push a client
-        # event so the just-approved header re-anchors to the top of
-        # the viewport.
+        # On approve, the file section collapses, so scroll on to the
+        # next file.
         socket =
           if becoming_approved?,
-            do: scroll_file_into_view(socket, state.files, file_name),
+            do: scroll_past_file(socket, file_name),
             else: socket
 
         {:noreply, socket}
@@ -601,6 +603,13 @@ defmodule MeerkatWeb.ReviewLive do
       else
         assign(socket, collapsed_unapproved: toggle_member(collapsed, file_name))
       end
+
+    %{expanded_approved: expanded, collapsed_unapproved: collapsed} = socket.assigns
+
+    socket =
+      if file_section_collapsed?(state, expanded, collapsed, file_name),
+        do: scroll_past_file(socket, file_name),
+        else: socket
 
     {:noreply, socket}
   end
@@ -975,9 +984,24 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
-  defp scroll_file_into_view(socket, files, file_name) do
-    idx = Enum.find_index(files, &(&1.file_name == file_name))
-    if idx, do: push_event(socket, "scroll-into-view", %{id: "file-#{idx}"}), else: socket
+  # Scrolls to the next shown file after `file_name`, whose section has
+  # just collapsed, or to `file_name`'s own when none follows.
+  defp scroll_past_file(socket, file_name) do
+    %{state: state, filter_input: filter_input, only_file_index: only_file_index} =
+      socket.assigns
+
+    case Enum.find_index(state.files, &(&1.file_name == file_name)) do
+      nil ->
+        socket
+
+      idx ->
+        target =
+          visible_indices(state, filter_input, only_file_index)
+          |> Enum.filter(&(&1 > idx))
+          |> Enum.min(fn -> idx end)
+
+        push_event(socket, "scroll-into-view", %{id: "file-#{target}"})
+    end
   end
 
   # Approve writes EVERY currently-staged (file_name, oid) into the

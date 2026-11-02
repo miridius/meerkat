@@ -26,6 +26,18 @@ The caret rotates `-90°` to point right when collapsed; back to
 `▾` (pointing down) when expanded. Pure CSS transition (120ms
 ease), no JS.
 
+## Scroll on collapse
+
+Approving a file, or clicking its header to collapse it, scrolls
+the page to the next file the list shows, skipping files the
+filters hide. The next file's header lands exactly where it sticks
+under the toolbar, so scrolling on moves only the diff beneath it.
+When no shown file follows, the page scrolls toward the collapsed
+file's own header instead, as far as the page's end allows. The
+server pushes a `scroll-into-view` event naming that file's section,
+and the client scrolls it smoothly into place. Expanding a file and
+un-approving one push no scroll.
+
 ## Why collapse on approve
 
 A reviewer who has approved a file is done with it. Keeping the
