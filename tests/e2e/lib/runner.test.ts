@@ -226,23 +226,21 @@ test("starting reviews together stops those that started when another fails", as
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
 	const seen = join(dir, "seen");
 	const serving = join(dir, "serving");
-	// The failing review exits once the other has started and a second
-	// before it prints its URL, so the failure always comes first.
+	// The serving review prints its URL a second late, so the other's
+	// failure comes first: a start that throws at once leaves it running.
 	writeFileSync(
 		serving,
 		`#!/bin/sh\necho $$ > "$SEEN"\nsleep 1\necho "Paused for human review at http://127.0.0.1:1/" >&2\nexec sleep 60\n`,
 		{ mode: 0o755 },
 	);
 	const failing = join(dir, "failing");
-	writeFileSync(failing, `#!/bin/sh\nuntil [ -s "$SEEN" ]; do sleep 0.05; done\necho boom >&2\nexit 1\n`, {
-		mode: 0o755,
-	});
+	writeFileSync(failing, "#!/bin/sh\necho boom >&2\nexit 1\n", { mode: 0o755 });
 	let pid = 0;
 	try {
 		await expect(
 			startMeerkats(
 				{ bin: serving, args: [], fixture: { dir }, env: { SEEN: seen } },
-				{ bin: failing, args: [], fixture: { dir }, env: { SEEN: seen } },
+				{ bin: failing, args: [], fixture: { dir } },
 			),
 		).rejects.toThrow(/exited \(code=1\) before printing review URL[\s\S]*boom/);
 		pid = Number(readFileSync(seen, "utf8").trim());
@@ -280,9 +278,9 @@ test("a boot still waiting for its URL when its test ends is stopped, and its st
 test("a boot that printed its URL is no longer pending", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
 	const bin = join(dir, "meerkat");
-	writeFileSync(bin, `#!/bin/sh\necho "Paused for human review at http://127.0.0.1:1/" >&2\nexec sleep 60\n`, {
-		mode: 0o755,
-	});
+	// It exits after printing its URL, so a boot left pending fails the
+	// test at once rather than holding it open.
+	writeFileSync(bin, `#!/bin/sh\necho "Paused for human review at http://127.0.0.1:1/" >&2\n`, { mode: 0o755 });
 	const runner = await startMeerkat({ bin, args: [], fixture: { dir } });
 	try {
 		expect(await stopPendingBoots()).toEqual([]);

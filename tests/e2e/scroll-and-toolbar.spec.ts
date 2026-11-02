@@ -1,9 +1,8 @@
 import { rmSync } from "node:fs";
 import type { BrowserContext, Page } from "@playwright/test";
-import { budget } from "./lib/budget";
 import { makeFixture, manifestRoot, ownedTmpDir } from "./lib/fixture";
 import { startMeerkat, startMeerkats } from "./lib/runner";
-import { expect, test } from "./lib/test";
+import { afterNextFrame, expect, test } from "./lib/test";
 
 const PROD_MANIFEST = [
 	"abc1234567890",
@@ -39,8 +38,9 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 		const scrollY = () => page.evaluate(() => Math.round(window.scrollY));
 
 		// No prior scroll was stashed for this origin, so the restore is a
-		// no-op and the page stays at the top.
-		await page.waitForTimeout(budget(350));
+		// no-op and the page stays at the top. A restore would run on the
+		// next frame, the diff being tall enough by now.
+		await afterNextFrame(page);
 		expect(await scrollY()).toBe(0);
 
 		// ReviewLive.mount/3 uses static_changed?/1 to redirect reconnecting

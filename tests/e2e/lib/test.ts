@@ -14,7 +14,7 @@ declare global {
 	}
 }
 
-// Playwright's own `test`, for a spec that must see the page before
+// `test` without the join wait, for a spec that must see the page before
 // LiveView joins. A test that ended while a review it started was
 // booting, as when it timed out, leaves that boot running: its `page`
 // stops it, and reports its stderr. Every spec waiting on a review URL
