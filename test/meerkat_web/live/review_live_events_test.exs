@@ -28,15 +28,14 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   ## --- Connection ---
 
-  test "the page takes no input until LiveView connects, and hooks the reconnect gate",
-       %{conn: conn} do
+  test "the page takes no input until LiveView connects", %{conn: conn} do
     put_test_vite_manifest()
     put_state(%ReviewState{files: [@plain_file]})
     dead = conn |> get("/") |> html_response(200) |> LazyHTML.from_document()
     assert dead |> LazyHTML.query("main#meerkat-root[inert]") |> Enum.count() == 1
 
     view = mount_unbound(conn)
-    assert has_element?(view, "main#meerkat-root:not([inert])[phx-hook=ConnectionGate]")
+    assert has_element?(view, "main#meerkat-root:not([inert])")
   end
 
   ## --- Toolbar ---

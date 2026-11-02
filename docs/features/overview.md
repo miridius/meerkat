@@ -157,8 +157,10 @@ first connects, and from the moment it loses the connection until it
 reconnects, its controls take no clicks, focus or typing, the
 pointer shows progress over the page, and the connection pill says
 `connecting…`, or `disconnected` once the connection drops or an
-attempt fails, so no action is lost to the server not listening. On
-reconnecting, the control that had focus gets it back, caret included.
+attempt fails, so no action is lost to the server not listening. Once
+it has connected, a lost connection still leaves its text selectable,
+searchable and scrollable, and the focused control keeps its focus
+and caret.
 
 ## Line counts
 

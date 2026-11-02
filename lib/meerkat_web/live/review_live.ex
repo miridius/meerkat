@@ -1145,14 +1145,8 @@ defmodule MeerkatWeb.ReviewLive do
 
     ~H"""
     <%!-- The page paints before LiveView joins, and a click made then is
-          dropped, so the unconnected render takes no input. ConnectionGate
-          makes it inert again while LiveView reconnects. --%>
-    <main
-      class="review"
-      id="meerkat-root"
-      phx-hook="ConnectionGate"
-      inert={not connected?(@socket)}
-    >
+          dropped, so the unconnected render takes no input. --%>
+    <main class="review" id="meerkat-root" inert={not connected?(@socket)}>
       <.diff_toolbar
         mode={@diff_mode}
         wrap_lines={@wrap_lines}
