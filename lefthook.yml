@@ -26,6 +26,14 @@ pre-commit:
       priority: 4
       run: bash scripts/mutate.sh staged
 
+# A rebase skips pre-commit, so its dependency bump is committed after it.
+post-rewrite:
+  # Streamed as pre-commit is: the bump's commit runs pre-commit's checks.
+  follow: true
+  commands:
+    rebase-bump:
+      run: bun scripts/rebase-bump.ts {1}
+
 # A script, not a command: see .lefthook/pre-push/pre-push.sh.
 pre-push:
   scripts:

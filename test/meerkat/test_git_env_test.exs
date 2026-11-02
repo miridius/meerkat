@@ -46,4 +46,14 @@ defmodule Meerkat.TestGitEnvTest do
 
     assert git(base, ["config", "--list", "--show-scope"]) == "global\tmaintenance.auto=false"
   end
+
+  # A non-interactive rebase's hooks get GIT_SEQUENCE_EDITOR=:, which would
+  # beat a test's own.
+  test "git uses the sequence editor a test sets, despite an inherited one", %{base: base} do
+    Meerkat.TestHelpers.put_env("GIT_SEQUENCE_EDITOR", ":")
+    Meerkat.TestHelpers.put_git_config_env()
+
+    assert git(base, ["-c", "sequence.editor=test-editor", "var", "GIT_SEQUENCE_EDITOR"]) ==
+             "test-editor"
+  end
 end

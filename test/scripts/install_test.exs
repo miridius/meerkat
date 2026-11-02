@@ -75,14 +75,22 @@ defmodule Meerkat.InstallScriptTest do
       %{mise: Path.join(shim, "mise"), pinned: pinned, pinned_marker: pinned_marker}
     end
 
-    test "builds on the tools mise pins", ctx do
+    test "installs the pinned tools, then builds on them", ctx do
+      log = Path.join(ctx.pinned, "log")
+
       executable(
         ctx.mise,
-        ~s(#!/bin/sh\n[ "$1" = env ] && echo 'export PATH="#{ctx.pinned}:$PATH"'\nexit 0\n)
+        ~s(#!/bin/sh\n[ "$1" = env ] && echo 'export PATH="#{ctx.pinned}:$PATH"'\necho "mise $*" >> '#{log}'\nexit 0\n)
       )
+
+      executable(Path.join(ctx.pinned, "bun"), ~s(#!/bin/sh\necho "pinned bun $*" >> '#{log}'\n))
 
       assert {_, status} = install(ctx)
       assert status != 0
+
+      assert File.read!(log) ==
+               "mise install erlang elixir bun\nmise env --shell bash\npinned bun scripts/setup-toolchain.ts\n"
+
       assert File.exists?(ctx.pinned_marker)
       refute File.exists?(ctx.marker)
     end

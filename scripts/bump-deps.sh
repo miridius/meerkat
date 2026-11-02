@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit: moves each direct Hex and JS dependency that
-# scripts/outdated.sh would report to its latest release, and stages the
+# Pre-commit, and post-rewrite through scripts/rebase-bump.ts: moves each
+# direct Hex and JS dependency that scripts/outdated.sh would report to its
+# latest release, and stages the
 # dependency files the bump changed into the commit. Packages that are
 # current are left alone, so a commit carries no dependency change when
 # nothing is behind.
@@ -21,14 +22,16 @@
 #   floor lifted for it.
 # - Toolchain: scripts/toolchain.ts moves the pins in
 #   .tool-versions, .github/toolchain.env, package.json's packageManager and the
-#   workflows' actions onto their targets.
+#   workflows' actions onto their targets. Then scripts/setup-toolchain.ts
+#   installs any pinned Hex or rebar3 still missing, and with mise any
+#   pinned Erlang, Elixir or Bun, so the checks do not run without them.
 #
 # A package whose latest release is the one its scripts/dep-exemptions.json
 # entry names is left where it is; for JS, that is either the latest
 # release past the 24h floor or the registry's latest. Before its
 # reports, it installs the locked dependencies, refusing the commit when
 # that would change mix.lock or pnpm-lock.yaml. Any failure refuses the
-# commit.
+# commit, or, after a rebase, leaves the rebase without a bump commit.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -111,6 +114,7 @@ fi
 bun scripts/age-excludes.ts prune
 bun scripts/advisory-fixes.ts
 bun scripts/toolchain.ts bump
+bun scripts/setup-toolchain.ts
 
 bumped=()
 for i in "${!files[@]}"; do

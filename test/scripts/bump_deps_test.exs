@@ -1,197 +1,13 @@
 defmodule Meerkat.BumpDepsHookTest do
-  # Commits through the repo's real lefthook.yml, scripts/bump-deps.sh,
-  # scripts/deps-common.sh, scripts/bump-hex-requirements.exs and
-  # scripts/check.sh. Only mix,
-  # pnpm, bun and bunx are replaced, by stubs on PATH: they log each run,
-  # report the outdated packages a test sets up, and record an update by
-  # appending a line to the lockfile or manifest it would change.
-  use Meerkat.Case, async: false
+  # Commits through the fixture Meerkat.BumpDepsCase builds.
+  use Meerkat.BumpDepsCase
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
-
-  @root File.cwd!()
-
-  @mix_exs """
-  defmodule Fixture.MixProject do
-    use Mix.Project
-
-    defp deps do
-      [
-        {:bandit, "~> 1.11.0"},
-        {:jason, "~> 1.2"},
-        {:plug, "~> 1.0"}
-      ]
-    end
-  end
-  """
-
-  @hex_header "Dependency  Only  Current  Latest  Status\n"
-
-  @hex_behind @hex_header <>
-                """
-                bandit            1.11.0   1.12.5  Update not possible
-                jason             1.4.3    1.4.5   Update possible
-                plug              1.20.3   2.1.0   Update not possible
-                mdex              0.14.1   0.14.1  Up-to-date
-                """
+  @mix_exs mix_exs()
+  @hex_header hex_header()
+  @hex_behind hex_behind()
 
   @pnpm_behind ~s({"vite": {"current": "8.2.0", "latest": "8.3.1"},
                    "shiki": {"current": "3.23.0", "latest": "4.4.3"}})
-
-  @old "2020-01-01T00:00:00.000000Z"
-
-  @dep_files ~w(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json)
-
-  # Built once, then copied for each test.
-  setup_all do
-    template = Meerkat.TestHelpers.make_tmp_repo("meerkat-bump-deps-template")
-    on_exit(fn -> File.rm_rf!(template) end)
-    File.rm_rf!(Path.join(template, ".git"))
-    build_fixture(template)
-    {:ok, template: template}
-  end
-
-  setup %{template: template} do
-    base = Meerkat.TestHelpers.copy_fixture(template, "meerkat-bump-deps")
-
-    {:ok,
-     work: Path.join(base, "work"),
-     stubs: Path.join(base, "stubs"),
-     log: Path.join(base, "log"),
-     hex_out: Path.join(base, "hex.out"),
-     pnpm_out: Path.join(base, "pnpm.json"),
-     seen: Path.join(base, "seen"),
-     fail_update: Path.join(base, "fail-update"),
-     npm_latest: Path.join(base, "npm-latest"),
-     refuse: Path.join(base, "refuse"),
-     fail_get: Path.join(base, "fail-deps-get"),
-     fail_install: Path.join(base, "fail-pnpm-install"),
-     git_env: Path.join(base, "git-env"),
-     hex_api: Path.join(base, "hex-api")}
-  end
-
-  defp build_fixture(base) do
-    work = Path.join(base, "work")
-    stubs = Path.join(base, "stubs")
-    log = Path.join(base, "log")
-    hex_out = Path.join(base, "hex.out")
-    pnpm_out = Path.join(base, "pnpm.json")
-    seen = Path.join(base, "seen")
-    fail_update = Path.join(base, "fail-update")
-    npm_latest = Path.join(base, "npm-latest")
-    refuse = Path.join(base, "refuse")
-    fail_get = Path.join(base, "fail-deps-get")
-    fail_install = Path.join(base, "fail-pnpm-install")
-    git_env = Path.join(base, "git-env")
-    hex_api = Path.join(base, "hex-api")
-
-    File.mkdir_p!(Path.join(work, "scripts"))
-    git(base, ["init", "-q", "--initial-branch=main", work])
-    git(work, ["config", "user.email", "t@t.t"])
-    git(work, ["config", "user.name", "t"])
-
-    File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
-
-    for script <-
-          ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
-             deps-common.sh gate-lock.sh hex-cooldown.ts) do
-      File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
-    end
-
-    # Fixed rather than copied, so a new upstream release cannot change it.
-    File.write!(
-      Path.join([work, "scripts", "dep-exemptions.json"]),
-      ~s({"shiki": {"version": "4.4.3", "reason": "upstream needs shiki 3"}})
-    )
-
-    # This test covers the dependency bump, not the runner; keep the fixture's
-    # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
-    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
-    # test/scripts/pre_commit_test.exs covers the mutation gate.
-    File.write!(Path.join([work, "scripts", "mutate.sh"]), "exit 0\n")
-
-    File.write!(Path.join(work, ".gitignore"), "node_modules\n")
-    File.write!(Path.join(work, "mix.exs"), @mix_exs)
-
-    for file <-
-          ~w(mix.lock package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json code.txt
-             .tool-versions .github/toolchain.env) do
-      File.mkdir_p!(Path.dirname(Path.join(work, file)))
-      File.write!(Path.join(work, file), "base\n")
-    end
-
-    git(work, ["add", "-A"])
-    no_hooks(work, ["commit", "-qm", "base"])
-    no_hooks(work, ["switch", "-q", "-c", "feature"])
-
-    Meerkat.TestHelpers.install_lefthook(work)
-
-    File.write!(hex_out, @hex_header <> "mdex  0.14.1  0.14.1  Up-to-date\n")
-    File.write!(pnpm_out, "{}")
-
-    File.mkdir_p!(stubs)
-    File.mkdir_p!(npm_latest)
-    File.mkdir_p!(refuse)
-
-    File.write!(Path.join(stubs, "stub"), """
-    #!/usr/bin/env bash
-    cmd="$(basename "$0") $*"
-    echo "$cmd" >> '#{log}'
-    case "$cmd" in
-      "mix deps.get --check-locked" | "pnpm install --frozen-lockfile "*)
-        echo "$cmd: ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
-        if [[ "$1" == deps.get && -e '#{fail_get}' ]]; then echo "** (Mix) lock would change"; exit 1; fi
-        if [[ "$1" == install && -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi ;;
-      "mix hex.outdated") cat '#{hex_out}'; exit 1 ;;
-      "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
-      "mix deps.update "*)
-        [[ -e '#{fail_update}' ]] && exit 1
-        echo "updated ${cmd#mix deps.update }" >> mix.lock ;;
-      "pnpm -r outdated --format json")
-        echo " WARN  deprecated subdependency" >&2
-        cat '#{pnpm_out}'; exit 1 ;;
-      "pnpm view "*" dist-tags.latest")
-        if [[ -e '#{npm_latest}'/"$2" ]]; then cat '#{npm_latest}'/"$2"
-        else jq -r --arg n "$2" '.[$n].latest' '#{pnpm_out}'; fi ;;
-      "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
-        # Only a scratch copy of the workspace, without the repo's scripts/.
-        [[ ! -e scripts && -f package.json && -f pnpm-workspace.yaml && -f pnpm-lock.yaml &&
-           -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
-        echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
-        if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
-      "pnpm -r update --latest --ignore-scripts "*)
-        names="${cmd#pnpm -r update --latest --ignore-scripts }"
-        echo "updated $names" >> package.json
-        echo "updated $names" >> assets/package.json
-        echo "updated $names" >> pnpm-lock.yaml ;;
-      "mix compile --warnings-as-errors") cp mix.lock '#{seen}' ;;
-      "bun scripts/hex-cooldown.ts "*)
-        # Run outside the work tree, whose placeholder package.json bun
-        # would fail to parse.
-        cp "$1" '#{base}/hex-cooldown.ts' && cd '#{base}' &&
-          exec '#{System.find_executable("bun")}' hex-cooldown.ts "${@:2}" ;;
-      "bun scripts/age-excludes.ts prune")
-        if [[ -e '#{base}/fail-age-excludes.ts' ]]; then echo "$1 failed"; exit 1; fi
-        if [[ -e '#{base}/excludes-stale' ]]; then echo "pruned" >> pnpm-workspace.yaml; fi ;;
-      "bun scripts/advisory-fixes.ts" | "bun scripts/toolchain.ts bump")
-        if [[ -e '#{base}/fail-'"${1#scripts/}" ]]; then echo "$1 failed"; exit 1; fi
-        if [[ "$1" == scripts/toolchain.ts && -e '#{base}/toolchain-behind' ]]; then
-          echo "bun 9.9.9" >> .tool-versions
-        fi ;;
-    esac
-    """)
-
-    File.chmod!(Path.join(stubs, "stub"), 0o755)
-    for tool <- ~w(mix pnpm bun bunx curl), do: File.ln_s!("stub", Path.join(stubs, tool))
-
-    # hex.pm's records of the releases the requirements exclude, all
-    # published long ago.
-    File.mkdir_p!(hex_api)
-
-    for {name, version} <- [{"bandit", "1.12.5"}, {"plug", "2.1.0"}, {"jason", "1.4.5"}] do
-      File.write!(Path.join(hex_api, name <> ".json"), releases(version, @old))
-    end
-  end
 
   test "a commit while dependencies are behind carries their bump", ctx do
     File.write!(ctx.hex_out, @hex_behind)
@@ -256,7 +72,8 @@ defmodule Meerkat.BumpDepsHookTest do
   test "the bump syncs Hex then JS dependencies first, without the index Git exports", ctx do
     stage(ctx.work, "code.txt", "change\n")
 
-    assert {_, 0} = commit(ctx, ["-m", "change code"])
+    assert {out, 0} = commit(ctx, ["-m", "change code"])
+    refute out =~ "lock mismatch"
 
     assert Enum.take(run(ctx), 3) == [
              "mix deps.get --check-locked",
@@ -430,7 +247,7 @@ defmodule Meerkat.BumpDepsHookTest do
     assert_refused(ctx, "could not read when hex.pm published plug 2.1.0")
   end
 
-  test "the exclusion prune, advisory fixes and toolchain bump run after the dependency bump",
+  test "the exclusion prune, advisory fixes and toolchain bump run after the dependency bump, and the toolchain setup before the checks",
        ctx do
     File.write!(ctx.pnpm_out, @pnpm_behind)
     File.touch!(Path.join(Path.dirname(ctx.work), "toolchain-behind"))
@@ -443,19 +260,21 @@ defmodule Meerkat.BumpDepsHookTest do
              "pnpm -r update --latest --ignore-scripts vite",
              "bun scripts/age-excludes.ts prune",
              "bun scripts/advisory-fixes.ts",
-             "bun scripts/toolchain.ts bump"
+             "bun scripts/toolchain.ts bump",
+             "bun scripts/setup-toolchain.ts",
+             "mix compile --warnings-as-errors"
            ] ==
              Enum.filter(
                run(ctx),
                &(&1 =~
-                   ~r/^(pnpm -r update --latest --ignore|bun scripts\/(age-excludes|advisory-fixes|toolchain))/)
+                   ~r/^(pnpm -r update --latest --ignore|bun scripts\/(age-excludes|advisory-fixes|toolchain|setup-toolchain)|mix compile)/)
              )
 
     assert committed(ctx, ".tool-versions") == "base\nbun 9.9.9\n"
     assert committed(ctx, "pnpm-workspace.yaml") == "base\npruned\n"
   end
 
-  for script <- ~w(age-excludes.ts advisory-fixes.ts toolchain.ts) do
+  for script <- ~w(age-excludes.ts advisory-fixes.ts toolchain.ts setup-toolchain.ts) do
     test "a failing #{script} refuses the commit", ctx do
       File.touch!(Path.join(Path.dirname(ctx.work), "fail-#{unquote(script)}"))
       assert_refused(ctx, "scripts/#{unquote(script)} failed")
@@ -493,16 +312,6 @@ defmodule Meerkat.BumpDepsHookTest do
     assert git(ctx.work, ["status", "--porcelain"]) == ""
   end
 
-  defp commit(ctx, args) do
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    System.cmd("git", ["commit", "-q" | args],
-      cd: ctx.work,
-      env: [{"PATH", path} | hook_env()],
-      stderr_to_stdout: true
-    )
-  end
-
   # The commit fails with `message`, and no check ran.
   defp assert_refused(ctx, message) do
     stage(ctx.work, "code.txt", "change #{System.unique_integer()}\n")
@@ -515,24 +324,4 @@ defmodule Meerkat.BumpDepsHookTest do
     assert git(ctx.work, ["rev-parse", "HEAD"]) == head
     refute Enum.any?(run(ctx), &(&1 =~ "mix compile"))
   end
-
-  defp releases(version, inserted_at),
-    do: Jason.encode!(%{"releases" => [%{"version" => version, "inserted_at" => inserted_at}]})
-
-  defp committed(ctx, file), do: git(ctx.work, ["show", "HEAD:#{file}"]) <> "\n"
-
-  defp changed_files(ctx) do
-    ctx.work
-    |> git(["diff", "--name-only", "HEAD~1", "HEAD", "--" | @dep_files ++ ["code.txt"]])
-    |> String.split("\n", trim: true)
-  end
-
-  defp run(ctx) do
-    case File.read(ctx.log) do
-      {:ok, log} -> String.split(log, "\n", trim: true)
-      {:error, :enoent} -> []
-    end
-  end
-
-  defp no_hooks(work, args), do: git(work, ["-c", "core.hooksPath=/dev/null" | args])
 end

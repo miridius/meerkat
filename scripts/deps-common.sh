@@ -1,5 +1,5 @@
 # Sourced by scripts/outdated.sh (the pre-push gate) and
-# scripts/bump-deps.sh (the pre-commit bump), from the repo root, so both
+# scripts/bump-deps.sh (the dependency bump), from the repo root, so both
 # read the exemptions and the two outdated reports the same way. Each
 # function prints why it failed, prefixed with the caller's $prefix, and
 # returns 1.

@@ -40,11 +40,13 @@ defmodule Meerkat.SetupWorktreeHookTest do
 
       File.write!(stub, """
       #!/usr/bin/env bash
-      if [ "#{tool} $*" = "mise ls --current --missing" ]; then
+      if [ "#{tool} $*" = "mise ls --current --missing erlang elixir bun" ]; then
         [ -e '#{dir}/mise-ls-fails' ] && exit 1
         cat '#{dir}/mise-missing' 2>/dev/null; exit 0
       fi
-      echo "#{tool} $*" >> '#{dir}/calls'
+      # mise's env marks the calls made under it.
+      if [ "#{tool} $*" = "mise env --shell bash" ]; then echo "export MISE_ENV=1"; exit 0; fi
+      echo "#{tool} $*${MISE_ENV:+ (mise env)}" >> '#{dir}/calls'
       echo "#{tool} output"
       sleep "$(cat '#{dir}/#{tool}-sleep' 2>/dev/null || echo 0)"
       status=$(cat '#{dir}/#{tool}-status' 2>/dev/null || echo 0)
@@ -113,9 +115,22 @@ defmodule Meerkat.SetupWorktreeHookTest do
       assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
 
       assert calls(ctx.dir) == [
-               "mise install",
-               "bun scripts/setup-toolchain.ts",
-               "mix deps.get"
+               "mise install erlang elixir bun",
+               "bun scripts/setup-toolchain.ts (mise env)",
+               "mix deps.get (mise env)"
+             ]
+    end
+
+    test "a failed mise install is reported, and the setup goes on", ctx do
+      File.write!(Path.join(ctx.dir, "mise-missing"), "erlang 29.1.2 (missing)\n")
+      File.write!(Path.join(ctx.dir, "mise-status"), "1")
+
+      assert {out, 0} = run_hook(ctx.dir, ctx.checkout)
+      assert out =~ "`mise install erlang elixir bun` failed in #{ctx.checkout}"
+
+      assert calls(ctx.dir) == [
+               "mise install erlang elixir bun",
+               "bun scripts/setup-toolchain.ts (mise env)"
              ]
     end
 
@@ -123,12 +138,17 @@ defmodule Meerkat.SetupWorktreeHookTest do
       File.touch!(Path.join(ctx.dir, "mise-ls-fails"))
 
       assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
-      assert calls(ctx.dir) == ["mise install", "bun scripts/setup-toolchain.ts"]
+
+      assert calls(ctx.dir) == [
+               "mise install erlang elixir bun",
+               "bun scripts/setup-toolchain.ts (mise env)"
+             ]
     end
 
-    test "with every tool installed runs only the quick Hex and rebar3 check", ctx do
+    test "with every tool installed runs only the quick Hex and rebar3 check, in mise's env",
+         ctx do
       assert run_hook(ctx.dir, ctx.checkout) == {"", 0}
-      assert calls(ctx.dir) == ["bun scripts/setup-toolchain.ts"]
+      assert calls(ctx.dir) == ["bun scripts/setup-toolchain.ts (mise env)"]
     end
   end
 
