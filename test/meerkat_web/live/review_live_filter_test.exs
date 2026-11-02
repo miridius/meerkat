@@ -561,20 +561,29 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
   test "re-approving a file expanded while approved collapses it again", %{conn: conn} do
     state = %ReviewState{
-      files: [%{@plain_file | effective_oid: nil}],
+      files: [
+        %{@plain_file | effective_oid: nil},
+        %{@plain_file | file_name: "src/other.rs", effective_oid: nil}
+      ],
       head_branch: "main",
-      approved_file_names: MapSet.new(["src/widget.rs"])
+      approved_file_names: MapSet.new(["src/widget.rs", "src/other.rs"])
     }
 
     {view, _rid} = mount_bound(conn, state, tmp_git_repo())
 
-    approve = fn ->
+    toggle_approved = fn ->
       render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
     end
 
-    render_click(view, "file.toggle_expanded", %{"file_name" => "src/widget.rs"})
-    approve.()
-    assert approve.() =~ ~s(class="file-section approved collapsed")
+    for name <- ["src/widget.rs", "src/other.rs"],
+        do: render_click(view, "file.toggle_expanded", %{"file_name" => name})
+
+    refute has_element?(view, "#file-0.collapsed")
+    toggle_approved.()
+    toggle_approved.()
+    assert has_element?(view, "#file-0.collapsed")
+    # Only the re-approved file loses its expansion.
+    refute has_element?(view, "#file-1.collapsed")
   end
 
   test "a second decision submit still lands on the done view", %{conn: conn} do

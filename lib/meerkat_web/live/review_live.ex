@@ -363,15 +363,13 @@ defmodule MeerkatWeb.ReviewLive do
               assign(socket, flash_error: nil)
           end
 
-        # On approve, the file section collapses, so scroll on to the
-        # next file.
+        # On approve, the file section collapses, even if it was
+        # expanded while approved before, so scroll on to the next file.
         socket =
           if becoming_approved?,
             do:
               socket
-              |> assign(
-                expanded_approved: MapSet.delete(socket.assigns.expanded_approved, file_name)
-              )
+              |> update(:expanded_approved, &MapSet.delete(&1, file_name))
               |> scroll_past_file(file_name),
             else: socket
 
@@ -2669,8 +2667,9 @@ defmodule MeerkatWeb.ReviewLive do
   # collapsed, unapproved default to expanded). Either set toggles
   # the SAME file_name — clicking the caret on an approved file
   # writes to `expanded_approved`, on an unapproved file it writes
-  # to `collapsed_unapproved`. The XOR keeps the semantics clean
-  # even when approval flips while the file is already toggled.
+  # to `collapsed_unapproved`. Approving a file clears its
+  # `expanded_approved` entry; its `collapsed_unapproved` entry
+  # survives approval.
   defp file_section_collapsed?(state, expanded_approved, collapsed_unapproved, file_name) do
     approved? = MapSet.member?(state.approved_file_names, file_name)
 
