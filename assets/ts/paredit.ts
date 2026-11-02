@@ -230,7 +230,8 @@ export function barfBackward(state: EditorState): TransactionSpec | null {
 	});
 }
 
-/** Remove the brackets of the caret's collection, keeping its forms. */
+/** Remove the brackets of the caret's collection, with any prefix forms
+ *  wrapping it, keeping its forms. */
 export function splice(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.splice", (pos) => {
 		const coll = enclosing(state, pos);
@@ -238,7 +239,7 @@ export function splice(state: EditorState): TransactionSpec | null {
 		if (!coll || !closer || !coll.firstChild) return null;
 		return {
 			changes: [
-				{ from: openStart(coll), to: coll.firstChild.to },
+				{ from: element(coll).from, to: coll.firstChild.to },
 				{ from: closer.from, to: closer.to },
 			],
 		};
