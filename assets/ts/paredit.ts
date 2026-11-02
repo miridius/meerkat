@@ -31,12 +31,22 @@ function closerOf(coll: SyntaxNode): SyntaxNode | null {
 	return last && last.name === CLOSERS[coll.name] ? last : null;
 }
 
-/** The form that stands for `node` among its parent's forms: `node`
- *  itself, or the quote, metadata or other prefix form wrapping it. */
+/** `node` with the prefixes that apply to it: each form wrapping it that
+ *  ends with it, such as a quote, a tag or metadata, but not the
+ *  metadata `node` is the map of, nor a form a `#_` form sits in before
+ *  that form's own. */
 function element(node: SyntaxNode): SyntaxNode {
 	let el = node;
-	while (el.parent?.parent && !isColl(el.parent)) el = el.parent;
+	while (el.parent?.parent && !isColl(el.parent) && el.parent.to === el.to) el = el.parent;
 	return el;
+}
+
+/** Whether `coll` sits in another form's prefix, as a metadata map does
+ *  or a list a `#_` hides there. The structural keys leave such a list
+ *  alone: what they move out would take that prefix with it. */
+function inPrefix(coll: SyntaxNode): boolean {
+	const el = element(coll);
+	return !!el.parent?.parent && !isColl(el.parent);
 }
 
 /** Where `coll`'s opening bracket starts, with the prefix that is part
@@ -155,6 +165,7 @@ export function slurpForward(state: EditorState): TransactionSpec | null {
 		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
 			const closer = closerOf(coll);
 			if (!closer) return null;
+			if (inPrefix(coll)) return null;
 			const el = element(coll);
 			const target = sibling(el, 1);
 			if (!target) continue;
@@ -174,7 +185,7 @@ export function barfForward(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.barf", (pos) => {
 		const coll = enclosing(state, pos);
 		const closer = coll && closerOf(coll);
-		if (!coll || !closer || !coll.firstChild) return null;
+		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		const all = forms(coll);
 		if (all.length === 0) return null;
 		const at = all.length > 1 ? all[all.length - 2].to : coll.firstChild.to;
@@ -195,6 +206,7 @@ export function slurpBackward(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.slurp", (pos) => {
 		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
 			if (!closerOf(coll) || !coll.firstChild) return null;
+			if (inPrefix(coll)) return null;
 			const el = element(coll);
 			const target = sibling(el, -1);
 			if (!target) continue;
@@ -215,7 +227,7 @@ export function barfBackward(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.barf", (pos) => {
 		const coll = enclosing(state, pos);
 		const closer = coll && closerOf(coll);
-		if (!coll || !closer || !coll.firstChild) return null;
+		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		const all = forms(coll);
 		if (all.length === 0) return null;
 		const el = element(coll);
@@ -236,7 +248,7 @@ export function splice(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.splice", (pos) => {
 		const coll = enclosing(state, pos);
 		const closer = coll && closerOf(coll);
-		if (!coll || !closer || !coll.firstChild) return null;
+		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		return {
 			changes: [
 				{ from: element(coll).from, to: coll.firstChild.to },
@@ -251,7 +263,7 @@ export function splice(state: EditorState): TransactionSpec | null {
 export function raise(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.raise", (pos) => {
 		const coll = enclosing(state, pos);
-		if (!coll || !closerOf(coll)) return null;
+		if (!coll || !closerOf(coll) || inPrefix(coll)) return null;
 		const all = forms(coll);
 		const form = all.find((f) => f.from <= pos && pos <= f.to) ?? all.find((f) => f.from >= pos);
 		if (!form) return null;

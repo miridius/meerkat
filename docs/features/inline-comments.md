@@ -185,8 +185,11 @@ syntax node). ⌥⇧← / ⌥⇧→ keep CodeMirror's own binding everywhere
 (select by word on macOS, by syntax node elsewhere),
 as in Cursive, which has no selecting form move. The Clojure keys
 leave a list the seeded lines cut off from its closer alone, and
-never move a bracket past one cut off from its partner. With several
-carets, a structural key changes each list once.
+never move a bracket past one cut off from its partner. Slurp, barf,
+raise and splice also leave alone a collection used as metadata, and a
+list a `#_` hides inside another form's prefix, as what they move out
+would take that prefix with it. With several carets, a structural key
+changes each list once.
 
 **Structural typing in Clojure:**
 
@@ -198,7 +201,7 @@ carets, a structural key changes each list once.
   the `#?@` of `#?@(`, the `#:` of `#:ns{`), is blocked: the caret
   steps over the prefix and bracket on that side. A namespace name
   stays plain text. Inside an empty pair, either deletes both, with
-  any prefix.
+  its opener's prefix.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.

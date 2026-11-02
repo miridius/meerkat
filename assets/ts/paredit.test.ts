@@ -134,6 +134,15 @@ describe("cut-off lists", () => {
 	});
 });
 
+describe("lists in another form's prefix", () => {
+	test("structural commands leave them alone", () => {
+		const commands = [slurpForward, slurpBackward, barfForward, barfBackward, splice, raise];
+		for (const doc of ["(defn ^{:doc |1 :a 2} foo [])", "(f [a ^{:tag |b} c])", "(x ^:m #_(a |b) foo)", "'#_(a |b) c"]) {
+			for (const command of commands) expect([command.name, doc, run(command, doc)]).toEqual([command.name, doc, null]);
+		}
+	});
+});
+
 describe("barfForward", () => {
 	test("pushes the last form out", () => {
 		expect(run(barfForward, "(a |b c)")).toBe("(a |b) c");
