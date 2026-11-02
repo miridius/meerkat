@@ -29,8 +29,9 @@ test_file_lock "$1"
 # would report from itself, after its own redirections, or not at all if it
 # ends in exec.
 #
-# Each time has all six decimals: bash 5.3, rounding a time to fewer, writes
-# one of x.9995 s up to x.9999 s as "x.:00".
+# Each time asks for six decimals: bash 5.3 rounds a time to fewer without
+# carrying into the seconds, so at three it writes x.9995 s or more as
+# "x.:00". Bash before 5.3 writes at most three.
 exec 4>&2
 TIMEFORMAT='%6R %6U %6S'
 {
