@@ -74,6 +74,7 @@ More text.
 
 const OWNED_TMP_DIR_PREFIXES = [
 	"meerkat-e2e",
+	"meerkat-e2e-config",
 	"meerkat-e2e-gh",
 	"meerkat-e2e-pr-remote",
 	"meerkat-e2e-pr-staging",

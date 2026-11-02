@@ -4,6 +4,7 @@
 // returning: the page takes no input until then.
 
 import { test as base, expect, type Page } from "@playwright/test";
+import { stopPendingBoots } from "./runner.js";
 
 type Fixtures = Record<string, never>;
 
@@ -13,19 +14,33 @@ declare global {
 	}
 }
 
-export const test = base.extend<Fixtures>({
+// `test` without the join wait, for a spec that must see the page before
+// LiveView joins. A test that ended while a review it started was
+// booting, as when it timed out, leaves that boot running: its `page`
+// stops it, and reports its stderr. Every spec waiting on a review URL
+// uses `page`.
+export const unjoinedTest = base.extend<Fixtures>({
+	page: async ({ page }, use, testInfo) => {
+		await use(page);
+		for (const [i, stderr] of (await stopPendingBoots()).entries()) {
+			await testInfo.attach(`meerkat stderr while booting ${i + 1}`, { body: stderr, contentType: "text/plain" });
+		}
+	},
+});
+
+export const test = unjoinedTest.extend<Fixtures>({
 	page: async ({ page }, use) => {
 		// Phoenix LV stamps the root-view wrapper (the element with
 		// `data-phx-main`) with `phx-connected` once the channel has
 		// joined — at that point phx-click handlers are bound.
 		// `liveSocket.isConnected()` reports only the WebSocket
 		// handshake, which fires earlier; we want the post-join
-		// state.
+		// state. No deadline of its own: the test's timeout bounds it.
 		const joined = () =>
 			page.waitForFunction(
 				() => document.querySelector("[data-phx-main]")?.classList.contains("phx-connected") === true,
 				undefined,
-				{ timeout: 45_000 },
+				{ timeout: 0 },
 			);
 		const originalGoto = page.goto.bind(page);
 		page.goto = (async (url, opts) => {

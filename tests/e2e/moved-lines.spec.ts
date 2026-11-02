@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator } from "@playwright/test";
+import { budget } from "./lib/budget";
 import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -86,9 +87,9 @@ function movedState(file: Locator) {
 // counterpart's second code cell draws in the frame the flash starts:
 // the jump round-trips through the server, and the flash lasts only 1.6s.
 function flashOnClick(file: Locator) {
-	return file.evaluate(async (root) => {
+	return file.evaluate(async (root, wait) => {
 		(root.querySelector(".moved-arrow") as HTMLElement).click();
-		const deadline = performance.now() + 3000;
+		const deadline = performance.now() + wait;
 		while (!Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0)) {
 			if (performance.now() > deadline) throw new Error("no flash");
 			await new Promise((r) => requestAnimationFrame(r));
@@ -98,17 +99,17 @@ function flashOnClick(file: Locator) {
 		) as Element;
 		const td = tr.querySelector("td.diff-line-new-content, td.diff-line-content") as Element;
 		return getComputedStyle(td).boxShadow;
-	});
+	}, budget(3000));
 }
 
 // Clicks the old block's first arrow, then, in the frame the flash
 // starts, a visible Expand button, and returns the line numbers of the
 // cells still flashing two frames later, well inside the 1.6s flash.
 function expandDuringFlash(file: Locator) {
-	return file.evaluate(async (root) => {
+	return file.evaluate(async (root, wait) => {
 		const flashing = () => Array.from(root.querySelectorAll("td")).filter((td) => td.getAnimations().length > 0);
 		(root.querySelector(".moved-arrow") as HTMLElement).click();
-		const deadline = performance.now() + 3000;
+		const deadline = performance.now() + wait;
 		while (flashing().length === 0) {
 			if (performance.now() > deadline) throw new Error("no flash");
 			await new Promise((r) => requestAnimationFrame(r));
@@ -119,7 +120,7 @@ function expandDuringFlash(file: Locator) {
 		(expand as HTMLElement).click();
 		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 		return flashing().map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
-	});
+	}, budget(3000));
 }
 
 // Each arrow's line, unless it sits over its line's +/− mark, inside the

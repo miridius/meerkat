@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { budget } from "./lib/budget";
 import { makeFixture, sanitisedGitEnv } from "./lib/fixture";
 import { MEERKAT_BIN, startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -14,8 +15,8 @@ import { expect, test } from "./lib/test";
 test.describe("meerkat --answers", () => {
 	test("questions block a real git hook until answers sent through the launcher reach the next page", async ({ page }) => {
 		// Seven real CLI invocations span two browser reviews. Budget their combined
-		// runtime; each subprocess and review startup keeps its own bounded timeout.
-		test.setTimeout(180_000);
+		// runtime; each subprocess keeps its own bounded timeout.
+		test.setTimeout(budget(180_000));
 		const fixture = makeFixture();
 		const first = await startMeerkat({ fixture, keepFixture: true });
 		let next: Awaited<ReturnType<typeof startMeerkat>> | undefined;
@@ -40,7 +41,7 @@ test.describe("meerkat --answers", () => {
 			writeFileSync(hook, `#!/bin/sh\nexec ${quotedBin} --no-open\n`);
 			chmodSync(hook, 0o755);
 			const commit = () => spawnSync("git", ["commit", "-m", "Question round"], {
-				cwd: fixture.dir, encoding: "utf8", timeout: 60_000,
+				cwd: fixture.dir, encoding: "utf8", timeout: budget(60_000),
 				env: sanitisedGitEnv(),
 			});
 			let refused = commit();
@@ -51,7 +52,7 @@ test.describe("meerkat --answers", () => {
 			expect(refused.stderr).not.toContain("Paused for human review");
 
 			const submit = (questions: string[]) => spawnSync(MEERKAT_BIN, ["--answers"], {
-				cwd: fixture.dir, encoding: "utf8", timeout: 60_000, env: sanitisedGitEnv(),
+				cwd: fixture.dir, encoding: "utf8", timeout: budget(60_000), env: sanitisedGitEnv(),
 				input: JSON.stringify({ answers: questions.map(question => ({ location: "global", question, answer: `Because **${question}**` })) }),
 			});
 			expect(submit(["First question?"]).status).toBe(0);
