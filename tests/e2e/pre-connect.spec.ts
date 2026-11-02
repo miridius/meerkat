@@ -1,10 +1,10 @@
 // The page paints before LiveView joins, and a click made then never
 // reaches the server. LiveViewTest renders no CSS and makes no clicks
 // through the browser, so only a browser shows the page refusing them.
-// This spec uses Playwright's own `test`: the one in ./lib/test waits
-// for the join on every `goto`.
-import { expect, test } from "@playwright/test";
+// This spec uses `unjoinedTest`: `test` waits for the join on every
+// `goto`.
 import { startMeerkat } from "./lib/runner";
+import { expect, unjoinedTest as test } from "./lib/test";
 
 test("the page takes no clicks until LiveView connects, and says whether it is connecting", async ({ page }) => {
 	const meerkat = await startMeerkat();

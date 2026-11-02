@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import type { BrowserContext, Page } from "@playwright/test";
+import { budget } from "./lib/budget";
 import { makeFixture, manifestRoot, ownedTmpDir } from "./lib/fixture";
 import { startMeerkat, startMeerkats } from "./lib/runner";
 import { expect, test } from "./lib/test";
@@ -39,7 +40,7 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 
 		// No prior scroll was stashed for this origin, so the restore is a
 		// no-op and the page stays at the top.
-		await page.waitForTimeout(350);
+		await page.waitForTimeout(budget(350));
 		expect(await scrollY()).toBe(0);
 
 		// ReviewLive.mount/3 uses static_changed?/1 to redirect reconnecting

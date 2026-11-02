@@ -245,8 +245,9 @@ test.describe("a review outlives the process that invoked it", () => {
 			process.kill(Number(beam), "SIGTERM");
 
 			const { code, stderr } = await first.awaitExit();
-			// A graceful stop waits 15 s for open connections to close at any
-			// load; a halt takes seconds even on a loaded machine.
+			// A graceful stop waits up to 15 s by the clock for open connections
+			// to close, the full 15 s with the page's socket open; a halt takes
+			// seconds even on a loaded machine.
 			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(15_000);
 			expect(code).toBe(143);
 			expect(stderr).toContain(
@@ -274,9 +275,9 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			const { code, stderr } = await meerkat.awaitExit();
 			expect(code, stderr).toBe(0);
-			// Waiting for the run dir's exit file would take the caller's
-			// 150 polls of 0.2 s, 30 s at any load.
-			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(15_000);
+			// Waiting on the deleted run dir would cost the caller its 10 s wait,
+			// by the clock, for a pid file.
+			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(8_000);
 			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
 		} finally {
 			await meerkat.kill();

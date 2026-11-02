@@ -14,8 +14,22 @@ declare global {
 	}
 }
 
-export const test = base.extend<Fixtures>({
+// Playwright's own `test`, for a spec that must see the page before
+// LiveView joins. A test that ended while a review it started was
+// booting, as when it timed out, leaves that boot running: its `page`
+// stops it, and reports its stderr. Every spec waiting on a review URL
+// uses `page`.
+export const unjoinedTest = base.extend<Fixtures>({
 	page: async ({ page }, use, testInfo) => {
+		await use(page);
+		for (const [i, stderr] of (await stopPendingBoots()).entries()) {
+			await testInfo.attach(`meerkat stderr while booting ${i + 1}`, { body: stderr, contentType: "text/plain" });
+		}
+	},
+});
+
+export const test = unjoinedTest.extend<Fixtures>({
+	page: async ({ page }, use) => {
 		// Phoenix LV stamps the root-view wrapper (the element with
 		// `data-phx-main`) with `phx-connected` once the channel has
 		// joined — at that point phx-click handlers are bound.
@@ -41,12 +55,6 @@ export const test = base.extend<Fixtures>({
 			return response;
 		}) as typeof page.reload;
 		await use(page);
-		// A test that ended while a review it started was booting, as when
-		// it timed out, leaves that boot running: stop it, and report its
-		// stderr. Every spec waiting on a review URL uses `page`.
-		for (const [i, stderr] of (await stopPendingBoots()).entries()) {
-			await testInfo.attach(`meerkat stderr while booting ${i + 1}`, { body: stderr, contentType: "text/plain" });
-		}
 	},
 });
 
