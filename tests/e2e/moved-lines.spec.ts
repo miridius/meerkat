@@ -198,7 +198,13 @@ test("moved lines keep their tint and arrows when a collapsed section expands or
 		const flashing = () =>
 			file.evaluate((root) => Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0));
 		await expect.poll(flashing).toBe(false);
-		await page.evaluate(() => (window as unknown as { liveSocket: { disconnect(): void } }).liveSocket.disconnect());
+		// The page takes no clicks while disconnected, so hold its pushes
+		// back instead, well past the flash's wait.
+		await page.evaluate(() =>
+			(window as unknown as { liveSocket: { enableLatencySim(ms: number): void } }).liveSocket.enableLatencySim(
+				600_000,
+			),
+		);
 		expect(await flashOnClick(file)).toContain(FLASH);
 	} finally {
 		await meerkat.kill();

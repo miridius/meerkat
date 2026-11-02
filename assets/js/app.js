@@ -9,6 +9,7 @@ import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
+import { GATED_EVENTS, gateVerdict } from "../ts/connectionGate";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
 import { squeeze } from "../ts/toolbarSqueeze";
@@ -24,29 +25,6 @@ const csrfToken = document
 // heading is visible, not that the tab actually closed.
 const hooks = {
   ...getHooks(Components),
-  // LiveView drops every event pushed while its channel is down, though a
-  // checkbox still ticks, so the review takes no input until it rejoins.
-  // LiveView calls `disconnected` the moment the channel errors; its
-  // `phx-disconnected` binding runs only 500ms later. The rejoin's render
-  // drops `inert` too, as the first connect's does. Inert content loses
-  // focus, so the element that had it, caret included, gets it back. A
-  // failed rejoin calls `disconnected` again, when nothing has focus.
-  ConnectionGate: {
-    disconnected() {
-      if (this.el.inert) return;
-      const el = document.activeElement;
-      this._focused = this.el.contains(el) ? { el, start: el.selectionStart, end: el.selectionEnd } : null;
-      this.el.inert = true;
-    },
-    reconnected() {
-      this.el.inert = false;
-      const focused = this._focused;
-      this._focused = null;
-      if (!focused?.el.isConnected) return;
-      focused.el.focus({ preventScroll: true });
-      if (typeof focused.start === "number") focused.el.setSelectionRange(focused.start, focused.end);
-    },
-  },
   WindowClose: {
     mounted() {
       setTimeout(() => {
@@ -86,8 +64,7 @@ const hooks = {
       this._onKey = (e) => {
         if (!isSendFeedbackShortcut(e, mac)) return;
         e.preventDefault();
-        // A script's click reaches an inert button, so check for it here.
-        if (!this.el.disabled && !this.el.closest("[inert]")) this.el.click();
+        if (!this.el.disabled) this.el.click();
       };
       document.addEventListener("keydown", this._onKey);
     },
@@ -469,6 +446,27 @@ const hooks = {
     },
   },
 };
+
+// The review takes no input while LiveView is not connected (see
+// ../ts/connectionGate.ts). The root loses `phx-connected` the moment
+// the channel errors and gets it back once the rejoin has rendered.
+// Window capture listeners added before LiveView's run first.
+for (const type of GATED_EVENTS) {
+  window.addEventListener(
+    type,
+    (e) => {
+      if (!document.querySelector("[data-phx-main]:not(.phx-connected) main.review:not(.done)")) return;
+      const node = e.target instanceof Element ? e.target : e.target?.parentElement;
+      const control = node?.closest("input, textarea, select, button, a[href], summary, [contenteditable]");
+      const text = control?.isContentEditable || typeof control?.selectionStart === "number";
+      const target = text ? "text" : control ? "control" : "other";
+      const verdict = gateVerdict(e, target, control?.contains(document.activeElement) ?? false);
+      e.stopImmediatePropagation();
+      if (verdict === "cancel") e.preventDefault();
+    },
+    true,
+  );
+}
 
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
