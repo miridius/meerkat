@@ -182,6 +182,24 @@ defmodule Meerkat.ReviewServer do
   end
 
   @doc """
+  Ends the review through `Meerkat.Decision.end_unattended/0` if it has no
+  comments and no open forms, starting its server first if no tab has (the
+  server loads any comments saved by an earlier BEAM). Judging inside the
+  server keeps a comment saved meanwhile from slipping past the check.
+  Returns `:ended` or `:kept`.
+  """
+  @spec end_if_unused(review_id) :: :ended | :kept
+  def end_if_unused(review_id) do
+    {:ok, pid} =
+      ensure_started(review_id, %{
+        repo_path: Application.fetch_env!(:meerkat, :repo_path),
+        initial_state: Application.fetch_env!(:meerkat, :review_state)
+      })
+
+    GenServer.call(pid, :end_if_unused)
+  end
+
+  @doc """
   Deletes `review_id`'s snapshot now; if a server is running, deletion
   runs there after any save already in progress. The snapshot stays
   deleted because the server stops saving once a decision exists.
@@ -316,6 +334,12 @@ defmodule Meerkat.ReviewServer do
 
   def handle_call({:close_form, key}, _from, ctx) do
     update(ctx, fn s -> %{s | open_forms: OpenForms.close(s.open_forms, key)} end)
+  end
+
+  def handle_call(:end_if_unused, _from, %{state: state} = ctx) do
+    if Meerkat.Feedback.comment_count(state) == 0 and state.open_forms == [],
+      do: {:reply, Meerkat.Decision.end_unattended(), ctx},
+      else: {:reply, :kept, ctx}
   end
 
   def handle_call(:delete_snapshot, _from, %{repo_path: repo, review_id: id} = ctx) do

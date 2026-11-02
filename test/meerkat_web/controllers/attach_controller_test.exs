@@ -106,6 +106,12 @@ defmodule MeerkatWeb.AttachControllerTest do
     |> post("/api/attach/delivered?run=#{run}")
   end
 
+  defp leave(conn, run) do
+    conn
+    |> put_req_header("x-meerkat-token", @token)
+    |> post("/api/attach/leave?run=#{run}")
+  end
+
   test "frames mark each whole line, and a last line without a newline" do
     assert IO.iodata_to_binary(AttachController.frames("a\n\nb\n")) == "o a\no \no b\n"
     assert IO.iodata_to_binary(AttachController.frames("a\ntail")) == "o a\nn tail\n"
@@ -434,9 +440,46 @@ defmodule MeerkatWeb.AttachControllerTest do
     for run <- ["..", "a%2Fb", "."] do
       assert attach(conn, run).status == 400
       assert delivered(conn, run).status == 400
+      assert leave(conn, run).status == 400
     end
 
     refute_receive {:halted, _}, 100
+  end
+
+  describe "a caller leaving before the outcome" do
+    test "is told the review ended when it had no comments", %{conn: conn, repo: repo} do
+      serve_dir = Path.join(repo, "run")
+      File.mkdir_p!(serve_dir)
+      Application.put_env(:meerkat, :serve_dir, serve_dir)
+
+      on_exit(fn ->
+        Application.delete_env(:meerkat, :serve_dir)
+
+        for {pid, _} <- Registry.lookup(Meerkat.ReviewRegistry, "attach-test"),
+            do: DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, pid)
+      end)
+
+      conn = leave(conn, "later-run")
+
+      assert {conn.status, conn.resp_body} == {200, "ended\n"}
+      assert Decision.current() == {:ended, ""}
+    end
+
+    test "is refused without a single run id", %{conn: conn} do
+      for query <- ["", "?run[]=a"] do
+        conn =
+          conn |> put_req_header("x-meerkat-token", @token) |> post("/api/attach/leave#{query}")
+
+        assert {conn.status, conn.resp_body} == {400, "bad request\n"}
+      end
+    end
+
+    test "is told the review is still open when nothing judges it", %{conn: conn} do
+      conn = leave(conn, "later-run")
+
+      assert {conn.status, conn.resp_body} == {200, "open\n"}
+      assert Decision.current() == nil
+    end
   end
 
   test "a delivery report hands the CLI the run that took delivery", %{conn: conn} do
