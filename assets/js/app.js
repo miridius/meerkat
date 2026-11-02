@@ -484,7 +484,8 @@ window.addEventListener("phx:open-url", (e) => {
 // When a file collapses, it brings the next file's header to where it
 // sticks. On every panel open, it scrolls the panel to the top of the
 // viewport, regardless of the current scroll position. The handler scrolls
-// the element with the given id to the top of the viewport.
+// the element with the given id to the top of the viewport, less its
+// scroll-margin-top.
 window.addEventListener("phx:scroll-into-view", (e) => {
   const id = e.detail?.id;
   if (typeof id !== "string") return;

@@ -104,7 +104,7 @@ defmodule MeerkatWeb.ReviewLive do
        # uses the full viewport width. Toggle in the toolbar to
        # reveal the file list / filter / per-file approval ticks.
        files_panel_open: false,
-       # File indices the reviewer has explicitly expanded after the
+       # File names the reviewer has explicitly expanded after the
        # file was approved (which collapses the diff body by default).
        # Click the file header to flip collapse state; the set is
        # ephemeral — un-approving + re-approving collapses again.
@@ -367,7 +367,12 @@ defmodule MeerkatWeb.ReviewLive do
         # next file.
         socket =
           if becoming_approved?,
-            do: scroll_past_file(socket, file_name),
+            do:
+              socket
+              |> assign(
+                expanded_approved: MapSet.delete(socket.assigns.expanded_approved, file_name)
+              )
+              |> scroll_past_file(file_name),
             else: socket
 
         {:noreply, socket}

@@ -559,6 +559,24 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute_push_event(view2, "scroll-into-view", _, 0)
   end
 
+  test "re-approving a file expanded while approved collapses it again", %{conn: conn} do
+    state = %ReviewState{
+      files: [%{@plain_file | effective_oid: nil}],
+      head_branch: "main",
+      approved_file_names: MapSet.new(["src/widget.rs"])
+    }
+
+    {view, _rid} = mount_bound(conn, state, tmp_git_repo())
+
+    approve = fn ->
+      render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    end
+
+    render_click(view, "file.toggle_expanded", %{"file_name" => "src/widget.rs"})
+    approve.()
+    assert approve.() =~ ~s(class="file-section approved collapsed")
+  end
+
   test "a second decision submit still lands on the done view", %{conn: conn} do
     put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}]})
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
