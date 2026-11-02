@@ -3,7 +3,8 @@ defmodule Meerkat.ToolchainTest do
   # writes. Only curl and gh are replaced, by stubs on PATH: curl serves
   # the file a test wrote for a URL, or for that read of it, `[]` for any
   # other GitHub API URL, and fails for the rest, or for a read a test
-  # cancels.
+  # cancels. A test can also have it hang on a URL, or answer a URL only
+  # once a file exists.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/toolchain.ts")
@@ -73,6 +74,10 @@ defmodule Meerkat.ToolchainTest do
     url="${@: -1}"
     exec > "${@: -2:1}"
     f='#{web}'/"$(printf %s "$url" | tr -c 'A-Za-z0-9' '_')"
+    if [[ -e "$f.hang" ]]; then echo $$ > "$f.pid"; exec sleep 60; fi
+    if [[ -e "$f.after" ]]; then
+      for _ in {1..200}; do [[ -e "$(cat "$f.after")" ]] && break; sleep 0.05; done
+    fi
     # A URL's reads are counted once a test counts them.
     if [[ -e "$f.reads" ]]; then
       read=$(( $(cat "$f.reads") + 1 ))
@@ -167,6 +172,7 @@ defmodule Meerkat.ToolchainTest do
     for read <- 1..3, do: cancel(ctx, url, read)
     assert {_, 0} = toolchain(ctx, "check")
     assert reads(ctx, url) == 4
+    assert File.ls!(Path.join(ctx.base, "tmp")) == []
 
     for read <- 5..8, do: cancel(ctx, url, read)
     assert {out, 2} = toolchain(ctx, "check")
@@ -611,7 +617,9 @@ defmodule Meerkat.ToolchainTest do
   end
 
   test "a feed it cannot read fails closed", ctx do
-    File.rm!(fixture(ctx, "https://builds.hex.pm/builds/elixir/builds.txt"))
+    builds = "https://builds.hex.pm/builds/elixir/builds.txt"
+    File.rm!(fixture(ctx, builds))
+    count_reads(ctx, builds)
 
     for mode <- ~w(check bump) do
       assert {out, 2} = toolchain(ctx, mode)
@@ -622,7 +630,24 @@ defmodule Meerkat.ToolchainTest do
       assert File.ls!(Path.join(ctx.base, "tmp")) == []
     end
 
+    assert reads(ctx, builds) == 2
     assert File.read!(Path.join(ctx.base, ".github/toolchain.env")) == @env
+  end
+
+  test "a failed request stops the requests still in flight", ctx do
+    hang = fixture(ctx, "https://api.github.com/repos/oven-sh/bun/releases?per_page=100")
+    File.write!(hang <> ".hang", "")
+    builds = fixture(ctx, "https://builds.hex.pm/builds/elixir/builds.txt")
+    File.rm!(builds)
+    File.write!(builds <> ".after", hang <> ".pid")
+
+    assert {_, 2} = toolchain(ctx, "check")
+    pid = (hang <> ".pid") |> File.read!() |> String.trim()
+
+    assert Meerkat.TestHelpers.eventually(
+             fn -> elem(System.cmd("kill", ["-0", pid], stderr_to_stdout: true), 1) != 0 end,
+             interval: 100
+           )
   end
 
   test "an advisory feed it cannot read fails closed", ctx do

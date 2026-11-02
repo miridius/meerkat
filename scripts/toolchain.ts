@@ -18,17 +18,18 @@
 //
 // Both fail closed: a release list or advisory feed that cannot be read
 // exits 2. GitHub sometimes answers a release list with a page that holds
-// none of its releases, so a page with none that githubReleases takes is
-// read again, and is unreadable once GITHUB_READS reads in all have held
-// none. HTTP goes through curl, which tries a request again after a
-// timeout, a 408, 429, 500, 502, 503 or 504 answer, or a cancelled HTTP/2
-// stream; tests stub curl on PATH. GitHub requests carry GITHUB_TOKEN, or
+// none of its releases, so a page listing no stable release whose tag
+// matches is read again, and is unreadable once GITHUB_READS reads in all
+// have listed none. HTTP goes through curl, which tries a request again
+// after a timeout, a 408, 429, 500, 502, 503 or 504 answer, or an HTTP/2
+// stream error; tests stub curl on PATH. GitHub requests carry GITHUB_TOKEN, or
 // else gh's token, when there is one.
 
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Subprocess } from "bun";
 import { readExcludes, untilAccepted, WORKSPACE } from "./age-excludes";
 
 const DAY_MS = 86_400_000;
@@ -179,15 +180,24 @@ function githubToken(): Promise<string> {
 	return tokenPromise;
 }
 
-// downloadFile: a new file path in one directory for the run's downloads,
-// removed when the process exits, which a failed request can make it do
-// while others are still in flight.
+// downloadFile: a new file path in one directory for the run's downloads.
+// A failed request can make the process exit while others are in flight,
+// and their curls would outlive it, downloading on; exiting stops them and
+// removes the directory.
+const inFlight = new Set<Subprocess>();
 let downloads = "";
 let downloadCount = 0;
 function downloadFile(): string {
 	if (!downloads) {
 		const dir = mkdtempSync(join(tmpdir(), "toolchain-curl-"));
-		process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
+		process.on("exit", () => {
+			for (const proc of inFlight) proc.kill();
+			// A curl still stopping can add a file meanwhile; that leaves the
+			// directory behind rather than changing the exit status.
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {}
+		});
 		downloads = dir;
 	}
 	return join(downloads, String(++downloadCount));
@@ -201,9 +211,10 @@ async function curl(
 ): Promise<Uint8Array> {
 	// Abandons a try when connecting takes 30s or a transfer stays under
 	// 1 KiB/s for a minute, not after a fixed time: a release archive can
-	// take minutes on a slow link. Tries again, CURL_RETRIES times at most,
-	// after a timeout, a 408, 429, 500, 502, 503 or 504 answer, or an
-	// HTTP/2 stream the server cancels (exit 92), which --retry leaves out.
+	// take minutes on a slow link. curl tries again, CURL_RETRIES times at
+	// most, after a timeout or a 408, 429, 500, 502, 503 or 504 answer; a
+	// curl that ends in an HTTP/2 stream error (exit 92), which --retry
+	// leaves out, is run again as often.
 	const args = [
 		"curl",
 		"-sSfL",
@@ -237,9 +248,12 @@ async function curl(
 				stdout: "ignore",
 				stderr: "pipe",
 			});
+			inFlight.add(proc);
 			const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+			inFlight.delete(proc);
 			if (code === 92 && retry < CURL_RETRIES) continue;
-			// curl writes an error line for each try; the last is the one it gave up on.
+			// curl writes an error line for each try, and can follow the last,
+			// the one it gave up on, with advice.
 			const gaveUp = err.split("\n").findLast((line) => line.startsWith("curl: ("));
 			if (code !== 0) throw new Unreadable(`${url}: ${gaveUp || `curl exit ${code}`}`);
 			return readFileSync(out);
