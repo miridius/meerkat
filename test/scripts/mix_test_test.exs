@@ -329,16 +329,16 @@ defmodule Meerkat.MixTestScriptTest do
       end
     end
 
-    # Bash 5.3 rounds a time to fewer than six decimals without carrying into
-    # the seconds, so at three it writes x.9995 s or more as "x.:00", which
-    # test-file-times.ts cannot read. Bash before 5.3 writes at most three.
+    # Why six decimals: see TIMEFORMAT in scripts/run-test-file.sh.
     test "a file's times are written with all the decimals bash allows", ctx do
       secs = Path.join(ctx.base, "a.secs")
 
       assert {_, 0} =
                cmd(ctx, "bash", ["scripts/run-test-file.sh", "1", "test/a_test.exs", secs])
 
-      {version, 0} = cmd(ctx, "bash", ["-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"])
+      assert {version, 0} =
+               cmd(ctx, "bash", ["-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"])
+
       [major, minor] = version |> String.split() |> Enum.map(&String.to_integer/1)
       digits = if {major, minor} >= {5, 3}, do: 6, else: 3
 

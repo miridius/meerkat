@@ -31,7 +31,7 @@ test_file_lock "$1"
 #
 # Each time asks for six decimals: bash 5.3 rounds a time to fewer without
 # carrying into the seconds, so at three it writes x.9995 s or more as
-# "x.:00". Bash before 5.3 writes at most three.
+# "x.:00". Bash before 5.3 writes at most three, and carries.
 exec 4>&2
 TIMEFORMAT='%6R %6U %6S'
 {
