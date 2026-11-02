@@ -50,12 +50,14 @@ defmodule Meerkat.IntralineTest do
 
   test "a one-line range git writes without a count gets a count of one" do
     hunk = "@@ -5,2 +5 @@\n-a\n-b\n+x\n"
-    assert [first, _orphan] = Intraline.split([hunk])
-    assert String.starts_with?(first, "@@ -5,2 +5,1 @@\n")
+
+    assert Intraline.split([hunk]) == [
+             "@@ -5,2 +5,1 @@\n-a\n+x\n",
+             "@@ -6,1 +6,0 @@\n-b\n"
+           ]
   end
 
-  # With nothing to pair, a split would only cut the hunk in two and
-  # show a header that disagrees with git's.
+  # With nothing to pair, a split would only cut the hunk in two.
   test "one-sided runs pass through unsplit" do
     added = "@@ -2,3 +2,4 @@\n bravo\n charlie\n delta\n+echo\n"
     removed = "@@ -1,3 +1,2 @@\n a\n-b\n c\n"
@@ -145,11 +147,6 @@ defmodule Meerkat.IntralineTest do
 
   test "malformed hunk passed through unchanged" do
     hunk = "not-a-hunk\nrandom\n"
-    assert Intraline.split([hunk]) == [hunk]
-  end
-
-  test "hunk with a malformed count passed through unchanged" do
-    hunk = "@@ -1,2,3 +1 @@\n-a\n-b\n+x\n"
     assert Intraline.split([hunk]) == [hunk]
   end
 
