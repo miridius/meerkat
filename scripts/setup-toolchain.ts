@@ -1,8 +1,11 @@
 // Installs the Hex archive and rebar3 that .github/toolchain.env pins
 // into the Elixir on PATH, which a fresh Elixir lacks: `mix deps.get`
 // would otherwise stop to ask. rebar3 is checked against REBAR3_SHA256.
-// CI, the worktree setup hook and scripts/install.sh run it after
-// installing Erlang and Elixir; it does nothing when both are in place.
+// With mise, it first installs the Erlang, Elixir and Bun .tool-versions
+// pins when mise lists one as missing, and the Elixir is the pinned one,
+// whether or not mise is activated; a shim would otherwise install a new
+// Elixir without its Hex. CI, the worktree setup hook, scripts/install.sh
+// and scripts/bump-deps.sh run it; it does nothing when all are in place.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -19,6 +22,16 @@ function pin(key: string): string {
 		process.exit(1);
 	}
 	return value;
+}
+
+if (Bun.which("mise") && existsSync(".tool-versions")) {
+	const tools = ["erlang", "elixir", "bun"];
+	// Installs when mise cannot list what is missing too, so its failure shows.
+	const missing = await $`mise ls --current --missing ${tools}`.nothrow().quiet();
+	if (missing.exitCode !== 0 || missing.text().trim() !== "") {
+		await $`mise install ${tools}`;
+	}
+	$.env({ ...process.env, ...JSON.parse(await $`mise env --json`.text()) });
 }
 
 const hex = pin("HEX_VERSION");

@@ -206,7 +206,7 @@ defmodule Meerkat.BumpDepsCase do
       "bun scripts/age-excludes.ts prune")
         if [[ -e '#{base}/fail-age-excludes.ts' ]]; then echo "$1 failed"; exit 1; fi
         if [[ -e '#{base}/excludes-stale' ]]; then echo "pruned" >> pnpm-workspace.yaml; fi ;;
-      "bun scripts/advisory-fixes.ts" | "bun scripts/toolchain.ts bump")
+      "bun scripts/advisory-fixes.ts" | "bun scripts/toolchain.ts bump" | "bun scripts/setup-toolchain.ts")
         if [[ -e '#{base}/fail-'"${1#scripts/}" ]]; then echo "$1 failed"; exit 1; fi
         if [[ "$1" == scripts/toolchain.ts && -e '#{base}/toolchain-behind' ]]; then
           echo "bun 9.9.9" >> .tool-versions

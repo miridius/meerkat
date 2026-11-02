@@ -57,14 +57,18 @@ run() {
   fi
 }
 
-# The tools .tool-versions pins come from mise, then Hex and rebar3 for
-# that Elixir from scripts/setup-toolchain.ts, which is quick when they
-# are in place. When mise cannot list what is missing, the install runs
-# anyway, so its failure is reported.
+# The Erlang, Elixir and Bun .tool-versions pins come from mise, then Hex
+# and rebar3 for that Elixir from scripts/setup-toolchain.ts, which is
+# quick when they are in place. mise installs them here, not only in
+# setup-toolchain.ts, because Bun may not exist yet to run it. When mise
+# cannot list what is missing, the install runs anyway, so its failure is
+# reported. mise's env puts the pinned tools first on PATH, for the deps
+# too.
 if [ -f .tool-versions ] && command -v mise >/dev/null; then
-  if ! missing=$(mise ls --current --missing 2>/dev/null) || [ -n "$missing" ]; then
-    run mise install
+  if ! missing=$(mise ls --current --missing erlang elixir bun 2>/dev/null) || [ -n "$missing" ]; then
+    run mise install erlang elixir bun
   fi
+  if mise_env=$(mise env --shell bash 2>/dev/null); then eval "$mise_env"; fi
 fi
 if [ -f scripts/setup-toolchain.ts ]; then run bun scripts/setup-toolchain.ts; fi
 if mix_deps_missing; then run mix deps.get; fi

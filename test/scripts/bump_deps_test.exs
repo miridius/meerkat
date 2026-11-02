@@ -247,7 +247,7 @@ defmodule Meerkat.BumpDepsHookTest do
     assert_refused(ctx, "could not read when hex.pm published plug 2.1.0")
   end
 
-  test "the exclusion prune, advisory fixes and toolchain bump run after the dependency bump",
+  test "the exclusion prune, advisory fixes and toolchain bump run after the dependency bump, and the toolchain setup before the checks",
        ctx do
     File.write!(ctx.pnpm_out, @pnpm_behind)
     File.touch!(Path.join(Path.dirname(ctx.work), "toolchain-behind"))
@@ -260,19 +260,21 @@ defmodule Meerkat.BumpDepsHookTest do
              "pnpm -r update --latest --ignore-scripts vite",
              "bun scripts/age-excludes.ts prune",
              "bun scripts/advisory-fixes.ts",
-             "bun scripts/toolchain.ts bump"
+             "bun scripts/toolchain.ts bump",
+             "bun scripts/setup-toolchain.ts",
+             "mix compile --warnings-as-errors"
            ] ==
              Enum.filter(
                run(ctx),
                &(&1 =~
-                   ~r/^(pnpm -r update --latest --ignore|bun scripts\/(age-excludes|advisory-fixes|toolchain))/)
+                   ~r/^(pnpm -r update --latest --ignore|bun scripts\/(age-excludes|advisory-fixes|toolchain|setup-toolchain)|mix compile)/)
              )
 
     assert committed(ctx, ".tool-versions") == "base\nbun 9.9.9\n"
     assert committed(ctx, "pnpm-workspace.yaml") == "base\npruned\n"
   end
 
-  for script <- ~w(age-excludes.ts advisory-fixes.ts toolchain.ts) do
+  for script <- ~w(age-excludes.ts advisory-fixes.ts toolchain.ts setup-toolchain.ts) do
     test "a failing #{script} refuses the commit", ctx do
       File.touch!(Path.join(Path.dirname(ctx.work), "fail-#{unquote(script)}"))
       assert_refused(ctx, "scripts/#{unquote(script)} failed")

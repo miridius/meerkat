@@ -87,6 +87,82 @@ defmodule Meerkat.SetupToolchainTest do
     refute Enum.any?(log(ctx), &(&1 =~ "local.rebar"))
   end
 
+  # Pinned in .tool-versions, with a mise whose env puts a `pinned` Elixir
+  # ahead of the stubs, as for an activated shell whose PATH holds another.
+  describe "with mise" do
+    setup ctx do
+      File.write!(
+        Path.join(ctx.base, ".tool-versions"),
+        "erlang 29.1.2\nelixir 1.20.5\nbun 1.4.4\n"
+      )
+
+      File.mkdir_p!(Path.join(ctx.archives, "hex-2.5.3"))
+      File.write!(Path.join(ctx.base, "rebar3"), @rebar)
+      pinned = Path.join(ctx.base, "pinned")
+      File.mkdir_p!(pinned)
+      File.cp!(Path.join(ctx.base, "stubs/elixir"), Path.join(pinned, "elixir"))
+
+      File.write!(Path.join(pinned, "mix"), """
+      #!/usr/bin/env bash
+      echo "pinned mix $*" >> '#{ctx.base}/log'
+      """)
+
+      mise = Path.join(ctx.base, "stubs/mise")
+
+      File.write!(mise, """
+      #!/usr/bin/env bash
+      case "$*" in
+        "ls --current --missing erlang elixir bun")
+          [[ -e '#{ctx.base}/mise-ls-fails' ]] && exit 1
+          cat '#{ctx.base}/mise-missing' 2>/dev/null || true ;;
+        "env --json") printf '{"PATH": "%s"}' '#{pinned}:#{ctx.path}' ;;
+        install*) echo "mise $*" >> '#{ctx.base}/log'
+          if [[ -e '#{ctx.base}/mise-install-fails' ]]; then echo "mise install failed"; exit 1; fi ;;
+        *) echo "mise $*" >> '#{ctx.base}/log' ;;
+      esac
+      """)
+
+      for file <- [Path.join(pinned, "elixir"), Path.join(pinned, "mix"), mise],
+          do: File.chmod!(file, 0o755)
+
+      :ok
+    end
+
+    test "installs the pinned tools mise lists as missing, then Hex into the pinned Elixir",
+         ctx do
+      File.write!(Path.join(ctx.base, "mise-missing"), "elixir 1.20.5 (missing)\n")
+      File.rm_rf!(Path.join(ctx.archives, "hex-2.5.3"))
+
+      assert {_, 0} = setup_toolchain(ctx)
+      assert log(ctx) == ["mise install erlang elixir bun", "pinned mix local.hex 2.5.3 --force"]
+    end
+
+    test "runs the install when mise cannot list what is missing", ctx do
+      File.touch!(Path.join(ctx.base, "mise-ls-fails"))
+
+      assert {_, 0} = setup_toolchain(ctx)
+      assert log(ctx) == ["mise install erlang elixir bun"]
+    end
+
+    test "a failed install stops before Hex", ctx do
+      File.touch!(Path.join(ctx.base, "mise-ls-fails"))
+      File.touch!(Path.join(ctx.base, "mise-install-fails"))
+      File.rm_rf!(Path.join(ctx.archives, "hex-2.5.3"))
+
+      assert {out, status} = setup_toolchain(ctx)
+      assert status != 0
+      assert out =~ "mise install failed"
+      assert log(ctx) == ["mise install erlang elixir bun"]
+    end
+
+    test "with nothing missing installs nothing, and Hex goes into the pinned Elixir", ctx do
+      File.rm_rf!(Path.join(ctx.archives, "hex-2.5.3"))
+
+      assert {_, 0} = setup_toolchain(ctx)
+      assert log(ctx) == ["pinned mix local.hex 2.5.3 --force"]
+    end
+  end
+
   defp sha256(data), do: :crypto.hash(:sha256, data) |> Base.encode16(case: :lower)
 
   defp log(ctx),
