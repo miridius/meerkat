@@ -278,9 +278,11 @@ test("a boot still waiting for its URL when its test ends is stopped, and its st
 test("a boot that printed its URL is no longer pending", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
 	const bin = join(dir, "meerkat");
-	// It exits after printing its URL, so a boot left pending fails the
-	// test at once rather than holding it open.
-	writeFileSync(bin, `#!/bin/sh\necho "Paused for human review at http://127.0.0.1:1/" >&2\n`, { mode: 0o755 });
+	// It exits a second after printing its URL, so a boot left pending
+	// fails the test then rather than holding it open.
+	writeFileSync(bin, `#!/bin/sh\necho "Paused for human review at http://127.0.0.1:1/" >&2\nexec sleep 1\n`, {
+		mode: 0o755,
+	});
 	const runner = await startMeerkat({ bin, args: [], fixture: { dir } });
 	try {
 		expect(await stopPendingBoots()).toEqual([]);

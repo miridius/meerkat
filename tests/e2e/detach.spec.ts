@@ -278,7 +278,7 @@ test.describe("a review outlives the process that invoked it", () => {
 			// Waiting on the deleted run dir would cost the caller its wait for
 			// a pid file, over 9 s by the clock at any load: bash counts it in
 			// whole seconds up to 10.
-			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(9_000);
+			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(8_500);
 			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
 		} finally {
 			await meerkat.kill();
