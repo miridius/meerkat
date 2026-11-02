@@ -31,7 +31,7 @@ describe("language packs", () => {
 		expect(classes).toContain("tok-number");
 	});
 
-	test("clojure leaves bracket pairing but for quotes to paredit, and `'` unpaired", async () => {
+	test("clojure's closeBrackets pairs only `\"`, leaving brackets to paredit and `'` unpaired", async () => {
 		await preloadLanguages(["clojure"]);
 		const state = EditorState.create({ doc: "(a)", extensions: getLoadedLanguage("clojure") });
 		expect(state.languageDataAt("closeBrackets", 1)).toEqual([{ brackets: ['"'] }]);

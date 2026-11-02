@@ -13,7 +13,7 @@ import {
  *  which needs none. Each command returns the transaction to dispatch, or
  *  null when it does nothing there. */
 
-type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+export type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
 
 const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", '"': '"' };
 
@@ -108,7 +108,7 @@ function movable(state: EditorState, node: SyntaxNode): boolean {
 	return node.firstChild !== null || !/^[^\w\s"'`]+$/.test(state.doc.sliceString(node.from, node.to));
 }
 
-type Span = { from: number; to: number };
+export type Span = { from: number; to: number };
 
 /** `node`'s range without the line break and indentation a grammar may
  *  end a block statement with. */
@@ -155,20 +155,23 @@ function commaItems(state: EditorState, list: SyntaxNode): Span[] | null {
 	return commas ? items : null;
 }
 
-/** The entries of `list` when its items go in key-value pairs, such as a
- *  Clojure map, each spanning its key and value; null otherwise. */
-export type Entries = (state: EditorState, list: SyntaxNode) => Span[] | null;
+/** The items of `node` when they are not each child, such as a Clojure
+ *  map's, an entry spanning its key and value; empty when none of its
+ *  children moves on its own; null for any other node. */
+export type Entries = (node: SyntaxNode) => Span[] | null;
 
 /** `node`'s span and the span it swaps with moving by `dir`: in a comma
- *  list or one `entries` pairs, its item and the neighbouring item in
+ *  list or one `entries` splits, its item and the neighbouring item in
  *  `dir`; elsewhere, the node and its swap partner. Null when it has
- *  nothing to swap with. */
+ *  nothing to swap with, or its list's items hold a syntax error. */
 function swapPair(state: EditorState, node: SyntaxNode, dir: -1 | 1, entries: Entries): [Span, Span] | null {
-	const items = node.parent && (commaItems(state, node.parent) ?? entries(state, node.parent));
+	const list = node.parent;
+	const items = list && (commaItems(state, list) ?? entries(list));
 	if (!items) {
 		const partner = swapPartner(state, node, dir);
 		return partner && [span(state, node), partner];
 	}
+	if (!whole(list)) return null;
 	const at = items.findIndex((item) => item.from <= node.from && node.from < item.to);
 	const partner = at < 0 ? undefined : items[at + dir];
 	return partner ? [items[at], partner] : null;
@@ -224,10 +227,11 @@ export function moveNode(state: EditorState, dir: -1 | 1, entries: Entries = () 
 export type Tight = (state: EditorState, end: number, start: number) => boolean;
 
 /** Join the line after each caret's line onto it, or all the lines a
- *  selection touches. Blank lines go. Between two lines that are not
- *  blank, the line break and the whitespace around it become one space,
- *  or nothing when `tight` says so. Blank lines before the first line
- *  that is not blank go with its indentation kept. */
+ *  selection touches. Blank lines go, but for one when all are blank.
+ *  Between two lines that are not blank, the line break and the
+ *  whitespace around it become one space, or nothing when `tight` says
+ *  so. Blank lines before the first line that is not blank go, and that
+ *  line keeps its indentation. */
 export function joinLines(state: EditorState, tight: Tight = () => false): TransactionSpec | null {
 	const doc = state.doc;
 	let joined = false;
@@ -238,7 +242,7 @@ export function joinLines(state: EditorState, tight: Tight = () => false): Trans
 		joined = true;
 		const changes = [];
 		let caret = range.from;
-		// Where the text of the last line that is not blank ends.
+		// Where the text of the last line so far that is not blank ends.
 		let end: number | null = null;
 		for (let n = first; n <= last; n++) {
 			const line = doc.line(n);

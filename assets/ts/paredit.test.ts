@@ -92,18 +92,37 @@ describe("slurpForward", () => {
 });
 
 describe("structural commands with several carets", () => {
+	const carets = (doc: string, positions: number[]) =>
+		stateOf(doc).update({ selection: EditorSelection.create(positions.map((p) => EditorSelection.cursor(p))) }).state;
+	const apply = (state: EditorState, command: (s: EditorState) => TransactionSpec | null) =>
+		state.update(command(state) as TransactionSpec).state.doc.toString();
+
 	test("change a list once when two carets share it", () => {
-		const state = stateOf("(a b) c");
-		const two = state.update({
-			selection: EditorSelection.create([EditorSelection.cursor(2), EditorSelection.cursor(4)]),
-		}).state;
+		const two = carets("(a b) c", [2, 4]);
 		for (const command of [slurpForward, barfForward, splice, raise]) {
-			const next = two.update(command(two) as TransactionSpec).state.doc.toString();
-			expect([command.name, next]).toEqual([
+			expect([command.name, apply(two, command)]).toEqual([
 				command.name,
 				{ slurpForward: "(a b c)", barfForward: "(a) b c", splice: "a b c", raise: "a c" }[command.name],
 			]);
 		}
+	});
+
+	test("change each list when carets sit in different ones", () => {
+		expect(apply(carets("(a) b (c) d", [2, 8]), slurpForward)).toBe("(a b) (c d)");
+		expect(apply(carets("(a)(b)", [2, 5]), splice)).toBe("ab");
+		expect(apply(carets("((a b) c)", [4, 8]), barfForward)).toBe("((a) b) c");
+		expect(apply(carets("(a (b c))", [1, 5]), barfBackward)).toBe("a (b (c))");
+		expect(apply(carets("(a (b c))", [1, 5]), barfForward)).toBe("(a) (b) c");
+		expect(apply(carets("((a b) c)", [1, 2]), barfBackward)).toBe("a (b) (c)");
+		expect(apply(carets("((a b) c)", [3, 7]), barfBackward)).toBe("a (b) (c)");
+		expect(apply(carets("(a (b) c)", [1, 4]), splice)).toBe("a b c");
+		// Changes that meet where the carets' changed text only touches.
+		expect(apply(carets("((a) b) c", [1, 2]), slurpForward)).toBe("((a b) c)");
+		expect(apply(carets("(a (b c) d)", [1, 5]), barfForward)).toBe("(a (b) c) d");
+		// One caret's slurp would take in the other caret's list, so the
+		// later caret is left as it is.
+		expect(apply(carets("(a)(b) c", [2, 5]), slurpForward)).toBe("(a (b)) c");
+		expect(apply(carets("a (b)(c)", [3, 6]), slurpBackward)).toBe("(a b)(c)");
 	});
 });
 
@@ -178,8 +197,9 @@ describe("splice", () => {
 		expect(run(splice, "(a [b |c] d)")).toBe("(a b |c d)");
 	});
 
-	test("removes a set's #", () => {
+	test("removes a set's # and a splicing conditional's #?@", () => {
 		expect(run(splice, "#{a |b}")).toBe("a |b");
+		expect(run(splice, "#?@(|:clj a)")).toBe("|:clj a");
 	});
 
 	test("does nothing at the top level", () => {
@@ -279,6 +299,26 @@ describe("deleteGuarded", () => {
 		expect(back("#?(|:clj a)")).toBe("|#?(:clj a)");
 		expect(fwd("x |#{a b}")).toBe("x #{|a b}");
 		expect(fwd("|#?(:clj a)")).toBe("#?(|:clj a)");
+		expect(fwd("#|?(:clj a)")).toBe("#?(|:clj a)");
+		expect(back("#?@(|:clj [a])")).toBe("|#?@(:clj [a])");
+		expect(back("#?@|(:clj [a])")).toBe("|#?@(:clj [a])");
+		expect(back("#:a{|:b 1}")).toBe("|#:a{:b 1}");
+		expect(back("#:|a{:b 1}")).toBe("|#:a{:b 1}");
+		expect(fwd("|#?@(:clj [a])")).toBe("#?@(|:clj [a])");
+		expect(fwd("#?|@(:clj [a])")).toBe("#?@(|:clj [a])");
+		expect(fwd("|#:a{:b 1}")).toBe("#:a{|:b 1}");
+		expect(fwd("#|:a{:b 1}")).toBe("#:a{|:b 1}");
+		expect(back("x #?@(|) y")).toBe("x | y");
+		expect(back("#::|{:a 1}")).toBe("|#::{:a 1}");
+		expect(back("#::|al{:a 1}")).toBe("|#::al{:a 1}");
+		expect(fwd("#:|:{:a 1}")).toBe("#::{|:a 1}");
+		expect(back("#::a|l{:b 1}")).toBeNull();
+		expect(back("#:a|b{:b 1}")).toBeNull();
+	});
+
+	test("leaves a namespace name and an unmatched opener's # plain text", () => {
+		expect(back("#:ab|{:b 1}")).toBeNull();
+		expect(back("x #|{a b")).toBeNull();
 	});
 
 	test("lets an unmatched bracket be deleted", () => {

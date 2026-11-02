@@ -96,10 +96,39 @@ describe("hotkeyBindings", () => {
 		expect(press("Backspace", "clojure", stateOf("a)|", [clojure])).claimed).toBe(false);
 	});
 
-	test("⇧⌘↑/↓ move a Clojure map entry, key with value", () => {
-		expect(press("Mod-Shift-ArrowDown", "clojure", stateOf("{:a| 1 :b 2}", [clojure])).text).toBe("{:b 2 :a| 1}");
+	test("⇧⌘↑/↓ move a Clojure map entry key with value, and a set element alone", () => {
+		const down = (doc: string) => press("Mod-Shift-ArrowDown", "clojure", stateOf(doc, [clojure])).text;
+		expect(down("{:a| 1 :b 2}")).toBe("{:b 2 :a| 1}");
+		expect(down("{:a 1| :b 2}")).toBe("{:b 2 :a 1|}");
 		expect(press("Mod-Shift-ArrowUp", "clojure", stateOf("#:x{:a 1 :b| 2}", [clojure])).text).toBe("#:x{:b| 2 :a 1}");
-		expect(press("Mod-Shift-ArrowDown", "clojure", stateOf("#{|a b}", [clojure])).text).toBe("#{b |a}");
+		expect(down("#{|a b}")).toBe("#{b |a}");
+		expect(down("{#_x :a| 1 :b 2}")).toBe("{#_x :b 2 :a| 1}");
+		expect(down("(do {:a 1 |#_:b :c 3} (x))")).toBe("(do {:a 1 :c 3 |#_:b} (x))");
+	});
+
+	test("⇧⌘↑/↓ move a Clojure map entry with a #_ form between its key and value", () => {
+		const press1 = (key: string, doc: string) => press(key, "clojure", stateOf(doc, [clojure])).text;
+		expect(press1("Mod-Shift-ArrowDown", "{:a #_x| 1 :b 2}")).toBe("{:b 2 :a #_x| 1}");
+		expect(press1("Mod-Shift-ArrowDown", "{:a |#_x 1 :b 2}")).toBe("{:b 2 :a |#_x 1}");
+		expect(press1("Mod-Shift-ArrowUp", "{:b 2 :a #_x |1}")).toBe("{:a #_x |1 :b 2}");
+	});
+
+	test("⇧⌘↑/↓ move Clojure metadata, a reader tag and a record literal's name with their form", () => {
+		const down = (doc: string) => press("Mod-Shift-ArrowDown", "clojure", stateOf(doc, [clojure])).text;
+		const up = (doc: string) => press("Mod-Shift-ArrowUp", "clojure", stateOf(doc, [clojure])).text;
+		expect(down("(defn ^:pri|vate foo [])")).toBe("(defn [] ^:pri|vate foo)");
+		expect(up("(x ^:a fo|o)")).toBe("(^:a fo|o x)");
+		expect(down("(x #in|st \"2020\" y)")).toBe("(x y #in|st \"2020\")");
+		expect(up("(x #inst \"20|20\" y)")).toBe("(#inst \"20|20\" x y)");
+		expect(down("(f #my.R| {:a 1} y)")).toBe("(f y #my.R| {:a 1})");
+		expect(up("(f #my.R{:a| 1})")).toBe("(#my.R{:a| 1} f)");
+	});
+
+	test("⇧⌘↑/↓ move no key or value of a Clojure map without a value for each key", () => {
+		const down = (doc: string) => press("Mod-Shift-ArrowDown", "clojure", stateOf(doc, [clojure])).text;
+		expect(down("{:a| 1 :b}")).toBe("{:a| 1 :b}");
+		expect(down("x\n{:a| 1\n :b 2")).toBe("x\n{:a| 1\n :b 2");
+		expect(down("(do {:a| 1 :b} (x))")).toBe("(do (x) {:a| 1 :b})");
 	});
 });
 

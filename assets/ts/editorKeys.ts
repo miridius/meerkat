@@ -6,8 +6,8 @@ import {
 	barfBackward,
 	barfForward,
 	bracketTyping,
+	clojureItems,
 	deleteGuarded,
-	mapEntries,
 	moveByForm,
 	raise,
 	reindent,
@@ -87,8 +87,8 @@ export const HOTKEYS: Hotkey[] = [
 		keys: ["Mod-Shift-ArrowUp", "Mod-Shift-ArrowDown"],
 		does: "Move the statement, element or argument up / down",
 		run: [
-			(clojure) => claim(indented((state) => moveNode(state, -1, clojure ? mapEntries : undefined), clojure)),
-			(clojure) => claim(indented((state) => moveNode(state, 1, clojure ? mapEntries : undefined), clojure)),
+			(clojure) => claim(indented((state) => moveNode(state, -1, clojure ? clojureItems : undefined), clojure)),
+			(clojure) => claim(indented((state) => moveNode(state, 1, clojure ? clojureItems : undefined), clojure)),
 		],
 	},
 	{

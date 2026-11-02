@@ -1,5 +1,5 @@
 import { type IndentContext, indentService, syntaxTree } from "@codemirror/language";
-import { CLOSERS, forms, isColl, type SyntaxNode } from "./clojureTree.js";
+import { CLOSERS, forms, holder, isColl, type SyntaxNode } from "./clojureTree.js";
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
@@ -185,8 +185,7 @@ function matches(key: string | RegExp, name: string | null): boolean {
 /** Whether `list` is the body of `#?(...)` or, parsed as a deref inside
  *  one, `#?@(...)`. */
 function inReaderConditional(list: SyntaxNode): boolean {
-	const parent = list.parent?.name === "Deref" ? list.parent.parent : list.parent;
-	return parent?.name === "ReaderConditional";
+	return holder(list)?.name === "ReaderConditional";
 }
 
 /** Whether `node` starts its line. */
