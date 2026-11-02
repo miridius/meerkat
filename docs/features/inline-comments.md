@@ -177,7 +177,7 @@ nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
 | ⇧⌘K / ⇧⌘J | Slurp / barf forward |
 | ⌃⌘J / ⌃⌘K | Slurp / barf backward |
 | ⌘' | Raise the form at the caret, replacing its parent |
-| ⌥S | Splice: remove the enclosing brackets (also works where ⌥S types ß) |
+| ⌥S | Splice: remove the enclosing brackets with any prefix on them, such as `#`, `'`, `@`, `^:m ` or `#my.Rec` (also works where ⌥S types ß) |
 
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
 keep CodeMirror's own binding (on macOS, move by word; elsewhere, by

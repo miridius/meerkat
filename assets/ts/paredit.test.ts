@@ -202,6 +202,15 @@ describe("splice", () => {
 		expect(run(splice, "#?@(|:clj a)")).toBe("|:clj a");
 	});
 
+	test("removes any other prefix on the brackets", () => {
+		expect(run(splice, "(x #my.Rec{|:a 1})")).toBe("(x |:a 1)");
+		expect(run(splice, "(x #inst{|:a 1})")).toBe("(x |:a 1)");
+		expect(run(splice, "(x '(a |b))")).toBe("(x a |b)");
+		expect(run(splice, "(x @(f |a))")).toBe("(x f |a)");
+		expect(run(splice, "(x ^:m (a |b))")).toBe("(x a |b)");
+		expect(run(splice, "(x '^:m (a |b))")).toBe("(x a |b)");
+	});
+
 	test("does nothing at the top level", () => {
 		expect(run(splice, "a |b")).toBeNull();
 	});
