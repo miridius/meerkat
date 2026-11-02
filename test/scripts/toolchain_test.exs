@@ -3,8 +3,8 @@ defmodule Meerkat.ToolchainTest do
   # writes. Only curl and gh are replaced, by stubs on PATH: curl serves
   # the file a test wrote for a URL, or for that read of it, `[]` for any
   # other GitHub API URL, and fails for the rest, or for a read a test
-  # cancels. A test can also have it hang on a URL, or answer a URL only
-  # once a file exists.
+  # cancels. A test can also have it hang on a URL, or wait up to 10 s for
+  # a file to exist before answering a URL.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/toolchain.ts")
@@ -642,6 +642,7 @@ defmodule Meerkat.ToolchainTest do
     File.write!(builds <> ".after", hang <> ".pid")
 
     assert {_, 2} = toolchain(ctx, "check")
+    assert File.ls!(Path.join(ctx.base, "tmp")) == []
     pid = (hang <> ".pid") |> File.read!() |> String.trim()
 
     assert Meerkat.TestHelpers.eventually(

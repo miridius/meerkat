@@ -20,7 +20,7 @@
 // exits 2. GitHub sometimes answers a release list with a page that holds
 // none of its releases, so a page listing no stable release whose tag
 // matches is read again, and is unreadable once GITHUB_READS reads in all
-// have listed none. HTTP goes through curl, which tries a request again
+// have listed none. HTTP goes through curl, and a request is tried again
 // after a timeout, a 408, 429, 500, 502, 503 or 504 answer, or an HTTP/2
 // stream error; tests stub curl on PATH. GitHub requests carry GITHUB_TOKEN, or
 // else gh's token, when there is one.
@@ -29,7 +29,6 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Subprocess } from "bun";
 import { readExcludes, untilAccepted, WORKSPACE } from "./age-excludes";
 
 const DAY_MS = 86_400_000;
@@ -184,14 +183,14 @@ function githubToken(): Promise<string> {
 // A failed request can make the process exit while others are in flight,
 // and their curls would outlive it, downloading on; exiting stops them and
 // removes the directory.
-const inFlight = new Set<Subprocess>();
+const exiting = new AbortController();
 let downloads = "";
 let downloadCount = 0;
 function downloadFile(): string {
 	if (!downloads) {
 		const dir = mkdtempSync(join(tmpdir(), "toolchain-curl-"));
 		process.on("exit", () => {
-			for (const proc of inFlight) proc.kill();
+			exiting.abort();
 			// A curl still stopping can add a file meanwhile; that leaves the
 			// directory behind rather than changing the exit status.
 			try {
@@ -247,10 +246,9 @@ async function curl(
 				stdin: new TextEncoder().encode(config),
 				stdout: "ignore",
 				stderr: "pipe",
+				signal: exiting.signal,
 			});
-			inFlight.add(proc);
 			const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-			inFlight.delete(proc);
 			if (code === 92 && retry < CURL_RETRIES) continue;
 			// curl writes an error line for each try, and can follow the last,
 			// the one it gave up on, with advice.
