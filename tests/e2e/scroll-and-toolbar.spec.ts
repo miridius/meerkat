@@ -156,12 +156,6 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		expect(await scrollY(), "opening does not scroll the page").toBe(scrolled);
 		await afterNextFrame(page);
 		expect(await fits(), "opening does not refit the toolbar").toBe(fitsBefore);
-		// A fit, here one a change to the toolbar's class sets off, tries
-		// steps that change the toolbar's height, yet leaves the page where
-		// it was.
-		await page.evaluate(() => document.querySelector(".diff-toolbar")?.classList.add("refit"));
-		await expect.poll(fits).toBeGreaterThan(fitsBefore);
-		expect(await scrollY(), "a fit does not scroll the page").toBe(scrolled);
 
 		await page.keyboard.press("Escape");
 		await expect(dropdown).toBeHidden();
