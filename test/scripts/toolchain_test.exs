@@ -1,8 +1,10 @@
 defmodule Meerkat.ToolchainTest do
   # Runs the repo's real scripts/toolchain.ts against pins each test
   # writes. Only curl and gh are replaced, by stubs on PATH: curl serves
-  # the file a test wrote for a URL, `[]` for any other GitHub API URL,
-  # and fails for the rest.
+  # the file a test wrote for a URL, or for that read of it, `[]` for any
+  # other GitHub API URL, and fails for the rest, or for a read a test
+  # cancels. A test can also have it hang on a URL, or wait up to 10 s for
+  # a file to exist before answering a URL.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/toolchain.ts")
@@ -52,6 +54,7 @@ defmodule Meerkat.ToolchainTest do
     stubs = Path.join(base, "stubs")
     File.mkdir_p!(web)
     File.mkdir_p!(stubs)
+    File.mkdir_p!(Path.join(base, "tmp"))
     File.mkdir_p!(Path.join(base, ".github/workflows"))
 
     File.write!(Path.join(base, ".github/toolchain.env"), @env)
@@ -67,11 +70,25 @@ defmodule Meerkat.ToolchainTest do
     File.write!(Path.join(stubs, "curl"), """
     #!/usr/bin/env bash
     cat >> '#{base}/curl-config'
+    echo "$*" >> '#{base}/curl-args'
     url="${@: -1}"
+    exec > "${@: -2:1}"
     f='#{web}'/"$(printf %s "$url" | tr -c 'A-Za-z0-9' '_')"
-    if [[ -e "$f" ]]; then cat "$f"
+    if [[ -e "$f.hang" ]]; then echo $$ > "$f.pid"; exec sleep 60; fi
+    if [[ -e "$f.after" ]]; then
+      for _ in {1..200}; do [[ -e "$(cat "$f.after")" ]] && break; sleep 0.05; done
+    fi
+    # A URL's reads are counted once a test counts them.
+    if [[ -e "$f.reads" ]]; then
+      read=$(( $(cat "$f.reads") + 1 ))
+      echo "$read" > "$f.reads"
+    fi
+    if [[ -n "$read" && -e "$f.$read.cancel" ]]; then
+      echo 'curl: (92) HTTP/2 stream 1 was not closed cleanly: CANCEL (err 8)' >&2; exit 92
+    elif [[ -n "$read" && -e "$f.$read" ]]; then cat "$f.$read"
+    elif [[ -e "$f" ]]; then cat "$f"
     elif [[ "$url" == https://api.github.com/* ]]; then echo '[]'
-    else echo "curl: (22) 404 $url" >&2; exit 22; fi
+    else printf 'curl: (28) slow\\ncurl: (22) 404 %s\\nMore details here\\n' "$url" >&2; exit 22; fi
     """)
 
     File.write!(Path.join(stubs, "gh"), "#!/bin/sh\nexit 1\n")
@@ -141,6 +158,26 @@ defmodule Meerkat.ToolchainTest do
   test "sends GITHUB_TOKEN to GitHub in a config on stdin", ctx do
     assert {_, 0} = toolchain(ctx, "check")
     assert File.read!(Path.join(ctx.base, "curl-config")) =~ "Authorization: Bearer t0k"
+  end
+
+  test "has curl retry each request's transient failures", ctx do
+    assert {_, 0} = toolchain(ctx, "check")
+    requests = File.read!(Path.join(ctx.base, "curl-args")) |> String.split("\n", trim: true)
+    assert requests != []
+    assert Enum.all?(requests, &(&1 =~ " --retry 3 "))
+  end
+
+  test "tries a request again after a cancelled HTTP/2 stream, three times at most", ctx do
+    url = "https://api.github.com/repos/oven-sh/bun/releases?per_page=100"
+    for read <- 1..3, do: cancel(ctx, url, read)
+    assert {_, 0} = toolchain(ctx, "check")
+    assert reads(ctx, url) == 4
+    assert File.ls!(Path.join(ctx.base, "tmp")) == []
+
+    for read <- 5..8, do: cancel(ctx, url, read)
+    assert {out, 2} = toolchain(ctx, "check")
+    assert out =~ "#{url}: curl: (92) HTTP/2 stream 1 was not closed cleanly"
+    assert reads(ctx, url) == 8
   end
 
   describe "a newer release" do
@@ -580,15 +617,38 @@ defmodule Meerkat.ToolchainTest do
   end
 
   test "a feed it cannot read fails closed", ctx do
-    File.rm!(fixture(ctx, "https://builds.hex.pm/builds/elixir/builds.txt"))
+    builds = "https://builds.hex.pm/builds/elixir/builds.txt"
+    File.rm!(fixture(ctx, builds))
+    count_reads(ctx, builds)
 
     for mode <- ~w(check bump) do
       assert {out, 2} = toolchain(ctx, mode)
-      assert out =~ "builds.hex.pm/builds/elixir/builds.txt"
+      assert out =~ "builds.hex.pm/builds/elixir/builds.txt: curl: (22) 404"
+      refute out =~ "slow"
+      refute out =~ "More details"
       assert out =~ "cannot check the toolchain"
+      assert File.ls!(Path.join(ctx.base, "tmp")) == []
     end
 
+    assert reads(ctx, builds) == 2
     assert File.read!(Path.join(ctx.base, ".github/toolchain.env")) == @env
+  end
+
+  test "a failed request stops the requests still in flight", ctx do
+    hang = fixture(ctx, "https://api.github.com/repos/oven-sh/bun/releases?per_page=100")
+    File.write!(hang <> ".hang", "")
+    builds = fixture(ctx, "https://builds.hex.pm/builds/elixir/builds.txt")
+    File.rm!(builds)
+    File.write!(builds <> ".after", hang <> ".pid")
+
+    assert {_, 2} = toolchain(ctx, "check")
+    assert File.ls!(Path.join(ctx.base, "tmp")) == []
+    pid = (hang <> ".pid") |> File.read!() |> String.trim()
+
+    assert Meerkat.TestHelpers.eventually(
+             fn -> elem(System.cmd("kill", ["-0", pid], stderr_to_stdout: true), 1) != 0 end,
+             interval: 100
+           )
   end
 
   test "an advisory feed it cannot read fails closed", ctx do
@@ -617,6 +677,36 @@ defmodule Meerkat.ToolchainTest do
     assert tools(ctx) =~ "\nbun 1.4.3\n"
   end
 
+  describe "a GitHub release list holding none of its releases" do
+    @bun_releases "https://api.github.com/repos/oven-sh/bun/releases?per_page=100"
+
+    test "is read again", ctx do
+      # The second read lists only a pre-release, which counts as none.
+      serve(ctx, @bun_releases, "[]", 1)
+      serve(ctx, @bun_releases, releases_json([{"bun-v1.4.4", @old, true}]), 2)
+
+      assert {out, 0} = toolchain(ctx, "check")
+      assert out =~ "current: bun 1.4.3"
+      assert reads(ctx, @bun_releases) == 3
+    end
+
+    test "fails closed once every read holds none", ctx do
+      github(ctx, "oven-sh/bun", [])
+      count_reads(ctx, @bun_releases)
+
+      for mode <- ~w(check bump) do
+        assert {out, 2} = toolchain(ctx, mode)
+
+        assert out =~
+                 "oven-sh/bun: GitHub listed no stable release whose tag matches " <>
+                   "/^bun-v(\\d+\\.\\d+\\.\\d+)$/ in 5 reads — cannot check the toolchain."
+      end
+
+      assert reads(ctx, @bun_releases) == 10
+      assert tools(ctx) == @tool_versions
+    end
+  end
+
   test "a source with no release 24h old fails closed", ctx do
     github(ctx, "hexpm/hex", [{"v2.5.3", hours_ago(1)}])
     assert {out, 2} = toolchain(ctx, "check")
@@ -637,21 +727,45 @@ defmodule Meerkat.ToolchainTest do
 
   defp serve(ctx, url, body), do: File.write!(fixture(ctx, url), body)
 
+  # Serves BODY for only the READth read of URL.
+  defp serve(ctx, url, body, read) do
+    count_reads(ctx, url)
+    File.write!("#{fixture(ctx, url)}.#{read}", body)
+  end
+
+  # Has the READth read of URL end in a cancelled HTTP/2 stream.
+  defp cancel(ctx, url, read) do
+    count_reads(ctx, url)
+    File.write!("#{fixture(ctx, url)}.#{read}.cancel", "")
+  end
+
+  defp count_reads(ctx, url) do
+    counter = fixture(ctx, url) <> ".reads"
+    unless File.exists?(counter), do: File.write!(counter, "0")
+  end
+
+  defp reads(ctx, url),
+    do: File.read!(fixture(ctx, url) <> ".reads") |> String.trim() |> String.to_integer()
+
   defp github(ctx, repo, releases) do
     serve(
       ctx,
       "https://api.github.com/repos/#{repo}/releases?per_page=100",
-      Jason.encode!(
-        for release <- releases do
-          {tag, at, pre} =
-            case release do
-              {tag, at} -> {tag, at, false}
-              {tag, at, pre} -> {tag, at, pre}
-            end
+      releases_json(releases)
+    )
+  end
 
-          %{"tag_name" => tag, "published_at" => at, "draft" => false, "prerelease" => pre}
-        end
-      )
+  defp releases_json(releases) do
+    Jason.encode!(
+      for release <- releases do
+        {tag, at, pre} =
+          case release do
+            {tag, at} -> {tag, at, false}
+            {tag, at, pre} -> {tag, at, pre}
+          end
+
+        %{"tag_name" => tag, "published_at" => at, "draft" => false, "prerelease" => pre}
+      end
     )
   end
 
@@ -826,7 +940,11 @@ defmodule Meerkat.ToolchainTest do
   defp toolchain(ctx, mode) do
     System.cmd("bun", [@script, mode],
       cd: ctx.base,
-      env: [{"PATH", ctx.path}, {"GITHUB_TOKEN", "t0k"}],
+      env: [
+        {"PATH", ctx.path},
+        {"GITHUB_TOKEN", "t0k"},
+        {"TMPDIR", Path.join(ctx.base, "tmp")}
+      ],
       stderr_to_stdout: true
     )
   end
