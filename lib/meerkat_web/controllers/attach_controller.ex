@@ -154,6 +154,7 @@ defmodule MeerkatWeb.AttachController do
     # backend's held copy is the first invocation's index, not this caller's.
     # Other targets do not read the index, so its name is not checked.
     caller_index = if match?({:staged, _}, target), do: caller_index
+    # Tests set `:read_review_fun` to hand over a review without git.
     read = Application.get_env(:meerkat, :read_review_fun, &read_review/3)
 
     case read.(target, repo_path, caller_index) do

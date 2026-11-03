@@ -194,32 +194,32 @@ defmodule Meerkat.TestHelpers do
   @doc """
   A `make_tmp_repo/1` dir, removed when the test exits, for a test that
   needs only a place for meerkat's state, not git. Caches `:meerkat_dir`
-  in the application env as `Meerkat.CLI` does for a review, and the
-  dir's approval cache path as `Meerkat.ApprovalCache.path_for/1` keeps
-  the paths it resolves, so neither runs git; the previous values come
-  back on exit. Code that asks git itself, such as
-  `Meerkat.PendingAnswers.save/2` or a staged-blob lookup, finds no repo
-  here.
+  and `:approval_cache_path` in the application env as `Meerkat.CLI`
+  does for a review, so neither runs git; the previous values come back
+  on exit. The cached values serve every repo path, not just this dir's.
+  Code that asks git itself, such as `Meerkat.PendingAnswers.save/2` or a
+  staged-blob lookup, finds no repo here.
   """
   @spec make_state_repo(String.t()) :: String.t()
   def make_state_repo(prefix) do
     dir = make_tmp_repo(prefix)
     state_dir = Path.join([dir, ".git", "meerkat-precommit"])
-    previous = Application.fetch_env(:meerkat, :meerkat_dir)
-    Application.put_env(:meerkat, :meerkat_dir, state_dir)
-    paths = Application.get_env(:meerkat, :approval_cache_paths, %{})
-    approved = Path.join(state_dir, "approved.json")
-    Application.put_env(:meerkat, :approval_cache_paths, Map.put(paths, dir, approved))
+
+    cached = [
+      meerkat_dir: state_dir,
+      approval_cache_path: Path.join(state_dir, "approved.json")
+    ]
+
+    previous = for {key, _} <- cached, do: {key, Application.fetch_env(:meerkat, key)}
+    Enum.each(cached, fn {key, value} -> Application.put_env(:meerkat, key, value) end)
 
     on_exit(fn ->
-      case previous do
-        {:ok, value} -> Application.put_env(:meerkat, :meerkat_dir, value)
-        :error -> Application.delete_env(:meerkat, :meerkat_dir)
-      end
+      Enum.each(previous, fn
+        {key, {:ok, value}} -> Application.put_env(:meerkat, key, value)
+        {key, :error} -> Application.delete_env(:meerkat, key)
+      end)
 
-      paths = Application.get_env(:meerkat, :approval_cache_paths, %{})
-      Application.put_env(:meerkat, :approval_cache_paths, Map.delete(paths, dir))
-      File.rm_rf(dir)
+      File.rm_rf!(dir)
     end)
 
     dir
@@ -228,10 +228,15 @@ defmodule Meerkat.TestHelpers do
   @doc """
   Writes the pending-answers file `Meerkat.PendingAnswers.save/2` would
   for `answers`, maps with `:location`, `:question` and `:answer`,
-  without the git lookup `save/2` makes to find the repo.
+  validated as `save/2` validates them, without the lookup of the repo's
+  toplevel `save/2` makes. The file's path still comes from
+  `Meerkat.Git.meerkat_dir/1`.
   """
   @spec put_pending_answers(String.t(), [map()]) :: :ok
-  def put_pending_answers(repo, answers), do: :ok = Meerkat.PendingAnswers.write(repo, answers)
+  def put_pending_answers(repo, answers) do
+    {:ok, parsed} = Meerkat.PendingAnswers.parse(Jason.encode!(%{answers: answers}))
+    :ok = Meerkat.PendingAnswers.write(repo, parsed)
+  end
 
   @doc """
   Builds a fixture tree once, for tests that only read it or that copy it

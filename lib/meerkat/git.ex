@@ -54,6 +54,9 @@ defmodule Meerkat.Git do
           deletions: non_neg_integer()
         }
 
+  @typedoc "Where HEAD stands, as `head_branch/1` reports it."
+  @type head :: {:checked_out, String.t()} | {:rebasing, String.t()} | :detached
+
   @doc """
   Return the staged-vs-HEAD changed-file list, excluding paths with
   unresolved merge conflicts. If the working dir has no commits yet,
@@ -124,8 +127,7 @@ defmodule Meerkat.Git do
   `head-name` file `git rebase` keeps in the worktree's own gitdir, the
   same file `git status` reads to say "rebasing branch …".
   """
-  @spec head_branch(String.t()) ::
-          {:checked_out, String.t()} | {:rebasing, String.t()} | :detached
+  @spec head_branch(String.t()) :: head
   def head_branch(repo_path) do
     case run_git(repo_path, ["symbolic-ref", "--short", "-q", "HEAD"]) do
       {:ok, output} ->

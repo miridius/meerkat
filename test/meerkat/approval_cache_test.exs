@@ -1,5 +1,6 @@
 defmodule Meerkat.ApprovalCacheTest do
-  use ExUnit.Case, async: true
+  # Not async: a path_for/1 test sets the global :approval_cache_path.
+  use Meerkat.Case, async: false
 
   alias Meerkat.ApprovalCache
 
@@ -61,27 +62,24 @@ defmodule Meerkat.ApprovalCacheTest do
       {:ok, repo: repo}
     end
 
-    test "is approved.json in the shared gitdir, kept once resolved", %{repo: repo} do
+    test "is approved.json in the shared gitdir", %{repo: repo} do
       path = ApprovalCache.path_for(repo)
       assert path == Path.join([repo, ".git", "meerkat-precommit", "approved.json"])
-      File.rm_rf!(Path.join(repo, ".git"))
-      assert ApprovalCache.path_for(repo) == path
     end
 
-    test "each repo keeps its own", %{repo: repo} do
-      other = Meerkat.TestHelpers.make_git_repo("meerkat-approval-path")
-      on_exit(fn -> File.rm_rf!(other) end)
-      assert ApprovalCache.path_for(repo) != ApprovalCache.path_for(other)
-      assert ApprovalCache.path_for(other) =~ other
-    end
-
-    test "outside a repo is nil, and is looked up again", %{repo: repo} do
+    test "outside a repo is nil" do
       dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-nogit")
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf!(dir) end)
       assert ApprovalCache.path_for(dir) == nil
-      File.rename!(Path.join(repo, ".git"), Path.join(dir, ".git"))
-      assert ApprovalCache.path_for(dir) =~ dir
+    end
+
+    test "is the cached :approval_cache_path when set, without git", %{repo: repo} do
+      cached = Path.join(repo, "cached.json")
+      Application.put_env(:meerkat, :approval_cache_path, cached)
+      on_exit(fn -> Application.delete_env(:meerkat, :approval_cache_path) end)
+      File.rm_rf!(Path.join(repo, ".git"))
+      assert ApprovalCache.path_for(repo) == cached
     end
   end
 

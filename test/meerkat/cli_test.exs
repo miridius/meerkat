@@ -1046,7 +1046,7 @@ defmodule Meerkat.CLITest do
     end
   end
 
-  # The real-git fixtures below, each built once and copied for each test.
+  # The real-git fixtures the next describes copy for each test, each built once.
   setup_all do
     seeded =
       fixture_template("meerkat-cli-gate-template", fn dir ->

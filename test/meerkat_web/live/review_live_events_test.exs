@@ -427,7 +427,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   ## --- Decision ---
 
   test "approve renders the Approved done view and clears pending answers", %{conn: conn} do
-    # No cached meerkat dir, so each repo path resolves to its own.
+    # Not make_state_repo: its cached meerkat dir serves every repo path,
+    # so the cwd's answers file would be this repo's too.
     repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-lv")
     on_exit(fn -> File.rm_rf!(repo) end)
     put_pending_answers(repo, [%{location: "f.ex:1", question: "q", answer: "a"}])

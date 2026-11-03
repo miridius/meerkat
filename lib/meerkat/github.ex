@@ -77,8 +77,7 @@ defmodule Meerkat.GitHub do
   `Meerkat.Git.head_branch/1` reports it, or `:none` when no PR lookup
   applies.
   """
-  @spec pr_selector({:checked_out, String.t()} | {:rebasing, String.t()} | :detached) ::
-          {:ok, [String.t()]} | :none
+  @spec pr_selector(Git.head()) :: {:ok, [String.t()]} | :none
   def pr_selector({:checked_out, _}), do: {:ok, []}
 
   def pr_selector({:rebasing, branch}) do

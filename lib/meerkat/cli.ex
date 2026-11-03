@@ -683,6 +683,9 @@ defmodule Meerkat.CLI do
     Application.put_env(:meerkat, :review_id, review_id)
     Application.put_env(:meerkat, :repo_path, repo_path)
     Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
+    # Likewise, so an approval runs no `git rev-parse`.
+    # muex:ignore equivalent: unset or set elsewhere, path_for/1 resolves the same path live
+    Application.put_env(:meerkat, :approval_cache_path, ApprovalCache.path_for(repo_path))
     Application.put_env(:meerkat, :review_state, state)
     Application.put_env(:meerkat, :start_endpoint, true)
 
