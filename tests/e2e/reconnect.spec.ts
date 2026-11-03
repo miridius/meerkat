@@ -149,6 +149,14 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await page.mouse.up();
 		await expect(page.locator("#commit-msg-gutter .dragging"), "the release ends the drag").toHaveCount(0);
 		await connection.restore();
+		// A press held on one block takes no capture.
+		await page.mouse.move(from.x, from.y);
+		await page.mouse.down();
+		await connection.drop();
+		await page.mouse.up();
+		await page.mouse.move(to.x, to.y, { steps: 5 });
+		await expect(page.locator("#commit-msg-gutter .dragging"), "a move after the release drags nothing").toHaveCount(0);
+		await connection.restore();
 		await page.getByRole("button", { name: "Comment on commit message line 1" }).click();
 		await expect(page.locator(".commit-msg-form .line-anchor"), "the click asks for its own line").toHaveText(["L1–1"]);
 	} finally {
