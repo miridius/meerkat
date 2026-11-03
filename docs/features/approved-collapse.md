@@ -30,10 +30,10 @@ ease), no JS.
 
 Approving a file, or clicking its header to collapse it, scrolls
 the page to the next file the list shows, skipping files the
-filters hide. The next file's header lands exactly where it sticks
-under the toolbar, so scrolling on moves only the diff beneath it.
-When no shown file follows, the page scrolls toward the collapsed
-file's own header instead, as far as the page's end allows. The
+filters hide, or toward the collapsed file's own header when no
+shown file follows. As far as the page's end allows, that header
+lands exactly where it sticks under the toolbar, so scrolling on
+moves only the diff beneath it. The
 server pushes a `scroll-into-view` event naming that file's section,
 and the client scrolls it smoothly into place. Expanding a file and
 un-approving one push no scroll.
