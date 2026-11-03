@@ -44,8 +44,10 @@ run_gates() {
 # a gate is interrupted.
 check_elsewhere() (
   tmp=$(mktemp -d) || exit 1
-  # A second Ctrl-C does not cut the cleanup short.
-  trap 'trap "" INT; [ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
+  # No signal cuts the cleanup short: not a second Ctrl-C, nor a group's
+  # TERM or HUP that macOS delivers only once this shell has seen the gate
+  # die of it and begun cleaning up as a plain exit.
+  trap 'trap "" INT HUP TERM; [ ! -e "$tmp/tree" ] || git worktree remove --force "$tmp/tree"; rm -rf "$tmp"' EXIT
   # An exit, not death by SIGINT: bash 3.2 can skip the EXIT trap then.
   trap 'exit 130' INT
   # No hooks: post-checkout would run lefthook, which the new worktree lacks.
