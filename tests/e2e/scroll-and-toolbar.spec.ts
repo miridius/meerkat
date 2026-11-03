@@ -145,12 +145,16 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		fixture: makeFixture({ files: { "a/tall.txt": TALL_FILE, "b/z.txt": TALL_FILE } }),
 	});
 	try {
-		// Narrow enough that the toolbar wraps onto a second row.
 		await page.setViewportSize({ width: 700, height: 720 });
 		await page.goto(meerkat.url);
-		await expect
-			.poll(() => page.evaluate(() => document.querySelector(".diff-toolbar")?.getBoundingClientRect().height))
-			.toBeGreaterThan(60);
+		// The widest window in which the toolbar wraps onto a second row, its
+		// last squeeze step.
+		const toolbarHeight = () =>
+			page.evaluate(() => document.querySelector(".diff-toolbar")?.getBoundingClientRect().height ?? 0);
+		for (let width = 700; (await toolbarHeight()) <= 60; width -= 20) {
+			await page.setViewportSize({ width, height: 720 });
+			await afterNextFrame(page);
+		}
 		const toggle = page.getByRole("button", { name: /^Toggle file list$/ });
 		const dropdown = page.getByRole("dialog", { name: "Files" });
 		const scrollY = () => page.evaluate(() => Math.round(window.scrollY));

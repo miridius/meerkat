@@ -11,3 +11,16 @@ export function squeeze(fits: (taken: string[]) => boolean, steps = SQUEEZE_STEP
 	}
 	return steps;
 }
+
+type Mutation<N> = { type: string; target: N; addedNodes: Iterable<N>; removedNodes: Iterable<N> };
+
+// Whether any of a MutationObserver's records can change the fit. The files
+// dropdown sits out of the toolbar's flow, so nothing in it, nor its opening
+// or closing, can; `inDropdown` says whether a node is, or is in, it.
+export function changesFit<N>(records: Iterable<Mutation<N>>, inDropdown: (node: N) => boolean): boolean {
+	for (const r of records) {
+		if (inDropdown(r.target)) continue;
+		if (r.type !== "childList" || ![...r.addedNodes, ...r.removedNodes].every(inDropdown)) return true;
+	}
+	return false;
+}

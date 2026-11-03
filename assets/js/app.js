@@ -12,7 +12,7 @@ import Components from "virtual:live-svelte-components";
 import { GATED_EVENTS, gateVerdict } from "../ts/connectionGate";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
-import { squeeze } from "../ts/toolbarSqueeze";
+import { changesFit, squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -78,6 +78,11 @@ const hooks = {
   Toolbar: {
     mounted() {
       this._fit = () => {
+        // Each step tried resizes the toolbar, and the browser's scroll
+        // anchoring would scroll the page to make up for it, so the page
+        // jumps where the steps tried change the toolbar's row count.
+        const root = document.documentElement.style;
+        root.overflowAnchor = "none";
         // The branch chip can shrink past the part that may truncate, and
         // then its other part runs out of it.
         const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
@@ -93,7 +98,8 @@ const hooks = {
           return boxes.every((box) => box.scrollWidth <= box.clientWidth);
         }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
-        document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
+        root.setProperty("--toolbar-h", `${h}px`);
+        root.removeProperty("overflow-anchor");
       };
       // A fit resizes the toolbar and its items, so a ResizeObserver on them
       // would be notified from inside its own callback, which the browser
@@ -104,7 +110,11 @@ const hooks = {
       // MutationObserver. Neither sees what a fit changes.
       this._resize = new ResizeObserver(this._fit);
       this._resize.observe(this.el.querySelector(".toolbar-width"));
-      this._mutation = new MutationObserver(this._fit);
+      const inDropdown = (node) =>
+        (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".file-filter") != null;
+      this._mutation = new MutationObserver((records) => {
+        if (changesFit(records, inDropdown)) this._fit();
+      });
       this._mutation.observe(this.el, {
         subtree: true,
         childList: true,

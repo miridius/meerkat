@@ -24,7 +24,10 @@ box and chips stay put.
 
 Its width fits its widest row, so the longest file or folder name
 sets it, up to the toolbar's width less its padding; a wider tree
-scrolls sideways inside it. Rows narrower than
+scrolls sideways inside it. While the tree scrolls either way, it
+shows a scrollbar for that way. In browsers that style scrollbars
+(Chromium, Safari), it does even where the system hides scrollbars
+until scrolling, as macOS does by default. Rows narrower than
 the widest keep their buttons in a column at the dropdown's right.
 
 It closes (`files.close`) on:
