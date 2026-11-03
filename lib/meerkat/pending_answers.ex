@@ -22,6 +22,8 @@ defmodule Meerkat.PendingAnswers do
   @version 1
 
   @type answer :: %{location: String.t(), question: String.t(), answer: String.t()}
+  @typedoc "An answer as `parse/1` returns it and `write/2` stores it."
+  @type parsed_answer :: %{String.t() => String.t()}
   @type payload :: %{version: pos_integer(), created_at: String.t(), answers: [answer]}
 
   @doc """
@@ -38,7 +40,7 @@ defmodule Meerkat.PendingAnswers do
           | {:error, :not_a_repo | :invalid_input | :write_failed, String.t()}
   def save(path, input) do
     with {:ok, repo_path} <- toplevel(path),
-         {:ok, answers} <- parse_input(input),
+         {:ok, answers} <- parse(input),
          :ok <- write(repo_path, answers) do
       {:ok, length(answers)}
     end
@@ -130,7 +132,13 @@ defmodule Meerkat.PendingAnswers do
     end
   end
 
-  defp parse_input(input) do
+  @doc """
+  The answers in `input`, the JSON `save/2` takes, as string-keyed maps
+  in their order, or `{:error, :invalid_input, message}`.
+  """
+  @spec parse(binary()) ::
+          {:ok, [parsed_answer]} | {:error, :invalid_input, String.t()}
+  def parse(input) do
     case Jason.decode(input) do
       {:ok, %{"answers" => answers}} when is_list(answers) and answers != [] ->
         validate_answers(answers)
@@ -171,7 +179,14 @@ defmodule Meerkat.PendingAnswers do
     end
   end
 
-  defp write(repo_path, answers) do
+  @doc """
+  Store `answers`, as `parse/1` returns them, as the pending-answers file
+  of the repo at `repo_path`, replacing any earlier one. Unlike `save/2`,
+  it does not check that `repo_path` is in a repo: outside one it writes
+  under `<repo_path>/.git`.
+  """
+  @spec write(String.t(), [parsed_answer]) :: :ok | {:error, :write_failed, String.t()}
+  def write(repo_path, answers) do
     created_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     payload = %{"version" => @version, "createdAt" => created_at, "answers" => answers}
     path = path_for(repo_path)

@@ -180,6 +180,27 @@ defmodule Meerkat.ReviewStateTest do
                state.commit_message_blocks
     end
 
+    test "a single ref reviews that commit and its message; a two-dot range, only its files",
+         %{base: base} do
+      repo = Path.join(base, "repo")
+      File.mkdir_p!(repo)
+      init_repo(repo)
+      stage(repo, "base.txt", "base\n")
+      git(repo, ["commit", "-qm", "Base"])
+      stage(repo, "feature.rs", "fn feature() {}\n")
+      git(repo, ["commit", "-qm", "Add feature module"])
+      stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
+
+      assert {:ok, state} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
+      assert [%{file_name: "feature.rs", status: :added}] = state.files
+      assert state.commit_message == "Add feature module"
+      assert [%{start_line: 1, text: "Add feature module"}] = state.commit_message_blocks
+
+      assert {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
+      assert [%{file_name: "feature.rs"}] = state.files
+      assert state.commit_message == ""
+    end
+
     test "--pr reviews the PR head against its base, with the PR's metadata", %{base: base} do
       # Mirrors how GitHub publishes a PR: a remote holding the base
       # branch and `refs/pull/<N>/head`, cloned locally.

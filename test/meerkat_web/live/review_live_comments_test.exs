@@ -36,7 +36,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
   test "inline forms at different lines stay open together; each submit posts at its own lines",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     for {from, to} <- [{"1", "1"}, {"2", "3"}] do
@@ -300,7 +300,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
   test "commit-msg forms at two ranges are labelled and each posts at its own range",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [@plain_file],
@@ -407,7 +407,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "revealing a form in a filtered-out, collapsed file shows and expands it", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     other = %{@plain_file | file_name: "other.ex"}
 
     state = %ReviewState{
@@ -456,7 +456,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "revealing a form on a file already shown pins no :show override", %{conn: conn} do
-    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, tmp_git_repo())
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, state_repo())
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     render_click(view, "comment_form.reveal", %{"form_key" => "file:0"})
@@ -581,7 +581,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "comment.remove delegates to the ReviewServer in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     comment = %{
       id: "f1",
@@ -600,7 +600,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "opening and hiding forms persists to the ReviewServer in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
@@ -613,7 +613,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   ## --- Comments ---
 
   test "a global comment is added, edited through a Save form, and removed", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     add_global_comment(view, "first version")
@@ -642,7 +642,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "each finding type renders its own card class and badge label", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     types = [
@@ -662,7 +662,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "a file comment is added from the file's button, edited, and removed", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     body = "#file-0 .note.file-note .comment-body"
 
@@ -691,7 +691,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "opening then cancelling a file-comment form keeps the other comments", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     add_global_comment(view, "global baseline")
@@ -711,7 +711,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   end
 
   test "commit-message comments land in the gutter with their line range", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     msg = String.trim(@commit_msg)
 
     state = %ReviewState{
@@ -743,7 +743,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
   test "both agent-instruction checkboxes start off in the form and toggle independently on the rendered comment",
        %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     toggle = ".global-comments .note .flag-toggle"
     instructions = "#{toggle}[data-flag=correct_instructions] input"
@@ -790,7 +790,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   test "a submitted form stores both flags, and editing the comment reopens with them", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     for {instructions?, lint_rule?} <- [{true, false}, {false, true}] do
       {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
@@ -818,7 +818,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
   test "a comment added or removed in one tab updates another tab of the same review", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {tab_a, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     {:ok, tab_b, _html} = live_isolated(conn, ReviewLive)
 

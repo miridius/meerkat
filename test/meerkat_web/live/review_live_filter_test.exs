@@ -93,7 +93,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   test "approving a file with no effective_oid flashes instead of silently not persisting", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     Application.put_env(:meerkat, :repo_path, repo)
 
     view =
@@ -108,7 +108,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "ticking Approved in a PR / range review leaves the approval cache alone", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     # A staged-mode approval already cached for the same branch name.
     ApprovalCache.modify(ApprovalCache.path_for(repo), fn cache ->
@@ -259,7 +259,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "filter.show_all clears server-side overrides in bound mode", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.show_only", %{"file_index" => "0"})
@@ -270,7 +270,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   test "filter.toggle_file writes :hide for a visible file and :show for a hidden one", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.toggle_file", %{"file_name" => "src/widget.rs"})
@@ -281,7 +281,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "filter.toggle_file shows a file that show-only hides", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -294,7 +294,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "filter.toggle_file re-showing the show-only file keeps show-only", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -308,7 +308,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "filter.toggle_file ignores unknown file names", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     render_hook(view, "filter.toggle_file", %{"file_name" => "nope.ex"})
@@ -316,7 +316,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "filter.hide_matched / show_matched scope to the substring filter", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{files: [@plain_file, %{@plain_file | file_name: "other.ex"}]}
 
@@ -331,12 +331,11 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "hide *.md hides the markdown file until its chip is clicked", %{conn: conn} do
-    repo = tmp_git_repo()
-    commit(repo, "init")
-    stage(repo, "NOTES.md", "# Notes\n")
-    stage(repo, "src/main.rs", "fn main() {}\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
-    {view, _rid} = mount_bound(conn, state, repo)
+    state = %ReviewState{
+      files: [added("NOTES.md", "# Notes\n"), added("src/main.rs", "fn main() {}\n")]
+    }
+
+    {view, _rid} = mount_bound(conn, state, state_repo())
     open_files_panel(view)
     refute has_element?(view, ".hidden-extensions .filter-chip")
 
@@ -351,13 +350,9 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "generated files stay hidden until the generated chip shows them", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, ".gitattributes", "bun.lock linguist-generated=true\n")
-    commit(repo, "seed attrs")
-    stage(repo, "bun.lock", "fresh lockfile contents\n")
-    stage(repo, "src.ts", "export const greeting = 'hi';\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
-    {view, _rid} = mount_bound(conn, state, repo)
+    lock = %{added("bun.lock", "fresh lockfile contents\n") | is_generated: true}
+    state = %ReviewState{files: [lock, added("src.ts", "export const greeting = 'hi';\n")]}
+    {view, _rid} = mount_bound(conn, state, state_repo())
 
     assert has_element?(view, ".file-list .file-name", "src.ts")
     refute has_element?(view, ".file-list .file-name", "bun.lock")
@@ -395,7 +390,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   test "file.toggle_expanded flips the collapse set for approved and unapproved files", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     {view, _rid} =
       mount_bound(conn, %ReviewState{files: [%{@plain_file | effective_oid: nil}]}, repo)
@@ -462,7 +457,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "post_to_github failure with gh missing pushes no url", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [@plain_file], pr: %{number: 7, title: "t", url: "u"}}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -503,7 +498,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "un-approving does not push the scroll nudge; approving does", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: nil}],
@@ -548,7 +543,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "approve's bulk cache write skips files without an effective oid", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [
@@ -593,7 +588,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "an approve after another tab's decision marks no file approved", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], approval_key: "main"}
     {view, _rid} = mount_bound(conn, state, repo)
     {:ok, _} = Decision.submit({:reject, "feedback"})

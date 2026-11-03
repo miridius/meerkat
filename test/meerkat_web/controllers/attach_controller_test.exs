@@ -15,43 +15,75 @@ defmodule MeerkatWeb.AttachControllerTest do
   @token "test-token"
   @own_run "own-run"
 
-  setup do
-    repo = make_git_repo("meerkat-attach")
+  @review %ReviewState{
+    files: [%{file_name: "a.txt", effective_oid: "oid-one"}],
+    commit_message: "first message"
+  }
 
-    git(repo, [
-      "-c",
-      "user.email=t@t",
-      "-c",
-      "user.name=t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "init"
-    ])
+  # The staged review a `:git` test reads, built once and copied for each.
+  setup_all do
+    template =
+      fixture_template("meerkat-attach-template", fn repo ->
+        git(repo, ["init", "-q"])
+        commit(repo, "init")
+        stage(repo, "a.txt", "one\n")
+        File.write!(Path.join(repo, "MSG"), "first message\n")
+      end)
 
-    stage(repo, "a.txt", "one\n")
+    {:ok, template: template}
+  end
+
+  # A test whose code never reads the review is tagged
+  # `:no_review` and gets none. A test of how a later invocation reads the
+  # review from git is tagged `:git` and gets a real staged review. Any
+  # other later invocation reads `current`, which the test can change.
+  setup ctx do
+    cond do
+      ctx[:no_review] -> serve_backend([])
+      ctx[:git] -> serve_review(ctx.template)
+      true -> serve_review()
+    end
+  end
+
+  defp serve_review do
+    repo = make_state_repo("meerkat-attach")
+    {:ok, current} = Agent.start_link(fn -> {:ok, @review} end)
+
+    serve_backend(
+      repo_path: repo,
+      review_target: {:staged, nil},
+      review_state: @review,
+      read_review_fun: fn _target, _repo, _index -> Agent.get(current, & &1) end
+    )
+
+    %{repo: repo, current: current}
+  end
+
+  defp serve_review(template) do
+    repo = copy_fixture(template, "meerkat-attach")
     msg = Path.join(repo, "MSG")
-    File.write!(msg, "first message\n")
     target = {:staged, msg}
     {:ok, state} = ReviewState.from_target(target, repo)
+    serve_backend(repo_path: repo, review_target: target, review_state: state)
+    %{repo: repo, msg: msg}
+  end
 
+  defp serve_backend(review_env) do
     env = %{"MEERKAT_SERVE_TOKEN" => @token, "MEERKAT_RUN_ID" => @own_run}
     previous_env = Map.new(env, fn {k, _} -> {k, System.get_env(k)} end)
     Enum.each(env, fn {k, v} -> System.put_env(k, v) end)
 
     test_pid = self()
 
-    app_env = [
-      repo_path: repo,
-      review_id: "attach-test",
-      review_target: target,
-      review_state: state,
-      review_banner: "BANNER line\n",
-      no_open: true,
-      restart_fun: fn code -> send(test_pid, {:halted, code}) end,
-      browser_open_fun: fn url -> send(test_pid, {:opened, url}) end
-    ]
+    app_env =
+      review_env ++
+        [
+          review_id: "attach-test",
+          review_banner: "BANNER line\n",
+          no_open: true,
+          restart_fun: fn code -> send(test_pid, {:halted, code}) end,
+          browser_open_fun: fn url -> send(test_pid, {:opened, url}) end
+        ]
 
     previous_app = Map.new(app_env, fn {k, _} -> {k, Application.fetch_env(:meerkat, k)} end)
     Enum.each(app_env, fn {k, v} -> Application.put_env(:meerkat, k, v) end)
@@ -69,10 +101,9 @@ defmodule MeerkatWeb.AttachControllerTest do
       end)
 
       Application.delete_env(:meerkat, :review_deadline_ms)
-      File.rm_rf(repo)
     end)
 
-    %{repo: repo, msg: msg}
+    :ok
   end
 
   defp attach(conn, run, quiet \\ "0") do
@@ -100,27 +131,33 @@ defmodule MeerkatWeb.AttachControllerTest do
            "expected #{n} attached caller(s)"
   end
 
+  defp change_staged_content(current) do
+    Agent.update(current, fn _ ->
+      {:ok, %{@review | files: [%{file_name: "a.txt", effective_oid: "oid-two"}]}}
+    end)
+  end
+
   defp delivered(conn, run) do
     conn
     |> put_req_header("x-meerkat-token", @token)
     |> post("/api/attach/delivered?run=#{run}")
   end
 
+  @tag :no_review
   test "frames mark each whole line, and a last line without a newline" do
     assert IO.iodata_to_binary(AttachController.frames("a\n\nb\n")) == "o a\no \no b\n"
     assert IO.iodata_to_binary(AttachController.frames("a\ntail")) == "o a\nn tail\n"
     assert IO.iodata_to_binary(AttachController.frames("")) == ""
   end
 
-  test "reattaching a waiting review cannot bypass another round's questions, even with a changed index",
-       %{conn: conn, repo: repo} do
+  test "reattaching a waiting review cannot bypass another round's questions, even when its review cannot be read",
+       %{conn: conn, repo: repo, current: current} do
     Application.put_env(:meerkat, :no_open, false)
     answered = %{location: "global", question: "Already answered?"}
     missing = %{location: "file: a.txt", question: "Still owed?"}
     :ok = PendingQuestions.replace(repo, [answered, missing])
-
-    {:ok, 1} =
-      PendingAnswers.save(repo, Jason.encode!(%{answers: [Map.put(answered, :answer, "Yes.")]}))
+    put_pending_answers(repo, [Map.put(answered, :answer, "Yes.")])
+    Agent.update(current, fn _ -> {:error, "index gone"} end)
 
     refused = attach_from_index(conn, "later-run", "missing-index")
     assert refused.status == 200
@@ -135,12 +172,8 @@ defmodule MeerkatWeb.AttachControllerTest do
     refute_received {:opened, _}
     refute_received {:halted, _}
 
-    # A complete set reaches the real index comparison, without consuming the answers.
-    {:ok, 2} =
-      PendingAnswers.save(
-        repo,
-        Jason.encode!(%{answers: Enum.map([answered, missing], &Map.put(&1, :answer, "Yes."))})
-      )
+    # A complete set reaches the review comparison, without consuming the answers.
+    put_pending_answers(repo, Enum.map([answered, missing], &Map.put(&1, :answer, "Yes.")))
 
     assert attach_from_index(conn, "answered-run", "missing-index").status == 502
     assert length(PendingAnswers.load(repo).answers) == 2
@@ -199,6 +232,7 @@ defmodule MeerkatWeb.AttachControllerTest do
              IO.iodata_to_binary([AttachController.frames("Fix it."), "x 1\n"])
   end
 
+  @tag :no_review
   test "an authorized attach with no run or a non-string run is a bad request", %{conn: conn} do
     for path <- ["/api/attach", "/api/attach?run[]=later-run"] do
       refused = conn |> put_req_header("x-meerkat-token", @token) |> get(path)
@@ -209,11 +243,13 @@ defmodule MeerkatWeb.AttachControllerTest do
     end
   end
 
+  @tag :no_review
   test "a request without the backend's token is refused", %{conn: conn} do
     conn = get(conn, "/api/attach?run=#{@own_run}")
     assert conn.status == 403
   end
 
+  @tag :no_review
   test "a backend started without a token refuses a request carrying an empty one",
        %{conn: conn} do
     System.put_env("MEERKAT_SERVE_TOKEN", "")
@@ -279,9 +315,9 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   test "a later invocation whose staged content changed replaces the review",
-       %{conn: conn, repo: repo} do
+       %{conn: conn, current: current} do
     :ok = Decision.publish({0, "approved\n"})
-    stage(repo, "a.txt", "two\n")
+    change_staged_content(current)
 
     conn = attach(conn, "later-run")
 
@@ -291,8 +327,8 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   test "a later invocation whose commit message changed replaces the review",
-       %{conn: conn, msg: msg} do
-    File.write!(msg, "reworded message\n")
+       %{conn: conn, current: current} do
+    Agent.update(current, fn _ -> {:ok, %{@review | commit_message: "reworded message"}} end)
 
     conn = attach(conn, "later-run")
 
@@ -304,6 +340,8 @@ defmodule MeerkatWeb.AttachControllerTest do
     # `git commit` hands its hook a relative `.git/index`; `git commit -a` and
     # `git commit <path>` hand it a temporary one holding what they will commit.
     # The backend was started by an invocation git gave this index file.
+    @describetag :git
+
     setup do
       put_env("GIT_INDEX_FILE", ".git/index")
     end
@@ -400,10 +438,10 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   test "a caller attached to a review that changed is told so before the backend halts",
-       %{conn: conn, repo: repo} do
+       %{conn: conn, current: current} do
     first = Task.async(fn -> attach(conn, @own_run) end)
     await_attached()
-    stage(repo, "a.txt", "two\n")
+    change_staged_content(current)
 
     assert attach(conn, "later-run").status == 409
 
@@ -414,10 +452,10 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   test "a later invocation whose target no longer resolves is refused and leaves the review running",
-       %{conn: conn} do
+       %{conn: conn, current: current} do
     first = Task.async(fn -> attach(conn, @own_run) end)
     await_attached()
-    Application.put_env(:meerkat, :review_target, {:single_ref, "no-such-ref"})
+    Agent.update(current, fn _ -> {:error, "unknown revision no-such-ref"} end)
 
     conn = attach(conn, "later-run")
 
@@ -430,6 +468,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert Task.await(first).resp_body =~ ~r/\Ao BANNER line\n(k\n)*o approved\nx 0\n\z/
   end
 
+  @tag :no_review
   test "a run id that is not a launcher run id is refused", %{conn: conn} do
     for run <- ["..", "a%2Fb", "."] do
       assert attach(conn, run).status == 400

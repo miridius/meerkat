@@ -1046,6 +1046,34 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  # The real-git fixtures the next describes copy for each test, each built once.
+  setup_all do
+    seeded =
+      fixture_template("meerkat-cli-gate-template", fn dir ->
+        git(dir, ["init", "-q", "-b", "main"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        File.write!(Path.join(dir, "seed.rs"), "fn seed() {}\n")
+        git(dir, ["add", "seed.rs"])
+        git(dir, ["commit", "-qm", "seed"])
+      end)
+
+    # `a.rs` staged on main and approved at its staged OID.
+    approved =
+      fixture_template("meerkat-cli-approved-template", fn dir ->
+        git(dir, ["init", "-q", "-b", "main"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        git(dir, ["commit", "--allow-empty", "-qm", "seed"])
+        stage(dir, "a.rs", "fn a() {}\n")
+        oid = git(dir, ["rev-parse", ":a.rs"])
+        path = ApprovalCache.path_for(dir)
+        {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      end)
+
+    {:ok, seeded_template: seeded, approved_template: approved}
+  end
+
   describe "auto_approve_decision/3 — pending-answers gate (real git fixture)" do
     # Real-git fixture (not async: each test owns a tmp repo and shells
     # out to `git`). A prior review's **question**-type comments leave a
@@ -1054,19 +1082,8 @@ defmodule Meerkat.CLITest do
     # agent's answers get silently discarded (the "meerkat drops answers
     # on a clean tree" bug). The reviewer sees them via a live review
     # instead, and only a terminal decision clears the file.
-    setup do
-      dir =
-        Meerkat.TestHelpers.tmp_path("meerkat-cli-gate")
-
-      File.mkdir_p!(dir)
-      git(dir, ["init", "-q", "-b", "main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      File.write!(Path.join(dir, "seed.rs"), "fn seed() {}\n")
-      git(dir, ["add", "seed.rs"])
-      git(dir, ["commit", "-qm", "seed"])
-      on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, dir: dir}
+    setup ctx do
+      {:ok, dir: copy_fixture(ctx.seeded_template, "meerkat-cli-gate")}
     end
 
     test "empty staged diff + no pending answers → auto-approves (fast path unchanged)",
@@ -1175,19 +1192,10 @@ defmodule Meerkat.CLITest do
     # (restart onto a new version or after a code change, crash retry)
     # would find them all approved and exit 0 with no Approve click,
     # dropping the comments.
-    setup do
-      dir = make_git_repo("meerkat-cli-restart")
-      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
-      stage(dir, "a.rs", "fn a() {}\n")
-      oid = git(dir, ["rev-parse", ":a.rs"])
-      path = ApprovalCache.path_for(dir)
-      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+    setup ctx do
+      dir = copy_fixture(ctx.approved_template, "meerkat-cli-restart")
       serve_dir = Path.join(dir, ".git/run")
       File.mkdir_p!(serve_dir)
-      on_exit(fn -> File.rm_rf!(dir) end)
       {:ok, dir: dir, serve_dir: serve_dir}
     end
 
@@ -1214,18 +1222,8 @@ defmodule Meerkat.CLITest do
     # serve dir. Auto-approving would never deliver those comments.
     @all_approved {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
 
-    setup do
-      dir = make_git_repo("meerkat-cli-crashed")
-      git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
-      git(dir, ["commit", "--allow-empty", "-qm", "seed"])
-      stage(dir, "a.rs", "fn a() {}\n")
-      oid = git(dir, ["rev-parse", ":a.rs"])
-      path = ApprovalCache.path_for(dir)
-      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
-      on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, dir: dir}
+    setup ctx do
+      {:ok, dir: copy_fixture(ctx.approved_template, "meerkat-cli-crashed")}
     end
 
     # Saves the snapshot the review of the currently staged content writes.
@@ -1246,11 +1244,11 @@ defmodule Meerkat.CLITest do
       lint_rule: false
     }
 
-    for key <- [:comments, :file_comments, :global_comments, :commit_message_comments] do
-      test "a snapshot holding #{key} keeps the rerun live", %{dir: dir} do
-        save_snapshot(dir, [{unquote(key), [@comment]}])
-        assert CLI.auto_approve_decision_for_test(dir) == :live
-      end
+    # `Meerkat.Persistence.held_comments?/3`'s tests cover which snapshots
+    # hold a comment.
+    test "a snapshot holding a comment keeps the rerun live", %{dir: dir} do
+      save_snapshot(dir, comments: [@comment])
+      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
     # The review leaves whitespace-only changes out of its files and so out
@@ -1277,38 +1275,6 @@ defmodule Meerkat.CLITest do
       save_snapshot(dir, global_comments: [@comment])
       stage(dir, "a.rs", "fn a() {}\n")
       assert CLI.auto_approve_decision_for_test(dir) == @all_approved
-    end
-
-    # The fast path runs before the review's modules load, so a snapshot
-    # key may name no existing atom yet.
-    test "a snapshot of other staged content holding a key that is no atom still auto-approves",
-         %{dir: dir} do
-      stage(dir, "a.rs", "fn earlier() {}\n")
-      path = save_snapshot(dir, global_comments: [@comment])
-      key = "no_atom_#{System.unique_integer([:positive])}"
-
-      json =
-        path
-        |> File.read!()
-        |> Jason.decode!()
-        |> put_in(["global_comments", Access.at(0), key], 1)
-
-      File.write!(path, Jason.encode!(json))
-      stage(dir, "a.rs", "fn a() {}\n")
-      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
-    end
-
-    test "a snapshot written before signatures existed keeps the rerun live", %{dir: dir} do
-      path = save_snapshot(dir, global_comments: [@comment])
-      legacy = path |> File.read!() |> Jason.decode!() |> Map.delete("state_signature")
-      File.write!(path, Jason.encode!(legacy))
-      assert CLI.auto_approve_decision_for_test(dir) == :live
-    end
-
-    test "an unparseable snapshot keeps the rerun live", %{dir: dir} do
-      path = save_snapshot(dir, [])
-      File.write!(path, "{not json")
-      assert CLI.auto_approve_decision_for_test(dir) == :live
     end
 
     test "with nothing staged, a snapshot holding comments keeps the rerun live", %{dir: dir} do

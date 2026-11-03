@@ -5,20 +5,25 @@ defmodule Meerkat.GitHeldIndexTest do
 
   alias Meerkat.Git
 
-  setup do
-    dir = Meerkat.TestHelpers.make_git_repo("meerkat-held-index")
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    stage(dir, "a.txt", "base\n")
-    git(dir, ["commit", "-qm", "base"])
+  # Built once, then copied for each test.
+  setup_all do
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-held-index-template", fn dir ->
+        git(dir, ["init", "-q"])
+        git(dir, ["config", "user.email", "t@t.t"])
+        git(dir, ["config", "user.name", "t"])
+        stage(dir, "a.txt", "base\n")
+        git(dir, ["commit", "-qm", "base"])
+      end)
 
+    {:ok, template: template}
+  end
+
+  setup %{template: template} do
+    dir = Meerkat.TestHelpers.copy_fixture(template, "meerkat-held-index")
     held_dir = Path.join(dir, ".git/run")
     File.mkdir_p!(held_dir)
-
-    on_exit(fn ->
-      Application.delete_env(:meerkat, :held_index)
-      File.rm_rf!(dir)
-    end)
+    on_exit(fn -> Application.delete_env(:meerkat, :held_index) end)
 
     {:ok, dir: dir, held_dir: held_dir}
   end

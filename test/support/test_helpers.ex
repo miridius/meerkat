@@ -192,6 +192,79 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
+  A `make_tmp_repo/1` dir, removed when the test exits, for a test that
+  needs only a place for meerkat's state, not git. Caches `:meerkat_dir`
+  and `:approval_cache_path` in the application env as `Meerkat.CLI`
+  does for a review, so neither runs git; the previous values come back
+  on exit. The cached values serve every repo path, not just this dir's.
+  Code that asks git itself, such as `Meerkat.PendingAnswers.save/2` or a
+  staged-blob lookup, finds no repo here.
+  """
+  @spec make_state_repo(String.t()) :: String.t()
+  def make_state_repo(prefix) do
+    dir = make_tmp_repo(prefix)
+    state_dir = Path.join([dir, ".git", "meerkat-precommit"])
+
+    cached = [
+      meerkat_dir: state_dir,
+      approval_cache_path: Path.join(state_dir, "approved.json")
+    ]
+
+    previous = for {key, _} <- cached, do: {key, Application.fetch_env(:meerkat, key)}
+    Enum.each(cached, fn {key, value} -> Application.put_env(:meerkat, key, value) end)
+
+    on_exit(fn ->
+      Enum.each(previous, fn
+        {key, {:ok, value}} -> Application.put_env(:meerkat, key, value)
+        {key, :error} -> Application.delete_env(:meerkat, key)
+      end)
+
+      File.rm_rf!(dir)
+    end)
+
+    dir
+  end
+
+  @doc """
+  Writes the pending-answers file `Meerkat.PendingAnswers.save/2` would
+  for `answers`, maps with `:location`, `:question` and `:answer`,
+  validated as `save/2` validates them, without the lookup of the repo's
+  toplevel `save/2` makes. The file's path still comes from
+  `Meerkat.Git.meerkat_dir/1`.
+  """
+  @spec put_pending_answers(String.t(), [map()]) :: :ok
+  def put_pending_answers(repo, answers) do
+    {:ok, parsed} = Meerkat.PendingAnswers.parse(Jason.encode!(%{answers: answers}))
+    :ok = Meerkat.PendingAnswers.write(repo, parsed)
+  end
+
+  @doc """
+  Builds a fixture tree once, for tests that only read it or that copy it
+  with `copy_fixture/2`: calls `build` on a new `tmp_path/1` dir named
+  with `prefix`, removed when the caller exits, and returns the dir. Each
+  git repo in the tree then keeps its objects in one pack, so a copy
+  holds a few files where each loose object would be a file and often a
+  directory.
+  """
+  @spec fixture_template(String.t(), (String.t() -> any())) :: String.t()
+  def fixture_template(prefix, build) do
+    dir = tmp_path(prefix)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    File.mkdir_p!(dir)
+    build.(dir)
+
+    for objects <- Path.wildcard(Path.join(dir, "**/objects"), match_dot: true),
+        git_dir = Path.dirname(objects),
+        File.regular?(Path.join(git_dir, "HEAD")) do
+      # -n: no server info, which only dumb HTTP serving reads. No bitmap,
+      # which a bare repo's repack writes by default for serving clones.
+      git(git_dir, ["--git-dir=.", "-c", "repack.writeBitmaps=false", "repack", "-adqn"])
+    end
+
+    dir
+  end
+
+  @doc """
   Copies the fixture tree `template` to a new `tmp_path/1` dir named with
   `prefix`, removed when the test exits, and returns the copy. Each file
   outside git's object stores that names `template`, such as a remote's
@@ -200,8 +273,8 @@ defmodule Meerkat.TestHelpers do
   cannot be copied this way.
 
   A module that builds the same fixture for every test builds it once in
-  `setup_all` and copies it per test: under load, each git or lefthook
-  process that builds it costs a test seconds.
+  `setup_all` with `fixture_template/2` and copies it per test: under
+  load, each git or lefthook process that builds it costs a test seconds.
   """
   @spec copy_fixture(String.t(), String.t()) :: String.t()
   def copy_fixture(template, prefix) do
