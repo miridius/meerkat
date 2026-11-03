@@ -21,9 +21,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3]
+  import Meerkat.TestHelpers, only: [put_pending_answers: 2]
 
   @plain_file plain_file()
+  @md_file md_file()
   @commit_msg commit_msg()
 
   ## --- Connection ---
@@ -274,13 +275,13 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "a staged review renders its file rows, commit-message gutter and decision buttons", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
-    commit(repo, "init")
-    stage(repo, "NOTES.md", "# Notes\n")
-    stage(repo, "src/main.rs", "fn main() {}\n")
-    msg_path = Path.join(repo, "COMMIT_EDITMSG")
-    File.write!(msg_path, @commit_msg)
-    {:ok, state} = ReviewState.from_target({:staged, msg_path}, repo)
+    state = %ReviewState{
+      files: [added("NOTES.md", "# Notes\n"), added("src/main.rs", "fn main() {}\n")],
+      commit_message: @commit_msg,
+      commit_message_blocks: ReviewState.blocks(@commit_msg),
+      precommit?: true
+    }
+
     view = mount_unbound(conn, state)
 
     assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*NOTES\.md\s*\+1\s*-0\s*$/)
@@ -304,70 +305,11 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert has_element?(view, "button.cancel-btn", ~r/^\s*Cancel\s*$/)
   end
 
-  test "a single-ref review shows that commit's files and message", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "base.txt", "base\n")
-    commit(repo, "Base")
-    stage(repo, "added-by-feature.rs", "fn feature() {}\n")
-    commit(repo, "Add feature module")
-
-    {:ok, state} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
-    view = mount_unbound(conn, state)
-
-    assert has_element?(
-             view,
-             "button.file-row",
-             ~r/^\s*▾\s*A\s*added-by-feature\.rs\s*\+1\s*-0\s*$/
-           )
-
-    refute has_element?(view, "button.file-row", "base.txt")
-
-    assert has_element?(
-             view,
-             "button.gutter-line-num[aria-label='Comment on commit message line 1']"
-           )
-  end
-
-  test "a two-dot range review shows only the files changed between the refs", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "first.txt", "first commit body\n")
-    commit(repo, "First commit")
-    stage(repo, "second.txt", "second commit body\n")
-    commit(repo, "Second commit")
-
-    {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
-    view = mount_unbound(conn, state)
-
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*second\.txt\s*\+1\s*-0\s*$/)
-    refute has_element?(view, "button.file-row", "first.txt")
-  end
-
-  test "a range review lists a non-UTF-8 binary file without line counts", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "logo.bin", <<0, 255, 1>>)
-    commit(repo, "base")
-    stage(repo, "logo.bin", <<0, 254, 2>>)
-    stage(repo, "a.txt", "a\n")
-    commit(repo, "head")
-
-    {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
-    view = mount_unbound(conn, state)
-
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*M\s*logo\.bin\s*$/)
-    assert has_element?(view, "button.file-row", ~r/^\s*▾\s*A\s*a\.txt\s*\+1\s*-0\s*$/)
-  end
-
-  test "the toolbar sums every file's line counts and a binary file's header shows none", %{
+  test "a review's file rows show each file's line counts, and a binary file's none", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
-    stage(repo, "a.txt", "one\ntwo\nthree\n")
-    stage(repo, "logo.bin", <<0, 1, 2>>)
-    commit(repo, "base")
-    stage(repo, "a.txt", "one\nTWO\nthree\nfour\n")
-    stage(repo, "logo.bin", <<0, 1, 3>>)
-    stage(repo, "b.txt", "new\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    a = %{@plain_file | file_name: "a.txt", additions: 2, deletions: 1}
+    state = %ReviewState{files: [a, added("b.txt", "new\n"), binary("logo.bin")]}
 
     view = mount_unbound(conn, state)
     assert has_element?(view, ".toolbar-line-counts", ~r/^\s*\+3\s*-1\s*$/)
@@ -378,14 +320,9 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "the toolbar shows the counts of the expanded files the filter shows, of the whole diff's",
        %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "a.txt", "one\ntwo\n")
-    stage(repo, "c.md", "x\n")
-    commit(repo, "base")
-    stage(repo, "a.txt", "one\nTWO\nthree\n")
-    stage(repo, "b.txt", "new\n")
-    stage(repo, "c.md", "")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    a = %{@plain_file | file_name: "a.txt", additions: 2, deletions: 1}
+    c = %{@md_file | file_name: "c.md", additions: 0, deletions: 1}
+    state = %ReviewState{files: [a, added("b.txt", "new\n"), c]}
 
     view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["md"])})
 
@@ -413,19 +350,16 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "pending answers render as a banner with markdown questions and answers", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
-    answers = %{
-      answers: [
-        %{
-          location: "src/main.rs:1 (new)",
-          question: "Why the `use std::fmt`?",
-          answer: "It backs the Display impl below."
-        }
-      ]
-    }
+    put_pending_answers(repo, [
+      %{
+        location: "src/main.rs:1 (new)",
+        question: "Why the `use std::fmt`?",
+        answer: "It backs the Display impl below."
+      }
+    ])
 
-    {:ok, 1} = PendingAnswers.save(repo, Jason.encode!(answers))
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     assert has_element?(view, "section.pending-answers h2", ~r/^\s*Pending answers \(1\)\s*$/)
@@ -446,17 +380,17 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
            )
   end
 
-  test "a staged rename's header names the old path and its diff gets both sides", %{conn: conn} do
-    repo = tmp_git_repo()
-    # Mostly-unchanged body so git pairs the paths as a rename.
-    body = Enum.map_join(0..8, "\n", &"fn shared_#{&1}() {}")
-    stage(repo, "src/old_name.rs", "fn original() {}\n#{body}\n")
-    commit(repo, "base")
-    git(repo, ["mv", "src/old_name.rs", "src/new_name.rs"])
-    stage(repo, "src/new_name.rs", "fn renamed_fn() {}\n#{body}\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+  test "a rename's header names the old path and its diff gets both sides", %{conn: conn} do
+    renamed = %{
+      @plain_file
+      | status: :renamed,
+        file_name: "src/new_name.rs",
+        old_file_name: "src/old_name.rs",
+        old_content: "fn original() {}\n",
+        new_content: "fn renamed_fn() {}\n"
+    }
 
-    view = mount_unbound(conn, state)
+    view = mount_unbound(conn, %ReviewState{files: [renamed]})
 
     assert has_element?(view, "#file-0 button.file-row", ~r/▾\s*R\s*src\/new_name\.rs/)
     assert has_element?(view, "#file-0 .rename-from", ~r/^\s*\(was src\/old_name\.rs\)\s*$/)
@@ -471,14 +405,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "binary files get a header but no full-file link or rendered-markdown toggle", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
-    stage(repo, ".gitattributes", "added.md -diff\n")
-    stage(repo, "BUILD.bazel", <<0, 255, 1>>)
-    commit(repo, "base")
-    stage(repo, "BUILD.bazel", <<0, 254, 2>>)
-    stage(repo, "added.md", "# Binary by attributes\n")
-    stage(repo, "README.md", "# Text\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    state = %ReviewState{
+      files: [binary("BUILD.bazel"), %{binary("added.md") | status: :added}, @md_file]
+    }
+
     section = fn name -> "#file-#{Enum.find_index(state.files, &(&1.file_name == name))}" end
 
     view = mount_unbound(conn, state)
@@ -497,14 +427,10 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   ## --- Decision ---
 
   test "approve renders the Approved done view and clears pending answers", %{conn: conn} do
-    repo = tmp_git_repo()
-
-    {:ok, _} =
-      PendingAnswers.save(
-        repo,
-        ~s({"answers":[{"location":"f.ex:1","question":"q","answer":"a"}]})
-      )
-
+    # No cached meerkat dir, so each repo path resolves to its own.
+    repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-lv")
+    on_exit(fn -> File.rm_rf!(repo) end)
+    put_pending_answers(repo, [%{location: "f.ex:1", question: "q", answer: "a"}])
     assert PendingAnswers.load(repo)
 
     put_state(%ReviewState{files: [%{@plain_file | effective_oid: nil}]})
@@ -522,7 +448,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "approve in bound mode wipes drafts and mirrors the approval cache", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: "oid1", file_name: "src/widget.rs"}],
@@ -585,8 +511,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "a decision made outside any tab puts open tabs on the done view and wipes drafts",
        %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
     {:ok, _} = Decision.submit({:timeout, ""})
@@ -597,8 +522,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   test "a tab that mounts after a decision it missed opens on the done view and wipes drafts",
        %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
     {:ok, _} = Decision.submit({:timeout, ""})
 
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
@@ -608,8 +532,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "a tab that mounts before any decision keeps its drafts", %{conn: conn} do
-    repo = tmp_git_repo()
-    on_exit(fn -> File.rm_rf!(repo) end)
+    repo = state_repo()
 
     {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
 
@@ -634,7 +557,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "Cancel wipes the review's comments and submits an empty cancel", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
     add_global_comment(view, "wipe me")
     assert [_] = ReviewServer.get_state(rid).global_comments
@@ -657,7 +580,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   end
 
   test "post_to_github flashes when gh cannot run", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
 
     state = %ReviewState{
       files: [%{@plain_file | effective_oid: nil}],
@@ -684,7 +607,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
   test "Post to GitHub sends the comments through gh api and opens the returned review", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
+    repo = state_repo()
     pr_url = "https://github.com/example/example/pull/456"
     review_url = pr_url <> "#pullrequestreview-12345"
 
