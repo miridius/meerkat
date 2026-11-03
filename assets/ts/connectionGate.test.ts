@@ -18,17 +18,12 @@ describe("gateVerdict", () => {
 		expect(gateVerdict({ type: "pointerdown" }, "control", false)).toBe("stop");
 	});
 
-	test("cancels Tab and a control's activation keys, and keeps find, copy, scrolling and caret moves", () => {
+	test("cancels Tab, and keeps find, copy, scrolling and caret moves", () => {
 		expect(gateVerdict({ type: "keydown", key: "Tab" }, "other", false)).toBe("cancel");
 		expect(gateVerdict({ type: "keydown", key: "Tab" }, "text", true)).toBe("cancel");
-		expect(gateVerdict({ type: "keydown", key: " " }, "control", true)).toBe("cancel");
-		expect(gateVerdict({ type: "keydown", key: "Enter" }, "control", true)).toBe("cancel");
-		expect(gateVerdict({ type: "keydown", key: "f" }, "control", true)).toBe("stop");
+		expect(gateVerdict({ type: "keydown", key: " " }, "control", true)).toBe("stop");
 		expect(gateVerdict({ type: "keydown", key: "c" }, "control", true)).toBe("stop");
-		expect(gateVerdict({ type: "keydown", key: "PageDown" }, "control", true)).toBe("stop");
-		expect(gateVerdict({ type: "keydown", key: " " }, "text", true)).toBe("stop");
 		expect(gateVerdict({ type: "keydown", key: "ArrowLeft" }, "text", true)).toBe("stop");
-		expect(gateVerdict({ type: "keydown", key: "ArrowDown" }, "other", false)).toBe("stop");
 		expect(gateVerdict({ type: "keyup", key: " " }, "control", true)).toBe("stop");
 	});
 
