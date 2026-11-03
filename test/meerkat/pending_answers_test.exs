@@ -42,7 +42,7 @@ defmodule Meerkat.PendingAnswersTest do
       refute File.exists?(Path.join(subdir, ".git"))
     end
 
-    test "counts every answer", %{git_repo: repo} do
+    test "counts every answer and keeps their order", %{git_repo: repo} do
       input =
         Jason.encode!(%{
           "answers" => [
@@ -52,6 +52,7 @@ defmodule Meerkat.PendingAnswersTest do
         })
 
       assert {:ok, 2} = PendingAnswers.save(repo, input)
+      assert %{answers: [%{location: "a"}, %{location: "b"}]} = PendingAnswers.load(repo)
     end
 
     test "a repeated save overwrites the earlier answers", %{git_repo: repo} do

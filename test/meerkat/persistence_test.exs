@@ -47,13 +47,13 @@ defmodule Meerkat.PersistenceTest do
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
     end
 
-    for key <- ~w(comments file_comments global_comments commit_message_comments) do
+    for key <- ~w(comments file_comments global_comments commit_message_comments)a do
       test "a snapshot holding #{key} of the same signature holds one", %{
         repo: repo,
         review_id: id
       } do
-        snapshot = %{"state_signature" => "s1", unquote(key) => [%{"body" => "keep me"}]}
-        File.write!(Persistence.path_for(repo, id), Jason.encode!(snapshot))
+        state = Map.put(%ReviewState{state_signature: "s1"}, unquote(key), [%{body: "keep me"}])
+        :ok = Persistence.save(repo, id, state)
         assert Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
       end
     end

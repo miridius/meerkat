@@ -25,19 +25,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     template =
       fixture_template("meerkat-attach-template", fn repo ->
         git(repo, ["init", "-q"])
-
-        git(repo, [
-          "-c",
-          "user.email=t@t",
-          "-c",
-          "user.name=t",
-          "commit",
-          "-q",
-          "--allow-empty",
-          "-m",
-          "init"
-        ])
-
+        commit(repo, "init")
         stage(repo, "a.txt", "one\n")
         File.write!(Path.join(repo, "MSG"), "first message\n")
       end)
@@ -168,7 +156,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert IO.iodata_to_binary(AttachController.frames("")) == ""
   end
 
-  test "reattaching a waiting review cannot bypass another round's questions, even with a changed index",
+  test "reattaching a waiting review cannot bypass another round's questions, even when its review cannot be read",
        %{conn: conn, repo: repo, current: current} do
     Application.put_env(:meerkat, :no_open, false)
     answered = %{location: "global", question: "Already answered?"}

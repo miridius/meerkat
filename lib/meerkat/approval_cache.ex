@@ -30,8 +30,9 @@ defmodule Meerkat.ApprovalCache do
   across worktrees of the same repo.
 
   Reads the cached value from `Application.get_env(:meerkat,
-  :approval_cache_path)` when present, which `Meerkat.CLI` sets once for
-  its review's repo, so a review's approvals run no `git rev-parse`.
+  :approval_cache_path)` when present, for every `repo_path`:
+  `Meerkat.CLI` sets it once for its review's repo, so a review's
+  approvals run no `git rev-parse`.
   """
   @spec path_for(String.t()) :: String.t() | nil
   def path_for(repo_path) do

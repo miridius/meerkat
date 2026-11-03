@@ -2,8 +2,9 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
   @moduledoc """
   Shared setup and helpers for the tests that drive `MeerkatWeb.ReviewLive`'s
   event handlers hermetically: unbound mode injects state via app env; bound
-  mode starts a real ReviewServer against a throwaway state dir, or a real git repo where git is read, so the
-  delegation branches (`if rid != "unbound"`) run for real. async: false —
+  mode starts a real ReviewServer against a throwaway state dir, or a
+  real git repo where git is read, so the delegation branches
+  (`if rid != "unbound"`) run for real. async: false —
   mount reads the global `:meerkat` app env and the singleton
   `Meerkat.Decision`. The tests are split across files so each file's BEAM
   stays well under the per-file time limit.
