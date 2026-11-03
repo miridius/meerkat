@@ -152,8 +152,7 @@ pointer shows progress over the page, and the connection pill says
 `connecting…`, or `disconnected` once the connection drops or an
 attempt fails, so no action is lost to the server not listening. Once
 it has connected, a lost connection still leaves its text selectable,
-searchable and scrollable, and the focused control keeps its focus
-and caret.
+searchable and scrollable, and moves neither focus nor caret.
 
 ## Line counts
 

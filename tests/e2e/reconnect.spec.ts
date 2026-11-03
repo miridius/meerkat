@@ -41,17 +41,17 @@ test("a dropped connection makes the page refuse input until it reconnects, and 
 
 		await connection.drop();
 		await expect(page.locator(".conn-indicator")).toHaveText("disconnected", { useInnerText: true });
-		// A real mouse click: Playwright's own `click` waits until the
-		// element can take the click.
-		const box = await approved.boundingBox();
-		if (!box) throw new Error("Approved has no box");
-		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+		await approved.click();
 		await expect(approved, "the click does not tick a box the server never hears of").not.toBeChecked();
 		await expect(textarea, "the click moves no focus").toBeFocused();
 		await page.keyboard.type("lost");
 		await page.keyboard.press("Tab");
 		await expect(textarea).toHaveValue("abc");
 		await expect(textarea).toBeFocused();
+		// A press in the focused field still moves its caret.
+		const field = await textarea.boundingBox();
+		if (!field) throw new Error("textarea has no box");
+		await page.mouse.click(field.x + 2, field.y + 10);
 
 		const code = file.getByRole("cell", { name: "Lorem ipsum dolor sit amet." });
 		const from = await code.boundingBox();
@@ -61,16 +61,92 @@ test("a dropped connection makes the page refuse input until it reconnects, and 
 		await page.mouse.move(from.x + from.width - 2, from.y + from.height / 2, { steps: 5 });
 		await page.mouse.up();
 		expect(await page.evaluate(() => window.getSelection()?.toString() ?? ""), "diff text stays selectable").not.toBe("");
+		// Selecting text left the field, as it does when connected.
+		await textarea.focus();
 
 		await connection.restore();
-		await textarea.focus();
+		await expect(textarea, "reconnecting moves no focus").toBeFocused();
 		await page.keyboard.type("X");
-		await expect(textarea, "the caret is where it was").toHaveValue("abXc");
+		await expect(textarea, "the caret is where the press put it").toHaveValue("Xabc");
 
 		await approved.click();
 		await expect(approved).toBeChecked();
 		await page.reload();
 		await expect(approved, "the server recorded the click made after reconnecting").toBeChecked();
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("a line drag released while disconnected ends without a comment form, and a suggestion takes no paste", async ({
+	page,
+}) => {
+	const meerkat = await startMeerkat();
+	try {
+		const connection = await droppableConnection(page);
+		await page.goto(meerkat.url);
+		const forms = page.locator(".comment-form");
+
+		// The diff's gutter.
+		const file = page.locator(".file-section").first();
+		const code = file.getByRole("cell", { name: "Lorem ipsum dolor sit amet." });
+		const lineNums = file.locator("td.diff-line-num span[data-line-new-num]");
+		await lineNums.first().hover();
+		await page.mouse.down();
+		await expect(file.locator(".drag-selecting").first()).toBeVisible();
+		await connection.drop();
+		await page.mouse.up();
+		await code.hover();
+		await expect(file.locator(".drag-selecting"), "the release ends the drag").toHaveCount(0);
+		await connection.restore();
+		await code.click();
+		// Replies come in order, so once the form the last line asks for is
+		// shown, so is any form the click on code asked for.
+		const last = lineNums.last();
+		const n = await last.getAttribute("data-line-new-num");
+		await last.click();
+		const form = file.locator(`tr.meerkat-form-row[data-meerkat-form-anchor="${n}"] .comment-form`);
+		await expect(form).toBeVisible();
+		await expect(forms).toHaveCount(1);
+
+		// CodeMirror handles a paste itself, not as `beforeinput`.
+		await form.getByRole("button", { name: /^Suggestion$/ }).click();
+		const editor = form.locator(".code-host .cm-content");
+		await editor.click();
+		const before = await editor.textContent();
+		await connection.drop();
+		await editor.evaluate((el) => {
+			const clipboardData = new DataTransfer();
+			clipboardData.setData("text/plain", "pasted");
+			el.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+		});
+		expect(await editor.textContent(), "a suggestion takes no paste").toBe(before);
+		await connection.restore();
+		await forms.getByRole("button", { name: /^Cancel$/ }).click();
+		await expect(forms).toHaveCount(0);
+
+		// The commit message's gutter.
+		const blocks = page.locator("#commit-msg-gutter > li");
+		await blocks.first().scrollIntoViewIfNeeded();
+		const centre = async (i: number) => {
+			const box = await blocks.nth(i).boundingBox();
+			if (!box) throw new Error("commit-msg block not found");
+			return { x: box.x + 10, y: box.y + box.height / 2 };
+		};
+		const from = await centre(0);
+		await page.mouse.move(from.x, from.y);
+		await page.mouse.down();
+		const to = await centre(1);
+		await page.mouse.move(to.x, to.y, { steps: 5 });
+		await expect(blocks.nth(0)).toHaveClass(/dragging/);
+		await connection.drop();
+		await page.mouse.up();
+		const off = await centre(2);
+		await page.mouse.move(off.x, off.y, { steps: 5 });
+		await expect(page.locator("#commit-msg-gutter .dragging"), "the release ends the drag").toHaveCount(0);
+		await connection.restore();
+		await page.getByRole("button", { name: "Comment on commit message line 1" }).click();
+		await expect(page.locator(".commit-msg-form .line-anchor"), "the click asks for its own line").toHaveText(["L1–1"]);
 	} finally {
 		await meerkat.kill();
 	}

@@ -3,7 +3,7 @@ import { gateVerdict } from "./connectionGate";
 
 describe("gateVerdict", () => {
 	test("cancels clicks, edits and submits anywhere", () => {
-		for (const type of ["click", "auxclick", "dblclick", "beforeinput", "submit", "drop"] as const) {
+		for (const type of ["click", "auxclick", "dblclick", "beforeinput", "paste", "cut", "submit", "drop"] as const) {
 			for (const target of ["text", "control", "other"] as const) {
 				expect(gateVerdict({ type }, target, true)).toBe("cancel");
 			}
@@ -18,12 +18,15 @@ describe("gateVerdict", () => {
 		expect(gateVerdict({ type: "pointerdown" }, "control", false)).toBe("stop");
 	});
 
-	test("cancels Tab and keys on a control, and keeps find, copy and caret moves", () => {
+	test("cancels Tab and a control's activation keys, and keeps find, copy, scrolling and caret moves", () => {
 		expect(gateVerdict({ type: "keydown", key: "Tab" }, "other", false)).toBe("cancel");
-		expect(gateVerdict({ type: "keydown", key: "Tab", ctrlKey: true }, "text", true)).toBe("cancel");
+		expect(gateVerdict({ type: "keydown", key: "Tab" }, "text", true)).toBe("cancel");
 		expect(gateVerdict({ type: "keydown", key: " " }, "control", true)).toBe("cancel");
-		expect(gateVerdict({ type: "keydown", key: "f", metaKey: true }, "control", true)).toBe("stop");
-		expect(gateVerdict({ type: "keydown", key: "c", ctrlKey: true }, "control", true)).toBe("stop");
+		expect(gateVerdict({ type: "keydown", key: "Enter" }, "control", true)).toBe("cancel");
+		expect(gateVerdict({ type: "keydown", key: "f" }, "control", true)).toBe("stop");
+		expect(gateVerdict({ type: "keydown", key: "c" }, "control", true)).toBe("stop");
+		expect(gateVerdict({ type: "keydown", key: "PageDown" }, "control", true)).toBe("stop");
+		expect(gateVerdict({ type: "keydown", key: " " }, "text", true)).toBe("stop");
 		expect(gateVerdict({ type: "keydown", key: "ArrowLeft" }, "text", true)).toBe("stop");
 		expect(gateVerdict({ type: "keydown", key: "ArrowDown" }, "other", false)).toBe("stop");
 		expect(gateVerdict({ type: "keyup", key: " " }, "control", true)).toBe("stop");
