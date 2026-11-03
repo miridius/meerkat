@@ -129,9 +129,24 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 				};
 			}, selector);
 
+		// Counts the toolbar's fits, each of which tries its steps through
+		// `data-squeeze`.
+		const fits = () =>
+			page.evaluate(() => {
+				const w = window as unknown as { fitSteps?: number };
+				if (w.fitSteps === undefined) {
+					w.fitSteps = 0;
+					new MutationObserver((records) => {
+						w.fitSteps = (w.fitSteps ?? 0) + records.length;
+					}).observe(document.querySelector(".diff-toolbar") as Element, { attributeFilter: ["data-squeeze"] });
+				}
+				return w.fitSteps;
+			});
+
 		await page.evaluate(() => window.scrollTo(0, 1500));
 		await expect.poll(scrollY).toBeGreaterThan(1000);
 		const scrolled = await scrollY();
+		const fitsBefore = await fits();
 		await toggle.click();
 		await expect(dropdown).toBeVisible();
 		await expect(page.getByRole("textbox", { name: "Filter files" })).toBeFocused();
@@ -139,10 +154,28 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		expect(opened?.below).toBeGreaterThanOrEqual(0);
 		expect(opened?.fits).toBe(true);
 		expect(await scrollY(), "opening does not scroll the page").toBe(scrolled);
+		await afterNextFrame(page);
+		expect(await fits(), "opening does not refit the toolbar").toBe(fitsBefore);
+		// A fit, here one a change to the toolbar's class sets off, tries
+		// steps that change the toolbar's height, yet leaves the page where
+		// it was.
+		await page.evaluate(() => document.querySelector(".diff-toolbar")?.classList.add("refit"));
+		await expect.poll(fits).toBeGreaterThan(fitsBefore);
+		expect(await scrollY(), "a fit does not scroll the page").toBe(scrolled);
 
 		await page.keyboard.press("Escape");
 		await expect(dropdown).toBeHidden();
 		await expect(toggle).toBeFocused();
+
+		// Nor does opening at the very bottom of the page.
+		await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+		const bottom = await scrollY();
+		await toggle.click();
+		await expect(dropdown).toBeVisible();
+		await afterNextFrame(page);
+		expect(await scrollY(), "opening at the bottom does not scroll the page").toBe(bottom);
+		await page.keyboard.press("Escape");
+		await expect(dropdown).toBeHidden();
 
 		await toggle.click();
 		await expect(dropdown).toBeVisible();

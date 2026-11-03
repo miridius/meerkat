@@ -11,7 +11,7 @@ import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
-import { changesFit, squeeze } from "../ts/toolbarSqueeze";
+import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
   .querySelector("meta[name='csrf-token']")
@@ -78,11 +78,10 @@ const hooks = {
   Toolbar: {
     mounted() {
       this._fit = () => {
-        // Each step tried resizes the toolbar, and the browser's scroll
-        // anchoring would scroll the page to make up for it, so the page
-        // jumps where the steps tried change the toolbar's row count.
-        const root = document.documentElement.style;
-        root.overflowAnchor = "none";
+        // Each step tried resizes the toolbar, and the browser can scroll the
+        // page to make up for it. Nothing is drawn between the steps, so the
+        // fit puts the page back where it was.
+        const { scrollX, scrollY } = window;
         // The branch chip can shrink past the part that may truncate, and
         // then its other part runs out of it.
         const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
@@ -98,8 +97,9 @@ const hooks = {
           return boxes.every((box) => box.scrollWidth <= box.clientWidth);
         }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
-        root.setProperty("--toolbar-h", `${h}px`);
-        root.removeProperty("overflow-anchor");
+        document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
+        // Only when it moved: scrolling stops a smooth scroll under way.
+        if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
       };
       // A fit resizes the toolbar and its items, so a ResizeObserver on them
       // would be notified from inside its own callback, which the browser
@@ -110,10 +110,14 @@ const hooks = {
       // MutationObserver. Neither sees what a fit changes.
       this._resize = new ResizeObserver(this._fit);
       this._resize.observe(this.el.querySelector(".toolbar-width"));
+      // No change in the files dropdown can change the fit: its panel sits
+      // out of the toolbar's flow, and only the toolbar's steps change its
+      // button's width. So opening it, which sets the button's loading
+      // class and adds the panel, does no fit work.
       const inDropdown = (node) =>
-        (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".file-filter") != null;
+        (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".files-dropdown") != null;
       this._mutation = new MutationObserver((records) => {
-        if (changesFit(records, inDropdown)) this._fit();
+        if (records.some((r) => !inDropdown(r.target))) this._fit();
       });
       this._mutation.observe(this.el, {
         subtree: true,
