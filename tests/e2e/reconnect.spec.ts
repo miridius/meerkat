@@ -94,12 +94,14 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await lineNums.first().hover();
 		await page.mouse.down();
 		await expect(file.locator(".drag-selecting").first()).toBeVisible();
+		await code.hover();
 		await connection.drop();
 		await page.mouse.up();
-		await code.hover();
 		await expect(file.locator(".drag-selecting"), "the release ends the drag").toHaveCount(0);
 		await connection.restore();
-		await code.click();
+		// A click on code with no move since the release.
+		await page.mouse.down();
+		await page.mouse.up();
 		// Replies come in order, so once the form the last line asks for is
 		// shown, so is any form the click on code asked for.
 		const last = lineNums.last();
@@ -115,13 +117,17 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await editor.click();
 		const before = await editor.textContent();
 		await connection.drop();
-		await editor.evaluate((el) => {
-			const clipboardData = new DataTransfer();
-			clipboardData.setData("text/plain", "pasted");
-			el.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
-		});
+		const paste = () =>
+			editor.evaluate((el) => {
+				const clipboardData = new DataTransfer();
+				clipboardData.setData("text/plain", "pasted");
+				el.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+			});
+		await paste();
 		expect(await editor.textContent(), "a suggestion takes no paste").toBe(before);
 		await connection.restore();
+		await paste();
+		await expect(editor, "the same paste lands once connected").toContainText("pasted");
 		await forms.getByRole("button", { name: /^Cancel$/ }).click();
 		await expect(forms).toHaveCount(0);
 
@@ -141,8 +147,6 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await expect(blocks.nth(0)).toHaveClass(/dragging/);
 		await connection.drop();
 		await page.mouse.up();
-		const off = await centre(2);
-		await page.mouse.move(off.x, off.y, { steps: 5 });
 		await expect(page.locator("#commit-msg-gutter .dragging"), "the release ends the drag").toHaveCount(0);
 		await connection.restore();
 		await page.getByRole("button", { name: "Comment on commit message line 1" }).click();
@@ -152,7 +156,9 @@ test("a line drag released while disconnected ends without a comment form, and a
 	}
 });
 
-test("the Send Feedback shortcut does nothing while the page is disconnected", async ({ page }) => {
+test("the Send Feedback shortcut and a focused control's keys do nothing while the page is disconnected", async ({
+	page,
+}) => {
 	const meerkat = await startMeerkat();
 	try {
 		const connection = await droppableConnection(page);
@@ -178,6 +184,15 @@ test("the Send Feedback shortcut does nothing while the page is disconnected", a
 		await connection.drop();
 		await page.keyboard.press("Control+Shift+Enter");
 		await expect(sendFeedback).toHaveAttribute("data-clicks", "0");
+		// The keys that act on a focused control.
+		await sendFeedback.focus();
+		await page.keyboard.press("Enter");
+		await page.keyboard.press(" ");
+		await expect(sendFeedback).toHaveAttribute("data-clicks", "0");
+		const approved = page.locator(".file-section").first().getByRole("checkbox", { name: "Approved" });
+		await approved.focus();
+		await page.keyboard.press(" ");
+		await expect(approved).not.toBeChecked();
 
 		await connection.restore();
 		await page.keyboard.press("Control+Shift+Enter");

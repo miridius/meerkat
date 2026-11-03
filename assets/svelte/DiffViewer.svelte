@@ -924,9 +924,6 @@
   function handlePointerMove(e: PointerEvent) {
     if (clj_hover) restartHoverTimer(e.clientX, e.clientY);
     if (!dragStart) return;
-    // A release the page took no input for, while disconnected, ends the
-    // drag here instead.
-    if (!(e.buttons & 1)) return handlePointerCancel(e);
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
     if (!el) return;
     const hit = extractLineTarget(el);
@@ -957,6 +954,8 @@
     finishDrag();
   }
 
+  // Also ends a drag at a release the page took no input for, while
+  // disconnected: the release still frees the pointer capture.
   function handlePointerCancel(_e: PointerEvent) {
     dragStart = null;
     dragCurrent = null;
@@ -1291,6 +1290,7 @@
     onpointerdown={handlePointerDown}
     onpointermove={handlePointerMove}
     onpointerup={handlePointerUp}
+    onlostpointercapture={handlePointerCancel}
     onpointercancel={handlePointerCancel}
     onpointerleave={clj_hover ? closeHoverSoon : undefined}
     style:tab-size={tab_size}

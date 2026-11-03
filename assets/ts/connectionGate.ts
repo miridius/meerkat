@@ -39,12 +39,11 @@ export function gateVerdict(e: GateEvent, target: GateTarget, focused: boolean):
 		// a press elsewhere starts a selection, as it does when connected.
 		case "mousedown":
 			return target !== "other" && !focused ? "cancel" : "stop";
-		// Tab moves focus, and Enter or Space on a checkbox, button or link
-		// acts on it. Other keys keep find, copy and scrolling, and a text
-		// field's edits are stopped as `beforeinput`, `paste` or `cut`.
+		// Tab moves focus. Other keys keep find, copy and scrolling: a key
+		// that acts on a control does so by a `click` or `submit`, and a
+		// text field's edits come as `beforeinput`, `paste` or `cut`.
 		case "keydown":
-			if (e.key === "Tab") return "cancel";
-			return target === "control" && (e.key === "Enter" || e.key === " ") ? "cancel" : "stop";
+			return e.key === "Tab" ? "cancel" : "stop";
 		case "pointerdown":
 		case "pointerup":
 		case "mouseup":
