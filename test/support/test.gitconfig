@@ -10,7 +10,7 @@
 	logAllRefUpdates = false
 [init]
 	# No template: each init or clone otherwise copies the template's sample
-	# hooks, description and info/exclude, 18 entries no test reads.
+	# hooks, description and info/exclude, which no test reads.
 	templateDir =
 [transfer]
 	# A push or fetch keeps what it receives as one pack rather than

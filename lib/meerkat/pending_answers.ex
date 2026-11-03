@@ -22,6 +22,8 @@ defmodule Meerkat.PendingAnswers do
   @version 1
 
   @type answer :: %{location: String.t(), question: String.t(), answer: String.t()}
+  @typedoc "An answer as `parse/1` returns it and `write/2` stores it."
+  @type parsed_answer :: %{String.t() => String.t()}
   @type payload :: %{version: pos_integer(), created_at: String.t(), answers: [answer]}
 
   @doc """
@@ -135,7 +137,7 @@ defmodule Meerkat.PendingAnswers do
   in their order, or `{:error, :invalid_input, message}`.
   """
   @spec parse(binary()) ::
-          {:ok, [%{String.t() => String.t()}]} | {:error, :invalid_input, String.t()}
+          {:ok, [parsed_answer]} | {:error, :invalid_input, String.t()}
   def parse(input) do
     case Jason.decode(input) do
       {:ok, %{"answers" => answers}} when is_list(answers) and answers != [] ->
@@ -179,9 +181,11 @@ defmodule Meerkat.PendingAnswers do
 
   @doc """
   Store `answers`, as `parse/1` returns them, as the pending-answers file
-  of the repo at `repo_path`, replacing any earlier one.
+  of the repo at `repo_path`, replacing any earlier one. Unlike `save/2`,
+  it does not check that `repo_path` is in a repo: outside one it writes
+  under `<repo_path>/.git`.
   """
-  @spec write(String.t(), [map()]) :: :ok | {:error, :write_failed, String.t()}
+  @spec write(String.t(), [parsed_answer]) :: :ok | {:error, :write_failed, String.t()}
   def write(repo_path, answers) do
     created_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     payload = %{"version" => @version, "createdAt" => created_at, "answers" => answers}

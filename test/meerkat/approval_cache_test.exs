@@ -81,6 +81,20 @@ defmodule Meerkat.ApprovalCacheTest do
       File.rm_rf!(Path.join(repo, ".git"))
       assert ApprovalCache.path_for(repo) == cached
     end
+
+    test "is cached by Meerkat.CLI for a review, with its meerkat_dir", %{repo: repo} do
+      path = ApprovalCache.path_for(repo)
+      meerkat_dir = Meerkat.Git.meerkat_dir(repo)
+
+      on_exit(fn ->
+        Application.delete_env(:meerkat, :approval_cache_path)
+        Application.delete_env(:meerkat, :meerkat_dir)
+      end)
+
+      assert Meerkat.CLI.cache_review_paths(repo) == meerkat_dir
+      assert Application.get_env(:meerkat, :meerkat_dir) == meerkat_dir
+      assert Application.get_env(:meerkat, :approval_cache_path) == path
+    end
   end
 
   describe "prune/2" do
