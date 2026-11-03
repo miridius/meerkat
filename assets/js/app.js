@@ -246,7 +246,7 @@ const hooks = {
 
       // The page takes no release while disconnected, so a drag also ends
       // when the release frees the gutter's capture, at a move with no
-      // button held, or at the next press.
+      // button held, or at the next press the page takes.
       const endDrag = () => {
         dragStart = null;
         dragEnd = null;
@@ -332,8 +332,9 @@ const hooks = {
         ev.stopImmediatePropagation();
       };
 
-      // A touch's block button loses its implicit capture when the
-      // gutter takes it mid-drag; that is no release.
+      // A block button's own implicit capture, from touch or pen, ends
+      // at every release or when the gutter takes it; only the gutter's
+      // own capture loss is the end of a drag.
       this._onLostCapture = (ev) => {
         if (ev.target === gutter) endDrag();
       };
