@@ -78,10 +78,6 @@ const hooks = {
   Toolbar: {
     mounted() {
       this._fit = () => {
-        // Each step tried resizes the toolbar, and the browser can scroll the
-        // page to make up for it. Nothing is drawn between the steps, so the
-        // fit puts the page back where it was.
-        const { scrollX, scrollY } = window;
         // The branch chip can shrink past the part that may truncate, and
         // then its other part runs out of it.
         const boxes = [this.el, ...this.el.querySelectorAll(".branch-chip")];
@@ -98,8 +94,6 @@ const hooks = {
         }).join(" ");
         const h = Math.round(this.el.getBoundingClientRect().height);
         document.documentElement.style.setProperty("--toolbar-h", `${h}px`);
-        // Only when it moved: scrolling stops a smooth scroll under way.
-        if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
       };
       // A fit resizes the toolbar and its items, so a ResizeObserver on them
       // would be notified from inside its own callback, which the browser
