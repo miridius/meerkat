@@ -4,7 +4,7 @@ defmodule Meerkat.VerifiedPushTest do
   # each run and, unless told to fail, record HEAD the way the real ones do.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
+  import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0, intercept_git: 3]
 
   @root File.cwd!()
 
@@ -43,14 +43,15 @@ defmodule Meerkat.VerifiedPushTest do
     pwd -P >> '#{dirs}'
     # Blocks only the first check, so a test can see whether a later tip is
     # still checked after an interrupt. Like the BEAM, it handles SIGINT
-    # itself and exits 0.
+    # itself and exits 0. A signal that kills its sleeper fails the check,
+    # even if macOS has yet to deliver that signal to this shell.
     if [ -n "${STUB_FIFO:-}" ] && [ ! -e "$STUB_FIFO.used" ]; then
       touch "$STUB_FIFO.used"
       sleep 30 &
       sleeper=$!
       trap 'kill "$sleeper"; exit 0' INT
       echo started > "$STUB_FIFO"
-      wait "$sleeper"
+      wait "$sleeper" || exit
     fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
     [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
@@ -201,14 +202,14 @@ defmodule Meerkat.VerifiedPushTest do
   end
 
   # INT as from Ctrl-C, HUP as from a closed terminal, TERM as from kill.
-  for signal <- ~w(INT HUP TERM) do
+  for {signal, number} <- [{"INT", 2}, {"HUP", 1}, {"TERM", 15}] do
     test "SIG#{signal} during the check of a tip other than HEAD removes its temporary worktree and checks no later tip",
          ctx do
-      interrupt_check(ctx, unquote(signal))
+      interrupt_check(ctx, unquote(signal), unquote(number))
     end
   end
 
-  defp interrupt_check(ctx, signal) do
+  defp interrupt_check(ctx, signal, number) do
     commit(ctx.work, "code.txt", "lower\n", "lower")
     lower = git(ctx.work, ["rev-parse", "HEAD"])
     commit(ctx.work, "code.txt", "upper\n", "upper")
@@ -218,10 +219,14 @@ defmodule Meerkat.VerifiedPushTest do
     {_, 0} = System.cmd("mkfifo", [fifo])
     on_exit(fn -> Enum.each([fifo, fifo <> ".used"], &File.rm/1) end)
 
-    # Signal the whole process group once the check has started, as Ctrl-C does.
+    # Signal the whole process group once the check has started, as Ctrl-C
+    # does. A bash caller stops after SIGINT only if verified-push.sh dies of
+    # it. For HUP and TERM the caller reports how verified-push.sh exited,
+    # catching the signal itself: macOS can deliver it to the caller only
+    # after its wait for verified-push.sh has returned.
     driver = """
     set -m
-    { bash scripts/verified-push.sh "$1" "$2"; echo "caller carried on after $1"; } &
+    { trap : HUP TERM; bash scripts/verified-push.sh "$1" "$2"; echo "caller carried on: $?"; } &
     read -r _ < "$3"
     kill -"$4" -- -$!
     wait $!
@@ -230,10 +235,30 @@ defmodule Meerkat.VerifiedPushTest do
     args = ["-c", driver, "driver", lower, upper, fifo, signal]
     assert {out, code} = run(ctx.work, args, [{"STUB_FIFO", fifo}])
 
-    assert code != 0
-    refute out =~ "caller carried on after #{lower}"
+    if signal == "INT" do
+      assert code != 0
+      refute out =~ "caller carried on"
+    else
+      assert out =~ "caller carried on: #{128 + number}\n"
+    end
+
     assert checks_run(ctx) == ["check.sh --head in #{lower}"]
     assert_cleaned_up(ctx)
+  end
+
+  # macOS can deliver a process group's signal to the shell running a
+  # temporary worktree's check only once that shell has seen the check die of
+  # it and begun cleaning up; here the signal arrives from inside the cleanup.
+  for signal <- ~w(INT HUP TERM) do
+    test "SIG#{signal} during the removal of a temporary worktree does not cut it short", ctx do
+      wrapper = ctx.log <> ".git-wrapper"
+      on_exit(fn -> File.rm_rf!(wrapper) end)
+      intercept_git(wrapper, "remove", ~s(kill -#{unquote(signal)} "$PPID"))
+      other = other_tip(ctx.work)
+
+      assert {_, 0} = verified_push(ctx, [other])
+      assert_cleaned_up(ctx)
+    end
   end
 
   test "the check of a tip other than HEAD ignores the git location exported to hooks", ctx do
