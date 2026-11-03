@@ -18,7 +18,7 @@ describe("gateVerdict", () => {
 		expect(gateVerdict({ type: "pointerdown" }, "control", false)).toBe("stop");
 	});
 
-	test("cancels only Tab at keydown", () => {
+	test("cancels Tab and no other key", () => {
 		expect(gateVerdict({ type: "keydown", key: "Tab" }, "other", false)).toBe("cancel");
 		expect(gateVerdict({ type: "keydown", key: "Tab" }, "text", true)).toBe("cancel");
 		expect(gateVerdict({ type: "keydown", key: " " }, "control", true)).toBe("stop");

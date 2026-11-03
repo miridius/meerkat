@@ -145,6 +145,9 @@ test("a line drag released while disconnected ends without a comment form, and a
 		const to = await centre(1);
 		await page.mouse.move(to.x, to.y, { steps: 5 });
 		await expect(blocks.nth(0)).toHaveClass(/dragging/);
+		// A block's button losing a touch's capture to the gutter's is no release.
+		await blocks.nth(0).getByRole("button").first().dispatchEvent("lostpointercapture");
+		await expect(blocks.nth(0)).toHaveClass(/dragging/);
 		await connection.drop();
 		await page.mouse.up();
 		await expect(page.locator("#commit-msg-gutter .dragging"), "the release ends the drag").toHaveCount(0);
@@ -157,6 +160,16 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await page.mouse.move(to.x, to.y, { steps: 5 });
 		await expect(page.locator("#commit-msg-gutter .dragging"), "a move after the release drags nothing").toHaveCount(0);
 		await connection.restore();
+		// Nor does a press with no move since the release.
+		await page.mouse.move(from.x, from.y);
+		await page.mouse.down();
+		await connection.drop();
+		await page.mouse.up();
+		await connection.restore();
+		await page.mouse.down({ button: "right" });
+		await page.mouse.move(to.x, to.y, { steps: 5 });
+		await expect(page.locator("#commit-msg-gutter .dragging"), "a press after the release drags nothing").toHaveCount(0);
+		await page.mouse.up({ button: "right" });
 		await page.getByRole("button", { name: "Comment on commit message line 1" }).click();
 		await expect(page.locator(".commit-msg-form .line-anchor"), "the click asks for its own line").toHaveText(["L1–1"]);
 	} finally {
