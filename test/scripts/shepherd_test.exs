@@ -566,13 +566,15 @@ defmodule Meerkat.ShepherdTest do
   # A BEAM that never binds, so the review has no URL yet, or one whose
   # port nothing answers on. It says when it has started: a shepherd
   # stopped before it traps signals dies without recording an exit code.
+  # The signal goes to the caller's whole process group, so it also kills
+  # whatever the caller is running at the time.
   for {signal, number, backend, beam} <- [
         {"TERM", 15, "starts", ""},
         {"INT", 2, "starts", ""},
         {"HUP", 1, "starts", ""},
         {"TERM", 15, "does not answer", ~S|echo "1 $$" >"$MEERKAT_SERVE_DIR/port"|}
       ] do
-    test "a caller stopped by SIG#{signal} while its backend #{backend} stops the backend, says to rerun and dies of the signal" do
+    test "a caller whose process group gets SIG#{signal} while its backend #{backend} stops the backend, prints only to rerun and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       rel = Path.join(dir, "rel")
@@ -586,13 +588,20 @@ defmodule Meerkat.ShepherdTest do
 
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
       started = Path.join(dir, "beam-started")
+      caller_pid_file = Path.join(dir, "caller-pid")
 
       port =
-        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
-          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
-          {"BEAM_STARTED", started},
-          {"INPUT_FILE", "/dev/null"}
-        ])
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          dir,
+          [
+            {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+            {"BEAM_STARTED", started},
+            {"CALLER_PID_FILE", caller_pid_file}
+          ],
+          own_group: true
+        )
 
       runs = Path.join(dir, "runs")
       backend = await_backend_pid(runs)
@@ -609,13 +618,12 @@ defmodule Meerkat.ShepherdTest do
       end)
 
       assert await_file(started) == ""
-      {:os_pid, caller} = Port.info(port, :os_pid)
-      System.cmd("kill", ["-#{unquote(signal)}", to_string(caller)])
+      System.cmd("kill", ["-#{unquote(signal)}", "-" <> await_file(caller_pid_file)])
 
       assert {code, output} = await_result(port, dir)
       assert code == 128 + unquote(number)
 
-      assert output =~
+      assert output ==
                "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
                  "Run the same command again.\n"
 
@@ -1485,11 +1493,28 @@ defmodule Meerkat.ShepherdTest do
     ]
 
     # Piped when there is input, as a caller piping answers in does;
-    # /dev/null otherwise.
-    script = ~S"""
-    if [ "$INPUT_FILE" = /dev/null ]; then exec "$0" "$@" </dev/null; fi
-    cat "$INPUT_FILE" | "$0" "$@"
-    """
+    # /dev/null otherwise. With :own_group, the caller leads its own process
+    # group, as under an app that signals its whole tree, and the port runs
+    # the bash that started it, which records the caller's pid in
+    # $CALLER_PID_FILE. Only the caller's own stderr reaches the port: that
+    # bash reports its job's death too.
+    {shell, script} =
+      if Keyword.get(opts, :own_group) do
+        {"/bin/bash",
+         ~S"""
+         exec 3>&2 2>/dev/null
+         set -m
+         "$0" "$@" </dev/null 2>&3 3>&- &
+         echo "$!" >"$CALLER_PID_FILE.tmp" && mv "$CALLER_PID_FILE.tmp" "$CALLER_PID_FILE"
+         wait "$!"
+         """}
+      else
+        {"/bin/sh",
+         ~S"""
+         if [ "$INPUT_FILE" = /dev/null ]; then exec "$0" "$@" </dev/null; fi
+         cat "$INPUT_FILE" | "$0" "$@"
+         """}
+      end
 
     env = base |> Map.new() |> Map.merge(Map.new(env))
 
@@ -1521,7 +1546,7 @@ defmodule Meerkat.ShepherdTest do
     env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))
 
     Port.open(
-      {:spawn_executable, "/bin/sh"},
+      {:spawn_executable, shell},
       [
         :binary,
         :exit_status,

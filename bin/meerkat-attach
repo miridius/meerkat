@@ -86,7 +86,7 @@ meerkat_attach() {
       elif [[ "$_MA_DIR" != "$_MA_LINK" ]] || _ma_exit_stale "$_MA_DIR"; then
         _ma_must _ma_retire "$_MA_DIR"
       else
-        sleep 0.2
+        _ma_nap
       fi
       continue
     fi
@@ -134,9 +134,17 @@ meerkat_attach() {
     if [[ -f "$_MA_DIR/port" ]]; then
       _ma_attach
     else
-      sleep 0.2
+      _ma_nap
     fi
   done
+}
+
+# Pause between polls. A signal to the caller's whole process group also
+# kills the sleep, and bash reports any command it waits on that dies of a
+# signal other than SIGINT, before the caller's trap prints its own line.
+# It reports none run in a command substitution.
+_ma_nap() {
+  : "$(sleep 0.2)"
 }
 
 # Record the chain of processes above the caller, so _ma_exit_if_orphaned
@@ -455,7 +463,7 @@ _ma_wait_for_exit() {
     # A deleted run dir never gets its exit file.
     [[ -d "$_MA_DIR" && ! -f "$_MA_DIR/exit" ]] || return 0
     _ma_server_alive || return 0
-    sleep 0.2
+    _ma_nap
   done
 }
 
@@ -552,7 +560,7 @@ _ma_attach() {
       exit 64
       ;;
     *)
-      sleep 0.2
+      _ma_nap
       ;;
   esac
 }

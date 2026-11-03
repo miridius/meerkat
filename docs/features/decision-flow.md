@@ -232,7 +232,8 @@ it what to do, naming the signal it got, and dies of that signal:
   within 2 seconds, in which case the invocation stops the server:
   `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
 
-The pause
+It prints no other line, even when the signal reaches its whole
+process group. The pause
 banner covers an invocation killed without a chance to print, as by
 SIGKILL: it says to run the same command again when the output ends
 after the banner with no outcome line.
