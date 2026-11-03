@@ -7,6 +7,7 @@
   // suggestion as a fenced code block.
 
   import { onDestroy, untrack } from "svelte";
+  import { useLiveConnection } from "live_svelte";
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
   import { languageFor } from "../ts/languageFor";
   import type { EditorView } from "@codemirror/view";
@@ -135,6 +136,13 @@
   let lintRule = $state(initialLintRule);
   let submitInFlight = $state(false);
   let submitError = $state<string | null>(null);
+
+  // A submit's reply never comes once the connection drops, and LiveView
+  // drops the callback with it, so the form can be submitted again.
+  const connection = useLiveConnection();
+  $effect(() => {
+    if (!connection.connected) submitInFlight = false;
+  });
 
   // Persist draft on every keystroke. Cleared on submit-ack /
   // cancel so a re-open of the same anchor starts blank.

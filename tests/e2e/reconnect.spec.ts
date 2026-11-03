@@ -13,6 +13,7 @@ async function droppableConnection(page: Page) {
 	const transports = await liveTransports(page);
 	const root = page.locator("[data-phx-main]");
 	return {
+		hold: transports.hold,
 		drop: async () => {
 			await transports.drop();
 			await expect(root).toHaveClass(/phx-client-error/);
@@ -172,6 +173,41 @@ test("a line drag released while disconnected ends without a comment form, and a
 		await page.mouse.up({ button: "right" });
 		await page.getByRole("button", { name: "Comment on commit message line 1" }).click();
 		await expect(page.locator(".commit-msg-form .line-anchor"), "the click asks for its own line").toHaveText(["L1–1"]);
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("a comment whose submit the dropped connection lost can be submitted once the page reconnects", async ({
+	page,
+}) => {
+	const meerkat = await startMeerkat();
+	try {
+		const connection = await droppableConnection(page);
+		await page.goto(meerkat.url);
+		const file = page.locator(".file-section").first();
+		await file.locator("td.diff-line-num span[data-line-new-num]").last().click();
+		await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
+		// An inline form, mounted by the diff viewer, and a global one,
+		// mounted by LiveSvelte itself.
+		for (const [form, body] of [
+			[file.locator(".comment-form"), "inline note"],
+			[page.locator(".global-comments .comment-form"), "global note"],
+		] as const) {
+			const submit = form.locator(".btn-submit");
+			await form.locator("textarea").first().fill(body);
+			connection.hold(true);
+			await submit.click();
+			await expect(submit, "the submit awaits its reply").toBeDisabled();
+			await connection.drop();
+			connection.hold(false);
+			await connection.restore();
+			await expect(form, "the server never got the submit").toHaveCount(1);
+			await expect(submit).toBeEnabled();
+			await form.locator("textarea").first().press("Control+Enter");
+			await expect(form).toHaveCount(0);
+			await expect(page.getByText(body)).toBeVisible();
+		}
 	} finally {
 		await meerkat.kill();
 	}

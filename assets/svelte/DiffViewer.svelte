@@ -94,7 +94,7 @@
 <script lang="ts">
   import { DiffFile, DiffView, DiffModeEnum } from "@git-diff-view/svelte";
   import "@git-diff-view/svelte/styles/diff-view.css";
-  import { mount, unmount } from "svelte";
+  import { getAllContexts, mount, unmount } from "svelte";
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
@@ -190,6 +190,10 @@
     clj_hover?: boolean;
     live: LiveBridge;
   } = $props();
+
+  // Inline forms mount outside this component's tree, so hand them its
+  // LiveSvelte context, which carries the connection state.
+  const contexts = getAllContexts();
 
   // True for `.puml` / `.plantuml` files — drives the inline
   // diagram preview rendered below the diff body.
@@ -570,6 +574,7 @@
         const tr = buildRow();
         const component = mount(CommentForm, {
           target: formCell(tr),
+          context: contexts,
           // A getter, so the open form follows ruler setting changes.
           props: {
             ...desc.props,
