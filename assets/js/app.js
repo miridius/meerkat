@@ -244,7 +244,25 @@ const hooks = {
       // per-pointer, not per-listener).
       let capturedPointerId = null;
 
+      // The page takes no release while disconnected, so a drag also ends
+      // when the release frees the gutter's capture, at a move with no
+      // button held, or at the next press.
+      const endDrag = () => {
+        dragStart = null;
+        dragEnd = null;
+        clearHighlight();
+        if (capturedPointerId !== null) {
+          try {
+            gutter.releasePointerCapture?.(capturedPointerId);
+          } catch (_e) {
+            /* ignore */
+          }
+          capturedPointerId = null;
+        }
+      };
+
       this._onPointerDown = (ev) => {
+        endDrag();
         if (ev.button !== 0) return;
         const hit = lineFor(ev.target);
         if (!hit) return;
@@ -258,23 +276,6 @@ const hooks = {
         // crosses into a second block.
         dragStart = hit;
         dragEnd = hit;
-      };
-
-      // The page takes no release while disconnected, so a drag also ends
-      // when the release frees the gutter's capture, or at a move with no
-      // button held.
-      const endDrag = () => {
-        dragStart = null;
-        dragEnd = null;
-        clearHighlight();
-        if (capturedPointerId !== null) {
-          try {
-            gutter.releasePointerCapture?.(capturedPointerId);
-          } catch (_e) {
-            /* ignore */
-          }
-          capturedPointerId = null;
-        }
       };
 
       this._onPointerMove = (ev) => {
@@ -331,7 +332,8 @@ const hooks = {
         ev.stopImmediatePropagation();
       };
 
-      // A block's button losing its own capture is no release.
+      // A touch's block button loses its implicit capture when the
+      // gutter takes it mid-drag; that is no release.
       this._onLostCapture = (ev) => {
         if (ev.target === gutter) endDrag();
       };
