@@ -75,8 +75,7 @@ remove commits a merged PR still references). Before committing:
   Existing bash scripts are being moved to TypeScript, one family per PR;
   until a bash script moves, code that must run in its own process, such
   as `scripts/gate-lock.sh`, stays bash with it.
-- **No mock/demo data.** The review UI runs against real diffs. If you
-  need test data, write a real commit / range / PR.
+- **No demo data.** The review UI runs against real diffs.
 - **Headless browsers only.** Agents never open a visible browser
   window on the user's screen: run Playwright headless, any Chrome they
   launch with `--headless=new`, and pass `--no-open` to every meerkat
@@ -98,9 +97,8 @@ meerkat's own steps for a bug report or feature request:
    the changed behaviour. Once `bun run test` passes, and before
    the PR is opened, the `meerkat-qa` agent exercises the changed
    behaviour the way a user meets it. Turn each QA-found bug into a
-   test that fails before the fix, at the lowest layer that reaches
-   it; use e2e only when lower-layer tests cannot reach the seam,
-   1-3 tests per seam. Tests pass `--no-open`.
+   test that fails before the fix: the smallest test that catches
+   it. Tests pass `--no-open`.
    A run that needs a browser (Playwright, `meerkat-qa`) opens the
    printed URL itself.
 3. **Ship.** Commit and push without asking first.
@@ -150,13 +148,13 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 `bun run test` runs `scripts/mix-test.sh`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` from the repo root, then `bun run test:e2e`.
 
-When behaviour changes, choose the lowest layer that exercises it:
-- Use ExUnit (`test/**/*_test.exs`, including LiveViewTest) or asset
-  `bun test` for behaviour they can reach.
-- Use Playwright (`tests/e2e/*.spec.ts`) only for seams those tests
-  cannot reach, 1-3 tests per seam: browser Svelte/JS to LiveView,
-  CLI to BEAM exit/stdout, and process lifecycle.
-- Keep owned/local behaviour real; mock only boundaries we don't own.
+When behaviour changes, always use the smallest test that works:
+- Test each piece's logic in a unit test: ExUnit
+  (`test/**/*_test.exs`, including LiveViewTest) or asset `bun test`,
+  given literal inputs or stand-ins for the pieces it uses, such as git.
+- Add only the integration and e2e tests needed to show the pieces fit
+  together, for example one integration test per seam and one
+  Playwright test (`tests/e2e/*.spec.ts`) per major feature.
 - Keep unit tests fast. Never wait out a timeout to show that something
   did not happen: check what is already known, such as a mailbox a
   synchronous call has filled, or wait for the event that settles it.
