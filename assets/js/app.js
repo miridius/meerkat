@@ -260,8 +260,25 @@ const hooks = {
         dragEnd = hit;
       };
 
+      const endDrag = () => {
+        dragStart = null;
+        dragEnd = null;
+        clearHighlight();
+        if (capturedPointerId !== null) {
+          try {
+            gutter.releasePointerCapture?.(capturedPointerId);
+          } catch (_e) {
+            /* ignore */
+          }
+          capturedPointerId = null;
+        }
+      };
+
       this._onPointerMove = (ev) => {
         if (!dragStart) return;
+        // A release the page took no input for, while disconnected, ends
+        // the drag here instead.
+        if (!(ev.buttons & 1)) return endDrag();
         const hit = lineUnder(ev);
         if (!hit) return;
         if (hit.li === dragEnd?.li) return;
@@ -293,17 +310,7 @@ const hooks = {
         const lo = Math.min(dragStart.start, finalHit.start);
         const hi = Math.max(dragStart.end, finalHit.end);
         const crossedBlocks = finalHit.li !== dragStart.li;
-        dragStart = null;
-        dragEnd = null;
-        clearHighlight();
-        if (capturedPointerId !== null) {
-          try {
-            gutter.releasePointerCapture?.(capturedPointerId);
-          } catch (_e) {
-            /* ignore */
-          }
-          capturedPointerId = null;
-        }
+        endDrag();
         if (crossedBlocks) {
           suppressNextClick = true;
           ev.preventDefault();
@@ -450,7 +457,8 @@ const hooks = {
 // The review takes no input while LiveView is not connected (see
 // ../ts/connectionGate.ts). The root loses `phx-connected` the moment
 // the channel errors and gets it back once the rejoin has rendered.
-// Window capture listeners added before LiveView's run first.
+// A window capture listener sees each event before any element's,
+// document's or LiveView's handler.
 for (const type of GATED_EVENTS) {
   window.addEventListener(
     type,

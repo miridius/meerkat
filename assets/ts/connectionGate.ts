@@ -14,6 +14,8 @@ export const GATED_EVENTS = [
 	"keydown",
 	"keyup",
 	"beforeinput",
+	"paste",
+	"cut",
 	"submit",
 	"drop",
 ] as const;
@@ -29,22 +31,20 @@ export type GateVerdict = "stop" | "cancel";
 type GateEvent = {
 	type: (typeof GATED_EVENTS)[number];
 	key?: string;
-	ctrlKey?: boolean;
-	metaKey?: boolean;
 };
 
 export function gateVerdict(e: GateEvent, target: GateTarget, focused: boolean): GateVerdict {
 	switch (e.type) {
-		// Pressing on a control that lacks focus would move focus to it;
-		// pressing on text starts a selection.
+		// A press on a control or field that lacks focus would focus it;
+		// a press elsewhere starts a selection, as it does when connected.
 		case "mousedown":
 			return target !== "other" && !focused ? "cancel" : "stop";
-		// Tab moves focus, and a key on a checkbox, select or button acts
-		// on it. Keys with Cmd or Ctrl keep find and copy, and a text
-		// field's edits are stopped as `beforeinput`.
+		// Tab moves focus, and Enter or Space on a checkbox, button or link
+		// acts on it. Other keys keep find, copy and scrolling, and a text
+		// field's edits are stopped as `beforeinput`, `paste` or `cut`.
 		case "keydown":
 			if (e.key === "Tab") return "cancel";
-			return target === "control" && !e.ctrlKey && !e.metaKey ? "cancel" : "stop";
+			return target === "control" && (e.key === "Enter" || e.key === " ") ? "cancel" : "stop";
 		case "pointerdown":
 		case "pointerup":
 		case "mouseup":

@@ -101,7 +101,7 @@ the LiveView reconnects to the same `ReviewServer` with state intact.
 - Subscriber disconnect (WebSocket drop) → Phoenix client auto-
   reconnects; on mount, `ReviewServer.get_state/1` returns the
   latest. No state lost; until the page reconnects it takes no
-  input (see [overview.md](overview.md)).
+  clicks or typing (see [overview.md](overview.md)).
 - ReviewServer crash → DynamicSupervisor restarts it; init loads
   from `Persistence`. Comments persist; in-flight in-memory data
   between save calls is lost (acceptable trade-off — every mutation

@@ -1584,7 +1584,7 @@ main.review.done h1 {
    until LiveView first connects, and app.js stops its input after a
    drop. Pointer events skip inert content and land on the page behind
    it, and reach every element after a drop, so the cursor goes on all.
-   Last in the file, so no element's own cursor follows it. */
+   The selector outweighs every element's own cursor rule. */
 :root:has([data-phx-main]:not(.phx-connected) main.review:not(.done)),
 :root:has([data-phx-main]:not(.phx-connected) main.review:not(.done)) * {
   cursor: progress;
