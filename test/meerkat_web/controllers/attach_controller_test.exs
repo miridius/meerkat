@@ -45,7 +45,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     {:ok, template: template}
   end
 
-  # A test refused before the backend looks at its review is tagged
+  # A test whose code never reads the review is tagged
   # `:no_review` and gets none. A test of how a later invocation reads the
   # review from git is tagged `:git` and gets a real staged review. Any
   # other later invocation reads `current`, which the test can change.

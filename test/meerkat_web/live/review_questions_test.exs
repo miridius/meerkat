@@ -10,18 +10,8 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
     repo = make_state_repo("meerkat-question-rounds")
 
     file = %{
-      status: :added,
-      file_name: "src/x.ex",
-      old_file_name: nil,
-      old_content: "",
-      new_content: "defmodule X do\nend\n",
-      hunks: ["@@ -0,0 +1,2 @@\n+defmodule X do\n+end"],
-      additions: 2,
-      deletions: 0,
-      read_errors: [],
-      effective_oid: "oid",
-      is_generated: false,
-      is_binary: false
+      MeerkatWeb.ReviewLiveEventsCase.added("src/x.ex", "defmodule X do\nend\n")
+      | effective_oid: "oid"
     }
 
     state = %ReviewState{files: [file], precommit?: true}

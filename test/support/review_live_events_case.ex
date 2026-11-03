@@ -2,7 +2,7 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
   @moduledoc """
   Shared setup and helpers for the tests that drive `MeerkatWeb.ReviewLive`'s
   event handlers hermetically: unbound mode injects state via app env; bound
-  mode starts a real ReviewServer against a throwaway repo dir so the
+  mode starts a real ReviewServer against a throwaway state dir, or a real git repo where git is read, so the
   delegation branches (`if rid != "unbound"`) run for real. async: false —
   mount reads the global `:meerkat` app env and the singleton
   `Meerkat.Decision`. The tests are split across files so each file's BEAM
@@ -90,9 +90,9 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
     }
   end
 
-  # A file a review lists as `Meerkat.Git` reads it.
+  # An added file holding `content`.
   def added(name, content) do
-    lines = String.split(content, "\n", trim: true)
+    lines = content |> String.trim_trailing("\n") |> String.split("\n")
 
     %{
       plain_file()

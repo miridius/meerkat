@@ -153,7 +153,9 @@ When behaviour changes, always use the smallest test that works:
   (`test/**/*_test.exs`, including LiveViewTest) or asset `bun test`,
   given literal inputs or stand-ins for the pieces it uses, such as git.
 - Add only the integration and e2e tests needed to show the pieces fit
-  together, for example one integration test per seam and one
+  together, for example one integration test per seam, such as browser
+  Svelte/JS to LiveView, CLI to BEAM exit/stdout, or process lifecycle,
+  and one
   Playwright test (`tests/e2e/*.spec.ts`) per major feature.
 - Keep unit tests fast. Never wait out a timeout to show that something
   did not happen: check what is already known, such as a mailbox a

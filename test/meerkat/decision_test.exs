@@ -320,11 +320,11 @@ defmodule Meerkat.DecisionTest do
   end
 
   defp overdue_review do
-    # Match production: Meerkat.CLI.start_endpoint! caches :meerkat_dir in
-    # application env. Without it, each 5 ms deadline check runs two `git
-    # rev-parse` subprocesses in the singleton Decision GenServer; under
-    # load one took over 5 s and the on_exit reset timed out. The callers
-    # setup below caches it for the same reason.
+    # make_state_repo caches :meerkat_dir in application env, as
+    # Meerkat.CLI.start_endpoint! does. Without it, each 5 ms deadline
+    # check runs two `git rev-parse` subprocesses in the singleton Decision
+    # GenServer; under load one took over 5 s and the on_exit reset timed
+    # out. The callers setup below uses it for the same reason.
     repo = Meerkat.TestHelpers.make_state_repo("meerkat-decision")
     meerkat_dir = Meerkat.Git.meerkat_dir(repo)
     Application.put_env(:meerkat, :repo_path, repo)
