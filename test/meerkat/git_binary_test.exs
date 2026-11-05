@@ -13,6 +13,8 @@ defmodule Meerkat.GitBinaryTest do
         git(dir, ["config", "user.email", "t@t.t"])
         git(dir, ["config", "user.name", "t"])
         git(dir, ["config", "core.hooksPath", "/dev/null"])
+        # Tests init with no template, so git makes no info/ dir for their attributes.
+        File.mkdir_p!(Path.join(dir, ".git/info"))
       end)
 
     {:ok, template: template}

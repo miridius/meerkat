@@ -22,7 +22,10 @@ defmodule Meerkat.PendingAnswers do
   @version 1
 
   @type answer :: %{location: String.t(), question: String.t(), answer: String.t()}
-  @typedoc "An answer as `parse/1` returns it and `write/2` stores it."
+  @typedoc """
+  An answer as `parse/1` returns it and `write/2` stores it: string
+  `"location"`, `"question"` and `"answer"` keys only.
+  """
   @type parsed_answer :: %{String.t() => String.t()}
   @type payload :: %{version: pos_integer(), created_at: String.t(), answers: [answer]}
 
@@ -182,8 +185,9 @@ defmodule Meerkat.PendingAnswers do
   @doc """
   Store `answers`, as `parse/1` returns them, as the pending-answers file
   of the repo at `repo_path`, replacing any earlier one. Unlike `save/2`,
-  it does not check that `repo_path` is in a repo: outside one it writes
-  under `<repo_path>/.git`.
+  it does not check that `repo_path` is in a repo: it writes where
+  `path_for/1` says, which outside one is under `<repo_path>/.git`
+  unless `:meerkat_dir` is cached.
   """
   @spec write(String.t(), [parsed_answer]) :: :ok | {:error, :write_failed, String.t()}
   def write(repo_path, answers) do

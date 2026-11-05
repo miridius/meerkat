@@ -43,6 +43,11 @@ defmodule Meerkat.PersistenceTest do
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
     end
 
+    test "a saved review without comments holds none", %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1"})
+      refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+    end
+
     test "a different signature does not", %{repo: repo, review_id: id} do
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
     end

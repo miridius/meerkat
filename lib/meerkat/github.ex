@@ -74,9 +74,9 @@ defmodule Meerkat.GitHub do
 
   @doc """
   The extra `gh pr view` arguments for HEAD as
-  `Meerkat.Git.head_branch/1` reports it: none for a checked-out branch,
-  which gh finds itself, the branch's name mid-rebase, or `:none` when no
-  PR lookup applies.
+  `Meerkat.Git.head_branch/1` reports it: `{:ok, []}` for a checked-out
+  branch, which gh finds itself, `{:ok, [branch]}` mid-rebase, or `:none`
+  when no PR lookup applies.
   """
   @spec pr_selector(Git.head()) :: {:ok, [String.t()]} | :none
   def pr_selector({:checked_out, _}), do: {:ok, []}

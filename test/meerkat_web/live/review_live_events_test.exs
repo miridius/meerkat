@@ -21,7 +21,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [put_pending_answers: 2]
+  import Meerkat.TestHelpers, only: [put_pending_answers: 2, stage: 3]
 
   @plain_file plain_file()
   @md_file md_file()

@@ -685,8 +685,9 @@ defmodule Meerkat.CLI do
   ## Endpoint startup
 
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
-    # No in-VM test runs a live review this far.
-    # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
+    # ExUnit runs no live review in its own VM, where a regression would
+    # wait on a human forever.
+    # muex:ignore unreachable I/O seam: killed by decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
     meerkat_dir = cache_review_paths(repo_path)
 
     # Application env carries the derived target + initial state into

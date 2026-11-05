@@ -161,7 +161,7 @@ mix format --check-formatted         # Elixir formatting
 mix compile --warnings-as-errors     # strict compile
 ```
 
-ExUnit (including LiveViewTest) and the assets bun tests test each piece. The Playwright suite in `tests/e2e/` drives a real meerkat binary only to show the pieces fit together: browser Svelte/JS to LiveView, CLI to BEAM exit code and stdout, process lifecycle, and each major feature.
+ExUnit (including LiveViewTest) and the assets bun tests test each piece. The Playwright suite in `tests/e2e/` drives a real meerkat binary, with one test per seam only it reaches, such as browser Svelte/JS to LiveView, and one per major feature.
 
 ## License
 
