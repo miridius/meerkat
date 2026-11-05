@@ -89,6 +89,32 @@ defmodule Meerkat.CLIMainTest do
     assert CLI.auto_approve_decision_for_test(repo) == :live
   end
 
+  # Under a UTF-8 locale the BEAM opens stdin in unicode mode, as
+  # `File.open/2` with `:utf8` opens this file.
+  test "--answers stores answers outside Latin-1 from stdin in unicode mode", %{repo: repo} do
+    answer = "wait… — “ok”"
+    path = Path.join(repo, "answers.json")
+
+    File.write!(
+      path,
+      Jason.encode!(%{answers: [%{location: "global", question: "Q?", answer: answer}]})
+    )
+
+    {:ok, stdin} = File.open(path, [:read, :utf8])
+    group_leader = Process.group_leader()
+    Process.group_leader(self(), stdin)
+
+    result =
+      try do
+        run_main(["--answers"])
+      after
+        Process.group_leader(self(), group_leader)
+      end
+
+    assert result == {0, "meerkat: stored 1 answer.\n"}
+    assert [%{answer: ^answer}] = PendingAnswers.load(repo).answers
+  end
+
   test "a served restart and a missing temporary index cannot bypass the question gate", %{
     repo: repo
   } do
