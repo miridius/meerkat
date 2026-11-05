@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "./lib/test";
+import { makeFixture } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 
 // The seam from a decision sent in the browser, through the CLI and the
@@ -110,6 +111,37 @@ test.describe("decision flow", () => {
 		} finally {
 			await meerkat.kill();
 			meerkat.fixture.cleanup?.();
+		}
+	});
+
+	// Chrome lets a page close its own tab only while the tab has one
+	// history entry, so a jump from the file list must not add one.
+	test("the tab closes itself after Approve, even after jumping to a file from the file list", async ({
+		page: blank,
+		context,
+	}) => {
+		const tall = `${Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
+		const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "a.txt": tall, "z.txt": "z\n" } }) });
+		try {
+			// Opened as `open <url>` opens it: a new tab whose first entry is
+			// the review, not Playwright's about:blank.
+			const cdp = await context.newCDPSession(blank);
+			const { browserContextId } = (await cdp.send("Target.getTargetInfo")).targetInfo;
+			const opened = context.waitForEvent("page");
+			await cdp.send("Target.createTarget", { url: meerkat.url, browserContextId });
+			const page = await opened;
+			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible();
+			await page.getByRole("button", { name: /^Toggle file list$/ }).click();
+			await page.locator(".file-filter .file-path").filter({ hasText: "z.txt" }).click();
+			await expect(page.locator(".file-section").filter({ hasText: "z.txt" })).toBeInViewport();
+			expect(await page.evaluate(() => [history.length, location.hash])).toEqual([1, ""]);
+
+			const closed = page.waitForEvent("close");
+			await page.getByRole("button", { name: /^Approve$/ }).click();
+			await closed;
+			expect((await meerkat.awaitExit()).code).toBe(0);
+		} finally {
+			await meerkat.kill();
 		}
 	});
 });

@@ -533,6 +533,17 @@ window.addEventListener("phx:scroll-into-view", (e) => {
   if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
 });
 
+// In-page links, such as the file list's file names, scroll to their target
+// without navigating: a hash navigation adds a history entry, and Chrome lets
+// the done view's window.close() shut only a tab with a single entry.
+document.addEventListener("click", (e) => {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const link = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
+  if (!link) return;
+  e.preventDefault();
+  document.getElementById(decodeURIComponent(link.hash.slice(1)))?.scrollIntoView({ block: "start" });
+});
+
 // Calls `find` each frame until it returns something, then `act` with
 // that, giving up after 3s. The server has just expanded / unhidden a
 // file, so what it named may take a few frames to mount (DiffViewer

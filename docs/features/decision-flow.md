@@ -317,8 +317,8 @@ ends:
 
 - Every connected tab switches to a done view headed **Review
   ended**, and tries to close itself. Browsers allow that only for a
-  tab whose history holds one page, such as the tab meerkat opened
-  before any in-page link was followed; any other tab keeps showing
+  tab whose history holds one page, such as the tab meerkat opened,
+  since in-page links add no history entry; any other tab keeps showing
   the notice. A tab opened later also shows it, until the BEAM exits.
 - The review log records `decision: ended`.
 - The BEAM exits **1**, printing
