@@ -1,6 +1,6 @@
 defmodule MeerkatWeb.AttachController do
   @moduledoc """
-  Endpoints for the caller in `bin/meerkat-attach`. Both require the
+  Endpoints for the caller in `bin/meerkat-attach`. Each requires the
   backend's serve token and return 400 when the run id contains anything
   other than letters, digits, and hyphens.
 

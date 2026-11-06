@@ -580,7 +580,10 @@ defmodule Meerkat.ShepherdTest do
         {"HUP", 1, "starts", "", "", true, @rerun},
         {"TERM", 15, "is between BEAMs", ~S|touch "$MEERKAT_SERVE_DIR/served"|, "", false,
          @rerun},
-        {"TERM", 15, "does not answer within 2 s", @serves, "exit 28", true, @rerun},
+        # A curl not told to give up after 2 s answers nothing, and the caller
+        # leaves the server running.
+        {"TERM", 15, "does not answer within 2 s", @serves,
+         ~S|[[ " $* " == *" --max-time 2 "* ]] && exit 28; exit 0|, true, @rerun},
         {"TERM", 15, "answers with an error", @serves, "exit 22", false, @rerun},
         {"TERM", 15, "answers that the review ended", @serves, "echo ended; exit 0", false,
          @rerun},
@@ -659,6 +662,56 @@ defmodule Meerkat.ShepherdTest do
         assert await_file(Path.join(run, "exit")) == "143"
       end
     end
+  end
+
+  test "a rerun stopped before its backend has shown the review hands it back to the caller it replaced" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    fake_release(dir, "exec sleep 60\n")
+    runs = Path.join(dir, "runs")
+    rerun_pid_file = Path.join(dir, "rerun-pid")
+    kills = Path.join(dir, "kills")
+    env = [{"MEERKAT_CURRENT_LINK", Path.join(dir, "current")}, {"INPUT_FILE", "/dev/null"}]
+    first = open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, env)
+    {:os_pid, first_pid} = Port.info(first, :os_pid)
+    backend = await_backend_pid(runs)
+
+    # Killed outright, the first caller cannot remove the run while it is
+    # deleted; the backend's exit file is written before then.
+    on_exit(fn ->
+      System.cmd("kill", ["-KILL", to_string(first_pid)], stderr_to_stdout: true)
+      System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+
+      for run <- Path.wildcard(Path.join(runs, "*.*")),
+          do: await_file(Path.join(run, "exit"), 10_000)
+    end)
+
+    rerun =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        env ++
+          [
+            {"CALLER_PID_FILE", rerun_pid_file},
+            {"KILLS", kills},
+            {"BASH_FUNC_kill%%", ~S|() { echo "$*" >>"$KILLS"; builtin kill "$@"; }|}
+          ],
+        own_group: true
+      )
+
+    rerun_pid = await_file(rerun_pid_file)
+    [caller] = Path.wildcard(Path.join([runs, "*.*", "caller"]))
+    assert eventually(fn -> File.read!(caller) == "#{rerun_pid}\n" end, timeout: @timeout_ms)
+    System.cmd("kill", ["-TERM", "-" <> rerun_pid])
+
+    assert {143, output} = await_result(rerun, dir)
+
+    assert output ==
+             "meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n"
+
+    assert File.read!(caller) == "#{first_pid}\n"
+    refute "-TERM #{backend}" in String.split(File.read!(kills), "\n")
   end
 
   describe "when a review's backend is killed and the review rerun at once" do

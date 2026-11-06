@@ -232,10 +232,9 @@ it what to do, naming the signal it got, and dies of that signal:
   `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
   The invocation stops a server that has not yet shown the review, or
   gave no answer within 2 seconds. It leaves running a server that
-  answered with an error or is between BEAMs, as after an install;
-  a BEAM of this version then judges the review once the invocation
-  is gone. An invocation still waiting to take the review over from
-  another leaves the server alone.
+  answered with an error or is between BEAMs, as after an install.
+  An invocation still waiting to take the review over from another
+  leaves the server alone.
 
 It prints no other line, even when the signal reaches its whole
 process group. The pause

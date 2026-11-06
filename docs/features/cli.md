@@ -178,7 +178,7 @@ see [pending-answers.md](pending-answers.md).
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
   the decision prints to run the same command again, with the review's
   URL while it stays open, stopping a server that has not shown the
-  review or does not answer, and dies of that signal (128 plus its
+  review or does not answer within 2 seconds, and dies of that signal (128 plus its
   number to a shell, so 130 for SIGINT and 129 for SIGHUP); see
   [decision-flow.md](decision-flow.md#when-the-caller-exits).
 
