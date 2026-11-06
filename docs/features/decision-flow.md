@@ -221,7 +221,8 @@ and saving its comments; a review with neither
 [ends](#when-nothing-waits-on-the-review).
 
 An invocation stopped by SIGTERM, SIGINT or SIGHUP before it has the
-decision first detaches from the server, which
+decision first detaches from the server, unless it is still taking
+the review over (below). The server then
 [judges the review](#when-nothing-waits-on-the-review) at once and
 answers whether that ended it. The invocation then tells whoever ran
 it what to do, naming the signal it got, and dies of that signal:

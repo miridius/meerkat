@@ -623,7 +623,7 @@ defmodule Meerkat.ShepherdTest do
             {"BASH_FUNC_kill%%", ~S|() { echo "$*" >>"$KILLS"; builtin kill "$@"; }|}
           ],
           own_group: true,
-          # The attach is refused, so the caller keeps trying until stopped.
+          # The attach never connects, so the caller keeps trying until stopped.
           curl: """
           #!/usr/bin/env bash
           if [[ "$*" == *attach/leave* ]]; then #{unquote(leave)}; fi
@@ -715,7 +715,7 @@ defmodule Meerkat.ShepherdTest do
              "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @still_open
   end
 
-  # The attach is refused, so neither caller hears from the backend; a leave
+  # The attach never connects, so neither caller hears from the backend; a leave
   # is logged and answered as if it ended the review.
   for {shown, beam} <- [{"has not shown", ""}, {"has shown", @serves}] do
     test "a rerun stopped before it hears from a backend that #{shown} the review only hands it back to the caller it replaced" do

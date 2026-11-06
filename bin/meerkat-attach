@@ -53,7 +53,7 @@ meerkat_attach() {
   _MA_PID_WAIT_DIR=""
   # Where a stopped caller says how the review stands: a trap can run inside
   # a command whose stderr goes to /dev/null.
-  exec {_MA_ERR}>&2
+  exec {_MA_ERR}>&2 || exec {_MA_ERR}>/dev/null
   _ma_record_ancestors
   trap '_ma_stopped TERM' TERM
   trap '_ma_stopped INT' INT
