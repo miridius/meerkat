@@ -16,8 +16,9 @@
 # orphaned review lives until reattached and can outlast an upgrade.
 #
 # A backend's run dir holds `pid` (its shepherd), `caller` (the pid of
-# the caller waiting on it: a takeover overwrites it, and a refused or
-# stopped one restores it), `token`, `log` (its
+# the caller waiting on it: a takeover overwrites it, and restores it if
+# refused, or if stopped or its server exits before it hears from the
+# server), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
 # (once a BEAM has announced the review), `opened` (the browser-open
 # marker), `index` (a held temporary index, if any) and, once it has
@@ -50,6 +51,9 @@ meerkat_attach() {
   _MA_QUIET=0
   # The run dir whose pid _MA_PID_WAIT is the deadline for.
   _MA_PID_WAIT_DIR=""
+  # Where a stopped caller says how the review stands: a trap can run inside
+  # a command whose stderr goes to /dev/null.
+  exec {_MA_ERR}>&2
   _ma_record_ancestors
   trap '_ma_stopped TERM' TERM
   trap '_ma_stopped INT' INT
@@ -196,24 +200,26 @@ _ma_ps_works() {
 # ran it learns whether to rerun instead of reading only an exit status. It
 # then dies of the signal, as it would have untrapped.
 _ma_stopped() {
-  _ma_leave "stopped waiting (SIG$1)"
+  _ma_leave "stopped waiting (SIG$1)" 2>&"$_MA_ERR"
   trap - "$1"
   kill -s "$1" $$
 }
 
 # Detach from the backend, which judges the review at once, and say to rerun,
 # with the review's URL when the backend answers that it is still open. Only a
-# caller that took the run acts on it. A backend that has not announced the
-# review, or does not answer within 2 s, is stopped, unless this caller is a
-# rerun that has not yet heard from it: that hands the run back to the caller
-# it replaced, which may still wait on the backend. One that answers with an
+# caller that took the run acts on it. A rerun that has not yet heard from the
+# backend only hands the run back to the caller it replaced, which may still
+# wait on it: a leave would have the backend judge the review while that
+# caller is between attaches. Any other caller stops a backend that has not
+# announced the review or does not answer within 2 s. One that answers with an
 # error, or is between BEAMs, is left running.
 _ma_leave() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
   local IFS=$' \t\n' beam standing="" status=0
-  if ((_MA_OWNED)); then
-    ((_MA_HELD)) || _ma_restore_caller
+  if ((_MA_OWNED && !_MA_HELD)); then
+    _ma_restore_caller
+  elif ((_MA_OWNED)); then
     if read -r _MA_PORT beam 2>/dev/null <"$_MA_DIR/port"; then
       _MA_TOKEN="$(cat "$_MA_DIR/token" 2>/dev/null)"
       standing="$(_ma_request POST "attach/leave?run=$_MA_RUN" -f --max-time 2 2>/dev/null)" || status=$?
@@ -226,7 +232,7 @@ _ma_leave() {
       ended) ;;
       *)
         # curl exits 28 on a timeout.
-        if ((_MA_HELD)) && { [[ ! -f "$_MA_DIR/served" ]] || ((status == 28)); }; then
+        if [[ ! -f "$_MA_DIR/served" ]] || ((status == 28)); then
           [[ -f "$_MA_DIR/pid" ]] && _ma_server_alive && kill -TERM "$(<"$_MA_DIR/pid")" 2>/dev/null
         fi
         ;;
@@ -336,9 +342,9 @@ _ma_write_caller() {
 }
 
 # A reattach the server refused, whose server exited before it heard from
-# it, or that is stopped before then, records again the caller it would have replaced, which may
-# still wait on the run. A caller displaced by a later one does nothing:
-# the file no longer names it.
+# it, or that is stopped before then, records again the caller it would have
+# replaced, which may still wait on the run. A caller displaced by a later
+# one does nothing: the file no longer names it.
 _ma_restore_caller() {
   [[ -n "$_MA_PREV_CALLER" && "$(cat "$_MA_DIR/caller" 2>/dev/null)" == "$$" ]] || return 0
   _ma_write_caller "$_MA_PREV_CALLER"
@@ -416,7 +422,7 @@ _ma_start_server() {
       close($f);
       rename("$dir/pid.tmp", "$dir/pid");
       exec(@ARGV) or die "meerkat: exec $ARGV[0]: $!";
-    ' "$_MA_DIR" "$self" "$@" </dev/null >>"$_MA_DIR/log" 2>&1
+    ' "$_MA_DIR" "$self" "$@" </dev/null >>"$_MA_DIR/log" 2>&1 {_MA_ERR}>&-
 }
 
 _ma_server_alive() {

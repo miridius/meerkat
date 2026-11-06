@@ -233,9 +233,8 @@ it what to do, naming the signal it got, and dies of that signal:
   The invocation stops a server that has not yet shown the review, or
   gave no answer within 2 seconds. It leaves running a server that
   answered with an error or is between BEAMs, as after an install.
-  An invocation still taking the review over from another hands it
-  back to that one, which may still wait on the server, and never stops
-  the server.
+  An invocation still taking the review over from another only hands
+  it back to that one, which may still wait on the server.
 
 It prints no other line, even when the signal reaches its whole
 process group. The pause
