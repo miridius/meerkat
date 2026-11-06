@@ -16,8 +16,8 @@
 # orphaned review lives until reattached and can outlast an upgrade.
 #
 # A backend's run dir holds `pid` (its shepherd), `caller` (the pid of
-# the caller waiting on it: a takeover overwrites it, and a refused one
-# restores it), `token`, `log` (its
+# the caller waiting on it: a takeover overwrites it, and a refused or
+# stopped one restores it), `token`, `log` (its
 # stderr), `port` ("<port> <BEAM pid>" while a BEAM serves), `served`
 # (once a BEAM has announced the review), `opened` (the browser-open
 # marker), `index` (a held temporary index, if any) and, once it has
@@ -202,18 +202,18 @@ _ma_stopped() {
 }
 
 # Detach from the backend, which judges the review at once, and say to rerun,
-# with the review's URL when the backend answers that it is still open. Only
-# the run's caller detaches; a rerun the backend has not heard from hands the
-# run back to the caller it replaced instead. A backend that has not announced
-# the review, or does not answer within 2 s, is stopped; one that answers with
-# an error, or is between BEAMs, is left running.
+# with the review's URL when the backend answers that it is still open. Only a
+# caller that took the run acts on it. A backend that has not announced the
+# review, or does not answer within 2 s, is stopped, unless this caller is a
+# rerun that has not yet heard from it: that hands the run back to the caller
+# it replaced, which may still wait on the backend. One that answers with an
+# error, or is between BEAMs, is left running.
 _ma_leave() {
   # A trap can run during `IFS= read`, whose empty IFS would keep the port
   # file's fields together.
   local IFS=$' \t\n' beam standing="" status=0
-  if ((_MA_OWNED && !_MA_HELD)); then
-    _ma_restore_caller
-  elif ((_MA_OWNED)); then
+  if ((_MA_OWNED)); then
+    ((_MA_HELD)) || _ma_restore_caller
     if read -r _MA_PORT beam 2>/dev/null <"$_MA_DIR/port"; then
       _MA_TOKEN="$(cat "$_MA_DIR/token" 2>/dev/null)"
       standing="$(_ma_request POST "attach/leave?run=$_MA_RUN" -f --max-time 2 2>/dev/null)" || status=$?
@@ -226,7 +226,7 @@ _ma_leave() {
       ended) ;;
       *)
         # curl exits 28 on a timeout.
-        if [[ ! -f "$_MA_DIR/served" ]] || ((status == 28)); then
+        if ((_MA_HELD)) && { [[ ! -f "$_MA_DIR/served" ]] || ((status == 28)); }; then
           [[ -f "$_MA_DIR/pid" ]] && _ma_server_alive && kill -TERM "$(<"$_MA_DIR/pid")" 2>/dev/null
         fi
         ;;
@@ -335,8 +335,8 @@ _ma_write_caller() {
   echo "${1:-$$}" >"$_MA_DIR/caller.$$" && mv -f "$_MA_DIR/caller.$$" "$_MA_DIR/caller"
 }
 
-# A reattach the server refused, or whose server exited before it heard
-# from it, records again the caller it would have replaced, which may
+# A reattach the server refused, whose server exited before it heard from
+# it, or that is stopped before then, records again the caller it would have replaced, which may
 # still wait on the run. A caller displaced by a later one does nothing:
 # the file no longer names it.
 _ma_restore_caller() {

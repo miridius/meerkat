@@ -49,8 +49,9 @@ defmodule Meerkat.Decision do
   `Meerkat.ReviewServer.end_if_unused/1` outside this server, in a process
   it starts or in `leave/1`'s caller, since ReviewServer calls this server.
   If the review has no comments and no open forms, that calls
-  `end_unattended/0`, which stores the decision `{:ended, ""}` only while there is still no decision and no caller. An
-  ended review turns later callers away with `:closing`. A kept review is
+  `end_unattended/0`, which stores the decision `{:ended, ""}` only while
+  there is still no decision and no caller. An ended review turns later
+  callers away with `:closing`. A kept review is
   marked `kept` in the serve dir, which every BEAM respawned for the review
   shares, so a respawned BEAM does not check for its dead caller again.
   """
@@ -59,8 +60,11 @@ defmodule Meerkat.Decision do
 
   require Logger
 
+  @typedoc "Tag of a decision made by a click on the review page."
+  @type click :: :approve | :approve_with_feedback | :reject | :cancel
+
   @typedoc "Tag of a decision made by a click or by the deadline."
-  @type choice :: :approve | :approve_with_feedback | :reject | :cancel | :timeout
+  @type choice :: click | :timeout
 
   @typedoc "A choice's tag, or `:ended` for a review nothing waited on."
   @type tag :: choice | :ended
@@ -109,12 +113,7 @@ defmodule Meerkat.Decision do
   effects never land. No call timeout: `on_accept` may wait out the
   approval cache's 10s lock before the decision is accepted.
   """
-  @spec submit_review(
-          :approve | :approve_with_feedback | :reject | :cancel,
-          Meerkat.ReviewState.t(),
-          String.t(),
-          (-> term())
-        ) ::
+  @spec submit_review(click(), Meerkat.ReviewState.t(), String.t(), (-> term())) ::
           {:ok, decision()} | {:already_decided, decision()}
   def submit_review(tag, state, repo_path, on_accept \\ fn -> :ok end)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel] do
@@ -184,8 +183,8 @@ defmodule Meerkat.Decision do
   @doc """
   End the review with the decision `{:ended, ""}` if it is still undecided
   and no caller is attached; returns `:ended` then or if it had already
-  ended, and `:kept` otherwise. Called
-  by `Meerkat.ReviewServer.end_if_unused/1` once it finds the review has no
+  ended, and `:kept` otherwise. Called by
+  `Meerkat.ReviewServer.end_if_unused/1` once it finds the review has no
   comments and no open forms.
   """
   @spec end_unattended() :: :ended | :kept

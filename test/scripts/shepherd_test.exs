@@ -580,8 +580,8 @@ defmodule Meerkat.ShepherdTest do
         {"HUP", 1, "starts", "", "", true, @rerun},
         {"TERM", 15, "is between BEAMs", ~S|touch "$MEERKAT_SERVE_DIR/served"|, "", false,
          @rerun},
-        # A curl not told to give up after 2 s answers nothing, and the caller
-        # leaves the server running.
+        # Times out only when told to give up after 2 s, so a caller that
+        # stopped passing --max-time 2 would leave the server running.
         {"TERM", 15, "does not answer within 2 s", @serves,
          ~S|[[ " $* " == *" --max-time 2 "* ]] && exit 28; exit 0|, true, @rerun},
         {"TERM", 15, "answers with an error", @serves, "exit 22", false, @rerun},
