@@ -228,9 +228,14 @@ it what to do, naming the signal it got, and dies of that signal:
 
 - The review stays open:
   `meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
-- The review ended, or the server is still starting or gave no answer
-  within 2 seconds, in which case the invocation stops the server:
+- Any other case:
   `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
+  The invocation stops a server that has not yet shown the review, or
+  gave no answer within 2 seconds. It leaves running a server that
+  answered with an error or is between BEAMs, as after an install;
+  a BEAM of this version then judges the review once the invocation
+  is gone. An invocation still waiting to take the review over from
+  another leaves the server alone.
 
 It prints no other line, even when the signal reaches its whole
 process group. The pause
@@ -335,15 +340,16 @@ review attaches to it. Deleting the review's comments afterwards does
 not end it; only another invocation that attaches and then goes away
 is judged again. The server records the kept judgement in the run dir
 as `kept`, so a BEAM respawned for the review, after an install or a
-dev-mode edit, does not check the dead invocation again. A decision clicked before the invocation went away
-is held for the next one, as above.
+dev-mode edit, does not check the dead invocation again. A decision
+clicked before the invocation went away is held for the next one, as
+above.
 
 ## Persistence across decisions
 
 The in-progress snapshot lives at
 `<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
 
-Right after the decision, before delivery, the CLI calls
+Right after any decision but `ended`, before delivery, the CLI calls
 `ReviewServer.delete_snapshot/2` once. If a `ReviewServer` is
 registered, deletion runs inside that process after any save already
 in progress; otherwise, the file is deleted directly. Once

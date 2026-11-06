@@ -563,18 +563,31 @@ defmodule Meerkat.ShepherdTest do
     refute File.exists?(Path.join(dir, "tmp"))
   end
 
-  # A BEAM that never binds, so the review has no URL yet, or one whose
-  # port nothing answers on. It says when it has started: a shepherd
-  # stopped before it traps signals dies without recording an exit code.
-  # The signal goes to the caller's whole process group, so it also kills
-  # whatever the caller is running at the time.
-  for {signal, number, backend, beam} <- [
-        {"TERM", 15, "starts", ""},
-        {"INT", 2, "starts", ""},
-        {"HUP", 1, "starts", ""},
-        {"TERM", 15, "does not answer", ~S|echo "1 $$" >"$MEERKAT_SERVE_DIR/port"|}
+  @rerun "Run the same command again.\n"
+  @still_open "The review is still open at http://127.0.0.1:1/; run the same command again to wait for its outcome.\n"
+  @serves ~S|touch "$MEERKAT_SERVE_DIR/served"; echo "1 $$" >"$MEERKAT_SERVE_DIR/port"|
+
+  # A BEAM that never binds, so the review has no URL yet, one between
+  # BEAMs, which has served the review but has no port, or one that has
+  # bound, whose answer to the caller's leave is `leave` (curl's output, then
+  # its exit status). It says when it has started: a shepherd stopped before
+  # it traps signals dies without recording an exit code. The signal goes to
+  # the caller's whole process group, so it also kills whatever the caller
+  # is running at the time.
+  for {signal, number, backend, beam, leave, stopped?, said} <- [
+        {"TERM", 15, "starts", "", "", true, @rerun},
+        {"INT", 2, "starts", "", "", true, @rerun},
+        {"HUP", 1, "starts", "", "", true, @rerun},
+        {"TERM", 15, "is between BEAMs", ~S|touch "$MEERKAT_SERVE_DIR/served"|, "", false,
+         @rerun},
+        {"TERM", 15, "does not answer within 2 s", @serves, "exit 28", true, @rerun},
+        {"TERM", 15, "answers with an error", @serves, "exit 22", false, @rerun},
+        {"TERM", 15, "answers that the review ended", @serves, "echo ended; exit 0", false,
+         @rerun},
+        {"TERM", 15, "answers that the review is open", @serves, "echo open; exit 0", false,
+         @still_open}
       ] do
-    test "a caller whose process group gets SIG#{signal} while its backend #{backend} stops the backend, prints only to rerun and dies of the signal" do
+    test "a caller whose process group gets SIG#{signal} while its backend #{backend} #{if stopped?, do: "stops", else: "leaves"} it, prints only what to do and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       rel = Path.join(dir, "rel")
@@ -589,6 +602,7 @@ defmodule Meerkat.ShepherdTest do
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
       started = Path.join(dir, "beam-started")
       caller_pid_file = Path.join(dir, "caller-pid")
+      kills = Path.join(dir, "kills")
 
       port =
         open_launcher(
@@ -598,9 +612,20 @@ defmodule Meerkat.ShepherdTest do
           [
             {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
             {"BEAM_STARTED", started},
-            {"CALLER_PID_FILE", caller_pid_file}
+            {"CALLER_PID_FILE", caller_pid_file},
+            # Every kill the launcher's bash runs is logged before it is sent,
+            # so whether the caller stopped the backend is known once it exits.
+            {"KILLS", kills},
+            {"BASH_FUNC_kill%%", ~S|() { echo "$*" >>"$KILLS"; builtin kill "$@"; }|}
           ],
-          own_group: true
+          own_group: true,
+          # The attach is refused, so the caller keeps trying until stopped.
+          curl: """
+          #!/usr/bin/env bash
+          if [[ "$*" == *attach/leave* ]]; then #{unquote(leave)}; fi
+          printf 's 000\\n'
+          exit 7
+          """
         )
 
       runs = Path.join(dir, "runs")
@@ -625,10 +650,14 @@ defmodule Meerkat.ShepherdTest do
 
       assert output ==
                "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
-                 "Run the same command again.\n"
+                 unquote(said)
 
-      [run] = Path.wildcard(Path.join(runs, "*.*"))
-      assert await_file(Path.join(run, "exit")) == "143"
+      assert "-TERM #{backend}" in String.split(File.read!(kills), "\n") == unquote(stopped?)
+
+      if unquote(stopped?) do
+        [run] = Path.wildcard(Path.join(runs, "*.*"))
+        assert await_file(Path.join(run, "exit")) == "143"
+      end
     end
   end
 

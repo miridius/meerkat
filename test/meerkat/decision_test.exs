@@ -964,6 +964,14 @@ defmodule Meerkat.DecisionTest do
       assert Decision.end_unattended() == :kept
       assert Decision.current() == {:cancel, ""}
     end
+
+    # Judging on a stream drop can end the review just before the caller's
+    # leave judges it, and that caller must hear it ended.
+    test "end_unattended/0 says an ended review ended" do
+      assert Decision.end_unattended() == :ended
+      assert Decision.end_unattended() == :ended
+      assert Decision.current() == {:ended, ""}
+    end
   end
 
   describe "reset/0" do

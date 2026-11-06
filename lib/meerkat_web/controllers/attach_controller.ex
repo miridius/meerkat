@@ -33,7 +33,8 @@ defmodule MeerkatWeb.AttachController do
 
   `POST /api/attach/leave?run=<run>` detaches a caller that is exiting
   before the outcome and answers `ended` if the review ended, judged at
-  once when no caller is left, or `open` if it is still open.
+  once when no caller is left, or `open` otherwise, a decision held for the
+  next caller included.
   """
 
   use Phoenix.Controller, formats: []

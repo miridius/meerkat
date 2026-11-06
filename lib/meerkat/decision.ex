@@ -22,8 +22,8 @@ defmodule Meerkat.Decision do
   caller, and it reaches this BEAM through `MeerkatWeb.AttachController`.
   A caller can exit at any time; unless the review then ends (see
   below), it keeps serving, and a later invocation of the same review
-  attaches in its place. So under a launcher the CLI does not print the outcome. It
-  publishes it with `publish/1`, every attached caller is sent it, and
+  attaches in its place. So under a launcher the CLI does not print the
+  outcome. It publishes it with `publish/1`, every attached caller is sent it, and
   the CLI halts only once a caller reports it delivered. An outcome
   published with nobody attached is held for the next caller. A caller
   attaching for a different run displaces every caller already attached
@@ -47,8 +47,8 @@ defmodule Meerkat.Decision do
   once a check every `caller_check_ms/0` finds the launcher's
   recorded caller gone (`Meerkat.Caller.gone?/1`). Judging runs
   `Meerkat.ReviewServer.end_if_unused/1` outside this server, in a process
-  it starts or in `leave/1`'s caller, since ReviewServer calls this server. If the review has no comments and no
-  open forms, that calls `end_unattended/0`, which stores the decision
+  it starts or in `leave/1`'s caller, since ReviewServer calls this server.
+  If the review has no comments and no open forms, that calls `end_unattended/0`, which stores the decision
   `{:ended, ""}` only while there is still no decision and no caller. An
   ended review turns later callers away with `:closing`. A kept review is
   marked `kept` in the serve dir, which every BEAM respawned for the review
@@ -59,8 +59,11 @@ defmodule Meerkat.Decision do
 
   require Logger
 
-  @typedoc "Tag identifying the user's choice, or `:ended` for a review nothing waited on."
-  @type tag :: :approve | :approve_with_feedback | :reject | :cancel | :timeout | :ended
+  @typedoc "Tag identifying the user's choice."
+  @type choice :: :approve | :approve_with_feedback | :reject | :cancel | :timeout
+
+  @typedoc "A choice's tag, or `:ended` for a review nothing waited on."
+  @type tag :: choice | :ended
 
   @typedoc "Decision tuple stored once the review is decided."
   @type decision :: {tag, term()}
@@ -92,7 +95,7 @@ defmodule Meerkat.Decision do
   Submit a terminal decision. Wakes any pending `await/0` callers.
   Subsequent submits are ignored.
   """
-  @spec submit(decision) :: {:ok, decision} | {:already_decided, decision}
+  @spec submit({choice, term()}) :: {:ok, decision} | {:already_decided, decision}
   def submit({tag, _payload} = decision)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel, :timeout] do
     GenServer.call(__MODULE__, {:submit, decision})
@@ -106,7 +109,7 @@ defmodule Meerkat.Decision do
   effects never land. No call timeout: `on_accept` may wait out the
   approval cache's 10s lock before the decision is accepted.
   """
-  @spec submit_review(tag(), Meerkat.ReviewState.t(), String.t(), (-> term())) ::
+  @spec submit_review(choice(), Meerkat.ReviewState.t(), String.t(), (-> term())) ::
           {:ok, decision()} | {:already_decided, decision()}
   def submit_review(tag, state, repo_path, on_accept \\ fn -> :ok end)
       when tag in [:approve, :approve_with_feedback, :reject, :cancel] do
@@ -351,6 +354,10 @@ defmodule Meerkat.Decision do
       when callers == %{} do
     {:reply, :ended, put_decision(state, {:ended, ""})}
   end
+
+  # A judgement started on the stream drop can land before the caller's leave.
+  def handle_call(:end_unattended, _from, %{decision: {:ended, _}} = state),
+    do: {:reply, :ended, state}
 
   def handle_call(:end_unattended, _from, state), do: {:reply, :kept, state}
 
