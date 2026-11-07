@@ -4,10 +4,16 @@ defmodule Meerkat.PendingQuestionsTest do
   import Meerkat.TestHelpers
   alias Meerkat.{PendingAnswers, PendingQuestions}
 
-  setup do
-    repo = make_git_repo("meerkat-owed-questions")
-    on_exit(fn -> File.rm_rf!(repo) end)
-    {:ok, repo: repo}
+  # A test that resolves paths through git is tagged `:git` and gets a
+  # real repo.
+  setup ctx do
+    if ctx[:git] do
+      repo = make_git_repo("meerkat-owed-questions")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    else
+      {:ok, repo: make_state_repo("meerkat-owed-questions")}
+    end
   end
 
   @questions [
@@ -21,10 +27,10 @@ defmodule Meerkat.PendingQuestionsTest do
     assert {:ok, @questions} = PendingQuestions.unanswered(repo)
     assert {:ok, @questions} = PendingQuestions.unanswered(repo)
 
-    assert {:ok, 1} = PendingAnswers.save(repo, answers([hd(@questions)]))
+    put_pending_answers(repo, answers([hd(@questions)]))
     assert {:ok, [List.last(@questions)]} == PendingQuestions.unanswered(repo)
 
-    assert {:ok, 2} = PendingAnswers.save(repo, answers(@questions))
+    put_pending_answers(repo, answers(@questions))
     assert {:ok, []} = PendingQuestions.unanswered(repo)
     # Merely passing the gate must not erase the obligation or banner.
     assert File.exists?(PendingQuestions.path_for(repo))
@@ -34,6 +40,7 @@ defmodule Meerkat.PendingQuestionsTest do
     assert {:ok, @questions} = PendingQuestions.unanswered(repo)
   end
 
+  @tag :git
   test "obligations persist at the stable filename with the versioned schema", %{repo: repo} do
     # Git resolves the physical root even when TMPDIR or the caller is symlinked.
     canonical_repo = git(repo, ["rev-parse", "--show-toplevel"])
@@ -76,7 +83,7 @@ defmodule Meerkat.PendingQuestionsTest do
           %{location: "src/x.rs:3 (new)", question: "why", answer: "because"},
           %{location: "src/x.rs:3 (new)", question: "why?", answer: " \n\t "}
         ] do
-      assert {:ok, 1} = PendingAnswers.save(repo, Jason.encode!(%{answers: [answer]}))
+      put_pending_answers(repo, [answer])
       assert {:ok, @questions} = PendingQuestions.unanswered(repo)
     end
   end
@@ -148,6 +155,7 @@ defmodule Meerkat.PendingQuestionsTest do
     assert error.reason == :enotdir
   end
 
+  @tag :git
   test "obligations follow the worktree across branches and subdirectories, not other worktrees",
        %{repo: repo} do
     git(repo, [
@@ -176,7 +184,5 @@ defmodule Meerkat.PendingQuestionsTest do
     assert {:ok, @questions} = PendingQuestions.unanswered(repo)
   end
 
-  defp answers(questions) do
-    Jason.encode!(%{answers: Enum.map(questions, &Map.put(&1, :answer, "Because **this**."))})
-  end
+  defp answers(questions), do: Enum.map(questions, &Map.put(&1, :answer, "Because **this**."))
 end

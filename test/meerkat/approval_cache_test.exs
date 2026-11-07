@@ -1,5 +1,6 @@
 defmodule Meerkat.ApprovalCacheTest do
-  use ExUnit.Case, async: true
+  # Not async: a path_for/1 test sets the global :approval_cache_path.
+  use Meerkat.Case, async: false
 
   alias Meerkat.ApprovalCache
 
@@ -51,6 +52,51 @@ defmodule Meerkat.ApprovalCacheTest do
 
     test "unapprove on a missing key is a no-op" do
       assert ApprovalCache.unapprove(%{}, "main", "missing") == %{}
+    end
+  end
+
+  describe "path_for/1" do
+    setup do
+      repo = Meerkat.TestHelpers.make_git_repo("meerkat-approval-path")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, repo: repo}
+    end
+
+    test "is approved.json in the shared gitdir", %{repo: repo} do
+      path = ApprovalCache.path_for(repo)
+      assert path == Path.join([repo, ".git", "meerkat-precommit", "approved.json"])
+    end
+
+    test "outside a repo is nil" do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-nogit")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      assert ApprovalCache.path_for(dir) == nil
+    end
+
+    test "is the cached :approval_cache_path when set, ahead of git and without it", %{
+      repo: repo
+    } do
+      cached = Path.join(repo, "cached.json")
+      Application.put_env(:meerkat, :approval_cache_path, cached)
+      on_exit(fn -> Application.delete_env(:meerkat, :approval_cache_path) end)
+      assert ApprovalCache.path_for(repo) == cached
+      File.rm_rf!(Path.join(repo, ".git"))
+      assert ApprovalCache.path_for(repo) == cached
+    end
+
+    test "is cached by Meerkat.CLI for a review, with its meerkat_dir", %{repo: repo} do
+      path = ApprovalCache.path_for(repo)
+      meerkat_dir = Meerkat.Git.meerkat_dir(repo)
+
+      on_exit(fn ->
+        Application.delete_env(:meerkat, :approval_cache_path)
+        Application.delete_env(:meerkat, :meerkat_dir)
+      end)
+
+      assert Meerkat.CLI.cache_review_paths(repo) == meerkat_dir
+      assert Application.get_env(:meerkat, :meerkat_dir) == meerkat_dir
+      assert Application.get_env(:meerkat, :approval_cache_path) == path
     end
   end
 

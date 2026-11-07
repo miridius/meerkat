@@ -43,8 +43,46 @@ defmodule Meerkat.PersistenceTest do
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
     end
 
+    test "a saved review without comments holds none", %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1"})
+      refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+    end
+
     test "a different signature does not", %{repo: repo, review_id: id} do
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
+    end
+
+    for key <- ~w(comments file_comments global_comments commit_message_comments)a do
+      test "a snapshot holding #{key} of the same signature holds one", %{
+        repo: repo,
+        review_id: id
+      } do
+        state = Map.put(%ReviewState{state_signature: "s1"}, unquote(key), [%{body: "keep me"}])
+        :ok = Persistence.save(repo, id, state)
+        assert Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+      end
+    end
+
+    test "a comment key that names no atom is read", %{repo: repo, review_id: id} do
+      key = "no_atom_#{System.unique_integer([:positive])}"
+      snapshot = %{"state_signature" => "s1", "global_comments" => [%{key => 1}]}
+      File.write!(Persistence.path_for(repo, id), Jason.encode!(snapshot))
+      assert Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+      refute Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
+    end
+
+    test "a snapshot written before signatures existed holds one", %{repo: repo, review_id: id} do
+      File.write!(Persistence.path_for(repo, id), ~s({"comments": [{"body": "keep me"}]}))
+      assert Persistence.held_comments?(repo, id, fn -> {:ok, "s2"} end)
+    end
+
+    test "an unparseable snapshot counts as holding one", %{repo: repo, review_id: id} do
+      File.write!(Persistence.path_for(repo, id), "{not json")
+      assert Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+    end
+
+    test "no snapshot holds none", %{repo: repo} do
+      refute Persistence.held_comments?(repo, "no-such-review", fn -> {:ok, "s1"} end)
     end
   end
 

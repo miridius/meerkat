@@ -7,21 +7,14 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
   alias MeerkatWeb.ReviewLive
 
   setup do
-    repo = make_git_repo("meerkat-question-rounds")
+    repo = make_state_repo("meerkat-question-rounds")
 
-    git(repo, [
-      "-c",
-      "user.name=Test",
-      "-c",
-      "user.email=t@t.t",
-      "commit",
-      "--allow-empty",
-      "-qm",
-      "initial"
-    ])
+    file = %{
+      MeerkatWeb.ReviewLiveEventsCase.added("src/x.ex", "defmodule X do\nend\n")
+      | effective_oid: "oid"
+    }
 
-    stage(repo, "src/x.ex", "defmodule X do\nend\n")
-    {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
+    state = %ReviewState{files: [file], precommit?: true}
     rid = "questions-#{System.unique_integer([:positive])}"
 
     previous =
@@ -42,8 +35,6 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
           :error -> Application.delete_env(:meerkat, key)
         end
       end
-
-      File.rm_rf!(repo)
     end)
 
     {:ok, repo: repo, rid: rid}
@@ -79,7 +70,7 @@ defmodule MeerkatWeb.ReviewQuestionsTest do
       assert {:ok, ^questions} = PendingQuestions.unanswered(repo)
 
       answers = Enum.map(questions, &Map.put(&1, :answer, "Because **it matters**."))
-      assert {:ok, 2} = PendingAnswers.save(repo, Jason.encode!(%{answers: answers}))
+      put_pending_answers(repo, answers)
       assert {:ok, []} = PendingQuestions.unanswered(repo)
       {:ok, next, _} = live_isolated(conn, ReviewLive)
       assert has_element?(next, "section.pending-answers h2", "Pending answers (2)")

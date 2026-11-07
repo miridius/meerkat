@@ -685,10 +685,10 @@ defmodule Meerkat.CLI do
   ## Endpoint startup
 
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
-    # `meerkat_dir` resolution shells out to `git rev-parse`; do it
-    # once here so every save/load through the lifetime of this BEAM
-    # doesn't re-fork-and-exec just to discover the same path.
-    meerkat_dir = Git.meerkat_dir(repo_path)
+    # ExUnit runs no live review in its own VM, where a regression would
+    # wait on a human forever.
+    # muex:ignore unreachable I/O seam: killed by decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+    meerkat_dir = cache_review_paths(repo_path)
 
     # Application env carries the derived target + initial state into
     # `ReviewLive.mount/3`. The LiveView then calls
@@ -696,7 +696,6 @@ defmodule Meerkat.CLI do
     # GenServer owns the canonical state and the LV reads from it.
     Application.put_env(:meerkat, :review_id, review_id)
     Application.put_env(:meerkat, :repo_path, repo_path)
-    Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
     Application.put_env(:meerkat, :review_state, state)
     Application.put_env(:meerkat, :start_endpoint, true)
 
@@ -706,6 +705,18 @@ defmodule Meerkat.CLI do
     # only the URL + verdict, not 40+ lines of server log.
     Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
     start_app!(requested_port, preferred_port_from_env(System.get_env("MEERKAT_PREFERRED_PORT")))
+  end
+
+  # Resolving `meerkat_dir` and the approval cache path shells out to
+  # `git rev-parse`; do it once per review so every save, load and
+  # approval through the lifetime of this BEAM doesn't re-fork-and-exec
+  # just to discover the same paths. Returns `meerkat_dir`.
+  @doc false
+  def cache_review_paths(repo_path) do
+    meerkat_dir = Git.meerkat_dir(repo_path)
+    Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
+    Application.put_env(:meerkat, :approval_cache_path, ApprovalCache.path_for(repo_path))
+    meerkat_dir
   end
 
   # The launcher copies a user-set MEERKAT_PORT here, so say when a value

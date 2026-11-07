@@ -36,9 +36,7 @@ defmodule Meerkat.DecisionTest do
 
   describe "submit_review/3" do
     setup do
-      repo = Meerkat.TestHelpers.make_git_repo("meerkat-review-obligations")
-      on_exit(fn -> File.rm_rf!(repo) end)
-      {:ok, repo: repo}
+      {:ok, repo: Meerkat.TestHelpers.make_state_repo("meerkat-review-obligations")}
     end
 
     for {tag, mode} <- [reject: :rejection, approve_with_feedback: :approval_with_feedback] do
@@ -162,11 +160,9 @@ defmodule Meerkat.DecisionTest do
     } do
       :ok = PendingQuestions.replace(repo, [%{location: "global", question: "Before?"}])
 
-      {:ok, 1} =
-        PendingAnswers.save(
-          repo,
-          ~s({"answers":[{"location":"global","question":"Before?","answer":"Yes."}]})
-        )
+      Meerkat.TestHelpers.put_pending_answers(repo, [
+        %{location: "global", question: "Before?", answer: "Yes."}
+      ])
 
       review = %ReviewState{
         global_comments: [
@@ -189,7 +185,7 @@ defmodule Meerkat.DecisionTest do
 
   describe "the review deadline" do
     setup do
-      repo = Meerkat.TestHelpers.make_git_repo("meerkat-decision-deadline")
+      repo = Meerkat.TestHelpers.make_state_repo("meerkat-decision-deadline")
       previous_repo = Application.fetch_env(:meerkat, :repo_path)
       Application.put_env(:meerkat, :repo_path, repo)
 
@@ -198,8 +194,6 @@ defmodule Meerkat.DecisionTest do
           {:ok, value} -> Application.put_env(:meerkat, :repo_path, value)
           :error -> Application.delete_env(:meerkat, :repo_path)
         end
-
-        File.rm_rf!(repo)
       end)
 
       Application.put_env(:meerkat, :deadline_check_ms, 5)
@@ -326,21 +320,15 @@ defmodule Meerkat.DecisionTest do
   end
 
   defp overdue_review do
-    repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-decision")
-    meerkat_dir = Path.join([repo, ".git", "meerkat-precommit"])
+    # make_state_repo caches :meerkat_dir in application env, as
+    # Meerkat.CLI.start_endpoint! does. Without it, each 5 ms deadline
+    # check runs two `git rev-parse` subprocesses in the singleton Decision
+    # GenServer; under load one took over 5 s and the on_exit reset timed
+    # out. The callers and ending setups below use it for the same reason.
+    repo = Meerkat.TestHelpers.make_state_repo("meerkat-decision")
+    meerkat_dir = Meerkat.Git.meerkat_dir(repo)
     Application.put_env(:meerkat, :repo_path, repo)
-    # Match production: Meerkat.CLI.start_endpoint! caches :meerkat_dir in
-    # application env. Without it, each 5 ms deadline check runs two `git
-    # rev-parse` subprocesses in the singleton Decision GenServer; under
-    # load one took over 5 s and the on_exit reset timed out. The callers
-    # setup below caches it for the same reason.
-    Application.put_env(:meerkat, :meerkat_dir, meerkat_dir)
-
-    on_exit(fn ->
-      Application.delete_env(:meerkat, :repo_path)
-      Application.delete_env(:meerkat, :meerkat_dir)
-      File.rm_rf(repo)
-    end)
+    on_exit(fn -> Application.delete_env(:meerkat, :repo_path) end)
 
     System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
     Meerkat.Timeout.deadline_ms(repo, "abc123")
@@ -352,9 +340,8 @@ defmodule Meerkat.DecisionTest do
     import Meerkat.TestHelpers
 
     setup do
-      repo = make_tmp_repo("meerkat-decision-callers")
+      repo = make_state_repo("meerkat-decision-callers")
       Application.put_env(:meerkat, :repo_path, repo)
-      Application.put_env(:meerkat, :meerkat_dir, Path.join([repo, ".git", "meerkat-precommit"]))
       Application.put_env(:meerkat, :review_id, "abc123")
       Application.put_env(:meerkat, :deadline_check_ms, 5)
       previous = System.get_env("MEERKAT_REVIEW_TIMEOUT")
@@ -371,11 +358,9 @@ defmodule Meerkat.DecisionTest do
           else: System.delete_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT")
 
         Enum.each(
-          [:repo_path, :meerkat_dir, :review_id, :deadline_check_ms, :review_deadline_ms],
+          [:repo_path, :review_id, :deadline_check_ms, :review_deadline_ms],
           &Application.delete_env(:meerkat, &1)
         )
-
-        File.rm_rf(repo)
       end)
 
       Application.put_env(:meerkat, :review_deadline_ms, nil)
@@ -576,8 +561,7 @@ defmodule Meerkat.DecisionTest do
     ]
 
     setup do
-      # The review's server runs git in it.
-      repo = make_git_repo("meerkat-decision-ending")
+      repo = make_state_repo("meerkat-decision-ending")
       serve_dir = Path.join(repo, "run")
       File.mkdir_p!(serve_dir)
       review_id = "ending_#{System.unique_integer([:positive])}"
@@ -595,7 +579,6 @@ defmodule Meerkat.DecisionTest do
 
         Enum.each(@env_keys, &Application.delete_env(:meerkat, &1))
         Decision.reset()
-        File.rm_rf(repo)
       end)
 
       Decision.reset()

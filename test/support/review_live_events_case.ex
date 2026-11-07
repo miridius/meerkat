@@ -2,8 +2,9 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
   @moduledoc """
   Shared setup and helpers for the tests that drive `MeerkatWeb.ReviewLive`'s
   event handlers hermetically: unbound mode injects state via app env; bound
-  mode starts a real ReviewServer against a throwaway `git init` dir so the
-  delegation branches (`if rid != "unbound"`) run for real. async: false —
+  mode starts a real ReviewServer against a throwaway state dir, or a
+  real git repo where git is read, so the delegation branches
+  (`if rid != "unbound"`) run for real. async: false —
   mount reads the global `:meerkat` app env and the singleton
   `Meerkat.Decision`. The tests are split across files so each file's BEAM
   stays well under the per-file time limit.
@@ -11,7 +12,7 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
   import Phoenix.LiveViewTest
-  import Meerkat.TestHelpers, only: [make_git_repo: 1]
+  import Meerkat.TestHelpers, only: [make_git_repo: 1, make_state_repo: 1]
 
   alias MeerkatWeb.ReviewLive
 
@@ -90,6 +91,28 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
     }
   end
 
+  # An added file holding `content`.
+  def added(name, content) do
+    lines = content |> String.trim_trailing("\n") |> String.split("\n")
+
+    %{
+      plain_file()
+      | status: :added,
+        file_name: name,
+        old_content: "",
+        new_content: content,
+        hunks: ["@@ -0,0 +1,#{length(lines)} @@\n" <> Enum.map_join(lines, "\n", &("+" <> &1))],
+        additions: length(lines),
+        deletions: 0
+    }
+  end
+
+  def binary(name) do
+    plain_file()
+    |> Map.merge(%{file_name: name, old_content: "", new_content: "", hunks: []})
+    |> Map.merge(%{additions: 0, deletions: 0, is_binary: true})
+  end
+
   # Subject at L1, a two-line body at L3-4, list items at L6 and L7.
   def commit_msg do
     """
@@ -109,6 +132,9 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
     # dir and leave this fixture not-a-repo under the pre-push hook.
     make_git_repo("meerkat-lv")
   end
+
+  # For a bound review that keeps only its own state there, not git's.
+  def state_repo, do: make_state_repo("meerkat-lv")
 
   def put_state(state) do
     Application.put_env(:meerkat, :review_state, state)
