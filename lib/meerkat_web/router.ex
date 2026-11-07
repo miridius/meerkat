@@ -29,5 +29,6 @@ defmodule MeerkatWeb.Router do
     get "/file", FileContentController, :show
     get "/attach", AttachController, :attach
     post "/attach/delivered", AttachController, :delivered
+    post "/attach/leave", AttachController, :leave
   end
 end

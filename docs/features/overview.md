@@ -25,8 +25,9 @@ HTTP port is bound, the URL is opened in the browser, and it blocks
 until the human makes a decision. It prints feedback to stderr and
 exits with a code the caller (the git hook) uses to allow or block
 the commit. Under the launchers, the review server is detached from
-the invocation that started it and outlives it; a later invocation
-of the same review attaches to that server (see
+the invocation that started it and, while the review has comments or
+an open comment form, outlives it; a later invocation of the same
+review attaches to that server (see
 [decision-flow.md#when-the-caller-exits](decision-flow.md#when-the-caller-exits)).
 
 ## Top-level affordances

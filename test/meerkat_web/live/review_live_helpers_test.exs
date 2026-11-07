@@ -502,6 +502,7 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert ReviewLive.done_view_for_test({:timeout, ""}) == :approve
       assert ReviewLive.done_view_for_test({:reject, "x"}) == :reject
       assert ReviewLive.done_view_for_test({:cancel, ""}) == :cancel
+      assert ReviewLive.done_view_for_test({:ended, ""}) == :ended
     end
   end
 

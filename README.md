@@ -18,7 +18,8 @@ meerkat --pr 123                     # fetch and review a GitHub PR via `gh`
 No external server, no queue, no database. Each invocation spawns a
 short-lived Phoenix server on a local port, opens the browser to it,
 waits for your decision, and exits. If the invocation itself exits
-first, the review keeps running; see
+first, a review with comments or an open comment form keeps running,
+and any other review ends; see
 [decision-flow.md](docs/features/decision-flow.md#when-the-caller-exits).
 A countdown shows how long the review has left before it times out, 90
 minutes by default.

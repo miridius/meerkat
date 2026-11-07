@@ -3,7 +3,9 @@
 The reviewer's verdict produces an exit code that the git-commit hook
 (or calling agent) interprets. An open review normally ends when a
 button is clicked; the auto-approve fast path exits before the UI opens,
-and an auto-approved timeout can end an unanswered review.
+an auto-approved timeout can end an unanswered review, and a review
+with no comments ends once
+[nothing waits on it](#when-nothing-waits-on-the-review).
 
 ## Buttons
 
@@ -214,22 +216,38 @@ Both launchers start the review server detached from the process
 that invoked them. That invocation attaches to the server, prints
 what it streams, and exits with the code it sends. When the
 invocation exits first, by any signal, Ctrl-C included, the server
-keeps serving the review and saving its comments.
+keeps serving a review that has comments or an open comment form,
+and saving its comments; a review with neither
+[ends](#when-nothing-waits-on-the-review).
 
 An invocation stopped by SIGTERM, SIGINT or SIGHUP before it has the
-decision tells whoever ran it so, printing
-`meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
-(naming the signal it got, and leaving out ` at <url>` while the
-server is still starting), then dies of that signal. The pause
+decision first detaches from the server, unless it is still taking
+the review over (below). The server then
+[judges the review](#when-nothing-waits-on-the-review) at once and
+answers whether that ended it. The invocation then tells whoever ran
+it what to do, naming the signal it got, and dies of that signal:
+
+- The review stays open:
+  `meerkat: stopped waiting (SIGTERM) before the review completed. The review is still open at <url>; run the same command again to wait for its outcome.`
+- Any other case:
+  `meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.`
+  The invocation stops a server that has not yet shown the review, or
+  gave no answer within 2 seconds. It leaves running a server that
+  answered with an error or is between BEAMs, as after an install.
+  An invocation still taking the review over from another only hands
+  it back to that one, which may still wait on the server.
+
+It prints no other line, even when the signal reaches its whole
+process group. The pause
 banner covers an invocation killed without a chance to print, as by
-SIGKILL: an output that ends after the banner with no outcome line
-means the review is still open.
+SIGKILL: it says to run the same command again when the output ends
+after the banner with no outcome line.
 
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
 running, still attached. When the decision arrives, meerkat checks
 whether a process above it has exited, even one whose process ID has
-since been reused. If one has, it prints the same
+since been reused. If one has, it prints the still-open
 line with `the process that ran meerkat exited` in place of
 `stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
 the next invocation. A rerun before then takes the review over from
@@ -270,21 +288,68 @@ and exits 1, aborting its commit. An invocation that collects a
 decision already made prints the decision's output only, with no
 pause banner and no browser tab.
 
-A server whose invocation exited stays up until a later invocation
-of the same review attaches to it. The review deadline runs only
-while an invocation is attached, and each one gets the full limit.
-An invocation left by a killed `git commit` stays attached until the
-decision or a rerun takes the review over, so the deadline keeps
-running for it.
-A waiting invocation that reattaches opens the browser if no tab is
-already connected and `--no-open` was not passed.
+The review deadline runs only while an invocation is attached, and
+each one gets the full limit. An invocation left by a killed
+`git commit` stays attached until the decision or a rerun takes the
+review over, so the deadline keeps running for it. A waiting
+invocation that reattaches opens the browser if no tab is already
+connected and `--no-open` was not passed.
+
+## When nothing waits on the review
+
+A review left with no invocation waiting on it and no decision is
+judged once, when the server learns the invocation is gone:
+
+- An invocation that [tells whoever ran it](#when-the-caller-exits)
+  is gone once it detaches. The server judges the review before
+  answering it.
+- Any other attached invocation is gone once its attach stream drops,
+  about 1.5 seconds after it dies.
+- An invocation that died before it attached, for example while the
+  dev launcher compiled or the BEAM booted, is gone once the run dir's
+  `caller` file names a process that `ps` shows is not a running
+  meerkat. The server checks once a second until an invocation
+  attaches. Where `ps` is denied, as in Claude Code's sandbox, it
+  cannot tell and keeps waiting.
+
+If the review then has no saved comment and no comment form open, it
+ends:
+
+- Every connected tab switches to a done view headed **Review
+  ended**, and tries to close itself. Browsers allow that only for a
+  tab whose history holds one page, such as the tab meerkat opened
+  before any in-page link was followed; any other tab keeps showing
+  the notice. A tab opened later also shows it, until the BEAM exits.
+- The review log records `decision: ended`.
+- The BEAM exits **1**, printing
+  `meerkat: the review ended.`
+  to its log, and frees its port. Its run dir stays until the next
+  invocation with the same arguments in the same directory removes
+  it, as for any finished run whose caller is gone.
+- The in-progress snapshot is kept, so a rerun of the same review
+  restores its Approved ticks and filters. A rerun is a new
+  invocation, so when every staged file was ticked Approved it takes
+  the [auto-approve fast path](#auto-approve-fast-path).
+
+A later invocation that reaches the ending review is turned away and
+starts a new one. A button clicked after the review ended does
+nothing but show the notice.
+
+Otherwise the server stays up until a later invocation of the same
+review attaches to it. Deleting the review's comments afterwards does
+not end it; only another invocation that attaches and then goes away
+is judged again. The server records the kept judgement in the run dir
+as `kept`, so a BEAM respawned for the review, after an install or a
+dev-mode edit, does not check the dead invocation again. A decision
+clicked before the invocation went away is held for the next one, as
+above.
 
 ## Persistence across decisions
 
 The in-progress snapshot lives at
 `<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
 
-Right after the decision, before delivery, the CLI calls
+Right after any decision but `ended`, before delivery, the CLI calls
 `ReviewServer.delete_snapshot/2` once. If a `ReviewServer` is
 registered, deletion runs inside that process after any save already
 in progress; otherwise, the file is deleted directly. Once
@@ -303,6 +368,8 @@ a fresh review cannot start until they have answers.
 
 Every terminal decision also writes one JSON record to
 `<gitdir>/meerkat-precommit/reviews/<ts>-<branch>-<oid8>.json`
-via `Meerkat.ReviewLog.finalize/3`. `decision: in-progress`
-indicates the BEAM died before a decision; that file is the
-forensic record for any post-mortem.
+via `Meerkat.ReviewLog.finalize/3`, as does a review that
+[ended with nothing waiting on it](#when-nothing-waits-on-the-review),
+with `decision: ended`. `decision: in-progress` indicates the BEAM
+died before a decision; that file is the forensic record for any
+post-mortem.

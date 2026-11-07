@@ -412,6 +412,7 @@ defmodule Meerkat.ShepherdTest do
     script = ~S"""
     source "$1"
     exec 2>&1
+    exec {_MA_ERR}>&2
     _MA_LOG_FD=""
     _MA_RUN=run
     _MA_LINK="$2/run"
@@ -563,22 +564,73 @@ defmodule Meerkat.ShepherdTest do
     refute File.exists?(Path.join(dir, "tmp"))
   end
 
-  for {signal, number} <- [{"TERM", 15}, {"INT", 2}, {"HUP", 1}] do
-    test "a caller stopped by SIG#{signal} says the review is still open and dies of the signal" do
+  @rerun "Run the same command again.\n"
+  @still_open "The review is still open at http://127.0.0.1:1/; run the same command again to wait for its outcome.\n"
+  @serves ~S|touch "$MEERKAT_SERVE_DIR/served"; echo "1 $$" >"$MEERKAT_SERVE_DIR/port"|
+
+  # A BEAM that never binds, so the review has no URL yet, one between
+  # BEAMs, which has served the review but has no port, or one that has
+  # bound, whose answer to the caller's leave is `leave` (curl's output, then
+  # its exit status). It says when it has started: a shepherd stopped before
+  # it traps signals dies without recording an exit code. The signal goes to
+  # the caller's whole process group, so it also kills whatever the caller
+  # is running at the time.
+  for {signal, number, backend, beam, leave, stopped?, said} <- [
+        {"TERM", 15, "starts", "", "", true, @rerun},
+        {"INT", 2, "starts", "", "", true, @rerun},
+        {"HUP", 1, "starts", "", "", true, @rerun},
+        {"TERM", 15, "is between BEAMs", ~S|touch "$MEERKAT_SERVE_DIR/served"|, "", false,
+         @rerun},
+        # Times out only when told to give up after 2 s, so a caller that
+        # stopped passing --max-time 2 would leave the server running.
+        {"TERM", 15, "does not answer within 2 s", @serves,
+         ~S|[[ " $* " == *" --max-time 2 "* ]] && exit 28; exit 0|, true, @rerun},
+        {"TERM", 15, "answers with an error", @serves, "exit 22", false, @rerun},
+        {"TERM", 15, "answers that the review ended", @serves, "echo ended; exit 0", false,
+         @rerun},
+        {"TERM", 15, "answers that the review is open", @serves, "echo open; exit 0", false,
+         @still_open}
+      ] do
+    test "a caller whose process group gets SIG#{signal} while its backend #{backend} #{if stopped?, do: "stops", else: "leaves"} it, prints only what to do and dies of the signal" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
       rel = Path.join(dir, "rel")
       File.mkdir_p!(Path.join(rel, "bin"))
       File.ln_s!(rel, Path.join(dir, "current"))
-      # A BEAM that never binds, so the review has no URL yet.
-      File.write!(Path.join([rel, "bin", "meerkat"]), "#!/usr/bin/env bash\nexec sleep 60\n")
+
+      File.write!(
+        Path.join([rel, "bin", "meerkat"]),
+        "#!/usr/bin/env bash\n#{unquote(beam)}\ntouch \"$BEAM_STARTED\"\nexec sleep 60\n"
+      )
+
       File.chmod!(Path.join([rel, "bin", "meerkat"]), 0o755)
+      started = Path.join(dir, "beam-started")
+      caller_pid_file = Path.join(dir, "caller-pid")
+      kills = Path.join(dir, "kills")
 
       port =
-        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
-          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
-          {"INPUT_FILE", "/dev/null"}
-        ])
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          dir,
+          [
+            {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+            {"BEAM_STARTED", started},
+            {"CALLER_PID_FILE", caller_pid_file},
+            # Every kill the launcher's bash runs is logged before it is sent,
+            # so whether the caller stopped the backend is known once it exits.
+            {"KILLS", kills},
+            {"BASH_FUNC_kill%%", ~S|() { echo "$*" >>"$KILLS"; builtin kill "$@"; }|}
+          ],
+          own_group: true,
+          # The attach never connects, so the caller keeps trying until stopped.
+          curl: """
+          #!/usr/bin/env bash
+          if [[ "$*" == *attach/leave* ]]; then #{unquote(leave)}; fi
+          printf 's 000\\n'
+          exit 7
+          """
+        )
 
       runs = Path.join(dir, "runs")
       backend = await_backend_pid(runs)
@@ -594,17 +646,144 @@ defmodule Meerkat.ShepherdTest do
             do: await_file(Path.join(run, "exit"), 10_000)
       end)
 
-      {:os_pid, caller} = Port.info(port, :os_pid)
-      System.cmd("kill", ["-#{unquote(signal)}", to_string(caller)])
+      assert await_file(started) == ""
+      System.cmd("kill", ["-#{unquote(signal)}", "-" <> await_file(caller_pid_file)])
 
       assert {code, output} = await_result(port, dir)
       assert code == 128 + unquote(number)
 
-      assert output =~
+      assert output ==
                "meerkat: stopped waiting (SIG#{unquote(signal)}) before the review completed. " <>
-                 "The review is still open; run the same command again to wait for its outcome.\n"
+                 unquote(said)
 
-      assert {_, 0} = System.cmd("kill", ["-0", backend], stderr_to_stdout: true)
+      assert "-TERM #{backend}" in String.split(File.read!(kills), "\n") == unquote(stopped?)
+
+      if unquote(stopped?) do
+        [run] = Path.wildcard(Path.join(runs, "*.*"))
+        assert await_file(Path.join(run, "exit")) == "143"
+      end
+    end
+  end
+
+  # The caller signals itself from the `kill -0 ... 2>/dev/null` of a poll,
+  # so its trap runs while its stderr goes to /dev/null.
+  test "a caller stopped while a command's stderr is discarded still says how the review stands" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    fake_release(dir, "#{@serves}\ntouch \"$BEAM_STARTED\"\nexec sleep 60\n")
+    runs = Path.join(dir, "runs")
+    started = Path.join(dir, "beam-started")
+    trigger = Path.join(dir, "trigger")
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"BEAM_STARTED", started},
+          {"CALLER_PID_FILE", Path.join(dir, "caller-pid")},
+          {"TRIGGER", trigger},
+          {"BASH_FUNC_kill%%",
+           ~S|() { if [[ "$1" == -0 ]] && rm "$TRIGGER" 2>/dev/null; then builtin kill -TERM $$; fi; builtin kill "$@"; }|}
+        ],
+        own_group: true,
+        curl: """
+        #!/usr/bin/env bash
+        if [[ "$*" == *attach/leave* ]]; then echo open; exit 0; fi
+        printf 's 000\\n'
+        exit 7
+        """
+      )
+
+    backend = await_backend_pid(runs)
+
+    on_exit(fn ->
+      System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+
+      for run <- Path.wildcard(Path.join(runs, "*")),
+          do: await_file(Path.join(run, "exit"), 10_000)
+    end)
+
+    assert await_file(started) == ""
+    File.write!(trigger, "")
+
+    assert {143, output} = await_result(port, dir)
+
+    assert output ==
+             "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @still_open
+  end
+
+  # The attach never connects, so neither caller hears from the backend; a leave
+  # is logged and answered as if it ended the review.
+  for {shown, beam} <- [{"has not shown", ""}, {"has shown", @serves}] do
+    test "a rerun stopped before it hears from a backend that #{shown} the review only hands it back to the caller it replaced" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      fake_release(dir, "#{unquote(beam)}\nexec sleep 60\n")
+      runs = Path.join(dir, "runs")
+      rerun_pid_file = Path.join(dir, "rerun-pid")
+      kills = Path.join(dir, "kills")
+      leaves = Path.join(dir, "leaves")
+
+      env = [
+        {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+        {"INPUT_FILE", "/dev/null"},
+        {"LEAVES", leaves}
+      ]
+
+      curl = ~S"""
+      #!/usr/bin/env bash
+      if [[ "$*" == *attach/leave* ]]; then echo "$*" >>"$LEAVES"; echo ended; exit 0; fi
+      printf 's 000\n'
+      exit 7
+      """
+
+      first =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, env, curl: curl)
+
+      {:os_pid, first_pid} = Port.info(first, :os_pid)
+      backend = await_backend_pid(runs)
+
+      # Killed outright, the first caller cannot remove the run while it is
+      # deleted; the backend's exit file is written before then.
+      on_exit(fn ->
+        System.cmd("kill", ["-KILL", to_string(first_pid)], stderr_to_stdout: true)
+        System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+
+        for run <- Path.wildcard(Path.join(runs, "*.*")),
+            do: await_file(Path.join(run, "exit"), 10_000)
+      end)
+
+      rerun =
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          dir,
+          env ++
+            [
+              {"CALLER_PID_FILE", rerun_pid_file},
+              {"KILLS", kills},
+              {"BASH_FUNC_kill%%", ~S|() { echo "$*" >>"$KILLS"; builtin kill "$@"; }|}
+            ],
+          own_group: true,
+          curl: curl
+        )
+
+      rerun_pid = await_file(rerun_pid_file)
+      [caller] = Path.wildcard(Path.join([runs, "*.*", "caller"]))
+      assert eventually(fn -> File.read!(caller) == "#{rerun_pid}\n" end, timeout: @timeout_ms)
+      System.cmd("kill", ["-TERM", "-" <> rerun_pid])
+
+      assert {143, output} = await_result(rerun, dir)
+
+      assert output ==
+               "meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n"
+
+      assert File.read!(caller) == "#{first_pid}\n"
+      refute "-TERM #{backend}" in String.split(File.read!(kills), "\n")
+      refute File.exists?(leaves)
     end
   end
 
@@ -1469,11 +1648,28 @@ defmodule Meerkat.ShepherdTest do
     ]
 
     # Piped when there is input, as a caller piping answers in does;
-    # /dev/null otherwise.
-    script = ~S"""
-    if [ "$INPUT_FILE" = /dev/null ]; then exec "$0" "$@" </dev/null; fi
-    cat "$INPUT_FILE" | "$0" "$@"
-    """
+    # /dev/null otherwise. With :own_group, the caller leads its own process
+    # group, as under an app that signals its whole tree, and the port runs
+    # the bash that started it, which records the caller's pid in
+    # $CALLER_PID_FILE. Only the caller's own stderr reaches the port: that
+    # bash reports its job's death too.
+    {shell, script} =
+      if Keyword.get(opts, :own_group) do
+        {"/bin/bash",
+         ~S"""
+         exec 3>&2 2>/dev/null
+         set -m
+         "$0" "$@" </dev/null 2>&3 3>&- &
+         echo "$!" >"$CALLER_PID_FILE.tmp" && mv "$CALLER_PID_FILE.tmp" "$CALLER_PID_FILE"
+         wait "$!"
+         """}
+      else
+        {"/bin/sh",
+         ~S"""
+         if [ "$INPUT_FILE" = /dev/null ]; then exec "$0" "$@" </dev/null; fi
+         cat "$INPUT_FILE" | "$0" "$@"
+         """}
+      end
 
     env = base |> Map.new() |> Map.merge(Map.new(env))
 
@@ -1505,7 +1701,7 @@ defmodule Meerkat.ShepherdTest do
     env = Map.put(env, "PATH", http <> ":" <> Map.get(env, "PATH", System.fetch_env!("PATH")))
 
     Port.open(
-      {:spawn_executable, "/bin/sh"},
+      {:spawn_executable, shell},
       [
         :binary,
         :exit_status,
