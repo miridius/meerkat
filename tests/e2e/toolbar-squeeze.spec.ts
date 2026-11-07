@@ -304,12 +304,13 @@ test("at its step the version chip shows only its count of updates, and its drop
 		await expect(chip).toBeFocused();
 		await chip.click();
 		await expect(popover).toBeVisible();
-		// A click elsewhere closes it, leaving focus where the click put it.
+		// A click elsewhere closes it, leaving focus where the click put it:
+		// the files dropdown it opens takes focus to its filter box.
 		const files = page.getByRole("button", { name: "Toggle file list" });
 		await files.click();
 		await expect(popover).toBeHidden();
 		await afterNextFrame(page);
-		await expect(files).toBeFocused();
+		await expect(page.getByRole("textbox", { name: "Filter files" })).toBeFocused();
 		await files.click();
 		await afterNextFrame(page);
 		expect(errors, "no page errors").toEqual([]);
