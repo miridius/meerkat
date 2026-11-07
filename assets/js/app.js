@@ -9,6 +9,7 @@ import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
+import { GATED_EVENTS, gateVerdict } from "../ts/connectionGate";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
 import { squeeze } from "../ts/toolbarSqueeze";
@@ -237,13 +238,31 @@ const hooks = {
         }
       };
 
-      // Set on pointerdown; cleared on pointerup/cancel. Track the
-      // pointerId separately so we can release the capture in the
-      // same shape we acquired it (capture is per-pointer, not
-      // per-listener).
+      // Set once a drag crosses into a second block; cleared when the
+      // drag ends. Track the pointerId separately so we can release the
+      // capture in the same shape we acquired it (capture is
+      // per-pointer, not per-listener).
       let capturedPointerId = null;
 
+      // The page takes no release while disconnected, so a drag also ends
+      // when the release frees the gutter's capture, at a move with no
+      // button held, or at the next press the page takes.
+      const endDrag = () => {
+        dragStart = null;
+        dragEnd = null;
+        clearHighlight();
+        if (capturedPointerId !== null) {
+          try {
+            gutter.releasePointerCapture?.(capturedPointerId);
+          } catch (_e) {
+            /* ignore */
+          }
+          capturedPointerId = null;
+        }
+      };
+
       this._onPointerDown = (ev) => {
+        endDrag();
         if (ev.button !== 0) return;
         const hit = lineFor(ev.target);
         if (!hit) return;
@@ -261,6 +280,7 @@ const hooks = {
 
       this._onPointerMove = (ev) => {
         if (!dragStart) return;
+        if (ev.buttons === 0) return endDrag();
         const hit = lineUnder(ev);
         if (!hit) return;
         if (hit.li === dragEnd?.li) return;
@@ -292,17 +312,7 @@ const hooks = {
         const lo = Math.min(dragStart.start, finalHit.start);
         const hi = Math.max(dragStart.end, finalHit.end);
         const crossedBlocks = finalHit.li !== dragStart.li;
-        dragStart = null;
-        dragEnd = null;
-        clearHighlight();
-        if (capturedPointerId !== null) {
-          try {
-            gutter.releasePointerCapture?.(capturedPointerId);
-          } catch (_e) {
-            /* ignore */
-          }
-          capturedPointerId = null;
-        }
+        endDrag();
         if (crossedBlocks) {
           suppressNextClick = true;
           ev.preventDefault();
@@ -322,10 +332,18 @@ const hooks = {
         ev.stopImmediatePropagation();
       };
 
+      // A block button's own implicit capture, from touch or pen, ends
+      // at every release or when the gutter takes it; only the gutter's
+      // own capture loss is the end of a drag.
+      this._onLostCapture = (ev) => {
+        if (ev.target === gutter) endDrag();
+      };
+
       gutter.addEventListener("pointerdown", this._onPointerDown);
       gutter.addEventListener("pointermove", this._onPointerMove);
       gutter.addEventListener("pointerup", this._onPointerUp);
       gutter.addEventListener("pointercancel", this._onPointerUp);
+      gutter.addEventListener("lostpointercapture", this._onLostCapture);
       gutter.addEventListener("click", this._onClickCapture, { capture: true });
     },
 
@@ -334,6 +352,7 @@ const hooks = {
       this.el.removeEventListener("pointermove", this._onPointerMove);
       this.el.removeEventListener("pointerup", this._onPointerUp);
       this.el.removeEventListener("pointercancel", this._onPointerUp);
+      this.el.removeEventListener("lostpointercapture", this._onLostCapture);
       this.el.removeEventListener("click", this._onClickCapture, { capture: true });
     },
   },
@@ -445,6 +464,28 @@ const hooks = {
     },
   },
 };
+
+// The review takes no input while LiveView is not connected (see
+// ../ts/connectionGate.ts). The root loses `phx-connected` the moment
+// the channel errors and gets it back once the rejoin has rendered.
+// A window capture listener sees each event before any element's,
+// document's or LiveView's handler.
+for (const type of GATED_EVENTS) {
+  window.addEventListener(
+    type,
+    (e) => {
+      if (!document.querySelector("[data-phx-main]:not(.phx-connected) main.review:not(.done)")) return;
+      const node = e.target instanceof Element ? e.target : e.target?.parentElement;
+      const control = node?.closest("input, textarea, select, button, a[href], summary, [contenteditable]");
+      const text = control?.isContentEditable || typeof control?.selectionStart === "number";
+      const target = text ? "text" : control ? "control" : "other";
+      const verdict = gateVerdict(e, target, control?.contains(document.activeElement) ?? false);
+      e.stopImmediatePropagation();
+      if (verdict === "cancel") e.preventDefault();
+    },
+    true,
+  );
+}
 
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,

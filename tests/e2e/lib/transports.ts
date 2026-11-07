@@ -1,0 +1,24 @@
+// Controls LiveView's transports on a page: while refusing, every new
+// WebSocket or long-poll request fails; `drop()` also closes the open
+// WebSocket and starts refusing. Call before the page's `goto`.
+import type { Page, WebSocketRoute } from "@playwright/test";
+
+export async function liveTransports(page: Page) {
+	let refusing = false;
+	let open: WebSocketRoute | null = null;
+	await page.routeWebSocket(/\/live\/websocket/, (ws) => {
+		if (refusing) return ws.close();
+		ws.connectToServer();
+		open = ws;
+	});
+	await page.route(/\/live\/longpoll/, (route) => (refusing ? route.abort() : route.continue()));
+	return {
+		refuse: (on: boolean) => {
+			refusing = on;
+		},
+		drop: async () => {
+			refusing = true;
+			await open?.close();
+		},
+	};
+}

@@ -954,6 +954,8 @@
     finishDrag();
   }
 
+  // Also ends a drag at a release the page took no input for, while
+  // disconnected: the release still frees the pointer capture.
   function handlePointerCancel(_e: PointerEvent) {
     dragStart = null;
     dragCurrent = null;
@@ -1288,6 +1290,7 @@
     onpointerdown={handlePointerDown}
     onpointermove={handlePointerMove}
     onpointerup={handlePointerUp}
+    onlostpointercapture={handlePointerCancel}
     onpointercancel={handlePointerCancel}
     onpointerleave={clj_hover ? closeHoverSoon : undefined}
     style:tab-size={tab_size}

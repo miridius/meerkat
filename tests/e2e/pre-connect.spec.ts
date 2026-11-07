@@ -5,6 +5,7 @@
 // `goto`.
 import { startMeerkat } from "./lib/runner";
 import { expect, unjoinedTest as test } from "./lib/test";
+import { liveTransports } from "./lib/transports";
 
 test("the page takes no clicks until LiveView connects, and says whether it is connecting", async ({ page }) => {
 	const meerkat = await startMeerkat();
@@ -15,9 +16,8 @@ test("the page takes no clicks until LiveView connects, and says whether it is c
 	});
 	try {
 		// Refusing both LiveView transports makes the first connect fail.
-		let refuse = true;
-		await page.routeWebSocket(/\/live\/websocket/, (ws) => (refuse ? ws.close() : ws.connectToServer()));
-		await page.route(/\/live\/longpoll/, (route) => (refuse ? route.abort() : route.continue()));
+		const transports = await liveTransports(page);
+		transports.refuse(true);
 		await page.route(/\/assets\/app-[^/]*\.js$/, async (route) => {
 			await held;
 			await route.continue();
@@ -48,7 +48,7 @@ test("the page takes no clicks until LiveView connects, and says whether it is c
 		await clickThrough();
 		await expect(approved, "a failed connect leaves the page refusing clicks").not.toBeChecked();
 
-		refuse = false;
+		transports.refuse(false);
 		await expect(root).toHaveClass(/phx-connected/);
 		await expect(pill).toHaveText("connected", { useInnerText: true });
 		await expect(approved).not.toBeChecked();
