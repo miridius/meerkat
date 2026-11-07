@@ -1138,7 +1138,8 @@ a.chip-link:hover .chip-value {
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
-/* button. outweighs the base button:hover rule. */
+/* The button prefix brings this level with the base
+   button:hover:not(:disabled) rule, and coming later, it wins. */
 button.tree-dir:hover,
 .file-entry:hover {
   background: var(--panel-2);

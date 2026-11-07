@@ -119,9 +119,13 @@ test("collapsing or approving a file lands the next file's header where it stick
 		// Deep inside a.txt, its header is stuck under the toolbar.
 		await expect(section("a.txt").locator(".diff-line").first()).toBeVisible();
 		await page.evaluate(() => window.scrollTo(0, 1500));
-		await section("a.txt").getByRole("button", { name: /a\.txt/ }).click();
+		const aHeader = section("a.txt").getByRole("button", { name: /a\.txt/ });
+		await aHeader.click();
 		await expect(section("a.txt")).toHaveClass(/collapsed/);
 		await settled("b.txt");
+		// The scroll leaves focus where it was, unlike a pick in the files
+		// dropdown.
+		await expect(aHeader).toBeFocused();
 
 		await section("b.txt").getByRole("checkbox", { name: "Approved" }).click();
 		await expect(section("b.txt")).toHaveClass(/collapsed/);
@@ -133,8 +137,8 @@ test("collapsing or approving a file lands the next file's header where it stick
 
 // The files dropdown's browser seams: it opens over the review from the
 // sticky toolbar, below the toolbar even when it wraps, without moving the
-// page, and takes focus; Escape, an outside click, its title and a pick
-// close it, without refitting the toolbar; a
+// page or refitting the toolbar, and takes focus; Escape, an outside
+// click, its title and a pick close it, a pick without refitting; a
 // pick scrolls to the file without adding a history entry, which would
 // stop window.close() closing the tab after a decision; and picking a
 // hidden file moves focus to the button. Its tree, filters and events are
@@ -201,8 +205,7 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		await afterNextFrame(page);
 		expect(await fits(), "opening does not refit the toolbar").toBe(fitsBefore);
 
-		// Typing in the filter box leaves the dropdown open; only Escape
-		// closes it.
+		// Typing in the filter box leaves the dropdown open until Escape.
 		await page.keyboard.press("z");
 		await expect(dropdown).toContainText("Files (1 of 2)");
 		await page.keyboard.press("Backspace");
@@ -211,7 +214,7 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		await expect(dropdown).toBeHidden();
 		await expect(toggle).toBeFocused();
 
-		// Nor does opening at the very bottom of the page.
+		// Opening at the very bottom of the page does not scroll it either.
 		await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 		const bottom = await scrollY();
 		await toggle.click();

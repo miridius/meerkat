@@ -428,12 +428,17 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert has_element?(view, ".tree-dir[phx-value-path=src][style='--depth: 0']")
     assert has_element?(view, ".tree-dir[phx-value-path='src/a/deep'][style='--depth: 1']")
     assert has_element?(view, ".file-entry[style='--depth: 2']", "x.rs")
+    # Each row's tooltip gives its full path.
+    assert has_element?(view, ".tree-dir[phx-value-path='src/a/deep'][title='src/a/deep']")
+    assert has_element?(view, ".file-entry .file-path[title='src/a/deep/x.rs']")
     assert has_element?(view, ".file-entry .base-name", "widget.rs")
     refute has_element?(view, ".file-entry .base-name", "src/widget.rs")
     assert has_element?(view, ".file-entry .base-name", "README.md")
 
+    refute has_element?(view, ".tree-dir[phx-value-path=src] .tree-caret.collapsed")
     view |> element(".tree-dir[phx-value-path=src]") |> render_click()
     assert has_element?(view, ".tree-dir[phx-value-path=src][aria-expanded=false]")
+    assert has_element?(view, ".tree-dir[phx-value-path=src] .tree-caret.collapsed")
     refute has_element?(view, ".file-entry .base-name", "widget.rs")
     refute has_element?(view, ".tree-dir[phx-value-path='src/a/deep']")
     assert has_element?(view, ".file-entry .base-name", "README.md")
@@ -489,6 +494,11 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     files = [@plain_file, %{@plain_file | file_name: "b.ex"}]
     view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"b.ex" => :hide}})
     open_files_panel(view)
+
+    # The hidden file's row is unticked and dimmed; the shown one's is not.
+    assert has_element?(view, ".file-entry.hidden-by-other input[type=checkbox]:not([checked])")
+    assert has_element?(view, ".file-entry:not(.hidden-by-other) input[type=checkbox][checked]")
+    assert has_element?(view, ".file-entry.hidden-by-other", "b.ex")
 
     view |> element(".file-entry .file-path", "b.ex") |> render_click()
     refute has_element?(view, "#file-filter")

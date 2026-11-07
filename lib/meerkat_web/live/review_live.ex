@@ -587,8 +587,8 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   # The file's section exists only while the main list shows it. Picking
-  # a file it hides moves focus to the `☰ Files` button, rather than lost
-  # with the closed dropdown.
+  # a file it hides moves focus to the `☰ Files` button, rather than
+  # leaving it on the removed dropdown.
   def handle_event("files.pick", %{"file_index" => idx}, socket) do
     case parse_int(idx) do
       {:ok, n} ->
@@ -1964,6 +1964,13 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # The assign holding the folders collapsed in the view the filter text
+  # selects. While the filter has text, a folder collapses only until the
+  # text changes, so no match hides in a folder collapsed beforehand, and
+  # the folders collapsed without a filter come back when it clears.
+  defp collapsed_dirs_key(""), do: :collapsed_dirs
+  defp collapsed_dirs_key(_filter_input), do: :filter_collapsed_dirs
+
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rows, :list, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
@@ -2018,13 +2025,6 @@ defmodule MeerkatWeb.ReviewLive do
     </ul>
     """
   end
-
-  # The assign holding the folders collapsed in the view the filter text
-  # selects. While the filter has text, a folder collapses only until the
-  # text changes, so no match hides in a folder collapsed beforehand, and
-  # the folders collapsed without a filter come back when it clears.
-  defp collapsed_dirs_key(""), do: :collapsed_dirs
-  defp collapsed_dirs_key(_filter_input), do: :filter_collapsed_dirs
 
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :file, :map, required: true
@@ -2490,8 +2490,8 @@ defmodule MeerkatWeb.ReviewLive do
   defp any_generated?(files), do: Enum.any?(files, &Map.get(&1, :is_generated, false))
 
   # Filter the files dropdown's entries by the `filter_input`
-  # substring on the base name. Returns `[{file, idx}, …]` so the
-  # template doesn't lose the index needed for `filter.show_only`.
+  # substring on the base name. Returns `[{file, idx}, …]` so each row
+  # keeps its file's index.
   defp filter_sidebar_entries(files, ""), do: Enum.with_index(files)
 
   defp filter_sidebar_entries(files, input) do

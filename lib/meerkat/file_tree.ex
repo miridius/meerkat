@@ -6,7 +6,7 @@ defmodule Meerkat.FileTree do
   with it (`lib/meerkat_web/live`).
   """
 
-  @typedoc "A folder row, keyed by its full path, holding its rows."
+  @typedoc "A folder row, keyed by the full path of its deepest folder, holding its rows."
   @type dir :: %{dir: String.t(), name: String.t(), children: [tree_node()]}
 
   @typedoc "A file row, holding the entry it was built from."
@@ -15,7 +15,8 @@ defmodule Meerkat.FileTree do
   @type tree_node :: dir() | file()
 
   @typedoc "A file and its index in the review's file list."
-  @type entry :: {%{file_name: String.t()}, non_neg_integer()}
+  @type entry ::
+          {%{required(:file_name) => String.t(), optional(atom()) => term()}, non_neg_integer()}
 
   @doc "The tree's top-level rows for `entries`."
   @spec build([entry()]) :: [tree_node()]
@@ -53,6 +54,6 @@ defmodule Meerkat.FileTree do
   end
 
   # Case-insensitive, as GitHub sorts; the name itself breaks ties so
-  # the order never depends on the diff's.
+  # the order of different names never depends on the diff's.
   defp sort_key(name), do: {String.downcase(name), name}
 end

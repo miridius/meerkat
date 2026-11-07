@@ -75,7 +75,7 @@ Like GitHub's file tree:
   are kept apart, in `filter_collapsed_dirs`. Clearing the filter
   restores the folders collapsed without one.
 
-## Panel contents
+## Dropdown contents
 
 Top to bottom:
 
@@ -88,7 +88,7 @@ Top to bottom:
    after all rules in **Composition**; `total_count` is the number
    of files in the diff.
 2. **Filter input**: a debounced (50ms) `phx-change="filter.set_input"`
-   text box. Filters the panel's list AND the main file list by
+   text box. Filters the dropdown's list AND the main file list by
    case-insensitive substring on the file's base name.
 3. **Generated-file chip**: `generated ✓` / `generated ×` —
    click to toggle `show_generated`. Only renders when at least
@@ -146,7 +146,7 @@ Each file row in the tree shows:
 - `only_file_index` (int | nil, in-LV ephemeral) — "show only
   this file" override.
 - `state.approved_file_names` (MapSet, persisted) — driven by
-  the per-file Approved checkbox in the main file list; the panel's
+  the per-file Approved checkbox in the main file list; the dropdown's
   rows have no approval checkbox.
 
 Hidden / show_generated / file_overrides / approved-files survive
