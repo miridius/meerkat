@@ -1214,7 +1214,9 @@ a.chip-link:hover .chip-value {
   /* overflow stays visible — sticky positioning on .file-section-header
      requires no scrolling parent in the chain. */
   width: 100%;
-  scroll-margin-top: var(--sticky-scroll-margin);
+  /* Scrolling to the section puts its header exactly where it sticks,
+     var(--toolbar-h) down, below the section's 1px top border. */
+  scroll-margin-top: calc(var(--toolbar-h) - 1px);
 }
 .file-section.approved {
   opacity: 0.7;

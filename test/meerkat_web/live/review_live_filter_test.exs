@@ -31,6 +31,8 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     html = render_hook(view, "file.toggle_approved", %{"file_name" => "src_widget.rs"})
     refute html =~ "didn&#39;t persist"
+    # The reply itself collapses the section, ahead of the scroll it pushes.
+    assert html =~ ~s(class="file-section approved collapsed")
     assert ReviewServer.get_state(rid).approved_file_names == MapSet.new(["src_widget.rs"])
     assert ApprovalCache.approved?(ApprovalCache.load_for(repo), "main", "src_widget.rs", oid)
 
@@ -421,6 +423,25 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert has_element?(view, "#DiffViewer-0")
   end
 
+  test "collapsing a file scrolls to the next shown file, or to its own when none follows", %{
+    conn: conn
+  } do
+    files = for name <- ~w(a b c d), do: %{@plain_file | file_name: name, effective_oid: nil}
+    view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"b" => :hide}})
+    toggle = &render_click(view, "file.toggle_expanded", %{"file_name" => &1})
+
+    # b is hidden, so a's next shown file is c.
+    toggle.("a")
+    assert_push_event(view, "scroll-into-view", %{id: "file-2"})
+    toggle.("d")
+    assert_push_event(view, "scroll-into-view", %{id: "file-3"})
+
+    # Expanding, or a file the review lacks, does not scroll.
+    toggle.("a")
+    toggle.("nope")
+    refute_push_event(view, "scroll-into-view", _, 0)
+  end
+
   test "file.toggle_rendered caches markdown sides in order; unknown and binary files no-op", %{
     conn: conn
   } do
@@ -502,11 +523,16 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert html =~ "no longer staged"
   end
 
-  test "un-approving does not push the scroll nudge; approving does", %{conn: conn} do
+  test "un-approving does not push the scroll nudge; approving scrolls to the next file", %{
+    conn: conn
+  } do
     repo = tmp_git_repo()
 
     state = %ReviewState{
-      files: [%{@plain_file | effective_oid: nil}],
+      files: [
+        %{@plain_file | effective_oid: nil},
+        %{@plain_file | file_name: "src/next.rs", effective_oid: nil}
+      ],
       head_branch: "main"
     }
 
@@ -515,7 +541,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
-    assert_push_event(view, "scroll-into-view", %{})
+    assert_push_event(view, "scroll-into-view", %{id: "file-1"})
 
     # Fresh socket pre-approved: un-approving must not nudge the scroll.
     # A separate mount keeps the push mailbox clean for the negative
@@ -531,6 +557,33 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     render_hook(view2, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
     refute_push_event(view2, "scroll-into-view", _, 0)
+  end
+
+  test "re-approving a file expanded while approved collapses it again", %{conn: conn} do
+    state = %ReviewState{
+      files: [
+        %{@plain_file | effective_oid: nil},
+        %{@plain_file | file_name: "src/other.rs", effective_oid: nil}
+      ],
+      head_branch: "main",
+      approved_file_names: MapSet.new(["src/widget.rs", "src/other.rs"])
+    }
+
+    {view, _rid} = mount_bound(conn, state, tmp_git_repo())
+
+    toggle_approved = fn ->
+      render_hook(view, "file.toggle_approved", %{"file_name" => "src/widget.rs"})
+    end
+
+    for name <- ["src/widget.rs", "src/other.rs"],
+        do: render_click(view, "file.toggle_expanded", %{"file_name" => name})
+
+    refute has_element?(view, "#file-0.collapsed")
+    toggle_approved.()
+    toggle_approved.()
+    assert has_element?(view, "#file-0.collapsed")
+    # Only the re-approved file loses its expansion.
+    refute has_element?(view, "#file-1.collapsed")
   end
 
   test "a second decision submit still lands on the done view", %{conn: conn} do

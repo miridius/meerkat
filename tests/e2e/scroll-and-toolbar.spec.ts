@@ -112,6 +112,49 @@ test("a fresh review starts at the top and a reload keeps its scroll, the file p
 	}
 });
 
+// Collapsing a file, by a click on its header or by approving it, scrolls
+// the next file's header to where it sticks, so scrolling on leaves it
+// in place. Which file is next, and when the scroll is pushed, is
+// covered by the LiveView tests.
+test("collapsing or approving a file lands the next file's header where it sticks", async ({ page }) => {
+	const meerkat = await startMeerkat({
+		fixture: makeFixture({ files: { "a.txt": TALL_FILE, "b.txt": TALL_FILE, "c.txt": TALL_FILE } }),
+	});
+	try {
+		await page.goto(meerkat.url);
+		const section = (name: string) => page.locator(".file-section", { hasText: name });
+		// The header's top against its sticky top, while its section's top
+		// edge sits right above it, so the header is not stuck yet.
+		const landed = (name: string) =>
+			section(name).evaluate((s) => {
+				const header = s.querySelector(".file-section-header");
+				if (!header) return false;
+				const top = header.getBoundingClientRect().top;
+				const sticky = Number.parseFloat(getComputedStyle(header).top);
+				return Math.abs(top - sticky) < 0.5 && Math.abs(s.getBoundingClientRect().top + s.clientTop - top) < 0.5;
+			});
+		const settled = async (name: string) => {
+			await expect.poll(() => landed(name)).toBe(true);
+			// The smooth scroll ends there rather than passing through.
+			await afterNextFrame(page);
+			expect(await landed(name)).toBe(true);
+		};
+
+		// Deep inside a.txt, its header is stuck under the toolbar.
+		await expect(section("a.txt").locator(".diff-line").first()).toBeVisible();
+		await page.evaluate(() => window.scrollTo(0, 1500));
+		await section("a.txt").getByRole("button", { name: /a\.txt/ }).click();
+		await expect(section("a.txt")).toHaveClass(/collapsed/);
+		await settled("b.txt");
+
+		await section("b.txt").getByRole("checkbox", { name: "Approved" }).click();
+		await expect(section("b.txt")).toHaveClass(/collapsed/);
+		await settled("c.txt");
+	} finally {
+		await meerkat.kill();
+	}
+});
+
 // Toolbar settings live in the config dir's settings.json. A change
 // reaches the review's other tabs live over PubSub; another review runs
 // in its own BEAM, so its tabs read the file when they load or rejoin.

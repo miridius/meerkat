@@ -104,7 +104,7 @@ defmodule MeerkatWeb.ReviewLive do
        # uses the full viewport width. Toggle in the toolbar to
        # reveal the file list / filter / per-file approval ticks.
        files_panel_open: false,
-       # File indices the reviewer has explicitly expanded after the
+       # File names the reviewer has explicitly expanded after the
        # file was approved (which collapses the diff body by default).
        # Click the file header to flip collapse state; the set is
        # ephemeral — un-approving + re-approving collapses again.
@@ -326,9 +326,13 @@ defmodule MeerkatWeb.ReviewLive do
 
     case stale_oid_check(repo_path, rendered_file, becoming_approved?) do
       :ok ->
-        if rid != "unbound" do
-          _ = ReviewServer.set_approved(rid, file_name, becoming_approved?)
-        end
+        # The new state goes out with the reply, so the section has
+        # collapsed when the client handles the scroll pushed below.
+        socket =
+          if rid != "unbound",
+            do:
+              assign(socket, state: ReviewServer.set_approved(rid, file_name, becoming_approved?)),
+            else: socket
 
         # In a staged review, mirror into the global per-branch
         # approval cache so future hook runs on this branch can
@@ -359,13 +363,14 @@ defmodule MeerkatWeb.ReviewLive do
               assign(socket, flash_error: nil)
           end
 
-        # On approve, the file section collapses — without this the
-        # following file leaps up by ~viewport height. Push a client
-        # event so the just-approved header re-anchors to the top of
-        # the viewport.
+        # On approve, the file section collapses, even if it was
+        # expanded while approved before, so scroll on to the next file.
         socket =
           if becoming_approved?,
-            do: scroll_file_into_view(socket, state.files, file_name),
+            do:
+              socket
+              |> update(:expanded_approved, &MapSet.delete(&1, file_name))
+              |> scroll_past_file(file_name),
             else: socket
 
         {:noreply, socket}
@@ -601,6 +606,13 @@ defmodule MeerkatWeb.ReviewLive do
       else
         assign(socket, collapsed_unapproved: toggle_member(collapsed, file_name))
       end
+
+    %{expanded_approved: expanded, collapsed_unapproved: collapsed} = socket.assigns
+
+    socket =
+      if file_section_collapsed?(state, expanded, collapsed, file_name),
+        do: scroll_past_file(socket, file_name),
+        else: socket
 
     {:noreply, socket}
   end
@@ -975,9 +987,24 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
-  defp scroll_file_into_view(socket, files, file_name) do
-    idx = Enum.find_index(files, &(&1.file_name == file_name))
-    if idx, do: push_event(socket, "scroll-into-view", %{id: "file-#{idx}"}), else: socket
+  # Scrolls to the next shown file after `file_name`, whose section has
+  # just collapsed, or to `file_name`'s own when none follows.
+  defp scroll_past_file(socket, file_name) do
+    %{state: state, filter_input: filter_input, only_file_index: only_file_index} =
+      socket.assigns
+
+    case Enum.find_index(state.files, &(&1.file_name == file_name)) do
+      nil ->
+        socket
+
+      idx ->
+        target =
+          visible_indices(state, filter_input, only_file_index)
+          |> Enum.filter(&(&1 > idx))
+          |> Enum.min(fn -> idx end)
+
+        push_event(socket, "scroll-into-view", %{id: "file-#{target}"})
+    end
   end
 
   # Approve writes EVERY currently-staged (file_name, oid) into the
@@ -2633,16 +2660,16 @@ defmodule MeerkatWeb.ReviewLive do
     |> Enum.map(fn {file, _idx} -> file end)
   end
 
-  # Approved files collapse by default; the reviewer can override
-  # per-file via the header click (which toggles
-  # `expanded_approved`). Un-approved files are always expanded.
+  # Approved files collapse by default and un-approved files expand;
+  # the reviewer can override either per-file via the header click.
   # A file is "collapsed" if the user's explicit toggle has put it on
   # the opposite side of its default (approved files default to
   # collapsed, unapproved default to expanded). Either set toggles
   # the SAME file_name — clicking the caret on an approved file
   # writes to `expanded_approved`, on an unapproved file it writes
-  # to `collapsed_unapproved`. The XOR keeps the semantics clean
-  # even when approval flips while the file is already toggled.
+  # to `collapsed_unapproved`. Approving a file clears its
+  # `expanded_approved` entry; its `collapsed_unapproved` entry
+  # survives approval.
   defp file_section_collapsed?(state, expanded_approved, collapsed_unapproved, file_name) do
     approved? = MapSet.member?(state.approved_file_names, file_name)
 

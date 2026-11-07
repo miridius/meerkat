@@ -480,12 +480,12 @@ window.addEventListener("phx:open-url", (e) => {
   }
 });
 
-// Server-driven scroll for file approval and file-filter panel opening.
-// After approval, it re-anchors the collapsed file header at the top of
-// the viewport; otherwise the next file leaps up by about a viewport height.
-// On every panel open, it scrolls the panel to the top of the viewport,
-// regardless of the current scroll position. The handler scrolls the element
-// with the given id to the top of the viewport.
+// Server-driven scroll for a file's collapse and file-filter panel opening.
+// When a file collapses, it brings the next file's header to where it
+// sticks. On every panel open, it scrolls the panel to the top of the
+// viewport, regardless of the current scroll position. The handler scrolls
+// the element with the given id to its scroll-margin-top below the top of
+// the viewport.
 window.addEventListener("phx:scroll-into-view", (e) => {
   const id = e.detail?.id;
   if (typeof id !== "string") return;
