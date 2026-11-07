@@ -249,14 +249,17 @@ defmodule Meerkat.VerifiedPushTest do
   # macOS can deliver a process group's signal to the shell running a
   # temporary worktree's check only once that shell has seen the check die of
   # it and begun cleaning up; here the signal arrives from inside the cleanup.
+  # INT stands in for a second Ctrl-C.
   for signal <- ~w(INT HUP TERM) do
     test "SIG#{signal} during the removal of a temporary worktree does not cut it short", ctx do
       wrapper = ctx.log <> ".git-wrapper"
+      sent = Path.join(wrapper, "sent")
       on_exit(fn -> File.rm_rf!(wrapper) end)
-      intercept_git(wrapper, "remove", ~s(kill -#{unquote(signal)} "$PPID"))
+      intercept_git(wrapper, "remove", ~s(touch '#{sent}'; kill -#{unquote(signal)} "$PPID"))
       other = other_tip(ctx.work)
 
       assert {_, 0} = verified_push(ctx, [other])
+      assert File.exists?(sent)
       assert_cleaned_up(ctx)
     end
   end
