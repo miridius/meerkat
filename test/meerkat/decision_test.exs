@@ -561,8 +561,7 @@ defmodule Meerkat.DecisionTest do
     ]
 
     setup do
-      # The review's server runs git in it.
-      repo = make_git_repo("meerkat-decision-ending")
+      repo = make_state_repo("meerkat-decision-ending")
       serve_dir = Path.join(repo, "run")
       File.mkdir_p!(serve_dir)
       review_id = "ending_#{System.unique_integer([:positive])}"
@@ -580,7 +579,6 @@ defmodule Meerkat.DecisionTest do
 
         Enum.each(@env_keys, &Application.delete_env(:meerkat, &1))
         Decision.reset()
-        File.rm_rf(repo)
       end)
 
       Decision.reset()
