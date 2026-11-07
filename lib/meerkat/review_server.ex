@@ -337,6 +337,7 @@ defmodule Meerkat.ReviewServer do
   end
 
   def handle_call(:end_if_unused, _from, %{state: state} = ctx) do
+    # muex:ignore equivalent: both operands of `and` are pure booleans, so their order changes nothing
     if Meerkat.Feedback.comment_count(state) == 0 and state.open_forms == [],
       do: {:reply, Meerkat.Decision.end_unattended(), ctx},
       else: {:reply, :kept, ctx}

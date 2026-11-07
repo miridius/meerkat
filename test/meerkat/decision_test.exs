@@ -904,6 +904,16 @@ defmodule Meerkat.DecisionTest do
       refute_received {:trace, ^decision, :spawn, _, _}
     end
 
+    test "a caller check due once no serve dir is set stops the checks without reading one" do
+      Application.put_env(:meerkat, :caller_check_ms, 60_000)
+      Decision.reset()
+      due = :sys.get_state(Decision).caller_check
+      Application.delete_env(:meerkat, :serve_dir)
+      decision = Process.whereis(Decision)
+      send(decision, {:check_caller, due})
+      assert :sys.get_state(decision).caller_check == nil
+    end
+
     test "a decision made with no caller attached stops the caller checks, judging nothing", %{
       serve_dir: serve_dir
     } do

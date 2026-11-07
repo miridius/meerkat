@@ -348,6 +348,7 @@ defmodule Meerkat.Decision do
     standing =
       cond do
         match?({:ended, _}, state.decision) -> :ended
+        # muex:ignore equivalent: both operands of the first `and` are pure booleans, so their order changes nothing
         is_nil(state.decision) and callers == %{} and serve_dir() -> :judge
         true -> :open
       end
