@@ -8,7 +8,9 @@
 
   import { onDestroy, untrack } from "svelte";
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
+  import { cheatSheet } from "../ts/editorKeys";
   import { languageFor } from "../ts/languageFor";
+  import { onMac } from "../ts/sendFeedbackShortcut";
   import type { EditorView } from "@codemirror/view";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
@@ -186,6 +188,35 @@
     if (cmView) setCmRulers(cmView, columns);
   });
 
+  // The suggestion editor's keys cheat sheet.
+  let keysOpen = $state(false);
+  let keysHost: HTMLDivElement | null = $state(null);
+  const keyRows = $derived(cheatSheet(language, onMac()));
+
+  // While open, Escape closes the cheat sheet and not the form: the
+  // capture-phase listener runs before the editor's and the textarea's
+  // Escape handlers. A click outside it closes it too. Leaving the
+  // suggestion type closes it with the editor.
+  $effect(() => {
+    if (findingType !== "suggestion") keysOpen = false;
+    if (!keysOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      keysOpen = false;
+    };
+    const onPointer = (e: PointerEvent) => {
+      if (keysHost && !keysHost.contains(e.target as Node)) keysOpen = false;
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  });
+
   onDestroy(() => {
     cmView?.destroy();
     cmView = null;
@@ -304,7 +335,28 @@
       placeholder="Optional prose explanation (rendered above the suggestion)"
       rows="2"
     ></textarea>
-    <div class="code-host" bind:this={codeHost}></div>
+    <div class="code-wrap">
+      <div class="code-host" bind:this={codeHost}></div>
+      <div class="keys" bind:this={keysHost}>
+        <button
+          type="button"
+          class="keys-link"
+          aria-expanded={keysOpen}
+          onclick={() => (keysOpen = !keysOpen)}
+        >Keys</button>
+        {#if keysOpen}
+          <div class="keys-sheet" role="dialog" aria-label="Editor keys">
+            <table>
+              <tbody>
+                {#each keyRows as row}
+                  <tr><th scope="row">{row.keys}</th><td>{row.does}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </div>
+    </div>
   {:else}
     <textarea
       bind:value={prose}
@@ -380,6 +432,52 @@
   textarea.prose {
     min-height: 2lh;
     margin-bottom: 0.5rem;
+  }
+  .code-wrap {
+    position: relative;
+  }
+  /* In the editor's top-right corner, over the code. */
+  .keys {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    z-index: 2;
+  }
+  .keys-link {
+    padding: 0 0.4rem;
+    background: rgba(13, 17, 23, 0.85);
+    color: #8b949e;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .keys-link:hover,
+  .keys-link[aria-expanded="true"] {
+    color: #c9d1d9;
+  }
+  .keys-sheet {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    padding: 0.4rem 0.6rem;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(1, 4, 9, 0.6);
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+  .keys-sheet th {
+    padding: 0.15rem 0.75rem 0.15rem 0;
+    text-align: left;
+    font-weight: normal;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #c9d1d9;
+  }
+  .keys-sheet td {
+    padding: 0.15rem 0;
+    color: #8b949e;
   }
   .code-host {
     border: 1px solid #30363d;
