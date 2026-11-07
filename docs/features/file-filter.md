@@ -17,7 +17,7 @@ The dropdown takes no room in the page: the review does not move or
 change width when it opens, and the page does not scroll. It stays
 below the toolbar while the page scrolls, below its last row when a
 narrow window wraps it, and it is drawn over
-everything else on the page, the decision footer included. It is no
+the review, the decision footer included. It is no
 taller than the space between the toolbar and the bottom of the
 viewport; a longer tree scrolls inside it while its title row, filter
 box and chips stay put.
@@ -36,6 +36,8 @@ It closes (`files.close`) on:
   `☰ Files` button.
 - **A click outside it.** The `☰ Files` button is not outside it, so
   clicking that button while open just closes it.
+- **Its `Files (n of m)` title button.** Focus returns to the
+  `☰ Files` button.
 - **Picking a file** (see [File rows](#per-entry-affordances)).
 
 ## Keyboard
@@ -47,7 +49,7 @@ applies its text (`phx-submit="filter.set_input"`) rather than
 submitting the form natively, which would reload the page and add a
 history entry. The `only` and
 `hide *.<ext>` buttons, shown on hover, also show while a control in
-their row has keyboard focus.
+their row has focus.
 
 ## Folder tree
 

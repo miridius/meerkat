@@ -31,9 +31,6 @@
      at the end of <body> and by the Toolbar hook. The literal
      applies only where neither ran. */
   --toolbar-h: 40px;
-  /* Gap left above a scroll target so the sticky .diff-toolbar does not
-     paint over it. */
-  --sticky-scroll-margin: calc(var(--toolbar-h) + 8px);
 }
 
 * { box-sizing: border-box; }
@@ -1025,10 +1022,12 @@ a.chip-link:hover .chip-value {
   top: calc(100% + 6px);
   /* In line with the button, inside the toolbar's 10px side padding. */
   left: 10px;
-  /* Over the toolbar's positioned popovers, such as the ⚙ settings. */
+  /* Over the ⚙ settings popover. */
   z-index: 20;
   width: max-content;
-  min-width: 280px;
+  /* Never wider than the toolbar, even in a phone-width window, so it
+     never overflows the toolbar and sets off its fit. */
+  min-width: min(280px, calc(100% - 20px));
   max-width: calc(100% - 20px);
   /* The toolbar is not yet stuck at the top of an unscrolled page, so
      leave room for the page's padding above it too. */
@@ -1124,6 +1123,9 @@ a.chip-link:hover .chip-value {
   list-style: none;
   padding: 0;
   margin: 0;
+  /* As wide as its widest row, so while the tree scrolls sideways every
+     row spans it and the row buttons keep to one column. */
+  min-width: max-content;
 }
 
 .tree-dir,
@@ -1136,7 +1138,8 @@ a.chip-link:hover .chip-value {
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
-.tree-dir:hover,
+/* button. outweighs the base button:hover rule. */
+button.tree-dir:hover,
 .file-entry:hover {
   background: var(--panel-2);
 }
@@ -1286,8 +1289,8 @@ a.chip-link:hover .chip-value {
   border-bottom: 1px solid var(--border);
   background: var(--panel-2);
   /* Stick to the top of the viewport while the diff body scrolls.
-     Sits below the diff toolbar (which is also sticky at top: 0
-     with z-index: 5). Use a slightly lower z-index so the toolbar
+     Sits below the diff toolbar (which is also sticky at top: 0,
+     with a higher z-index). Use a lower z-index so the toolbar
      wins on overlap. */
   position: sticky;
   top: var(--toolbar-h);

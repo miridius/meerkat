@@ -133,10 +133,11 @@ test("collapsing or approving a file lands the next file's header where it stick
 
 // The files dropdown's browser seams: it opens over the review from the
 // sticky toolbar, below the toolbar even when it wraps, without moving the
-// page, and takes focus; Escape, an outside click and a pick close it; a
+// page, and takes focus; Escape, an outside click, its title and a pick
+// close it, without refitting the toolbar; a
 // pick scrolls to the file without adding a history entry, which would
 // stop window.close() closing the tab after a decision; and picking a
-// hidden file leaves focus on the button. Its tree, filters and events are
+// hidden file moves focus to the button. Its tree, filters and events are
 // covered by the LiveView tests.
 test("the files dropdown opens over the review, closes on Escape, an outside click and a pick, and a pick adds no history entry", async ({
 	page,
@@ -172,8 +173,8 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 				};
 			}, selector);
 
-		// Counts the toolbar's fits, each of which tries its steps through
-		// `data-squeeze`.
+		// Counts the toolbar's `data-squeeze` writes; every fit makes at
+		// least one.
 		const fits = () =>
 			page.evaluate(() => {
 				const w = window as unknown as { fitSteps?: number };
@@ -200,6 +201,12 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		await afterNextFrame(page);
 		expect(await fits(), "opening does not refit the toolbar").toBe(fitsBefore);
 
+		// Typing in the filter box leaves the dropdown open; only Escape
+		// closes it.
+		await page.keyboard.press("z");
+		await expect(dropdown).toContainText("Files (1 of 2)");
+		await page.keyboard.press("Backspace");
+		await expect(dropdown).toContainText("Files (2 of 2)");
 		await page.keyboard.press("Escape");
 		await expect(dropdown).toBeHidden();
 		await expect(toggle).toBeFocused();
@@ -221,15 +228,27 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		await page.mouse.click(2, 400);
 		await expect(dropdown).toBeHidden();
 
+		// Its title button closes it too, handing focus back.
 		await toggle.click();
+		await dropdown.getByRole("button", { name: "Files (2 of 2)" }).focus();
+		await page.keyboard.press("Enter");
+		await expect(dropdown).toBeHidden();
+		await expect(toggle).toBeFocused();
+
+		await toggle.click();
+		await expect(dropdown).toBeVisible();
+		await afterNextFrame(page);
+		const fitsBeforePick = await fits();
 		await dropdown.getByRole("button", { name: "z.txt", exact: true }).click();
 		await expect(dropdown).toBeHidden();
 		await expect(page.locator("#file-1 .file-row")).toBeFocused();
-		// Ride out the smooth scroll: the section ends up just below the
-		// sticky toolbar.
+		await afterNextFrame(page);
+		expect(await fits(), "closing on a pick does not refit the toolbar").toBe(fitsBeforePick);
+		// Ride out the smooth scroll: the file's header ends up where it
+		// sticks, just below the sticky toolbar.
 		await expect
 			.poll(async () => {
-				const p = await placement("#file-1");
+				const p = await placement("#file-1 .file-section-header");
 				return p !== null && p.below >= 0 && p.below <= 16;
 			})
 			.toBe(true);
@@ -241,6 +260,18 @@ test("the files dropdown opens over the review, closes on Escape, an outside cli
 		await dropdown.getByRole("button", { name: "z.txt", exact: true }).click();
 		await expect(dropdown).toBeHidden();
 		await expect(toggle).toBeFocused();
+
+		// In a phone-width window it stays inside the toolbar, which would
+		// otherwise count it as overflow and squeeze on every fit.
+		await page.setViewportSize({ width: 300, height: 720 });
+		await toggle.click();
+		await expect(dropdown).toBeVisible();
+		const overhang = await page.evaluate(() => {
+			const el = document.querySelector("#file-filter")?.getBoundingClientRect();
+			const bar = document.querySelector(".diff-toolbar")?.getBoundingClientRect();
+			return el && bar ? Math.round(el.right - bar.right) : null;
+		});
+		expect(overhang).toBeLessThan(0);
 	} finally {
 		await meerkat.kill();
 	}

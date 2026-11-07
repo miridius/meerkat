@@ -107,11 +107,13 @@ const hooks = {
       // No change in the files dropdown can change the fit: its panel sits
       // out of the toolbar's flow, and only the toolbar's steps change its
       // button's width. So opening it, which sets the button's loading
-      // class and adds the panel, does no fit work.
+      // class and adds the panel, does no fit work. A change to a node
+      // since removed, such as one inside a closed panel, counts only
+      // through the record of its removal.
       const inDropdown = (node) =>
         (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".files-dropdown") != null;
       this._mutation = new MutationObserver((records) => {
-        if (records.some((r) => !inDropdown(r.target))) this._fit();
+        if (records.some((r) => r.target.isConnected && !inDropdown(r.target))) this._fit();
       });
       this._mutation.observe(this.el, {
         subtree: true,

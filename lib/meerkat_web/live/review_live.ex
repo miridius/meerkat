@@ -587,7 +587,7 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   # The file's section exists only while the main list shows it. Picking
-  # a file it hides leaves focus on the `☰ Files` button, rather than lost
+  # a file it hides moves focus to the `☰ Files` button, rather than lost
   # with the closed dropdown.
   def handle_event("files.pick", %{"file_index" => idx}, socket) do
     case parse_int(idx) do
@@ -1887,7 +1887,7 @@ defmodule MeerkatWeb.ReviewLive do
         <button
           type="button"
           class="file-filter-toggle"
-          phx-click="toolbar.toggle_files_panel"
+          phx-click={JS.push("files.close") |> JS.focus(to: "#files-toggle")}
           title="Close file panel"
         >
           Files ({@visible_count} of {@total_count})
@@ -2485,11 +2485,11 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   # True if any file in the diff is linguist-generated. Drives whether
-  # the file-filter panel shows the "generated ×" chip — no point
+  # the files dropdown shows the "generated ×" chip — no point
   # rendering it when there's nothing to toggle.
   defp any_generated?(files), do: Enum.any?(files, &Map.get(&1, :is_generated, false))
 
-  # Filter the sidebar's `fileEntries` list by the `filter_input`
+  # Filter the files dropdown's entries by the `filter_input`
   # substring on the base name. Returns `[{file, idx}, …]` so the
   # template doesn't lose the index needed for `filter.show_only`.
   defp filter_sidebar_entries(files, ""), do: Enum.with_index(files)

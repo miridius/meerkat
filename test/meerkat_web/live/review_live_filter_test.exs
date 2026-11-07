@@ -405,6 +405,10 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     open_files_panel(view)
     render_hook(view, "files.close", %{})
     refute has_element?(view, "#file-filter")
+
+    open_files_panel(view)
+    view |> element(".file-filter-toggle") |> render_click()
+    refute has_element?(view, "#file-filter")
   end
 
   test "the dropdown shows a folder tree of base names that folders collapse", %{conn: conn} do
@@ -420,6 +424,10 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert has_element?(view, ".tree-dir[aria-expanded=true]", "src")
     # A folder whose only child is a folder shares its row.
     assert has_element?(view, ".tree-dir[phx-value-path='src/a/deep']", "a/deep")
+    # Rows are indented by depth.
+    assert has_element?(view, ".tree-dir[phx-value-path=src][style='--depth: 0']")
+    assert has_element?(view, ".tree-dir[phx-value-path='src/a/deep'][style='--depth: 1']")
+    assert has_element?(view, ".file-entry[style='--depth: 2']", "x.rs")
     assert has_element?(view, ".file-entry .base-name", "widget.rs")
     refute has_element?(view, ".file-entry .base-name", "src/widget.rs")
     assert has_element?(view, ".file-entry .base-name", "README.md")
@@ -480,6 +488,20 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
        %{conn: conn} do
     files = [@plain_file, %{@plain_file | file_name: "b.ex"}]
     view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"b.ex" => :hide}})
+    open_files_panel(view)
+
+    view |> element(".file-entry .file-path", "b.ex") |> render_click()
+    refute has_element?(view, "#file-filter")
+    refute_push_event(view, "scroll-into-view", _, 0)
+    assert_push_event(view, "focus", %{id: "files-toggle"})
+  end
+
+  test "picking a file hidden while another is shown alone closes the dropdown without scrolling",
+       %{conn: conn} do
+    view =
+      mount_unbound(conn, %ReviewState{files: [@plain_file, %{@plain_file | file_name: "b.ex"}]})
+
+    render_hook(view, "filter.show_only", %{"file_index" => "0"})
     open_files_panel(view)
 
     view |> element(".file-entry .file-path", "b.ex") |> render_click()
