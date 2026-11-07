@@ -94,7 +94,8 @@ defmodule Meerkat.MixProject do
       # guard `in`, module-body calls, macro bodies), a timeout that
       # counts from the suite's start and whose leftover output cannot
       # crash the pool, and an escript that finds Mix behind a
-      # version-manager shim.
+      # version-manager shim. It also treats Kernel `max`/`min` argument
+      # swaps as equivalent and never runs them.
       {:muex,
        github: "agent-for-miridius/muex",
        ref: "72da5e97b82e91742a1c6d48df3a9912f138a3c5",
