@@ -74,10 +74,13 @@ defmodule Meerkat.ApprovalCacheTest do
       assert ApprovalCache.path_for(dir) == nil
     end
 
-    test "is the cached :approval_cache_path when set, without git", %{repo: repo} do
+    test "is the cached :approval_cache_path when set, ahead of git and without it", %{
+      repo: repo
+    } do
       cached = Path.join(repo, "cached.json")
       Application.put_env(:meerkat, :approval_cache_path, cached)
       on_exit(fn -> Application.delete_env(:meerkat, :approval_cache_path) end)
+      assert ApprovalCache.path_for(repo) == cached
       File.rm_rf!(Path.join(repo, ".git"))
       assert ApprovalCache.path_for(repo) == cached
     end
