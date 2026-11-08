@@ -104,7 +104,17 @@ const hooks = {
       // MutationObserver. Neither sees what a fit changes.
       this._resize = new ResizeObserver(this._fit);
       this._resize.observe(this.el.querySelector(".toolbar-width"));
-      this._mutation = new MutationObserver(this._fit);
+      // No change in the files dropdown can change the fit: its panel sits
+      // out of the toolbar's flow, and only the toolbar's steps change its
+      // button's width. So opening it, which sets the button's loading
+      // class and adds the panel, does no fit work. A change to a node
+      // since removed, such as one inside a closed panel, counts only
+      // through the record of its removal.
+      const inDropdown = (node) =>
+        (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".files-dropdown") != null;
+      this._mutation = new MutationObserver((records) => {
+        if (records.some((r) => r.target.isConnected && !inDropdown(r.target))) this._fit();
+      });
       this._mutation.observe(this.el, {
         subtree: true,
         childList: true,
@@ -520,17 +530,26 @@ window.addEventListener("phx:open-url", (e) => {
   }
 });
 
-// Server-driven scroll for a file's collapse and file-filter panel opening.
-// When a file collapses, it brings the next file's header to where it
-// sticks. On every panel open, it scrolls the panel to the top of the
-// viewport, regardless of the current scroll position. The handler scrolls
-// the element with the given id to its scroll-margin-top below the top of
-// the viewport.
+// Server-driven scroll for a file's collapse and for picking a file in the
+// files dropdown. When a file collapses, it brings the next file's header to
+// where it sticks. The handler scrolls the element with the given id to its
+// scroll-margin-top below the top of the viewport. With `focus`, it also
+// focuses the file's header row, so a keyboard pick carries on from the file
+// it jumped to; the dropdown that held focus is gone by then.
 window.addEventListener("phx:scroll-into-view", (e) => {
   const id = e.detail?.id;
   if (typeof id !== "string") return;
   const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (!el) return;
+  el.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (e.detail.focus) el.querySelector(".file-row")?.focus({ preventScroll: true });
+});
+
+// Server-driven focus, such as back to the `☰ Files` button when a pick
+// closes the files dropdown without scrolling to a file.
+window.addEventListener("phx:focus", (e) => {
+  const id = e.detail?.id;
+  if (typeof id === "string") document.getElementById(id)?.focus();
 });
 
 // Calls `find` each frame until it returns something, then `act` with
