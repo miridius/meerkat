@@ -254,7 +254,6 @@ BASE_BRANCH=origin/<base> scripts/mutate.sh changed
 Use the PR's base branch as `<base>`, on reruns after fix commits too,
 so a fix that only adds tests still re-checks the lines it targets.
 The PR branch must be checked out for this command.
-Survivors on lines the PR does not change do not block the merge.
 
 ### Post-merge deploy
 
