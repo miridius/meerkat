@@ -419,12 +419,18 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
  *  brackets are text. A string with no closing quote runs to the end of
  *  the text. */
 function inText(state: EditorState, pos: number): boolean {
+	return textStart(state, pos) !== null;
+}
+
+/** Where the text that `inText` says `pos` sits in starts: its string,
+ *  comment or character literal, or its `\`. Null in code. */
+function textStart(state: EditorState, pos: number): number | null {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		if (node.name === "String") return inString(node, pos);
-		if (node.name === "LineComment") return node.from < pos;
-		if (node.name === "Character") return node.from < pos && pos < node.to;
+		if (node.name === "String") return inString(node, pos) ? node.from : null;
+		if (node.name === "LineComment") return node.from < pos ? node.from : null;
+		if (node.name === "Character") return node.from < pos && pos < node.to ? node.from : null;
 	}
-	return state.doc.sliceString(pos - 1, pos) === "\\";
+	return state.doc.sliceString(pos - 1, pos) === "\\" ? pos - 1 : null;
 }
 
 /** Whether a selection end at `pos` splits a prefix from what it applies
@@ -481,16 +487,19 @@ function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 
 /** Typing `text`: an opener inserts its closer too, around a selection if
  *  there is one, and leaves a selection that `cutsAcross` brackets, or
- *  that starts where `inText` says brackets are text and ends where they
- *  are code, as it is; a closer before the same matched closer steps over
- *  it. Where both ends are in text, an opener is typed as text. Null, so
- *  the editor types `text` itself, for anything else, for an opener where
- *  every range is in text, and for a closer where any range is, as no
- *  bracket in text is matched. */
+ *  that starts where `inText` says brackets are text and ends anywhere
+ *  but the same text, as it is; a closer before the same matched closer
+ *  steps over it. Where both ends are in the same text, an opener is
+ *  typed as text. Null, so the editor types `text` itself, for anything
+ *  else, for an opener where every range is in text, and for a closer
+ *  where any range is, as no bracket in text is matched. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
-	const textAt = (r: SelectionRange) => inText(state, r.from) && (r.empty || inText(state, r.to));
+	const textAt = (r: SelectionRange) => {
+		const start = textStart(state, r.from);
+		return start !== null && textStart(state, r.to) === start;
+	};
 	if (text in PAIRS) {
 		if (ranges.every(textAt)) return null;
 		return {

@@ -426,6 +426,35 @@ describe("typeBracket", () => {
 		expect(typeOver("(", '"a b" x', 2, 7)).toBe('"a b" x');
 		expect(typeOver("(", '#"a" (x)', 2, 8)).toBe('#"a" (x)');
 		expect(typeOver("(", "; a\n(x)", 2, 7)).toBe("; a\n(x)");
+		expect(typeOver("(", "\\a (x)", 1, 6)).toBe("\\a (x)");
+		expect(typeOver("(", "\\ (x)", 1, 5)).toBe("\\ (x)");
+		const state = stateOf('"a b" x').update({ selection: EditorSelection.range(2, 7) }).state;
+		const next = state.update(typeBracket(state, "(") as TransactionSpec).state;
+		expect([next.selection.main.from, next.selection.main.to]).toEqual([2, 7]);
+	});
+
+	test("an opener does nothing to a selection from one text to another across code", () => {
+		expect(typeOver("(", '"a" ; b', 2, 7)).toBe('"a" ; b');
+		expect(typeOver("(", '"a" (x) "b"', 2, 10)).toBe('"a" (x) "b"');
+		expect(typeOver("(", '"a" (x "b")', 1, 8)).toBe('"a" (x "b")');
+		expect(typeOver("(", "\\a x \\b", 1, 6)).toBe("\\a x \\b");
+	});
+
+	test("an opener is typed as text over a selection within one string or comment", () => {
+		expect(typeOver("(", '"a b"', 1, 4)).toBeNull();
+		expect(typeOver("(", "; a b", 3, 5)).toBeNull();
+	});
+
+	test("a selection from text into code is left as it is while other selections wrap", () => {
+		const state = stateOf('"a" x y').update({
+			selection: EditorSelection.create([EditorSelection.range(2, 5), EditorSelection.range(6, 7)]),
+		}).state;
+		const next = state.update(typeBracket(state, "(") as TransactionSpec).state;
+		expect(next.doc.toString()).toBe('"a" x (y)');
+		expect(next.selection.ranges.map((r) => [r.from, r.to])).toEqual([
+			[2, 5],
+			[7, 8],
+		]);
 	});
 
 	test("an opener does nothing to a selection that splits a prefix from its form", () => {
