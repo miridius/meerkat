@@ -343,7 +343,7 @@ function bracketAt(state: EditorState, from: number): { node: SyntaxNode; matche
 }
 
 /** The matched collection a form with a prefix in its opener (`#{`, `#?@(`,
- *  `#:a{`) opens, or null when it is not matched. */
+ *  `#:a{`) opens, or null when it opens no matched collection. */
 function prefixedColl(node: SyntaxNode): SyntaxNode | null {
 	const last = node.lastChild;
 	const coll = last?.name === "Deref" ? last.lastChild : last;
@@ -424,20 +424,27 @@ function inText(state: EditorState, pos: number): boolean {
 /** Whether a selection end at `pos` splits a prefix from what it applies
  *  to: a matched collection's opener from the prefix that is part of it,
  *  as one between `#` and `{`, or in or after the namespace of `#:ns{`,
- *  does; or a prefix form (`'`, `^:m`, `#_`, `#'`, `#inst`) from its
- *  form. The selection's start (`end` false) may sit at that form, but
- *  its end may not, as wrapping would leave the prefix without one. */
+ *  does; the `##` of `##Inf` from its name; or any other node that is no
+ *  collection, such as a prefix form (`'`, `^:m`, `#_`, `#'`, `#inst`),
+ *  from the child it ends with. The selection's start (`end` false) may
+ *  sit at that child, but its end may not, as wrapping would leave the
+ *  prefix without one; a record literal's child is its map or vector,
+ *  which no selection may start at either, as its name needs one. A
+ *  `pos` inside a collection, as in a metadata map, splits nothing. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.from >= pos) continue;
-		if (PREFIXED.has(node.name)) {
-			const coll = prefixedColl(node);
-			if (coll?.firstChild && pos < coll.firstChild.to) return true;
+		// Inside a collection, no prefix outside it can be split.
+		if (isColl(node)) {
+			if (pos < node.to) return false;
 			continue;
 		}
+		if (node.name === "SymbolicValue" && pos < node.to) return true;
+		const coll = PREFIXED.has(node.name) ? prefixedColl(node) : null;
+		if (coll?.firstChild && pos < coll.firstChild.to) return true;
 		const form = node.lastChild;
-		if (!node.parent || isColl(node) || !form || form.to !== node.to || form.from <= node.from) continue;
-		if (end ? pos <= form.from : pos < form.from) return true;
+		if (!node.parent || !form || form.to !== node.to) continue;
+		if (end || node.name === "ConstructorCall" ? pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }
@@ -469,7 +476,8 @@ function cutsAcross(state: EditorState, range: SelectionRange): boolean {
  *  is; a closer before the same matched closer steps over it. Where
  *  `inText` says brackets are text, an opener is typed as text. Null, so
  *  the editor types `text` itself, for anything else, for an opener where
- *  every range is in text, and for a closer where any range is. */
+ *  every range is in text, and for a closer where any range is, as no
+ *  bracket in text is matched. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;

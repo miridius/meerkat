@@ -189,8 +189,8 @@
   });
 
   // The suggestion editor's keys cheat sheet, on macOS only, where the
-  // keys are bound. It reads the platform as CodeMirror does to bind
-  // them.
+  // keys are bound. It reads `navigator.platform`, as CodeMirror does to
+  // bind them.
   const mac = isMacPlatform(navigator.platform);
   let keysOpen = $state(false);
   let keysHost: HTMLDivElement | null = $state(null);

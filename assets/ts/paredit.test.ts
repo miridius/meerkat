@@ -417,6 +417,7 @@ describe("typeBracket", () => {
 	test("an opener does nothing to a selection from code into a string or comment", () => {
 		expect(typeOver("(", 'x "a b"', 0, 4)).toBe('x "a b"');
 		expect(typeOver("(", "x ; note", 0, 6)).toBe("x ; note");
+		expect(typeOver("(", "x ; note", 0, 8)).toBe("x ; note");
 		expect(typeOver("(", "a \\b", 0, 3)).toBe("a \\b");
 		expect(typeOver("(", 'x "a b" y', 0, 7)).toBe('(x "a b") y');
 	});
@@ -428,13 +429,27 @@ describe("typeBracket", () => {
 		expect(typeOver("(", "a #_b", 0, 3)).toBe("a #_b");
 		expect(typeOver("(", "a #_b", 0, 4)).toBe("a #_b");
 		expect(typeOver("(", "'(a b)", 0, 1)).toBe("'(a b)");
+		expect(typeOver("(", "x 'a", 0, 3)).toBe("x 'a");
 		expect(typeOver("(", "#my.Rec{:a 1}", 0, 7)).toBe("#my.Rec{:a 1}");
+		// A record literal's name needs its map or vector.
+		expect(typeOver("(", "#my.Rec{:a 1}", 7, 13)).toBe("#my.Rec{:a 1}");
+		expect(typeOver("(", "##Inf", 1, 5)).toBe("##Inf");
+		expect(typeOver("(", "##Inf", 2, 5)).toBe("##Inf");
+		// The seeded lines cut this set off from its closer.
+		expect(typeOver("(", "#{a b", 0, 1)).toBe("#{a b");
+		expect(typeOver("{", "##Inf", 0, 1)).toBe("##Inf");
+		expect(typeOver("(", "^:m ^:n x", 0, 7)).toBe("^:m ^:n x");
+		expect(typeOver("(", "#?@(a)", 3, 6)).toBe("#?@(a)");
 	});
 
 	test("an opener wraps a whole prefix form, or the form inside its prefix", () => {
 		expect(typeOver("(", "#_a b", 0, 3)).toBe("(#_a) b");
 		expect(typeOver("(", "'(a b)", 1, 6)).toBe("'((a b))");
 		expect(typeOver("(", "^:k x", 4, 5)).toBe("^:k (x)");
+		expect(typeOver("(", "^:m ^:n x", 4, 9)).toBe("^:m (^:n x)");
+		expect(typeOver("(", "##Inf x", 0, 5)).toBe("(##Inf) x");
+		expect(typeOver("(", "#my.Rec{:a 1}", 8, 10)).toBe("#my.Rec{(:a) 1}");
+		expect(typeOver("(", "^{:a 1} x", 2, 4)).toBe("^{(:a) 1} x");
 		// A `#` that ends a symbol or a character is no prefix.
 		expect(typeOver("(", "x# 1", 2, 4)).toBe("x#( 1)");
 		expect(typeOver("(", "\\# a", 2, 4)).toBe("\\#( a)");
@@ -446,6 +461,10 @@ describe("typeBracket", () => {
 		}).state;
 		const next = state.update(typeBracket(state, "(") as TransactionSpec).state;
 		expect(next.doc.toString()).toBe('((a b)) "( y"');
+		expect(next.selection.ranges.map((r) => [r.from, r.to])).toEqual([
+			[1, 6],
+			[10, 10],
+		]);
 	});
 
 	test("with several selections, an opener wraps each that cuts across no brackets", () => {
