@@ -2715,7 +2715,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # One entry per file in the main list, holding the per-file values its
+  # One entry per file in the review, holding the per-file values its
   # section renders.
   defp file_entries(
          state,

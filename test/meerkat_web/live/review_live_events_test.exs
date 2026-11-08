@@ -512,7 +512,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       open_files_panel(view)
 
       diffs = sent_diffs(view, fn -> render_click(view, "files.close", %{}) end)
-      # The toolbar's change was captured.
+      # A diff was captured.
       assert diffs != "[]"
       assert viewers(diffs) == []
     end
@@ -543,7 +543,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     end
 
     test "opening a line form re-sends only its file's, with that file's code", %{conn: conn} do
-      view = mount_unbound(conn, %ReviewState{files: @three_files})
+      files = List.update_at(@three_files, 2, &%{&1 | new_content: "fn c() {}\n"})
+      view = mount_unbound(conn, %ReviewState{files: files})
       line = %{"file_index" => "2", "start_line" => "1", "end_line" => "1", "side" => "new"}
 
       diffs = sent_diffs(view, fn -> render_hook(view, "comment_form.show_at_line", line) end)
@@ -551,7 +552,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
       html = render(view)
       assert %{"inline_forms" => [%{"props" => props}]} = svelte_props(html, "DiffViewer-2")
-      assert %{"fileName" => "c.rs", "initialCode" => "fn a2() {}"} = props
+      assert %{"fileName" => "c.rs", "initialCode" => "fn c() {}"} = props
       assert %{"inline_forms" => []} = svelte_props(html, "DiffViewer-0")
     end
 
@@ -559,6 +560,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       bee = %{@md_file | file_name: "BEE.md", new_content: "# Bee\n\nBee paragraph.\n"}
       view = mount_unbound(conn, %ReviewState{files: [@md_file, bee]})
       render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+      assert has_element?(view, "#file-0 .md-preview")
 
       diffs =
         sent_diffs(view, fn ->
