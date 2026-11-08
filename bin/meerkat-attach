@@ -606,7 +606,9 @@ meerkat_decision_code() {
 # with its decision. It runs as a background job so a TERM, INT or HUP
 # to the launcher can SIGKILL it rather than orphan it.
 meerkat_run_once() {
-  trap 'kill -9 $(jobs -p) 2>/dev/null; wait; exit 143' TERM INT HUP
+  # Quietly: bash reports a reaped killed job on stderr. `|| :` keeps a
+  # signal that finds no job from tripping the dev launcher's errexit.
+  trap 'kill -9 $(jobs -p) 2>/dev/null || :; wait 2>/dev/null; exit 143' TERM INT HUP
   "$@" <&0 &
   local code=0
   wait $! || code=$?

@@ -80,7 +80,7 @@ defmodule Meerkat.ShepherdTest do
            }
   end
 
-  test "--answers runs the BEAM once in the foreground with the caller's stdin" do
+  test "--answers runs the BEAM once with the caller's stdin" do
     input = ~s({"answers":[{"location":"global","question":"q","answer":"a"}]}\n)
 
     assert run_shepherd([76], args: ["--answers"], input: input) == %{
@@ -96,6 +96,38 @@ defmodule Meerkat.ShepherdTest do
              iterations: 1,
              stdin: "{}"
            }
+  end
+
+  test "--answers stopped by SIGTERM kills its BEAM and exits 143 without a message" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    fake_release(
+      dir,
+      "echo $$ > \"$BEAM_STARTED.tmp\"; mv \"$BEAM_STARTED.tmp\" \"$BEAM_STARTED\"\nexec sleep 60\n"
+    )
+
+    started = Path.join(dir, "beam-started")
+    caller_pid_file = Path.join(dir, "caller-pid")
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--answers"],
+        dir,
+        [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"BEAM_STARTED", started},
+          {"CALLER_PID_FILE", caller_pid_file}
+        ],
+        own_group: true
+      )
+
+    beam = await_file(started)
+    System.cmd("kill", ["-TERM", await_file(caller_pid_file)])
+
+    assert await_result(port, dir) == {143, ""}
+    await_gone(beam)
   end
 
   test "--answers propagates a crash (exit 2) without a retry" do
@@ -139,7 +171,7 @@ defmodule Meerkat.ShepherdTest do
   end
 
   for flag <- ["--answers", "--answers=true"] do
-    test "the dev launcher runs #{flag} once in the foreground with the caller's stdin" do
+    test "the dev launcher runs #{flag} once with the caller's stdin" do
       input = ~s({"answers":[{"location":"global","question":"q","answer":"a"}]}\n)
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
