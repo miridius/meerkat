@@ -19,6 +19,15 @@ function newLine(fileSection: Locator, n: number): Locator {
 	return fileSection.locator(`td.diff-line-num span[data-line-new-num="${n}"]`);
 }
 
+// The hotkeys bind on macOS only, which a test emulates on any system
+// by setting the platform the page reads before its scripts load.
+async function onPlatform(page: Page, platform: string): Promise<void> {
+	await page.addInitScript((p) => {
+		Object.defineProperty(Navigator.prototype, "platform", { get: () => p });
+		Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => undefined });
+	}, platform);
+}
+
 async function openSuggestion(page: Page, line: number): Promise<Locator> {
 	const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
 	await newLine(fileSection, line).evaluate((el) => el.scrollIntoView({ block: "center" }));
@@ -33,6 +42,7 @@ async function openSuggestion(page: Page, line: number): Promise<Locator> {
 test("Clojure keys and structural typing work in a suggestion", async ({ page }) => {
 	const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "src/app/core.clj": CLJ } }) });
 	try {
+		await onPlatform(page, "MacIntel");
 		await page.goto(meerkat.url);
 		const form = await openSuggestion(page, 5);
 		const line = form.locator(".code-host .cm-line");
@@ -43,7 +53,7 @@ test("Clojure keys and structural typing work in a suggestion", async ({ page })
 		await line.click();
 		await page.keyboard.press("Home");
 		for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
-		await page.keyboard.press("ControlOrMeta+Shift+K");
+		await page.keyboard.press("Meta+Shift+K");
 		await expect.poll(text).toBe("    (foo y bar)))");
 
 		// Backspace steps over the matched `(`, rather than deleting it.
@@ -57,9 +67,28 @@ test("Clojure keys and structural typing work in a suggestion", async ({ page })
 	}
 });
 
+test("off macOS the keys keep CodeMirror's bindings and the editor shows no Keys link", async ({ page }) => {
+	const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "src/app/core.clj": CLJ } }) });
+	try {
+		await onPlatform(page, "Linux x86_64");
+		await page.goto(meerkat.url);
+		const form = await openSuggestion(page, 5);
+		const content = form.locator(".code-host .cm-content");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("    (foo y) bar))");
+		await expect(form.getByRole("button", { name: "Keys" })).toHaveCount(0);
+		// CodeMirror's Ctrl+Shift+K deletes the line, rather than slurping.
+		await form.locator(".code-host .cm-line").click();
+		await page.keyboard.press("Control+Shift+K");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("");
+	} finally {
+		await meerkat.kill();
+	}
+});
+
 test("Escape closes the Keys cheat sheet and leaves the form open", async ({ page }) => {
 	const meerkat = await startMeerkat({ fixture: makeFixture({ files: { "src/app/core.clj": CLJ } }) });
 	try {
+		await onPlatform(page, "MacIntel");
 		await page.goto(meerkat.url);
 		const form = await openSuggestion(page, 5);
 		await form.locator(".code-host .cm-line").click();

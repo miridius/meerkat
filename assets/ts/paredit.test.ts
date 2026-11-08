@@ -382,6 +382,38 @@ describe("typeBracket", () => {
 		expect([next.selection.main.from, next.selection.main.to]).toEqual([3, 4]);
 	});
 
+	/** The text after typing `text` over the selection `from..to` of `doc`. */
+	const typeOver = (text: string, doc: string, from: number, to: number) => {
+		const state = stateOf(doc).update({ selection: EditorSelection.range(from, to) }).state;
+		const spec = typeBracket(state, text);
+		return spec && state.update(spec).state.doc.toString();
+	};
+
+	test("an opener wraps a selection holding whole forms with their prefixes", () => {
+		expect(typeOver("(", "(a b) (c d)", 0, 11)).toBe("((a b) (c d))");
+		expect(typeOver("[", "x #{a} y", 2, 6)).toBe("x [#{a}] y");
+		expect(typeOver("(", "(a [b] c)", 3, 8)).toBe("(a ([b] c))");
+	});
+
+	test("an opener does nothing to a selection that cuts across brackets", () => {
+		// `b) (c` in `(a b) (c d)`.
+		expect(typeOver("(", "(a b) (c d)", 3, 8)).toBe("(a b) (c d)");
+		expect(typeOver("[", "(a b) c", 0, 4)).toBe("(a b) c");
+		expect(typeOver("{", "(a b) c", 4, 7)).toBe("(a b) c");
+		// A bracket without a partner, and an opener split from its prefix.
+		expect(typeOver("(", "a) b", 0, 4)).toBe("a) b");
+		expect(typeOver("(", "#{a}", 1, 4)).toBe("#{a}");
+		expect(typeOver("(", "#{a}", 0, 1)).toBe("#{a}");
+		expect(typeOver("(", "#?(:clj a)", 1, 10)).toBe("#?(:clj a)");
+	});
+
+	test("with several selections, an opener wraps each that cuts across no brackets", () => {
+		const state = stateOf("(a b) (c d) e").update({
+			selection: EditorSelection.create([EditorSelection.range(3, 8), EditorSelection.range(12, 13)]),
+		}).state;
+		expect(state.update(typeBracket(state, "(") as TransactionSpec).state.doc.toString()).toBe("(a b) (c d) (e)");
+	});
+
 	test("a closer steps over the same matched closer", () => {
 		expect(type(")", "(a|)")).toBe("(a)|");
 	});

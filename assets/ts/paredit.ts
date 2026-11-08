@@ -414,25 +414,52 @@ function inText(state: EditorState, pos: number): boolean {
 	return state.doc.sliceString(pos - 1, pos) === "\\";
 }
 
+/** Whether `range` cuts across brackets: it holds a bracket whose partner
+ *  is outside it or missing, or one of its ends splits an opener's
+ *  prefix from its bracket, as one between `#` and `{` does. */
+function cutsAcross(state: EditorState, range: SelectionRange): boolean {
+	if (range.empty) return false;
+	const { from, to } = range;
+	if ([from, to].some((end) => prefixOf(state, end - 1) !== null)) return true;
+	let cut = false;
+	syntaxTree(state).iterate({
+		from,
+		to,
+		enter: (node) => {
+			if (cut || !BRACKETS.has(node.name) || node.from < from || node.to > to) return !cut;
+			const coll = node.node.parent;
+			const closer = coll && isColl(coll) ? closerOf(coll) : null;
+			cut = !coll || !closer || openStart(coll) < from || closer.to > to;
+			return !cut;
+		},
+	});
+	return cut;
+}
+
 /** Typing `text`: an opener inserts its closer too, around a selection if
- *  there is one; a closer before the same matched closer steps over it.
- *  Null, so the editor types `text` itself, for anything else and for
- *  brackets where `inText` says they are text. */
+ *  there is one, and leaves a selection that `cutsAcross` brackets as it
+ *  is; a closer before the same matched closer steps over it. Null, so
+ *  the editor types `text` itself, for anything else and for brackets
+ *  where `inText` says they are text. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
 	if (ranges.some((r) => inText(state, r.from))) return null;
 	if (text in PAIRS) {
 		return {
-			...state.changeByRange((range) => ({
-				changes: [
-					{ from: range.from, insert: text },
-					{ from: range.to, insert: PAIRS[text] },
-				],
-				range: range.empty
-					? EditorSelection.cursor(range.from + 1)
-					: EditorSelection.range(range.from + 1, range.to + 1),
-			})),
+			...state.changeByRange((range) =>
+				cutsAcross(state, range)
+					? { range }
+					: {
+							changes: [
+								{ from: range.from, insert: text },
+								{ from: range.to, insert: PAIRS[text] },
+							],
+							range: range.empty
+								? EditorSelection.cursor(range.from + 1)
+								: EditorSelection.range(range.from + 1, range.to + 1),
+						},
+			),
 			scrollIntoView: true,
 			userEvent: "input.type",
 		};

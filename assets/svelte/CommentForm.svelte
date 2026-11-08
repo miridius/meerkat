@@ -188,10 +188,12 @@
     if (cmView) setCmRulers(cmView, columns);
   });
 
-  // The suggestion editor's keys cheat sheet.
+  // The suggestion editor's keys cheat sheet, on macOS only, where the
+  // keys are bound.
+  const mac = onMac();
   let keysOpen = $state(false);
   let keysHost: HTMLDivElement | null = $state(null);
-  const keyRows = $derived(cheatSheet(language, onMac()));
+  const keyRows = $derived(cheatSheet(language));
 
   // While open, Escape closes the cheat sheet and not the form: the
   // capture-phase listener runs before the editor's and the textarea's
@@ -337,25 +339,27 @@
     ></textarea>
     <div class="code-wrap">
       <div class="code-host" bind:this={codeHost}></div>
-      <div class="keys" bind:this={keysHost}>
-        <button
-          type="button"
-          class="keys-link"
-          aria-expanded={keysOpen}
-          onclick={() => (keysOpen = !keysOpen)}
-        >Keys</button>
-        {#if keysOpen}
-          <div class="keys-sheet" role="dialog" aria-label="Editor keys">
-            <table>
-              <tbody>
-                {#each keyRows as row}
-                  <tr><th scope="row">{row.keys}</th><td>{row.does}</td></tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </div>
+      {#if mac}
+        <div class="keys" bind:this={keysHost}>
+          <button
+            type="button"
+            class="keys-link"
+            aria-expanded={keysOpen}
+            onclick={() => (keysOpen = !keysOpen)}
+          >Keys</button>
+          {#if keysOpen}
+            <div class="keys-sheet" role="dialog" aria-label="Editor keys">
+              <table>
+                <tbody>
+                  {#each keyRows as row}
+                    <tr><th scope="row">{row.keys}</th><td>{row.does}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   {:else}
     <textarea

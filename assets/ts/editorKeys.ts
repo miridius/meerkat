@@ -19,27 +19,24 @@ import {
 import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit.js";
 
 /** The suggestion editor's IDE-style hotkeys (Cursive's macOS keymap),
- *  and the cheat sheet that lists them. See "Editor hotkeys" in
- *  docs/features/inline-comments.md. */
+ *  bound on macOS only, and the cheat sheet that lists them. See "Editor
+ *  hotkeys" in docs/features/inline-comments.md. */
 
 /** Which files a key works in: every file, files whose language has a
  *  syntax grammar, or Clojure files. */
 export type Scope = "all" | "grammar" | "clojure";
 
-/** A key in CodeMirror's notation: the same everywhere, or one for
- *  macOS and one for other systems. */
-type Key = string | { mac: string; other: string };
-
 type Edit = (state: EditorState) => TransactionSpec | null;
 
 interface Hotkey {
 	scope: Scope;
-	keys: Key[];
+	/** Each key, in CodeMirror's notation. */
+	keys: string[];
 	does: string;
 	/** The command for each key, given whether the file is Clojure. */
 	run: ((clojure: boolean) => Command)[];
 	/** Keys that run the first key's command without being listed. */
-	alias?: Key[];
+	alias?: string[];
 }
 
 /** A command that dispatches `edit`'s transaction. It claims the key
@@ -72,7 +69,7 @@ export const HOTKEYS: Hotkey[] = [
 	},
 	{
 		scope: "all",
-		keys: [{ mac: "Ctrl-j", other: "Alt-j" }],
+		keys: ["Ctrl-j"],
 		does: "Join the next line, or the selected lines",
 		run: [(clojure) => claim((state) => joinLines(state, clojure ? tightInClojure : undefined))],
 	},
@@ -105,10 +102,7 @@ export const HOTKEYS: Hotkey[] = [
 	},
 	{
 		scope: "clojure",
-		keys: [
-			{ mac: "Ctrl-Cmd-j", other: "Ctrl-Alt-j" },
-			{ mac: "Ctrl-Cmd-k", other: "Ctrl-Alt-k" },
-		],
+		keys: ["Ctrl-Cmd-j", "Ctrl-Cmd-k"],
 		does: "Slurp / barf backward",
 		run: [() => claim(slurpBackward), () => claim(barfBackward)],
 	},
@@ -134,10 +128,10 @@ export function scopesFor(language: string): Scope[] {
 	return SUPPORTED_LANGUAGES.includes(language) ? ["all", "grammar"] : ["all"];
 }
 
-function binding(key: Key, run: Command): KeyBinding {
-	return typeof key === "string"
-		? { key, run, preventDefault: true }
-		: { key: key.other, mac: key.mac, run, preventDefault: true };
+/** A binding of `key` on macOS only: elsewhere the key keeps
+ *  CodeMirror's own binding. */
+function binding(key: string, run: Command): KeyBinding {
+	return { mac: key, run, preventDefault: true };
 }
 
 /** A command that runs `edit`, letting the key fall through to
@@ -172,7 +166,7 @@ export function hotkeyBindings(language: string): KeyBinding[] {
 	// Without a grammar, ⌥↑/⌥↓ still do not move lines: that moved to
 	// ⌥⇧↑/⌥⇧↓.
 	if (!scopes.includes("grammar")) {
-		for (const key of ["Alt-ArrowUp", "Alt-ArrowDown"]) bindings.push({ key, run: () => true });
+		for (const key of ["Alt-ArrowUp", "Alt-ArrowDown"]) bindings.push(binding(key, () => true));
 	}
 	if (clojure) {
 		bindings.push(
@@ -198,30 +192,22 @@ const MAC_SYMBOLS: [string, string][] = [
 	["Cmd", "⌘"],
 	["Mod", "⌘"],
 ];
-const OTHER_NAMES: [string, string][] = [
-	["Ctrl", "Ctrl"],
-	["Mod", "Ctrl"],
-	["Alt", "Alt"],
-	["Shift", "Shift"],
-];
 const KEY_NAMES: Record<string, string> = { ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" };
 
-/** `key` as a person reads it: ⌥⇧↑ on macOS, Alt+Shift+↑ elsewhere.
- *  macOS writes modifiers in the order Control, Option, Shift, Command. */
-export function keyLabel(key: Key, mac: boolean): string {
-	const spec = typeof key === "string" ? key : mac ? key.mac : key.other;
-	const parts = spec.split("-");
+/** `key` as a person reads it on macOS: ⌥⇧↑. macOS writes modifiers in
+ *  the order Control, Option, Shift, Command. */
+export function keyLabel(key: string): string {
+	const parts = key.split("-");
 	const name = parts.pop() as string;
 	const shown = KEY_NAMES[name] ?? name.toUpperCase();
-	const mods = (mac ? MAC_SYMBOLS : OTHER_NAMES).filter(([m]) => parts.includes(m)).map(([, label]) => label);
-	return mac ? mods.join("") + shown : [...mods, shown].join("+");
+	return MAC_SYMBOLS.filter(([m]) => parts.includes(m)).map(([, symbol]) => symbol).join("") + shown;
 }
 
 /** The cheat sheet's rows for a file in `language`. */
-export function cheatSheet(language: string, mac: boolean): { keys: string; does: string }[] {
+export function cheatSheet(language: string): { keys: string; does: string }[] {
 	const scopes = scopesFor(language);
 	return HOTKEYS.filter((h) => scopes.includes(h.scope)).map((h) => ({
-		keys: h.keys.map((k) => keyLabel(k, mac)).join(" / "),
+		keys: h.keys.map(keyLabel).join(" / "),
 		does: h.does,
 	}));
 }

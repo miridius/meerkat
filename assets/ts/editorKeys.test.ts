@@ -23,10 +23,10 @@ function marked(state: EditorState): string {
 	return `${doc.slice(0, head)}|${doc.slice(head)}`;
 }
 
-/** Press `key` (CodeMirror's name for it, as bound off macOS) in a file
+/** Press `key` (CodeMirror's name for it, as bound on macOS) in a file
  *  in `language`: the text after, and whether the key was claimed. */
 function press(key: string, language: string, state: EditorState) {
-	const binding = hotkeyBindings(language).find((b) => b.key === key);
+	const binding = hotkeyBindings(language).find((b) => (b.mac ?? b.key) === key);
 	if (!binding?.run) return { claimed: false, text: marked(state) };
 	let next = state;
 	const view = {
@@ -43,7 +43,7 @@ describe("hotkeyBindings", () => {
 	test("Clojure gets the structural keys", () => {
 		const state = stateOf("(a |b) c", [clojure]);
 		expect(press("Mod-Shift-k", "clojure", state)).toEqual({ claimed: true, text: "(a |b c)" });
-		expect(press("Ctrl-Alt-k", "clojure", state)).toEqual({ claimed: true, text: "a (|b) c" });
+		expect(press("Ctrl-Cmd-k", "clojure", state)).toEqual({ claimed: true, text: "a (|b) c" });
 		expect(press("Alt-ArrowRight", "clojure", state)).toEqual({ claimed: true, text: "(a b|) c" });
 	});
 
@@ -59,7 +59,7 @@ describe("hotkeyBindings", () => {
 	});
 
 	test("outside Clojure ⇧⌘K is left to CodeMirror's delete line", () => {
-		const keys = hotkeyBindings("javascript").map((b) => b.key);
+		const keys = hotkeyBindings("javascript").map((b) => b.mac);
 		expect(keys).not.toContain("Mod-Shift-k");
 		expect(keys).toContain("Mod-Shift-ArrowUp");
 	});
@@ -68,17 +68,19 @@ describe("hotkeyBindings", () => {
 		const state = stateOf("a\nb|", []);
 		expect(press("Alt-Shift-ArrowUp", "text", state)).toEqual({ claimed: true, text: "b|\na" });
 		expect(press("Alt-ArrowUp", "text", state)).toEqual({ claimed: true, text: "a\nb|" });
-		expect(hotkeyBindings("text").map((b) => b.key)).not.toContain("Mod-Shift-ArrowUp");
+		expect(hotkeyBindings("text").map((b) => b.mac)).not.toContain("Mod-Shift-ArrowUp");
 	});
 
 	test("join lines leaves no space after an opener in Clojure only", () => {
-		expect(press("Alt-j", "clojure", stateOf("(|\n a)", [clojure])).text).toBe("(|a)");
-		expect(press("Alt-j", "javascript", stateOf("f(|\n a)", [javascript()])).text).toBe("f(| a)");
+		expect(press("Ctrl-j", "clojure", stateOf("(|\n a)", [clojure])).text).toBe("(|a)");
+		expect(press("Ctrl-j", "javascript", stateOf("f(|\n a)", [javascript()])).text).toBe("f(| a)");
 	});
 
-	test("join lines is ⌃J on macOS", () => {
-		const join = hotkeyBindings("text").find((b) => b.key === "Alt-j");
-		expect(join?.mac).toBe("Ctrl-j");
+	test("the hotkeys bind on macOS only, and Backspace and Delete everywhere", () => {
+		const bindings = hotkeyBindings("clojure");
+		expect(bindings.filter((b) => b.key).map((b) => b.key)).toEqual(["Backspace", "Delete"]);
+		expect(bindings.filter((b) => !b.key).every((b) => b.mac)).toBe(true);
+		expect(hotkeyBindings("text").every((b) => !b.key && b.mac)).toBe(true);
 	});
 
 	test("moving a Clojure form re-indents it", () => {
@@ -151,22 +153,16 @@ describe("editorKeys", () => {
 
 describe("keyLabel", () => {
 	test("writes macOS symbols in Apple's order", () => {
-		expect(keyLabel("Mod-Shift-k", true)).toBe("⇧⌘K");
-		expect(keyLabel("Alt-Shift-ArrowUp", true)).toBe("⌥⇧↑");
-		expect(keyLabel({ mac: "Ctrl-Cmd-j", other: "Ctrl-Alt-j" }, true)).toBe("⌃⌘J");
-		expect(keyLabel("Mod-'", true)).toBe("⌘'");
-	});
-
-	test("writes names elsewhere", () => {
-		expect(keyLabel("Mod-Shift-k", false)).toBe("Ctrl+Shift+K");
-		expect(keyLabel({ mac: "Ctrl-Cmd-j", other: "Ctrl-Alt-j" }, false)).toBe("Ctrl+Alt+J");
-		expect(keyLabel({ mac: "Ctrl-j", other: "Alt-j" }, false)).toBe("Alt+J");
+		expect(keyLabel("Mod-Shift-k")).toBe("⇧⌘K");
+		expect(keyLabel("Alt-Shift-ArrowUp")).toBe("⌥⇧↑");
+		expect(keyLabel("Ctrl-Cmd-j")).toBe("⌃⌘J");
+		expect(keyLabel("Mod-'")).toBe("⌘'");
 	});
 });
 
 describe("cheatSheet", () => {
 	test("lists the keys for the file's language", () => {
-		const keys = (language: string) => cheatSheet(language, true).map((r) => r.keys);
+		const keys = (language: string) => cheatSheet(language).map((r) => r.keys);
 		expect(keys("text")).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J"]);
 		expect(keys("python")).toEqual(["⌥⇧↑ / ⌥⇧↓", "⌃J", "⌥↑ / ⌥↓", "⇧⌘↑ / ⇧⌘↓"]);
 		expect(keys("clojure")).toEqual([
