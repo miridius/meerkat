@@ -1,5 +1,5 @@
 import { type IndentContext, indentService, syntaxTree } from "@codemirror/language";
-import { closedString, forms, holder, holds, isColl, type SyntaxNode } from "./clojureTree.js";
+import { forms, holder, holds, inString, isColl, type SyntaxNode } from "./clojureTree.js";
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
@@ -125,7 +125,6 @@ const SORTED_INDENTS = DEFAULT_INDENTS.map((entry) => ({ entry, order: indentOrd
 	})
 	.map(({ entry }) => entry);
 
-const STRINGS = new Set(["String", "RegExp"]);
 const SYMBOLS = new Set(["Symbol", "Operator", "DefLike", "NS"]);
 
 /** The forms cljfmt's `index-of` counts: `#_` forms are left out. */
@@ -139,8 +138,7 @@ function elements(coll: SyntaxNode): SyntaxNode[] {
  *  after its opener. */
 function enclosing(tree: ReturnType<typeof syntaxTree>, pos: number): SyntaxNode | "string" | null {
 	for (let node: SyntaxNode | null = tree.resolveInner(pos, -1); node; node = node.parent) {
-		if (STRINGS.has(node.name) && node.from < pos && pos < node.to) return "string";
-		if (node.name === "String" && node.from < pos && !closedString(node)) return "string";
+		if (inString(node, pos) || (node.name === "RegExp" && node.from < pos && pos < node.to)) return "string";
 		if (isColl(node) && node.from < pos && holds(node, pos)) return node;
 	}
 	return null;

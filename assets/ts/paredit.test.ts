@@ -502,7 +502,9 @@ describe("typeBracket", () => {
 	test("brackets between a regex's # and its quote are code", () => {
 		expect(type("(", '#|"a"')).toBe('#(|)"a"');
 		expect(type("(", '#"a"|')).toBe('#"a"(|)');
-		// No selection may split a regex's `#` from its string.
+	});
+
+	test("an opener wraps a whole regex, but splits no regex's # from its string", () => {
 		expect(typeOver("(", '#"a"', 1, 4)).toBe('#"a"');
 		expect(typeOver("(", '#"a" b', 1, 6)).toBe('#"a" b');
 		expect(typeOver("(", 'a #"b"', 0, 3)).toBe('a #"b"');

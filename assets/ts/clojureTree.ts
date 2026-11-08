@@ -28,9 +28,16 @@ export function holds(coll: SyntaxNode, pos: number): boolean {
 
 /** Whether `node`, a String, has its closing quote: the quote it opens
  *  with is its first child. */
-export function closedString(node: SyntaxNode): boolean {
+function closedString(node: SyntaxNode): boolean {
 	const last = node.lastChild;
 	return last !== null && last.name === '"' && last.from > node.from;
+}
+
+/** Whether `node` is a String holding `pos` between its quotes. One with
+ *  no closing quote, such as one the editor's lines cut off, runs to the
+ *  end of the text. */
+export function inString(node: SyntaxNode, pos: number): boolean {
+	return node.name === "String" && node.from < pos && (pos < node.to || !closedString(node));
 }
 
 /** `coll`'s parent, or when `coll` is dereffed, the deref's parent: for

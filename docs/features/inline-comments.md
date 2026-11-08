@@ -198,12 +198,13 @@ changes each list once.
   prefix that is part of it (the `#` of `#{`, the `#?` of `#?(`, the
   `#:ns` of `#:ns{`); splits a prefix such as `'`, `^:m`, `#_`,
   `#inst`, `#'`, a regex's `#` or a record literal's `#my.Rec` from its
-  form (`x '` in `x 'a` would become `(x ')a`), or starts at the form
-  of `#'`, a regex or a record literal, whose prefix takes no other;
+  form (`x '` in `x 'a` would become `(x ')a`), or starts at the symbol
+  of `#'`, a regex's string, or a record literal's map or vector, whose
+  prefix takes no other;
   starts or ends inside a symbolic value such as `##Inf`; or starts in
   code and ends where brackets are text (in a string, a regex's
   included, a comment or a character literal, or after a `\`; a string
-  with no closing quote runs to the end). Inside a collection, such as a
+  with no closing quote runs to the end of the text). Inside a collection, such as a
   metadata map, a selection splits no prefix outside it. Where brackets
   are text, an opening bracket is typed as text. Typing a closer just before the same
   matched closer steps over it. `'` is a quote and gets no partner.

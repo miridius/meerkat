@@ -10,11 +10,11 @@ import {
 import { EditorView } from "@codemirror/view";
 import {
 	BRACKETS,
-	closedString,
 	closerOf,
 	forms,
 	holder,
 	holds,
+	inString,
 	isColl,
 	type SyntaxNode,
 } from "./clojureTree.js";
@@ -33,9 +33,9 @@ const PREFIXED = new Set(["Set", "AnonymousFunction", "ReaderConditional", "Name
 /** Forms of a prefix and the form it applies to: `^:private foo`,
  *  `#inst "…"`, `#my.Rec{…}`. */
 const PREFIX_CONTAINERS = new Set(["Meta", "TaggedLiteral", "ConstructorCall"]);
-/** Forms whose prefix takes one kind of form only: `#my.Rec{…}`, `#"…"`,
+/** Forms whose prefix takes only certain forms: `#my.Rec{…}`, `#"…"`,
  *  `#'foo`. */
-const ONE_KIND_PREFIXED = new Set(["ConstructorCall", "RegExp", "Var"]);
+const NARROW_PREFIXED = new Set(["ConstructorCall", "RegExp", "Var"]);
 
 /** `node` with the prefixes that apply to it: each form wrapping it that
  *  ends with it, such as a quote, a tag or metadata, but not the
@@ -416,10 +416,11 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 
 /** Whether `pos` sits in a string (a regex's included, after its `#`), a
  *  comment or a character literal, or just after a `\`, where brackets
- *  are text. A string with no closing quote runs to the end. */
+ *  are text. A string with no closing quote runs to the end of
+ *  the text. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		if (node.name === "String") return node.from < pos && (pos < node.to || !closedString(node));
+		if (node.name === "String") return inString(node, pos);
 		if (node.name === "LineComment") return node.from < pos;
 		if (node.name === "Character") return node.from < pos && pos < node.to;
 	}
@@ -431,11 +432,12 @@ function inText(state: EditorState, pos: number): boolean {
  *  as one between `#` and `{`, or in or after the namespace of `#:ns{`,
  *  does; any position inside a symbolic value such as `##Inf` does; or
  *  any other node that is no collection, such as a prefix form (`'`,
- *  `^:m`, `#_`, `#'`, `#inst`), from the child it ends with. The selection's start (`end` false) may
- *  sit at that child, but its end may not, as wrapping would leave the
- *  prefix without one. No selection may start at the child of a form in
- *  `ONE_KIND_PREFIXED` either: a record literal's map or vector, a
- *  regex's string or a var's symbol, as its prefix takes no other. A
+ *  `^:m`, `#_`, `#'`, `#inst`), from the child it ends with. The
+ *  selection's start (`end` false) may sit at that child, but its end
+ *  may not, as wrapping would leave the prefix without one. No selection
+ *  may start at the child of a form in `NARROW_PREFIXED` either: a
+ *  record literal's map or vector, a regex's string or a var's symbol,
+ *  as its prefix takes no other. A
  *  `pos` inside a collection, as in a metadata map, splits no prefix
  *  outside that collection. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
@@ -451,7 +453,7 @@ function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 		if (coll?.firstChild && pos < coll.firstChild.to) return true;
 		const form = node.lastChild;
 		if (!node.parent || !form || form.to !== node.to) continue;
-		if (end || ONE_KIND_PREFIXED.has(node.name) ?pos <= form.from : pos < form.from) return true;
+		if (end || NARROW_PREFIXED.has(node.name) ? pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }
