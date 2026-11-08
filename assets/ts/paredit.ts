@@ -480,16 +480,17 @@ function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 }
 
 /** Typing `text`: an opener inserts its closer too, around a selection if
- *  there is one, and leaves a selection that `cutsAcross` brackets as it
- *  is; a closer before the same matched closer steps over it. Where
- *  `inText` says brackets are text, an opener is typed as text. Null, so
+ *  there is one, and leaves a selection that `cutsAcross` brackets, or
+ *  that starts where `inText` says brackets are text and ends where they
+ *  are code, as it is; a closer before the same matched closer steps over
+ *  it. Where both ends are in text, an opener is typed as text. Null, so
  *  the editor types `text` itself, for anything else, for an opener where
  *  every range is in text, and for a closer where any range is, as no
  *  bracket in text is matched. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
-	const textAt = (r: SelectionRange) => inText(state, r.from);
+	const textAt = (r: SelectionRange) => inText(state, r.from) && (r.empty || inText(state, r.to));
 	if (text in PAIRS) {
 		if (ranges.every(textAt)) return null;
 		return {
@@ -500,7 +501,7 @@ export function typeBracket(state: EditorState, text: string): TransactionSpec |
 						range: EditorSelection.cursor(range.from + 1),
 					};
 				}
-				if (cutsAcross(state, range)) return { range };
+				if (inText(state, range.from) || cutsAcross(state, range)) return { range };
 				return {
 					changes: [
 						{ from: range.from, insert: text },

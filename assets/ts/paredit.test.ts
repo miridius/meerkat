@@ -422,6 +422,12 @@ describe("typeBracket", () => {
 		expect(typeOver("(", 'x "a b" y', 0, 7)).toBe('(x "a b") y');
 	});
 
+	test("an opener does nothing to a selection from a string or comment into code", () => {
+		expect(typeOver("(", '"a b" x', 2, 7)).toBe('"a b" x');
+		expect(typeOver("(", '#"a" (x)', 2, 8)).toBe('#"a" (x)');
+		expect(typeOver("(", "; a\n(x)", 2, 7)).toBe("; a\n(x)");
+	});
+
 	test("an opener does nothing to a selection that splits a prefix from its form", () => {
 		expect(typeOver("(", "#_a b", 1, 3)).toBe("#_a b");
 		expect(typeOver("{", "#'foo", 1, 5)).toBe("#'foo");
