@@ -2,7 +2,8 @@ defmodule Meerkat.SetupToolchainTest do
   # Runs the repo's real scripts/setup-toolchain.ts against pins each test
   # writes. elixir, mix and curl are replaced by stubs on PATH: elixir
   # names an archives dir and rebar3 path in the scratch dir, mix logs
-  # each run, and curl downloads the `rebar3-download` file.
+  # each run, and curl downloads the `rebar3-download` file and saves its
+  # arguments.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/setup-toolchain.ts")
@@ -42,7 +43,8 @@ defmodule Meerkat.SetupToolchainTest do
     File.write!(Path.join(stubs, "curl"), """
     #!/usr/bin/env bash
     echo "curl ${@: -1}" >> '#{base}/log'
-    cp '#{base}/rebar3-download' "$2"
+    echo "$*" > '#{base}/curl-args'
+    cp '#{base}/rebar3-download' "${@: -2:1}"
     """)
 
     for stub <- ~w(elixir mix curl), do: File.chmod!(Path.join(stubs, stub), 0o755)
@@ -61,6 +63,8 @@ defmodule Meerkat.SetupToolchainTest do
            ] = log(ctx)
 
     assert install =~ ~r"^mix local.rebar rebar3 \S+/rebar3 --force$"
+    # A brief outage at the download host is retried rather than failing CI.
+    assert File.read!(Path.join(ctx.base, "curl-args")) =~ "--retry 5 --retry-all-errors"
   end
 
   test "installs nothing when both are in place", ctx do

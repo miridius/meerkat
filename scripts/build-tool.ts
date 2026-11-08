@@ -73,7 +73,7 @@ try {
 	const local: string[] = [];
 	for (const [i, url] of recipe.files(version).entries()) {
 		const path = join(work, `${i}-${url.split("/").at(-1)}`);
-		await $`curl -fsSLo ${path} ${url}`;
+		await $`curl -fsSL --retry 5 --retry-all-errors -o ${path} ${url}`;
 		hash.update(await Bun.file(path).bytes());
 		local.push(path);
 	}

@@ -95,7 +95,7 @@ jobs:
           key: plantuml-${{ runner.os }}-${{ runner.arch }}-${{ env.PLANTUML_VERSION }}-${{ env.PLANTUML_SHA256 }}
 
       - if: steps.plantuml.outputs.cache-hit != 'true'
-        run: curl -fsSL --create-dirs -o ~/.cache/ci/plantuml.zip "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/native-plantuml-macos-arm64-$PLANTUML_VERSION.zip"
+        run: curl -fsSL --retry 5 --retry-all-errors --create-dirs -o ~/.cache/ci/plantuml.zip "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/native-plantuml-macos-arm64-$PLANTUML_VERSION.zip"
 
       - name: Install PlantUML
         run: |
@@ -117,7 +117,7 @@ jobs:
           key: clj-kondo-${{ runner.os }}-${{ runner.arch }}-${{ env.CLJ_KONDO_VERSION }}-${{ env.CLJ_KONDO_SHA256 }}
 
       - if: steps.clj-kondo.outputs.cache-hit != 'true'
-        run: curl -fsSL --create-dirs -o ~/.cache/ci/clj-kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$CLJ_KONDO_VERSION/clj-kondo-$CLJ_KONDO_VERSION-macos-aarch64.zip"
+        run: curl -fsSL --retry 5 --retry-all-errors --create-dirs -o ~/.cache/ci/clj-kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$CLJ_KONDO_VERSION/clj-kondo-$CLJ_KONDO_VERSION-macos-aarch64.zip"
 
       - name: Install clj-kondo
         run: |
