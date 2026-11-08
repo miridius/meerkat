@@ -1,7 +1,7 @@
 import Config
 
-# Dev launcher path (`bin/meerkat-beam` with MIX_ENV=dev — installed
-# via `scripts/dev-install.sh`).
+# Dev launcher path (`bin/meerkat-beam` with MIX_ENV=dev, which the
+# e2e suite runs).
 #
 # No vite watcher + no `static_url` host override: assets serve via
 # the meerkat endpoint itself out of `priv/static/` (built by the
@@ -11,9 +11,6 @@ import Config
 # (`to_url={fn p -> p end}`) — so the browser hit `/@vite/client`
 # on the meerkat host (not vite) and the whole page rendered
 # unstyled.
-#
-# Trade-off: no Svelte/CSS HMR. Editing assets needs a meerkat
-# restart so the pre-flight rebuilds priv/static/.
 #
 # `code_reloader: false`: Phoenix's request-time `.ex` recompile
 # fights `Meerkat.CLI`'s `Application.put_env` + manual supervisor

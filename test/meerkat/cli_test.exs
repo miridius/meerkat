@@ -1203,7 +1203,7 @@ defmodule Meerkat.CLITest do
   describe "auto_approve_decision/3 — restarted review (real git fixture)" do
     # Ticking a file Approved records it in the approval cache at once, so
     # once every file is ticked, a BEAM respawned for the same review
-    # (restart onto a new version or after a code change, crash retry)
+    # (restart onto a new version, crash retry)
     # would find them all approved and exit 0 with no Approve click,
     # dropping the comments.
     setup ctx do
@@ -1231,7 +1231,7 @@ defmodule Meerkat.CLITest do
   end
 
   describe "auto_approve_decision/3 — a review that ended without a decision (real git fixture)" do
-    # A BEAM nothing respawned (a dev-mode crash, a SIGKILL) leaves its
+    # A BEAM nothing respawned (a `bin/meerkat-beam` crash, a SIGKILL) leaves its
     # comments in the in-progress snapshot, and the rerun starts in a fresh
     # serve dir. Auto-approving would never deliver those comments.
     @all_approved {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}

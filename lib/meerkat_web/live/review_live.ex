@@ -93,7 +93,7 @@ defmodule MeerkatWeb.ReviewLive do
        version: Meerkat.Version.info(),
        deadline_ms: Application.get_env(:meerkat, :review_deadline_ms),
        timeout_action: Meerkat.Timeout.action(),
-       # Restore from persisted state — survives DevWatcher restart,
+       # Restore from persisted state — survives a BEAM restart,
        # crash, or close-and-reopen of the browser tab.
        open_forms: state.open_forms,
        # Set when VersionWatcher signals a newer install; the live-restart
@@ -157,7 +157,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp page_title(%ReviewState{}), do: "meerkat commit review"
 
   # Write-through: update the LV assign AND persist to ReviewServer
-  # so a BEAM restart (DevWatcher hot reload, crash) or a fresh tab
+  # so a BEAM restart (a new version, a crash) or a fresh tab
   # reconnect finds the same forms open at the same anchors. Body
   # content is separately preserved by CommentForm's localStorage
   # draft.
@@ -1146,13 +1146,6 @@ defmodule MeerkatWeb.ReviewLive do
       # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
       # file reads it, so a review without one skips the probe's JVM start.
       |> assign(:plantuml_available, plantuml_available?(assigns.state.files))
-      # Backfill assigns added since this socket mounted — needed for
-      # the DevWatcher hot-reload path where a previously-mounted LV
-      # keeps its socket but new code expects new assigns.
-      |> assign_new(:version, fn -> Meerkat.Version.info() end)
-      |> assign_new(:timeout_action, fn -> Meerkat.Timeout.action() end)
-      |> assign_new(:expanded_approved, fn -> MapSet.new() end)
-      |> assign_new(:collapsed_unapproved, fn -> MapSet.new() end)
       # Compute once per render and thread into both children.
       # `visible_indices/3` does a full scan of state.files with cond
       # branching per file — at twice per render it was the hot spot

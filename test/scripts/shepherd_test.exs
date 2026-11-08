@@ -1231,7 +1231,7 @@ defmodule Meerkat.ShepherdTest do
       assert out == "waits\n"
     end
 
-    test "the dev shepherd propagates a crash (exit 2) instead of waiting for a source change" do
+    test "the dev shepherd propagates a crash (exit 2)" do
       {port, dir} = open_dev_shepherd(exit_codes: [2, 0])
 
       assert await_exit(port, dir) == 2
@@ -1241,9 +1241,22 @@ defmodule Meerkat.ShepherdTest do
     test "the dev shepherd compiles a build that looks fresh but was compiled in another checkout" do
       {port, dir} = open_dev_shepherd(compile_code: 1, built: "/elsewhere")
 
-      await_output(port, dir, "waiting for source change")
-      kill_launcher(port, dir)
+      assert await_exit(port, dir) == 2
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
+    end
+
+    for {failed, opts} <- [
+          compile: [compile_code: 1],
+          "asset build": [built: :root, build_code: 1]
+        ] do
+      test "the dev shepherd exits 2 with a REJECT message, starting no BEAM, after a failed #{failed}" do
+        {port, dir} = open_dev_shepherd(unquote(opts) ++ [exit_codes: [0]])
+
+        {code, out} = await_result(port, dir)
+        assert code == 2
+        assert out =~ "meerkat: the build failed — defaulting to REJECT (commit aborted)."
+        assert File.read!(Path.join(dir, "i")) == "0"
+      end
     end
 
     test "a successful compile stamps the build with its checkout" do
@@ -1259,17 +1272,6 @@ defmodule Meerkat.ShepherdTest do
       {port, dir} = open_dev_shepherd(compile_code: 1, built: :root, exit_codes: [0])
 
       assert await_exit(port, dir) == 0
-    end
-
-    for deleted <- ["review", "root"] do
-      test "the dev shepherd exits 2 when its #{deleted} dir is deleted while it waits for a source change" do
-        {port, dir} = open_dev_shepherd(compile_code: 1)
-        await_output(port, dir, "waiting for source change")
-
-        File.rm_rf!(Path.join(dir, unquote(deleted)))
-
-        assert await_exit(port, dir) == 2
-      end
     end
   end
 
@@ -1434,11 +1436,12 @@ defmodule Meerkat.ShepherdTest do
   # Runs the dev launcher's served half (MEERKAT_SERVE_DIR set, so no
   # caller), copied into a checkout at `root` that has no build unless
   # `built` is given, from a fresh `review` dir, with `mix` and `bunx`
-  # replaced by stubs: `mix compile` exits `compile_code`, and each `mix
-  # run` exits the next of `exit_codes`, counting runs in the temp dir's
-  # `i`. With `built`, `root` has a source, a build manifest newer than
-  # it, and a stamp naming `built` as the checkout that compiled the build
-  # (`:root` names `root` itself).
+  # replaced by stubs: `mix compile` exits `compile_code`, the asset
+  # build exits `build_code`, and each `mix run` exits the next of
+  # `exit_codes`, counting runs in the temp dir's `i`. With `built`,
+  # `root` has a source, a build manifest newer than it, and a stamp
+  # naming `built` as the checkout that compiled the build (`:root`
+  # names `root` itself).
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -1481,7 +1484,11 @@ defmodule Meerkat.ShepherdTest do
     exit "${codes[$i]:-0}"
     """)
 
-    File.write!(Path.join(stubs, "bunx"), "#!/usr/bin/env bash\nexit 0\n")
+    File.write!(
+      Path.join(stubs, "bunx"),
+      "#!/usr/bin/env bash\nexit #{Keyword.get(opts, :build_code, 0)}\n"
+    )
+
     File.chmod!(Path.join(stubs, "mix"), 0o755)
     File.chmod!(Path.join(stubs, "bunx"), 0o755)
 

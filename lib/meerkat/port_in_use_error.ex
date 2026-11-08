@@ -1,8 +1,8 @@
 defmodule Meerkat.PortInUseError do
   # Raised when an explicit nonzero `--port` is taken. It is a rejected
   # argument, not a crash: exit 64 passes straight through both
-  # launchers, where exit 2 would make the dev launcher wait for a source
-  # change that cannot free the port.
+  # launchers, where exit 2 would read as a crash, which the prod
+  # shepherd retries on the same taken port.
   @moduledoc false
   defexception [:port]
 

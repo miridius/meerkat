@@ -50,6 +50,46 @@ see [pending-answers.md](pending-answers.md).
   preference. A nonzero `N` binds exactly `N`; if occupied, meerkat
   reports the conflict and exits `64`.
 
+## Preferred port
+
+With no explicit `--port N` or `--port=N`, both launchers discard any
+inherited `MEERKAT_PREFERRED_PORT` and set it to `MEERKAT_PORT` if
+nonempty, or to the review's stable port:
+`int(shasum256(cwd:args)[:8]) % 20000 + 40000`. The CLI's `--port`
+defaults to `0`; with port `0`, it tries a valid preferred port first.
+
+Absent a `MEERKAT_PORT` override, a fresh invocation of the same review
+(same repo and args) that starts a new server uses the same port when
+available, so a browser tab left open on that port needs no
+re-navigation. The 40000–59999 range is above privileged ports; its
+portion below 49152 is outside macOS's default ephemeral range
+(49152–65535), so OS-assigned port collisions are rare. `MEERKAT_PORT`
+exists for tests and debugging.
+
+If the preferred port is occupied, the CLI binds an OS-assigned port
+and prints `meerkat: port <N> is in use; serving on <url>` to stderr,
+with the full review URL (for example, `http://127.0.0.1:54563/`).
+A preferred value must be an integer from 1 to 65535; otherwise the
+CLI prints `meerkat: ignoring MEERKAT_PREFERRED_PORT="<value>": not a
+port from 1 to 65535` to stderr and uses an OS-assigned port.
+
+An explicit `--port N` or `--port=N` reaches the CLI unchanged. On the
+initial BEAM, the launcher sets no preferred port and ignores
+`MEERKAT_PORT`; explicit `--port 0` therefore requests an OS-assigned
+port. A nonzero `N` binds exactly `N`; if occupied, the CLI prints
+`meerkat: port N is in use (--port N); pick another port or omit
+--port` and exits `64`.
+
+After every BEAM exit, the launcher reads the run dir's `port` file
+(`<port> <BEAM pid>`), sets `MEERKAT_PREFERRED_PORT` to that port for
+the next BEAM, and immediately deletes the file. With the default port
+or `--port 0`, the next BEAM tries that port first; if it is occupied,
+the CLI falls back to an OS-assigned port. An explicit nonzero port is
+bound again. Removing the file prevents callers from attaching to the
+exited BEAM while the next one starts; a rerun while a server is alive
+attaches to the port in its run dir's `port` file rather than binding
+another.
+
 ## Env vars
 
 - `MEERKAT_PWD` — set by the launcher to the caller's cwd, so git
@@ -113,8 +153,6 @@ see [pending-answers.md](pending-answers.md).
   ignore the value.
 - `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
   changed` mode.
-- `FORCE=1` — let `scripts/install.sh` override the dev-mode
-  marker and reinstall the prod release.
 
 ## Exit codes
 
@@ -153,10 +191,9 @@ see [pending-answers.md](pending-answers.md).
   see [`GIT_INDEX_FILE`](#env-vars). A review whose server's bound
   port cannot be read exits 2 with a REJECT message, before printing
   a URL or opening a browser: meerkat never opens or announces a URL
-  on any port but the one it bound. While waiting to retry after a
-  failed build, the dev launcher exits 2 with a REJECT message if its
-  checkout or `$MEERKAT_PWD` is deleted. Under `--answers`: the dev
-  launcher could not build meerkat, so it stored nothing.
+  on any port but the one it bound. The dev launcher exits 2 with a
+  REJECT message when it cannot build meerkat. Under `--answers`: the
+  dev launcher could not build meerkat, so it stored nothing.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`
@@ -166,8 +203,8 @@ see [pending-answers.md](pending-answers.md).
   a terminal on stdin, or a directory that is no git repository.
 - `74` — `--answers` could not read stdin, or could not write the
   answers file. Nothing was stored, and the input itself was fine.
-- `75` — DevWatcher restart sentinel. Internal to
-  `bin/meerkat-beam`'s shepherd loop — never reaches the git hook.
+- `75` — restart sentinel for a [new version](installation.md#restart-onto-a-new-version).
+  Internal to the launchers' shepherd loops — never reaches the git hook.
 - `143` — a SIGTERM reached the review BEAM after
   `Meerkat.CLI.main/1` started. It defaults to REJECT (commit
   aborted): the BEAM prints a message to stderr, flushes the log

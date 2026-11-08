@@ -1,47 +1,14 @@
-# Installation modes
+# Installation
 
-`~/.local/bin/meerkat` is the public entrypoint. Two install
-modes share that path:
+`~/.local/bin/meerkat` is the public entrypoint. `scripts/install.sh`
+installs the prod release there.
 
-1. **Dev launcher** — a thin shell script that `exec`s
-   `bin/meerkat-beam` in this worktree under `MIX_ENV=dev`.
-   Installed via `scripts/dev-install.sh`. Refuses to install
-   from `main`; the branch's worktree is the source-of-truth for
-   every meerkat invocation from any repo.
-2. **Prod release** — `mix release` artefacts. Installed via
-   `scripts/install.sh`. Self-contained; the worktree the script
-   was run from is no longer relevant after install.
-
-Only one mode active at a time. The launcher script content IS
-the mode marker — re-running either script overwrites the other.
-
-## Dev install
-
-```
-scripts/dev-install.sh
-```
-
-- Verifies the current HEAD is NOT `main`. Refuses otherwise.
-- Writes a tiny `~/.local/bin/meerkat` that exports
-  `MIX_ENV=dev` and `exec`s the `bin/meerkat-beam` shepherd in
-  this worktree.
-- Every subsequent `meerkat` invocation (from any cwd) routes
-  through that shepherd → DevWatcher / hot reload / restart-on-
-  source-change behaviour active.
-
-Iterating on the UI:
-
-- Edit `lib/meerkat/*.ex` / `lib/meerkat_web/**/*.ex` →
-  DevWatcher fires → BEAM halts (75) → shepherd reads and removes the
-  old port file, then tries that port first on respawn. With the
-  default port or `--port 0`, if it is busy the CLI uses an
-  OS-assigned port; an explicit nonzero `--port N` is bound again and
-  exits 64 if busy.
-- Edit `assets/svelte/*.svelte` / `assets/css/*.css` →
-  DevWatcher fires → shepherd's `build_assets_if_stale` runs
-  Vite → BEAM restarts → new assets serve. No HMR (Vite HMR is
-  intentionally off in dev because LV's static-manifest
-  cache-busting plays badly with it).
+`bin/meerkat-beam`, the dev launcher, runs meerkat from a checkout
+under `MIX_ENV=dev`, compiling and building assets first when they are
+stale. It runs `mix compile` when a source is newer than the build or
+the launcher last compiled it in another checkout, so a build copied
+into a new worktree never stands in for that worktree's sources. The e2e suite and agents verifying a change run it directly;
+nothing installs it.
 
 ## Prod install
 
@@ -55,7 +22,7 @@ scripts/install.sh
 - Installs the prod shepherd `meerkat-shepherd`, and the
   `meerkat-attach` library it sources, beside the versions.
 - Writes `~/.local/bin/meerkat` to exec that shepherd, which runs
-  the release: no Mix, no DevWatcher.
+  the release: no Mix. It replaces any other launcher there.
 
 The post-merge git hook (`scripts/no-main-commits.sh` enables
 lefthook, which runs `scripts/install.sh` on merge to `main`)
@@ -63,15 +30,32 @@ auto-installs prod whenever a feature branch lands. So a
 `bundled-fixes → main` merge gives every consumer the prod
 release without manual steps.
 
-## Reverting between modes
+## Restart onto a new version
 
-- `scripts/install.sh` from any branch overwrites the dev
-  launcher with the prod release.
-- `scripts/dev-install.sh` from a non-main branch overwrites the
-  prod launcher with the dev shell shim.
+`Meerkat.VersionWatcher` notices a newly installed version, and the
+BEAM halts with exit 75 at a safe point; the shepherd respawns it on
+the new version, preferring the port the old BEAM bound. Phoenix
+LiveView's client auto-reconnects. The tab stays put because the
+shepherd keeps one secret across BEAMs, so its LiveView session token
+remains valid. The socket reads no session cookie, so another review
+loaded in the same browser, which replaces the cookie, doesn't stop
+the rejoin. If the new build changed the assets' hashed names,
+`ReviewLive.mount/3` instead redirects the reconnecting tab to "/" for
+a full page load of the new build. The page's asset tags and that
+check both use the manifest the BEAM read at boot. State survives
+either way because:
 
-No marker file; the launcher script content IS the mode. Cat
-`~/.local/bin/meerkat` to see which is active.
+- Comments + approvals are persisted to
+  `<gitdir>/meerkat-precommit/in-progress/<review_id>.json` and
+  reloaded by `ReviewServer.init/1`.
+- Open forms are persisted in `ReviewState.open_forms`. After
+  reconnect, `ReviewLive.mount/3` re-assigns them and `DiffViewer`
+  injects each inline form at its anchor. Prose typed into an add
+  form is kept in `localStorage` under
+  `meerkat:draft:<review_id>:` followed by the form's key, which
+  encodes its surface, anchor and edit target; reopening that form
+  restores the draft. Edit forms ignore drafts and reopen with the
+  saved comment's body.
 
 ## Env vars
 

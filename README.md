@@ -72,7 +72,8 @@ This builds a Mix release and installs a launcher at
 `scripts/install.sh` to update.
 
 For development, `bin/meerkat-beam` runs meerkat straight from the
-checkout and hot-restarts on source edits — see `CLAUDE.md`.
+checkout, building it first when stale — see
+[installation.md](docs/features/installation.md).
 
 ## As a git `commit-msg` hook
 

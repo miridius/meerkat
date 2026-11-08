@@ -27,9 +27,8 @@ export default defineConfig({
     alias: {
       "@": ".",
       // Phoenix LiveView's colocated-JS feature lives under
-      // MIX_BUILD_PATH/phoenix-colocated/<otp_app>. The launcher /
-      // dev watcher exports MIX_BUILD_PATH so this resolves at
-      // build time.
+      // MIX_BUILD_PATH/phoenix-colocated/<otp_app>. The launcher
+      // exports MIX_BUILD_PATH so this resolves at build time.
       "phoenix-colocated": `${process.env.MIX_BUILD_PATH}/phoenix-colocated`,
     },
   },

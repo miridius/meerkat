@@ -8,9 +8,7 @@ import Config
 
 # LiveSvelte SSR is OFF by default. The CLI binary path renders
 # client-side only — initial HTML is the LiveView shell, the Svelte
-# component hydrates from props on connect. dev / `iex -S mix
-# phx.server` flips this on (Vite-backed SSR) for full hot-reload
-# parity. Keeping SSR optional avoids needing NodeJS in the CLI's
+# component hydrates from props on connect. Keeping SSR off avoids needing NodeJS in the CLI's
 # critical path, which matters for the ≤500ms cold-start budget.
 config :live_svelte, ssr: false
 

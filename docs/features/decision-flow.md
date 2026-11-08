@@ -131,7 +131,7 @@ questions are unanswered, or while answers await the reviewer's reading.
 A BEAM respawned by the shepherd for the same review skips the fast
 path and resumes the live review with its Approved ticks and comments,
 even when every staged file is ticked Approved. This covers exit-75
-restarts onto a new version or after a code change, and the prod
+restarts onto a new version and the prod
 shepherd's single retry after crash exit 2. When the CLI announces the
 review, it writes a `served` marker file in the review's run dir;
 a BEAM that starts and finds this marker skips the fast path. The
@@ -143,7 +143,7 @@ Before each BEAM it starts, the shepherd rewrites the run dir's
 reattach to a review it keeps alive, however long it waits.
 
 A review whose BEAM ended without a decision and was not respawned
-(a crash in dev mode, a SIGKILL'd BEAM, a crash after the prod
+(a crash under the dev launcher, a SIGKILL'd BEAM, a crash after the prod
 shepherd's retry) leaves its comments in the review's
 [in-progress snapshot](#persistence-across-decisions). A new
 invocation of the same review, with the same staged content, skips
@@ -200,13 +200,12 @@ once, without waiting for HTTP connections to close. Neither
 `bin/meerkat-beam` nor `bin/meerkat-shepherd` restarts or retries
 it; both pass 143 to the caller.
 
-In dev mode (`MIX_ENV=dev`), the `bin/meerkat-beam` shepherd
-restarts the BEAM only for exit 75, preferring the port the exited
-BEAM bound (see [dev-mode.md](dev-mode.md) for when it falls back to
-another port); it propagates every other exit, including crash exit
-2. After a failed compile or asset build, it waits for a source change
-before retrying; if its checkout or `$MEERKAT_PWD` is deleted while
-it waits, it exits 2 with a REJECT message. The prod launcher
+The dev launcher (`bin/meerkat-beam`) restarts the BEAM only for exit
+75, preferring the port the exited BEAM bound (see
+[cli.md](cli.md#preferred-port) for when it falls back to another
+port); it propagates every other exit, including crash exit 2. After a
+failed compile or asset build, it exits 2 with a REJECT message. The
+prod launcher
 (`bin/meerkat-shepherd`) retries crash exit 2 once, then exits with
 the code.
 
@@ -339,8 +338,8 @@ Otherwise the server stays up until a later invocation of the same
 review attaches to it. Deleting the review's comments afterwards does
 not end it; only another invocation that attaches and then goes away
 is judged again. The server records the kept judgement in the run dir
-as `kept`, so a BEAM respawned for the review, after an install or a
-dev-mode edit, does not check the dead invocation again. A decision
+as `kept`, so a BEAM respawned for the review, after an install, does
+not check the dead invocation again. A decision
 clicked before the invocation went away is held for the next one, as
 above.
 
