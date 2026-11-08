@@ -414,7 +414,9 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
  *  literal, or just after a `\`, where brackets are text. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		if (node.name === "String" || node.name === "RegExp") return node.from < pos && pos < node.to;
+		if (node.name === "String") return node.from < pos && pos < node.to;
+		// A regex's text starts after its `#"`.
+		if (node.name === "RegExp") return node.from + 1 < pos && pos < node.to;
 		if (node.name === "LineComment") return node.from < pos;
 		if (node.name === "Character") return node.from < pos && pos < node.to;
 	}
@@ -424,19 +426,21 @@ function inText(state: EditorState, pos: number): boolean {
 /** Whether a selection end at `pos` splits a prefix from what it applies
  *  to: a matched collection's opener from the prefix that is part of it,
  *  as one between `#` and `{`, or in or after the namespace of `#:ns{`,
- *  does; the `##` of `##Inf` from its name; or any other node that is no
- *  collection, such as a prefix form (`'`, `^:m`, `#_`, `#'`, `#inst`),
- *  from the child it ends with. The selection's start (`end` false) may
+ *  does; any position inside a symbolic value such as `##Inf` does; or
+ *  any other node that is no collection, such as a prefix form (`'`,
+ *  `^:m`, `#_`, `#'`, `#inst`), from the child it ends with. The selection's start (`end` false) may
  *  sit at that child, but its end may not, as wrapping would leave the
  *  prefix without one; a record literal's child is its map or vector,
  *  which no selection may start at either, as its name needs one. A
- *  `pos` inside a collection, as in a metadata map, splits nothing. */
+ *  `pos` inside a collection, as in a metadata map, splits no prefix
+ *  outside that collection. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.from >= pos) continue;
-		// Inside a collection, no prefix outside it can be split.
+		// Inside a collection, no prefix outside it can be split. One with
+		// no closer holds everything after its opener.
 		if (isColl(node)) {
-			if (pos < node.to) return false;
+			if (pos < node.to || !closerOf(node)) return false;
 			continue;
 		}
 		if (node.name === "SymbolicValue" && pos < node.to) return true;

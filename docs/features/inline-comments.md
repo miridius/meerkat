@@ -196,9 +196,11 @@ changes each list once.
   selection cuts across brackets: when it holds a bracket without its
   partner, as `b) (c` does in `(a b) (c d)`; splits an opener from the
   prefix that is part of it (the `#` of `#{`, the `#?` of `#?(`, the
-  `#:ns` of `#:ns{`, the `#my.Rec` of a record literal); splits a
-  prefix such as `'`, `^:m`, `#_`, `#inst` or the `##` of `##Inf` from
-  its form (`x '` in `x 'a` would become `(x ')a`); or starts in code
+  `#:ns` of `#:ns{`); splits a prefix such as `'`, `^:m`, `#_`,
+  `#inst` or a record literal's `#my.Rec` from its form (`x '` in
+  `x 'a` would become `(x ')a`), or starts at a record literal's map or
+  vector; starts or ends inside a symbolic value
+  such as `##Inf`; or starts in code
   and ends where brackets are text (in a string, regex, comment or
   character literal, or after a `\`). Inside a collection, such as a
   metadata map, a selection splits no prefix outside it. Where brackets

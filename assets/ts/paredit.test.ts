@@ -435,10 +435,11 @@ describe("typeBracket", () => {
 		expect(typeOver("(", "#my.Rec{:a 1}", 7, 13)).toBe("#my.Rec{:a 1}");
 		expect(typeOver("(", "##Inf", 1, 5)).toBe("##Inf");
 		expect(typeOver("(", "##Inf", 2, 5)).toBe("##Inf");
-		// The seeded lines cut this set off from its closer.
+		// A set with no closer.
 		expect(typeOver("(", "#{a b", 0, 1)).toBe("#{a b");
 		expect(typeOver("{", "##Inf", 0, 1)).toBe("##Inf");
 		expect(typeOver("(", "^:m ^:n x", 0, 7)).toBe("^:m ^:n x");
+		expect(typeOver("(", "^{:a 1} x", 0, 7)).toBe("^{:a 1} x");
 		expect(typeOver("(", "#?@(a)", 3, 6)).toBe("#?@(a)");
 	});
 
@@ -450,6 +451,8 @@ describe("typeBracket", () => {
 		expect(typeOver("(", "##Inf x", 0, 5)).toBe("(##Inf) x");
 		expect(typeOver("(", "#my.Rec{:a 1}", 8, 10)).toBe("#my.Rec{(:a) 1}");
 		expect(typeOver("(", "^{:a 1} x", 2, 4)).toBe("^{(:a) 1} x");
+		// A metadata map with no closer holds the rest.
+		expect(typeOver("(", "^{:a 1", 5, 6)).toBe("^{:a (1)");
 		// A `#` that ends a symbol or a character is no prefix.
 		expect(typeOver("(", "x# 1", 2, 4)).toBe("x#( 1)");
 		expect(typeOver("(", "\\# a", 2, 4)).toBe("\\#( a)");
@@ -492,6 +495,11 @@ describe("typeBracket", () => {
 		expect(type("(", '"a|"')).toBeNull();
 		expect(type("(", "; a|")).toBeNull();
 		expect(type("(", "\\|")).toBeNull();
+		expect(type("(", '#"a|"')).toBeNull();
+	});
+
+	test("brackets between a regex's # and its quote are code", () => {
+		expect(type("(", '#|"a"')).toBe('#(|)"a"');
 	});
 
 	test("other text is left to the editor", () => {
