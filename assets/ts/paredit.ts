@@ -8,7 +8,16 @@ import {
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { BRACKETS, CLOSERS, forms, holder, isColl, type SyntaxNode } from "./clojureTree.js";
+import {
+	BRACKETS,
+	closedString,
+	closerOf,
+	forms,
+	holder,
+	holds,
+	isColl,
+	type SyntaxNode,
+} from "./clojureTree.js";
 import { type Entries, type Span, whole } from "./syntaxEdit.js";
 
 /** Structural editing for Clojure, in the style of Cursive's paredit,
@@ -24,15 +33,9 @@ const PREFIXED = new Set(["Set", "AnonymousFunction", "ReaderConditional", "Name
 /** Forms of a prefix and the form it applies to: `^:private foo`,
  *  `#inst "…"`, `#my.Rec{…}`. */
 const PREFIX_CONTAINERS = new Set(["Meta", "TaggedLiteral", "ConstructorCall"]);
-/** Forms whose prefix makes its form something else: `#my.Rec{…}`,
- *  `#"…"`. */
-const NAMED_BY_PREFIX = new Set(["ConstructorCall", "RegExp"]);
-
-/** The closing bracket of `coll`, or null when the text lacks it. */
-function closerOf(coll: SyntaxNode): SyntaxNode | null {
-	const last = coll.lastChild;
-	return last && last.name === CLOSERS[coll.name] ? last : null;
-}
+/** Forms whose prefix takes one kind of form only: `#my.Rec{…}`, `#"…"`,
+ *  `#'foo`. */
+const ONE_KIND_PREFIXED = new Set(["ConstructorCall", "RegExp", "Var"]);
 
 /** `node` with the prefixes that apply to it: each form wrapping it that
  *  ends with it, such as a quote, a tag or metadata, but not the
@@ -57,13 +60,6 @@ function inPrefix(coll: SyntaxNode): boolean {
 function openStart(coll: SyntaxNode): number {
 	const parent = holder(coll);
 	return parent && PREFIXED.has(parent.name) ? parent.from : coll.from;
-}
-
-/** Whether `pos`, after `coll`'s opener starts, is before its closer. A
- *  collection with no closer holds everything after its opener. */
-function holds(coll: SyntaxNode, pos: number): boolean {
-	const closer = closerOf(coll);
-	return !closer || pos <= closer.from;
 }
 
 /** The innermost collection whose brackets hold `pos`, or null at the
@@ -418,12 +414,12 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 	return { ...spec, scrollIntoView: true, userEvent: dir < 0 ? "delete.backward" : "delete.forward" };
 }
 
-/** Whether `pos` sits in a string, a regex, a comment or a character
- *  literal, or just after a `\`, where brackets are text. */
+/** Whether `pos` sits in a string (a regex's included, after its `#`), a
+ *  comment or a character literal, or just after a `\`, where brackets
+ *  are text. A string with no closing quote runs to the end. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		// A regex's text is its string, after its `#`.
-		if (node.name === "String") return node.from < pos && pos < node.to;
+		if (node.name === "String") return node.from < pos && (pos < node.to || !closedString(node));
 		if (node.name === "LineComment") return node.from < pos;
 		if (node.name === "Character") return node.from < pos && pos < node.to;
 	}
@@ -438,8 +434,8 @@ function inText(state: EditorState, pos: number): boolean {
  *  `^:m`, `#_`, `#'`, `#inst`), from the child it ends with. The selection's start (`end` false) may
  *  sit at that child, but its end may not, as wrapping would leave the
  *  prefix without one. No selection may start at the child of a form in
- *  `NAMED_BY_PREFIX` either: a record literal's map or vector, as its
- *  name needs one, or a regex's string, as its `#` would open it. A
+ *  `ONE_KIND_PREFIXED` either: a record literal's map or vector, a
+ *  regex's string or a var's symbol, as its prefix takes no other. A
  *  `pos` inside a collection, as in a metadata map, splits no prefix
  *  outside that collection. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
@@ -455,7 +451,7 @@ function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 		if (coll?.firstChild && pos < coll.firstChild.to) return true;
 		const form = node.lastChild;
 		if (!node.parent || !form || form.to !== node.to) continue;
-		if (end || NAMED_BY_PREFIX.has(node.name) ? pos <= form.from : pos < form.from) return true;
+		if (end || ONE_KIND_PREFIXED.has(node.name) ?pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }

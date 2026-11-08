@@ -1,5 +1,5 @@
 import { type IndentContext, indentService, syntaxTree } from "@codemirror/language";
-import { CLOSERS, forms, holder, isColl, type SyntaxNode } from "./clojureTree.js";
+import { closedString, forms, holder, holds, isColl, type SyntaxNode } from "./clojureTree.js";
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
@@ -133,13 +133,6 @@ function elements(coll: SyntaxNode): SyntaxNode[] {
 	return forms(coll).filter((node) => node.name !== "Discard");
 }
 
-/** Whether `node`, a String, has its closing quote: the quote it opens
- *  with is its first child. */
-function closedString(node: SyntaxNode): boolean {
-	const last = node.lastChild;
-	return last !== null && last.name === '"' && last.from > node.from;
-}
-
 /** The collection that `pos` sits inside, "string" inside a string, or
  *  null at the top level. An unclosed collection or string, such as one
  *  the editor's lines cut off from its closer, still holds every position
@@ -148,9 +141,7 @@ function enclosing(tree: ReturnType<typeof syntaxTree>, pos: number): SyntaxNode
 	for (let node: SyntaxNode | null = tree.resolveInner(pos, -1); node; node = node.parent) {
 		if (STRINGS.has(node.name) && node.from < pos && pos < node.to) return "string";
 		if (node.name === "String" && node.from < pos && !closedString(node)) return "string";
-		if (isColl(node) && node.from < pos && (pos < node.to || node.lastChild?.name !== CLOSERS[node.name])) {
-			return node;
-		}
+		if (isColl(node) && node.from < pos && holds(node, pos)) return node;
 	}
 	return null;
 }

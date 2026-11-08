@@ -504,7 +504,20 @@ describe("typeBracket", () => {
 		expect(type("(", '#"a"|')).toBe('#"a"(|)');
 		// No selection may split a regex's `#` from its string.
 		expect(typeOver("(", '#"a"', 1, 4)).toBe('#"a"');
+		expect(typeOver("(", '#"a" b', 1, 6)).toBe('#"a" b');
 		expect(typeOver("(", 'a #"b"', 0, 3)).toBe('a #"b"');
+		expect(typeOver("(", 'x #"a" y', 2, 6)).toBe('x (#"a") y');
+	});
+
+	test("an opener does nothing to a selection starting at a var's symbol", () => {
+		expect(typeOver("(", "#'foo", 2, 5)).toBe("#'foo");
+		expect(typeOver("(", "x #'foo", 0, 7)).toBe("(x #'foo)");
+	});
+
+	test("the end of a string with no closing quote is text", () => {
+		expect(type("(", '(a) "abc|')).toBeNull();
+		expect(typeOver("(", '(a) "abc', 0, 8)).toBe('(a) "abc');
+		expect(type("(", '#"a|')).toBeNull();
 	});
 
 	test("other text is left to the editor", () => {
