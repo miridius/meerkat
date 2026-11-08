@@ -200,6 +200,13 @@ once, without waiting for HTTP connections to close. Neither
 `bin/meerkat-beam` nor `bin/meerkat-shepherd` restarts or retries
 it; both pass 143 to the caller.
 
+A SIGTERM that reaches the BEAM while it still boots, before
+`Meerkat.CLI.main/1` starts, meets OTP's own handling, which stops
+the BEAM with exit 0. The launchers therefore read only `main/1`
+returning 0 as approval: for a BEAM that exits 0 any other way they
+print "meerkat: the review BEAM exited 0 before meerkat decided (a SIGTERM while it booted?) — defaulting to REJECT (commit aborted)."
+and exit **143**.
+
 The dev launcher (`bin/meerkat-beam`) restarts the BEAM only for exit
 75, preferring the port the exited BEAM bound (see
 [cli.md](cli.md#preferred-port) for when it falls back to another

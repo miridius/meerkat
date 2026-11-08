@@ -37,9 +37,12 @@ resolve_release() {
   fi
 }
 
+# shellcheck source=bin/meerkat-attach
+source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
+
 # `--answers` reads the answers from stdin, and the loop below starts
 # the BEAM as a background job, which bash gives /dev/null as stdin.
-# So it runs once, in the foreground, with no retry to re-read a
+# So it runs once, with the caller's stdin, with no retry to re-read a
 # stdin already consumed.
 for arg in "$@"; do
   if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
@@ -48,13 +51,9 @@ for arg in "$@"; do
       exit 64
     fi
     resolve_release
-    exec "$RELEASE_DIR/bin/meerkat" \
-      eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@"
+    meerkat_run_once "$RELEASE_DIR/bin/meerkat" eval "$MEERKAT_CLI_HALT" "$@"
   fi
 done
-
-# shellcheck source=bin/meerkat-attach
-source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
 
 # Run as the caller, which re-runs this script detached, with
 # MEERKAT_SERVE_DIR set, to serve the review.
@@ -120,11 +119,10 @@ while true; do
   resolve_release
   meerkat_restore_run_files
 
-  "$RELEASE_DIR/bin/meerkat" \
-    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" "$@" &
+  "$RELEASE_DIR/bin/meerkat" eval "$MEERKAT_CLI_HALT" "$@" &
   beam_pid=$!
   wait "$beam_pid"
-  exit_code=$?
+  exit_code=$(meerkat_decision_code $?)
   beam_pid=""
   # The port file records "<port> <pid>" for the port this BEAM bound.
   # Carry it forward after every exit (version-upgrade restart or the

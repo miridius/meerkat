@@ -205,11 +205,17 @@ another.
   answers file. Nothing was stored, and the input itself was fine.
 - `75` — restart sentinel for a [new version](installation.md#restart-onto-a-new-version).
   Internal to the launchers' shepherd loops — never reaches the git hook.
+- `76` — what the BEAM halts with when `Meerkat.CLI.main/1` returns
+  `0`. Internal to both launchers, which turn it into `0`.
 - `143` — a SIGTERM reached the review BEAM after
   `Meerkat.CLI.main/1` started. It defaults to REJECT (commit
   aborted): the BEAM prints a message to stderr, flushes the log
   file, and halts at once. Both launchers pass it straight through,
-  without a restart or retry. A launcher that receives SIGTERM,
+  without a restart or retry. A SIGTERM that reaches the BEAM while
+  it still boots, before `Meerkat.CLI.main/1` starts, makes it exit
+  0 without a decision; the launcher prints a REJECT message and
+  exits 143 for that too, since only `main/1` returning 0 approves.
+  The same holds under `--answers`. A launcher that receives SIGTERM,
   SIGINT or SIGHUP also exits 143, without a message, after
   SIGKILLing its BEAM. The invocation waiting on the review is
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has

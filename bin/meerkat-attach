@@ -6,7 +6,8 @@
 # left running, relays its stderr, and exits with its decision. The
 # backend sits outside the caller's process tree, so killing the caller
 # leaves the review running for the next invocation to reattach to.
-# `meerkat_restore_run_files`, at the end, is the shepherd's.
+# The definitions at the end, from `MEERKAT_CLI_HALT` on, are the
+# shepherds'.
 #
 # Each run has its own <runs>/<key>.<uuid> directory; <runs>/<key> is
 # a symlink naming the current run by its relative sibling name,
@@ -583,7 +584,36 @@ _ma_attach() {
   esac
 }
 
-# The serve half: a shepherd calls this before each BEAM it starts. It
+# The serve half. A BEAM SIGTERMed while it boots, before
+# `Meerkat.CLI.main/1` installs its own handler, meets OTP's, which exits
+# 0. So a shepherd's BEAM halts with 76 when `main/1` returns 0, and
+# `meerkat_decision_code` reads only 76 as approval, and a bare exit 0 as
+# REJECT.
+MEERKAT_CLI_HALT='System.halt(case Meerkat.CLI.main(System.argv()) do 0 -> 76; code -> code end)'
+
+meerkat_decision_code() {
+  case "$1" in
+    76) echo 0 ;;
+    0)
+      echo "meerkat: the review BEAM exited 0 before meerkat decided (a SIGTERM while it booted?) — defaulting to REJECT (commit aborted)." >&2
+      echo 143
+      ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Runs the BEAM command given once, with the caller's stdin, and exits
+# with its decision. It runs as a background job so a TERM, INT or HUP
+# to the launcher can SIGKILL it rather than orphan it.
+meerkat_run_once() {
+  trap 'kill -9 $(jobs -p) 2>/dev/null; wait; exit 143' TERM INT HUP
+  "$@" <&0 &
+  local code=0
+  wait $! || code=$?
+  exit "$(meerkat_decision_code "$code")"
+}
+
+# A shepherd calls this before each BEAM it starts. It
 # rewrites a missing `token` or `pid`, so losing one cannot leave callers
 # unable to reattach, or taking a live backend for dead.
 meerkat_restore_run_files() {
