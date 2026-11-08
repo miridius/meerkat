@@ -130,7 +130,9 @@ meerkat's own steps for a bug report or feature request:
 13. `bunx playwright install --only-shell chromium`
 14. `bun run test:e2e`
 
-`check.sh` records the checked contents, ignoring Markdown, through `scripts/checked-trees.sh` when every step passes and the worktree held exactly those contents, with no untracked file, before and after the steps. `check.sh --head` checks HEAD's contents without the Markdown-only skip.
+`check.sh` skips steps 12-14 when no staged path is an e2e input. `scripts/e2e-inputs.ts` holds an allowlist of paths nothing in the e2e run reads or executes, such as `test/` other than `test/support/test.gitconfig`, `scripts/` other than `check.sh`, `.github/` other than `toolchain.env`, and `.claude/`; every other path, new ones included, is an e2e input. A test fails if a repo path that `playwright.config.ts` or `tests/e2e/` names lands on the allowlist.
+
+`check.sh` records the checked contents, ignoring Markdown, through `scripts/checked-trees.sh` when every step passes and the worktree held exactly those contents, with no untracked file, before and after the steps. When steps 12-14 ran, it also records the contents' e2e inputs through `scripts/checked-trees.sh --e2e`. When it skipped them, it records the contents as checked only if their e2e inputs were recorded that way, as they are when the parent commit passed every step; otherwise the pre-push check runs every step on them. `check.sh --head` checks HEAD's contents without either skip.
 
 Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, including Svelte templates and styles. Biome warnings and errors fail the check; infos are printed only.
 

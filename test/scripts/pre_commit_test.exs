@@ -28,6 +28,13 @@ defmodule Meerkat.PreCommitHookTest do
     "bun run test:e2e"
   ]
 
+  # The steps check.sh skips for a commit that changes no e2e input.
+  @e2e_steps [
+    "bun run build",
+    "bunx playwright install --only-shell chromium",
+    "bun run test:e2e"
+  ]
+
   # What scripts/mutate.sh staged runs after the gates.
   @mutation [
     "mix deps.get",
@@ -75,7 +82,8 @@ defmodule Meerkat.PreCommitHookTest do
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh checked-trees.sh gate-lock.sh no-main-commits.sh mutate.sh mutate-paths.ts) do
+          ~w(check.sh checked-trees.sh e2e-inputs.ts gate-lock.sh no-main-commits.sh mutate.sh
+             mutate-paths.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -116,6 +124,10 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
+    # The real bun judges which paths are e2e inputs.
+    case "$(basename "$0") ${1:-}" in
+    "bun "*e2e-inputs.ts) exec '#{System.find_executable("bun")}' "$@" ;;
+    esac
     # With STUB_PROBE_SLOTS set, log each tool that runs while it, or a
     # process between it and the gate, holds a gate slot too: that process
     # would keep the slot if it outlived the gate.
@@ -242,6 +254,7 @@ defmodule Meerkat.PreCommitHookTest do
     assert {_, code} = commit(ctx, ["-m", "change code"], [{"STUB_FAIL", "bun run test:e2e"}])
     assert code != 0
     refute checked?(ctx, ":")
+    refute e2e_checked?(ctx, ":")
   end
 
   test "a commit whose worktree changes while the checks run is not recorded", ctx do
@@ -335,6 +348,72 @@ defmodule Meerkat.PreCommitHookTest do
     git(ctx.work, ["mv", "code.txt", "code.md"])
 
     assert {_, 0} = commit(ctx, ["-m", "rename"])
+    assert gates_run(ctx) == @gates
+  end
+
+  describe "a commit changing no e2e input" do
+    test "skips the build and e2e steps", ctx do
+      stage_tooling(ctx)
+
+      assert {out, 0} = commit(ctx, ["-m", "tooling"])
+      assert out =~ "no e2e input changed; skipping the build and e2e steps"
+      assert gates_run(ctx) == @gates -- @e2e_steps
+    end
+
+    test "on a parent that passed every step is recorded as checked", ctx do
+      stage(ctx.work, "code.txt", "staged\n")
+      assert {_, 0} = commit(ctx, ["-m", "change code"])
+      stage_tooling(ctx)
+
+      assert {_, 0} = commit(ctx, ["-m", "tooling"])
+      assert gates_run(ctx) == @gates ++ (@gates -- @e2e_steps)
+      assert checked?(ctx, "HEAD")
+    end
+
+    # Its contents' e2e inputs never passed the e2e steps, so the pre-push
+    # check must still run them.
+    test "on a parent never checked is not recorded as checked", ctx do
+      stage_tooling(ctx)
+
+      assert {out, 0} = commit(ctx, ["-m", "tooling"])
+      assert out =~ "the pre-push check will run every check on them"
+      refute checked?(ctx, "HEAD")
+      refute e2e_checked?(ctx, "HEAD")
+    end
+
+    test "check.sh --head on it runs every step", ctx do
+      stage_tooling(ctx)
+      no_hooks(ctx.work, ["commit", "-qm", "a rebase skips the pre-commit hook"])
+
+      assert {_, 0} = check_head(ctx)
+      assert gates_run(ctx) == @gates
+      assert checked?(ctx, "HEAD")
+    end
+  end
+
+  for {name, path} <- [
+        {"a new file outside the allowlist", "new/thing.txt"},
+        {"scripts/check.sh", "scripts/check.sh"},
+        {"the e2e suite", "tests/e2e/lib/setup.ts"}
+      ] do
+    test "a commit changing #{name} runs the e2e steps and records them", ctx do
+      file = Path.join(ctx.work, unquote(path))
+      old = if File.exists?(file), do: File.read!(file), else: ""
+      stage(ctx.work, unquote(path), old <> "# changed\n")
+
+      assert {_, 0} = commit(ctx, ["-m", "change"])
+      assert gates_run(ctx) == @gates
+      assert e2e_checked?(ctx, "HEAD")
+      assert checked?(ctx, "HEAD")
+    end
+  end
+
+  # --no-renames lists the old path too, which is an e2e input.
+  test "moving an e2e input under test/ runs the e2e steps", ctx do
+    File.mkdir_p!(Path.join(ctx.work, "test"))
+    git(ctx.work, ["mv", "code.txt", "test/code.txt"])
+
+    assert {_, 0} = commit(ctx, ["-m", "move"])
     assert gates_run(ctx) == @gates
   end
 
@@ -843,6 +922,15 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
+  # Stages files only under paths no e2e step uses.
+  defp stage_tooling(ctx) do
+    stage(ctx.work, "test/scripts/tool_test.exs", "test\n")
+    stage(ctx.work, "scripts/tool.sh", "tool\n")
+    stage(ctx.work, ".github/workflows/ci.yml", "ci\n")
+    stage(ctx.work, ".lefthook/pre-push/pre-push.sh", "hook\n")
+    stage(ctx.work, ".claude/settings.json", "{}\n")
+  end
+
   defp check_head(ctx, env \\ []) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
@@ -853,25 +941,16 @@ defmodule Meerkat.PreCommitHookTest do
     )
   end
 
+  defp checked?(ctx, rev), do: recorded?(ctx, [], rev)
+  defp mutated?(ctx, rev), do: recorded?(ctx, ["--mutated"], rev)
+  defp e2e_checked?(ctx, rev), do: recorded?(ctx, ["--e2e"], rev)
+
   # `:` names the index's tree, the contents a commit would get.
-  defp checked?(ctx, rev) do
+  defp recorded?(ctx, store, rev) do
     tree = if rev == ":", do: git(ctx.work, ["write-tree"]), else: rev
 
     {_, code} =
-      System.cmd("bash", ["scripts/checked-trees.sh", "has", tree],
-        cd: ctx.work,
-        env: hook_env()
-      )
-
-    code == 0
-  end
-
-  # `:` names the index's tree, as for checked?/2.
-  defp mutated?(ctx, rev) do
-    tree = if rev == ":", do: git(ctx.work, ["write-tree"]), else: rev
-
-    {_, code} =
-      System.cmd("bash", ["scripts/checked-trees.sh", "--mutated", "has", tree],
+      System.cmd("bash", ["scripts/checked-trees.sh" | store] ++ ["has", tree],
         cd: ctx.work,
         env: hook_env()
       )
