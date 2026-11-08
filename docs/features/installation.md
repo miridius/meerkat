@@ -80,6 +80,5 @@ either way because:
 - `MEERKAT_CONFIG_DIR` — meerkat's config dir, which holds
   `settings.json` (default `meerkat` under `XDG_CONFIG_HOME` when that
   is absolute, else `~/.config/meerkat`). Taken only when it is an
-  absolute path. Intended for tests, to keep
-  a run's settings apart without changing the `XDG_CONFIG_HOME` that
-  git reads.
+  absolute path. Intended for tests, to keep a run's settings apart
+  without changing the `XDG_CONFIG_HOME` that git reads.

@@ -41,16 +41,11 @@ defmodule Meerkat.SettingsTest do
        %{dir: dir} do
     Application.delete_env(:meerkat, :settings_path)
 
-    for var <- ["MEERKAT_CONFIG_DIR", "XDG_CONFIG_HOME"] do
-      prev = System.get_env(var)
-      on_exit(fn -> if prev, do: System.put_env(var, prev), else: System.delete_env(var) end)
-    end
-
-    System.delete_env("MEERKAT_CONFIG_DIR")
-    System.put_env("XDG_CONFIG_HOME", dir)
+    Meerkat.TestHelpers.put_env("MEERKAT_CONFIG_DIR", nil)
+    Meerkat.TestHelpers.put_env("XDG_CONFIG_HOME", dir)
     assert Settings.path() == Path.join([dir, "meerkat", "settings.json"])
 
-    System.put_env("MEERKAT_CONFIG_DIR", Path.join(dir, "mk"))
+    Meerkat.TestHelpers.put_env("MEERKAT_CONFIG_DIR", Path.join(dir, "mk"))
     assert Settings.path() == Path.join([dir, "mk", "settings.json"])
   end
 
