@@ -465,8 +465,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     @three_files ["a.rs", "b.rs", "c.rs"]
                  |> Enum.map(&%{@plain_file | file_name: &1, effective_oid: nil})
 
-    # The DiffViewer indices named in `diffs`: each re-sent file section
-    # names its DiffViewer.
+    # The indices of the DiffViewers re-sent in `diffs`.
     defp viewers(diffs) do
       ~r/DiffViewer-(\d+)/
       |> Regex.scan(diffs, capture: :all_but_first)
@@ -513,7 +512,61 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
       open_files_panel(view)
 
       diffs = sent_diffs(view, fn -> render_click(view, "files.close", %{}) end)
+      # The toolbar's change was captured.
+      assert diffs != "[]"
       assert viewers(diffs) == []
+    end
+
+    test "a line comment on one file re-sends that file's only", %{conn: conn} do
+      state = %ReviewState{files: @three_files}
+      view = mount_unbound(conn, state)
+
+      comment = %{
+        id: "c1",
+        file_index: 0,
+        start_line: 1,
+        end_line: 1,
+        side: "new",
+        body: "a line comment",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false,
+        created_at: Meerkat.Comment.now()
+      }
+
+      diffs =
+        sent_diffs(view, fn ->
+          send(view.pid, {:state_changed, %{state | comments: [comment]}})
+        end)
+
+      assert viewers(diffs) == ["0"]
+    end
+
+    test "opening a line form re-sends only its file's, with that file's code", %{conn: conn} do
+      view = mount_unbound(conn, %ReviewState{files: @three_files})
+      line = %{"file_index" => "2", "start_line" => "1", "end_line" => "1", "side" => "new"}
+
+      diffs = sent_diffs(view, fn -> render_hook(view, "comment_form.show_at_line", line) end)
+      assert viewers(diffs) == ["2"]
+
+      html = render(view)
+      assert %{"inline_forms" => [%{"props" => props}]} = svelte_props(html, "DiffViewer-2")
+      assert %{"fileName" => "c.rs", "initialCode" => "fn a2() {}"} = props
+      assert %{"inline_forms" => []} = svelte_props(html, "DiffViewer-0")
+    end
+
+    test "rendering one markdown file re-sends no other's rendered view", %{conn: conn} do
+      bee = %{@md_file | file_name: "BEE.md", new_content: "# Bee\n\nBee paragraph.\n"}
+      view = mount_unbound(conn, %ReviewState{files: [@md_file, bee]})
+      render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+
+      diffs =
+        sent_diffs(view, fn ->
+          render_click(view, "file.toggle_rendered", %{"file_name" => "BEE.md"})
+        end)
+
+      assert diffs =~ "Bee paragraph"
+      refute diffs =~ "New paragraph"
     end
 
     test "unapproving one file re-sends that file's only", %{conn: conn} do
@@ -538,6 +591,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
           send(view.pid, {:state_changed, %{state | approved_file_names: MapSet.new()}})
         end)
 
+      # The section's change was captured.
+      assert viewers(diffs) == ["1"]
       # A re-sent row re-sends its checkbox's ` checked`, and unapproving
       # ticks no other checkbox.
       refute diffs =~ "checked"

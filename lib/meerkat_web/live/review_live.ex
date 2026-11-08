@@ -1140,11 +1140,12 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def render(assigns) do
-    # Values derived from other assigns are computed in the attrs below,
-    # where change tracking recomputes them only when what they read
-    # changes. Assigned here, they would count as changed on every
-    # render, since render/1's assigns are never stored, and every file
-    # section reading one would be re-sent on every event.
+    # Values derived from other assigns are computed in the attrs below.
+    # Each is re-evaluated whenever the component it feeds re-renders,
+    # but counts as changed only when an assign it reads changes.
+    # Assigned here, they would count as changed on every render, since
+    # render/1's assigns are never stored, and every file section reading
+    # one would be re-sent on every event.
 
     ~H"""
     <%!-- The page paints before LiveView joins, and a click made then is
@@ -1546,10 +1547,10 @@ defmodule MeerkatWeb.ReviewLive do
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
 
-  # Each file section reads its per-file values from its entry (see
-  # `file_entries/6`), never from a review-wide assign: change tracking
-  # compares each entry with the one rendered before under the same
-  # key, so an event re-sends only the sections whose entry changed.
+  # Each file section reads its per-file values only from its entry
+  # (see `file_entries/7`), never from a review-wide map of them: change
+  # tracking compares each entry with the one rendered before under the
+  # same key, so an event re-sends only the sections whose entry changed.
   defp file_list(assigns) do
     ~H"""
     <section class="file-list">
@@ -1561,6 +1562,7 @@ defmodule MeerkatWeb.ReviewLive do
               @expanded_approved,
               @collapsed_unapproved,
               @rendered_files,
+              @rendered_html,
               @open_forms,
               @review_id
             )
@@ -1670,7 +1672,7 @@ defmodule MeerkatWeb.ReviewLive do
         />
         <.markdown_preview
           :if={not entry.collapsed? and entry.rendered?}
-          sides={Map.get(@rendered_html, file.file_name, %{old_html: nil, new_html: nil})}
+          sides={entry.rendered_sides}
           read_errors={file.read_errors}
         />
         <ul :if={not entry.collapsed?} class="file-comments">
@@ -1762,10 +1764,10 @@ defmodule MeerkatWeb.ReviewLive do
     not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
   end
 
-  # The extensions DiffViewer.svelte's `isPlantUml` previews.
-  # Drives the inline PlantUML preview: the diff preview when true, an
-  # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
-  # file reads it, so a review without one skips the probe's JVM start.
+  # Whether DiffViewer previews PlantUML (true) or shows an "install
+  # plantuml" hint (false). The extensions are those DiffViewer.svelte's
+  # `isPlantUml` previews; a review without such a file skips the
+  # probe's JVM start.
   defp plantuml_available?(files) do
     Enum.any?(files, &(String.downcase(Path.extname(&1.file_name)) in [".puml", ".plantuml"])) and
       Meerkat.PlantUML.available?()
@@ -1786,8 +1788,8 @@ defmodule MeerkatWeb.ReviewLive do
     # narrowing. The tree filters by `filter_input` (substring on
     # base_name); the title count and the main `.file-list` use
     # `@visible_indices` (see `visible_indices/3`). Each tree row holds
-    # whether the main list shows its file, so, as in `file_list/1`, an
-    # event re-sends only the rows it changes.
+    # whether the main list shows its file, so, as in `file_list/1`, a
+    # change to which files the list shows re-sends only their rows.
     rows =
       for {file, idx} <- filter_sidebar_entries(assigns.state.files, assigns.filter_input),
           do: {file, idx, MapSet.member?(assigns.visible_indices, idx)}
@@ -2715,7 +2717,15 @@ defmodule MeerkatWeb.ReviewLive do
 
   # One entry per file in the main list, holding the per-file values its
   # section renders.
-  defp file_entries(state, expanded_approved, collapsed_unapproved, rendered, open_forms, rid) do
+  defp file_entries(
+         state,
+         expanded_approved,
+         collapsed_unapproved,
+         rendered,
+         html,
+         open_forms,
+         rid
+       ) do
     inline_comments = group_inline_by_file(state.comments)
     file_comments = group_file_by_file_with_html(state.file_comments)
 
@@ -2730,6 +2740,7 @@ defmodule MeerkatWeb.ReviewLive do
         approved?: MapSet.member?(state.approved_file_names, name),
         collapsed?: file_section_collapsed?(state, expanded_approved, collapsed_unapproved, name),
         rendered?: MapSet.member?(rendered, name),
+        rendered_sides: Map.get(html, name, %{old_html: nil, new_html: nil}),
         comments: Map.get(inline_comments, idx, []),
         file_comments: Map.get(file_comments, idx, []),
         inline_forms: inline_forms_for_diff(open_forms, idx, file, rid),

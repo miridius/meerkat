@@ -14,7 +14,10 @@ defmodule Meerkat.FileTree do
 
   @type tree_node :: dir() | file()
 
-  @typedoc "A tuple of a file and whatever else its row shows, such as the file's index."
+  @typedoc """
+  A tuple whose first element is a file (a map with `:file_name`),
+  followed by whatever its row needs, such as the file's index.
+  """
   @type entry :: tuple()
 
   @doc "The tree's top-level rows for `entries`."
