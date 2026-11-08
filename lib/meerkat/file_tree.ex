@@ -14,15 +14,14 @@ defmodule Meerkat.FileTree do
 
   @type tree_node :: dir() | file()
 
-  @typedoc "A file and its index in the review's file list."
-  @type entry ::
-          {%{required(:file_name) => String.t(), optional(atom()) => term()}, non_neg_integer()}
+  @typedoc "A tuple of a file and whatever else its row shows, such as the file's index."
+  @type entry :: tuple()
 
   @doc "The tree's top-level rows for `entries`."
   @spec build([entry()]) :: [tree_node()]
   def build(entries) do
     entries
-    |> Enum.map(fn {file, _idx} = entry -> {String.split(file.file_name, "/"), entry} end)
+    |> Enum.map(&{String.split(elem(&1, 0).file_name, "/"), &1})
     |> rows("")
   end
 

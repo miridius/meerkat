@@ -332,6 +332,18 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert ReviewServer.get_state(rid).file_overrides == %{"src/widget.rs" => :show}
   end
 
+  test "the bulk button hides the matched files only while the list shows them all", %{
+    conn: conn
+  } do
+    {view, _rid} = mount_bound(conn, %ReviewState{files: [@plain_file, @md_file]}, state_repo())
+    open_files_panel(view)
+    bulk = "#file-filter .file-filter-header button.ghost-btn"
+    assert has_element?(view, bulk, "Hide matched")
+
+    render_hook(view, "filter.toggle_file", %{"file_name" => "README.md"})
+    assert has_element?(view, bulk, "Show matched")
+  end
+
   test "hide *.md hides the markdown file until its chip is clicked", %{conn: conn} do
     state = %ReviewState{
       files: [added("NOTES.md", "# Notes\n"), added("src/main.rs", "fn main() {}\n")]

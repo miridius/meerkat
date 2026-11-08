@@ -668,6 +668,8 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
     html = view |> element("#file-0 button", "+ Add file comment") |> render_click()
     assert %{"submitLabel" => "Add File Comment"} = svelte_props(html, "CommentForm-file-0")
+    # The open form takes the button's place.
+    refute has_element?(view, "#file-0 button", "+ Add file comment")
 
     submit_comment(view, "file:0", "file-level concern", "question")
     assert has_element?(view, body, ~r/^\s*file-level concern\s*$/)
