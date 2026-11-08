@@ -10,7 +10,7 @@
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
   import { cheatSheet } from "../ts/editorKeys";
   import { languageFor } from "../ts/languageFor";
-  import { onMac } from "../ts/sendFeedbackShortcut";
+  import { isMacPlatform } from "../ts/sendFeedbackShortcut";
   import type { EditorView } from "@codemirror/view";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
@@ -189,8 +189,9 @@
   });
 
   // The suggestion editor's keys cheat sheet, on macOS only, where the
-  // keys are bound.
-  const mac = onMac();
+  // keys are bound. It reads the platform as CodeMirror does to bind
+  // them.
+  const mac = isMacPlatform(navigator.platform);
   let keysOpen = $state(false);
   let keysHost: HTMLDivElement | null = $state(null);
   const keyRows = $derived(cheatSheet(language));

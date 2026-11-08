@@ -24,7 +24,6 @@ function newLine(fileSection: Locator, n: number): Locator {
 async function onPlatform(page: Page, platform: string): Promise<void> {
 	await page.addInitScript((p) => {
 		Object.defineProperty(Navigator.prototype, "platform", { get: () => p });
-		Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => undefined });
 	}, platform);
 }
 

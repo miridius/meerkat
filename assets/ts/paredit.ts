@@ -342,6 +342,14 @@ function bracketAt(state: EditorState, from: number): { node: SyntaxNode; matche
 	return { node, matched: node.name in PAIRS ? closer !== null : closer?.from === node.from };
 }
 
+/** The matched collection a form with a prefix in its opener (`#{`, `#?@(`,
+ *  `#:a{`) opens, or null when it is not matched. */
+function prefixedColl(node: SyntaxNode): SyntaxNode | null {
+	const last = node.lastChild;
+	const coll = last?.name === "Deref" ? last.lastChild : last;
+	return coll && isColl(coll) && closerOf(coll) ? coll : null;
+}
+
 /** The matched collection whose prefix holds the character at `at`, as
  *  `#` does in `#{`: the `#`, `#?` or `#?@` before its opener, or the
  *  `#:` or `#::` of a namespaced map, whose namespace stays plain text. */
@@ -349,9 +357,8 @@ function prefixOf(state: EditorState, at: number): SyntaxNode | null {
 	if (at < 0 || at >= state.doc.length) return null;
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(at, 1); node; node = node.parent) {
 		if (!PREFIXED.has(node.name)) continue;
-		const last = node.lastChild;
-		const coll = last?.name === "Deref" ? last.lastChild : last;
-		if (!coll || !isColl(coll) || !closerOf(coll)) return null;
+		const coll = prefixedColl(node);
+		if (!coll) return null;
 		if (node.name !== "NamespacedMap") return at < coll.from ? coll : null;
 		const autoResolved = state.doc.sliceString(node.from, node.from + 3) === "#::";
 		return at < node.from + (autoResolved ? 3 : 2) ? coll : null;
@@ -414,13 +421,26 @@ function inText(state: EditorState, pos: number): boolean {
 	return state.doc.sliceString(pos - 1, pos) === "\\";
 }
 
+/** Whether `pos` splits a matched collection's opener from its prefix, as
+ *  one between `#` and `{`, or in or after the namespace of `#:ns{`, does. */
+function splitsOpener(state: EditorState, pos: number): boolean {
+	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
+		const coll = PREFIXED.has(node.name) ? prefixedColl(node) : null;
+		if (coll?.firstChild && node.from < pos && pos < coll.firstChild.to) return true;
+	}
+	return false;
+}
+
 /** Whether `range` cuts across brackets: it holds a bracket whose partner
- *  is outside it or missing, or one of its ends splits an opener's
- *  prefix from its bracket, as one between `#` and `{` does. */
+ *  is outside it or missing, one of its ends `splitsOpener`, it ends
+ *  where `inText` says brackets are text, or it starts just after a `#`,
+ *  which the opener would join into another reader form, as `#(` from
+ *  `#_`. */
 function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 	if (range.empty) return false;
 	const { from, to } = range;
-	if ([from, to].some((end) => prefixOf(state, end - 1) !== null)) return true;
+	if (splitsOpener(state, from) || splitsOpener(state, to) || inText(state, to)) return true;
+	if (state.doc.sliceString(from - 1, from) === "#") return true;
 	let cut = false;
 	syntaxTree(state).iterate({
 		from,
@@ -438,28 +458,35 @@ function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 
 /** Typing `text`: an opener inserts its closer too, around a selection if
  *  there is one, and leaves a selection that `cutsAcross` brackets as it
- *  is; a closer before the same matched closer steps over it. Null, so
- *  the editor types `text` itself, for anything else and for brackets
- *  where `inText` says they are text. */
+ *  is; a closer before the same matched closer steps over it. Where
+ *  `inText` says brackets are text, an opener is typed as text. Null, so
+ *  the editor types `text` itself, for anything else, for an opener where
+ *  every range is in text, and for a closer where any range is. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
-	if (ranges.some((r) => inText(state, r.from))) return null;
+	const textAt = (r: SelectionRange) => inText(state, r.from);
 	if (text in PAIRS) {
+		if (ranges.every(textAt)) return null;
 		return {
-			...state.changeByRange((range) =>
-				cutsAcross(state, range)
-					? { range }
-					: {
-							changes: [
-								{ from: range.from, insert: text },
-								{ from: range.to, insert: PAIRS[text] },
-							],
-							range: range.empty
-								? EditorSelection.cursor(range.from + 1)
-								: EditorSelection.range(range.from + 1, range.to + 1),
-						},
-			),
+			...state.changeByRange((range) => {
+				if (textAt(range)) {
+					return {
+						changes: { from: range.from, to: range.to, insert: text },
+						range: EditorSelection.cursor(range.from + 1),
+					};
+				}
+				if (cutsAcross(state, range)) return { range };
+				return {
+					changes: [
+						{ from: range.from, insert: text },
+						{ from: range.to, insert: PAIRS[text] },
+					],
+					range: range.empty
+						? EditorSelection.cursor(range.from + 1)
+						: EditorSelection.range(range.from + 1, range.to + 1),
+				};
+			}),
 			scrollIntoView: true,
 			userEvent: "input.type",
 		};

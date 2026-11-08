@@ -11,7 +11,7 @@ import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
 import { GATED_EVENTS, gateVerdict } from "../ts/connectionGate";
 import { countdownView } from "../ts/countdown";
-import { isSendFeedbackShortcut, onMac, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
+import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
 import { squeeze } from "../ts/toolbarSqueeze";
 
 const csrfToken = document
@@ -58,7 +58,7 @@ const hooks = {
   },
   SendFeedbackShortcut: {
     mounted() {
-      const mac = onMac();
+      const mac = isMacPlatform(navigator.userAgentData?.platform || navigator.platform);
       this.el.querySelector(".shortcut-hint").textContent = sendFeedbackHint(mac);
       this._onKey = (e) => {
         if (!isSendFeedbackShortcut(e, mac)) return;

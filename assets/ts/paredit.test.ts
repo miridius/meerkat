@@ -405,13 +405,42 @@ describe("typeBracket", () => {
 		expect(typeOver("(", "#{a}", 1, 4)).toBe("#{a}");
 		expect(typeOver("(", "#{a}", 0, 1)).toBe("#{a}");
 		expect(typeOver("(", "#?(:clj a)", 1, 10)).toBe("#?(:clj a)");
+		// A namespaced map's namespace belongs to its opener.
+		expect(typeOver("(", "#:a{x}", 0, 3)).toBe("#:a{x}");
+		expect(typeOver("(", "#:ab{x}", 3, 4)).toBe("#:ab{x}");
+		expect(typeOver("(", "#:a{x} y", 0, 6)).toBe("(#:a{x}) y");
+	});
+
+	test("an opener does nothing to a selection from code into a string or comment", () => {
+		expect(typeOver("(", 'x "a b"', 0, 4)).toBe('x "a b"');
+		expect(typeOver("(", "x ; note", 0, 6)).toBe("x ; note");
+		expect(typeOver("(", 'x "a b" y', 0, 7)).toBe('(x "a b") y');
+	});
+
+	test("an opener does nothing to a selection starting just after a #", () => {
+		expect(typeOver("(", "#_a b", 1, 3)).toBe("#_a b");
+		expect(typeOver("{", "#'foo", 1, 5)).toBe("#'foo");
+		expect(typeOver("(", "#_a b", 0, 3)).toBe("(#_a) b");
+	});
+
+	test("an opener is typed as text over a selection in a string, while other selections wrap", () => {
+		const state = stateOf('(a b) "x y"').update({
+			selection: EditorSelection.create([EditorSelection.range(0, 5), EditorSelection.range(7, 8)]),
+		}).state;
+		const next = state.update(typeBracket(state, "(") as TransactionSpec).state;
+		expect(next.doc.toString()).toBe('((a b)) "( y"');
 	});
 
 	test("with several selections, an opener wraps each that cuts across no brackets", () => {
 		const state = stateOf("(a b) (c d) e").update({
 			selection: EditorSelection.create([EditorSelection.range(3, 8), EditorSelection.range(12, 13)]),
 		}).state;
-		expect(state.update(typeBracket(state, "(") as TransactionSpec).state.doc.toString()).toBe("(a b) (c d) (e)");
+		const next = state.update(typeBracket(state, "(") as TransactionSpec).state;
+		expect(next.doc.toString()).toBe("(a b) (c d) (e)");
+		expect(next.selection.ranges.map((r) => [r.from, r.to])).toEqual([
+			[3, 8],
+			[13, 14],
+		]);
 	});
 
 	test("a closer steps over the same matched closer", () => {
