@@ -434,6 +434,11 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert new =~ "fn renamed_fn() {}"
   end
 
+  test "a file without line comments hands its DiffViewer none", %{conn: conn} do
+    view = mount_unbound(conn)
+    assert %{"comments" => []} = svelte_props(render(view), "DiffViewer-0")
+  end
+
   test "binary files get a header but no full-file link or rendered-markdown toggle", %{
     conn: conn
   } do
@@ -454,6 +459,146 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     # A text markdown file keeps both.
     assert has_element?(view, "#{section.("README.md")} a.view-file[aria-label='Open full file']")
     assert has_element?(view, "#{section.("README.md")} .md-view-toggle")
+  end
+
+  describe "an event re-sends only the file sections it changes" do
+    @three_files ["a.rs", "b.rs", "c.rs"]
+                 |> Enum.map(&%{@plain_file | file_name: &1, effective_oid: nil})
+
+    # The indices of the DiffViewers re-sent in `diffs`.
+    defp viewers(diffs) do
+      ~r/DiffViewer-(\d+)/
+      |> Regex.scan(diffs, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    # What the server sends the client while `fun` runs, inspected.
+    defp sent_diffs(view, fun) do
+      {_ref, _topic, proxy} = view.proxy
+      :erlang.trace(proxy, true, [:receive])
+      fun.()
+      # Waits until the LiveView has handled every message `fun` sent it
+      # and the client proxy has taken the diffs that LiveView sent.
+      _ = :sys.get_state(view.pid)
+      _ = render(view)
+      :erlang.trace(proxy, false, [:receive])
+      ref = :erlang.trace_delivered(proxy)
+      assert_receive {:trace_delivered, ^proxy, ^ref}
+
+      proxy
+      |> received_diffs([])
+      |> inspect(limit: :infinity, printable_limit: :infinity)
+    end
+
+    defp received_diffs(proxy, acc) do
+      receive do
+        {:trace, ^proxy, :receive, %Phoenix.Socket.Reply{payload: %{diff: diff}}} ->
+          received_diffs(proxy, [diff | acc])
+
+        {:trace, ^proxy, :receive, %Phoenix.Socket.Message{event: "diff", payload: diff}} ->
+          received_diffs(proxy, [diff | acc])
+
+        {:trace, ^proxy, :receive, _other} ->
+          received_diffs(proxy, acc)
+      after
+        0 -> acc
+      end
+    end
+
+    test "closing the file list re-sends none", %{conn: conn} do
+      view = mount_unbound(conn, %ReviewState{files: @three_files})
+      open_files_panel(view)
+
+      diffs = sent_diffs(view, fn -> render_click(view, "files.close", %{}) end)
+      # A diff was captured.
+      assert diffs != "[]"
+      assert viewers(diffs) == []
+    end
+
+    test "a line comment on one file re-sends that file's only", %{conn: conn} do
+      state = %ReviewState{files: @three_files}
+      view = mount_unbound(conn, state)
+
+      comment = %{
+        id: "c1",
+        file_index: 0,
+        start_line: 1,
+        end_line: 1,
+        side: "new",
+        body: "a line comment",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false,
+        created_at: Meerkat.Comment.now()
+      }
+
+      diffs =
+        sent_diffs(view, fn ->
+          send(view.pid, {:state_changed, %{state | comments: [comment]}})
+        end)
+
+      assert viewers(diffs) == ["0"]
+    end
+
+    test "opening a line form re-sends only its file's, with that file's code", %{conn: conn} do
+      files = List.update_at(@three_files, 2, &%{&1 | new_content: "fn c() {}\n"})
+      view = mount_unbound(conn, %ReviewState{files: files})
+      line = %{"file_index" => "2", "start_line" => "1", "end_line" => "1", "side" => "new"}
+
+      diffs = sent_diffs(view, fn -> render_hook(view, "comment_form.show_at_line", line) end)
+      assert viewers(diffs) == ["2"]
+
+      html = render(view)
+      assert %{"inline_forms" => [%{"props" => props}]} = svelte_props(html, "DiffViewer-2")
+      assert %{"fileName" => "c.rs", "initialCode" => "fn c() {}"} = props
+      assert %{"inline_forms" => []} = svelte_props(html, "DiffViewer-0")
+    end
+
+    test "rendering one markdown file re-sends no other's rendered view", %{conn: conn} do
+      bee = %{@md_file | file_name: "BEE.md", new_content: "# Bee\n\nBee paragraph.\n"}
+      view = mount_unbound(conn, %ReviewState{files: [@md_file, bee]})
+      render_click(view, "file.toggle_rendered", %{"file_name" => "README.md"})
+      assert has_element?(view, "#file-0 .md-preview")
+
+      diffs =
+        sent_diffs(view, fn ->
+          render_click(view, "file.toggle_rendered", %{"file_name" => "BEE.md"})
+        end)
+
+      assert diffs =~ "Bee paragraph"
+      refute diffs =~ "New paragraph"
+    end
+
+    test "unapproving one file re-sends that file's only", %{conn: conn} do
+      state = %ReviewState{files: @three_files, approved_file_names: MapSet.new(["b.rs"])}
+      view = mount_unbound(conn, state)
+
+      diffs =
+        sent_diffs(view, fn ->
+          send(view.pid, {:state_changed, %{state | approved_file_names: MapSet.new()}})
+        end)
+
+      assert viewers(diffs) == ["1"]
+    end
+
+    test "unapproving a file re-sends no file list row", %{conn: conn} do
+      state = %ReviewState{files: @three_files, approved_file_names: MapSet.new(["b.rs"])}
+      view = mount_unbound(conn, state)
+      open_files_panel(view)
+
+      diffs =
+        sent_diffs(view, fn ->
+          send(view.pid, {:state_changed, %{state | approved_file_names: MapSet.new()}})
+        end)
+
+      # The section's change was captured.
+      assert viewers(diffs) == ["1"]
+      # A re-sent row re-sends its checkbox's ` checked`, and unapproving
+      # ticks no other checkbox.
+      refute diffs =~ "checked"
+    end
   end
 
   ## --- Decision ---

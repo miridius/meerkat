@@ -1140,35 +1140,12 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   def render(assigns) do
-    assigns =
-      assigns
-      # Drives the inline PlantUML preview: the diff preview when true, an
-      # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
-      # file reads it, so a review without one skips the probe's JVM start.
-      |> assign(:plantuml_available, plantuml_available?(assigns.state.files))
-      # Compute once per render and thread into both children.
-      # `visible_indices/3` does a full scan of state.files with cond
-      # branching per file — at twice per render it was the hot spot
-      # on every PubSub broadcast.
-      |> assign(
-        :visible_indices,
-        visible_indices(assigns.state, assigns.filter_input, assigns.only_file_index)
-      )
-      # Pre-group comments by file_index so file_list doesn't filter +
-      # sort the full list F times (O(F×C) → O(F+C) per render).
-      # Pre-render markdown into :body_html so the template doesn't
-      # re-parse on every PubSub-driven render.
-      |> assign(:inline_comments_by_file, group_inline_by_file(assigns.state.comments))
-      |> assign(:file_comments_by_file, group_file_by_file_with_html(assigns.state.file_comments))
-      |> assign(
-        :global_comments_rendered,
-        Enum.map(assigns.state.global_comments, &with_body_html/1)
-      )
-      |> assign(
-        :commit_message_comments_rendered,
-        Enum.map(assigns.state.commit_message_comments, &with_body_html/1)
-      )
-      |> assign(:shown_rulers, shown_rulers(assigns))
+    # Values derived from other assigns are computed in the attrs below.
+    # Each is re-evaluated whenever the component it feeds re-renders,
+    # but counts as changed only when an assign it reads changes.
+    # Assigned here, they would count as changed on every render, since
+    # render/1's assigns are never stored, and every file section reading
+    # one would be re-sent on every event.
 
     ~H"""
     <%!-- The page paints before LiveView joins, and a click made then is
@@ -1188,12 +1165,17 @@ defmodule MeerkatWeb.ReviewLive do
         version={@version}
         clj_kondo_missing={@clj_kondo_missing}
         expanded_files={
-          expanded_files(@state, @visible_indices, @expanded_approved, @collapsed_unapproved)
+          expanded_files(
+            @state,
+            visible_indices(@state, @filter_input, @only_file_index),
+            @expanded_approved,
+            @collapsed_unapproved
+          )
         }
         files_panel_open={@files_panel_open}
         filter_input={@filter_input}
         only_file_index={@only_file_index}
-        visible_indices={@visible_indices}
+        visible_indices={visible_indices(@state, @filter_input, @only_file_index)}
         collapsed_dirs={@collapsed_dirs}
         filter_collapsed_dirs={@filter_collapsed_dirs}
       />
@@ -1202,19 +1184,19 @@ defmodule MeerkatWeb.ReviewLive do
       <.commit_message_section
         :if={@state.commit_message != ""}
         state={@state}
-        rendered_comments={@commit_message_comments_rendered}
+        rendered_comments={Enum.map(@state.commit_message_comments, &with_body_html/1)}
         open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
-        ruler_columns={@shown_rulers}
+        ruler_columns={shown_rulers(@rulers, @ruler_columns)}
       />
       <.global_comments_section
         state={@state}
-        rendered_comments={@global_comments_rendered}
+        rendered_comments={Enum.map(@state.global_comments, &with_body_html/1)}
         open_forms={@open_forms}
         socket={@socket}
         review_id={@review_id}
-        ruler_columns={@shown_rulers}
+        ruler_columns={shown_rulers(@rulers, @ruler_columns)}
       />
       <p :if={@state.files != []} class="hint" phx-hook="HintDismiss" id="meerkat-hint">
         Tip: click a line number to comment on that line — click and drag for a range. {if @state.commit_message !=
@@ -1240,16 +1222,14 @@ defmodule MeerkatWeb.ReviewLive do
           wrap_lines={@wrap_lines}
           font_size_px={@font_size_px}
           tab_size={@tab_size}
-          ruler_columns={@shown_rulers}
+          ruler_columns={shown_rulers(@rulers, @ruler_columns)}
           open_forms={@open_forms}
-          visible_indices={@visible_indices}
+          visible_indices={visible_indices(@state, @filter_input, @only_file_index)}
           expanded_approved={@expanded_approved}
           collapsed_unapproved={@collapsed_unapproved}
           rendered_files={@rendered_files}
           rendered_html={@rendered_html}
-          inline_comments_by_file={@inline_comments_by_file}
-          file_comments_by_file={@file_comments_by_file}
-          plantuml_available={@plantuml_available}
+          plantuml_available={plantuml_available?(@state.files)}
           clj_hover={@clj_hover}
           review_id={@review_id}
         />
@@ -1560,8 +1540,6 @@ defmodule MeerkatWeb.ReviewLive do
   attr :collapsed_unapproved, :any, required: true
   attr :rendered_files, :any, required: true
   attr :rendered_html, :any, required: true
-  attr :inline_comments_by_file, :any, required: true
-  attr :file_comments_by_file, :any, required: true
   attr :plantuml_available, :boolean, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :clj_hover, :boolean, required: true
@@ -1569,20 +1547,30 @@ defmodule MeerkatWeb.ReviewLive do
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
 
+  # Each file section reads its per-file values only from its entry
+  # (see `file_entries/7`), never from a review-wide map of them: change
+  # tracking compares each entry with the one rendered before under the
+  # same key, so an event re-sends only the sections whose entry changed.
   defp file_list(assigns) do
     ~H"""
     <section class="file-list">
       <article
-        :for={{file, idx} <- Enum.with_index(@state.files)}
+        :for={
+          %{file: file, idx: idx} = entry <-
+            file_entries(
+              @state,
+              @expanded_approved,
+              @collapsed_unapproved,
+              @rendered_files,
+              @rendered_html,
+              @open_forms,
+              @review_id
+            )
+        }
         :if={MapSet.member?(@visible_indices, idx)}
         :key={idx}
         id={"file-#{idx}"}
-        class={[
-          "file-section",
-          MapSet.member?(@state.approved_file_names, file.file_name) && "approved",
-          file_section_collapsed?(@state, @expanded_approved, @collapsed_unapproved, file.file_name) &&
-            "collapsed"
-        ]}
+        class={["file-section", entry.approved? && "approved", entry.collapsed? && "collapsed"]}
       >
         <header class="file-section-header">
           <button
@@ -1591,15 +1579,7 @@ defmodule MeerkatWeb.ReviewLive do
             phx-click="file.toggle_expanded"
             phx-value-file_name={file.file_name}
           >
-            <span class={[
-              "caret",
-              file_section_collapsed?(
-                @state,
-                @expanded_approved,
-                @collapsed_unapproved,
-                file.file_name
-              ) && "collapsed"
-            ]}>
+            <span class={["caret", entry.collapsed? && "collapsed"]}>
               ▾
             </span>
             <span class={"status-badge status-#{file.status}"}>{status_badge(file.status)}</span>
@@ -1642,24 +1622,21 @@ defmodule MeerkatWeb.ReviewLive do
             phx-click="file.toggle_rendered"
             phx-value-file_name={file.file_name}
             title="Toggle rendered markdown view"
-            aria-pressed={to_string(MapSet.member?(@rendered_files, file.file_name))}
+            aria-pressed={to_string(entry.rendered?)}
           >
-            <span class={["seg", not MapSet.member?(@rendered_files, file.file_name) && "active"]}>
+            <span class={["seg", not entry.rendered? && "active"]}>
               Diff
             </span>
-            <span class={["seg", MapSet.member?(@rendered_files, file.file_name) && "active"]}>
+            <span class={["seg", entry.rendered? && "active"]}>
               Rendered
             </span>
           </button>
           <span
-            :if={
-              markdown_file?(file) and MapSet.member?(@rendered_files, file.file_name) and
-                Map.get(@inline_comments_by_file, idx, []) != []
-            }
+            :if={markdown_file?(file) and entry.rendered? and entry.comments != []}
             class="md-comments-hidden"
             title="Line comments aren't shown in rendered view"
           >
-            <% n = length(Map.get(@inline_comments_by_file, idx, [])) %>
+            <% n = length(entry.comments) %>
             {n} {if n == 1, do: "comment", else: "comments"} — switch to Diff
           </span>
           <label class="approved-toggle">
@@ -1667,20 +1644,13 @@ defmodule MeerkatWeb.ReviewLive do
               type="checkbox"
               phx-click="file.toggle_approved"
               phx-value-file_name={file.file_name}
-              checked={MapSet.member?(@state.approved_file_names, file.file_name)}
+              checked={entry.approved?}
             />
             <span>Approved</span>
           </label>
         </header>
         <.svelte
-          :if={
-            not file_section_collapsed?(
-              @state,
-              @expanded_approved,
-              @collapsed_unapproved,
-              file.file_name
-            ) and not MapSet.member?(@rendered_files, file.file_name)
-          }
+          :if={not entry.collapsed? and not entry.rendered?}
           id={"DiffViewer-#{idx}"}
           name="DiffViewer"
           props={
@@ -1692,8 +1662,8 @@ defmodule MeerkatWeb.ReviewLive do
               font_size_px: @font_size_px,
               tab_size: @tab_size,
               ruler_columns: @ruler_columns,
-              comments: Map.get(@inline_comments_by_file, idx, []),
-              inline_forms: inline_forms_for_diff(@open_forms, idx, @state, @review_id),
+              comments: entry.comments,
+              inline_forms: entry.inline_forms,
               plantuml_available: @plantuml_available,
               clj_hover: @clj_hover and CljHover.clojure_file?(file.file_name)
             }
@@ -1701,30 +1671,13 @@ defmodule MeerkatWeb.ReviewLive do
           socket={@socket}
         />
         <.markdown_preview
-          :if={
-            not file_section_collapsed?(
-              @state,
-              @expanded_approved,
-              @collapsed_unapproved,
-              file.file_name
-            ) and MapSet.member?(@rendered_files, file.file_name)
-          }
-          sides={Map.get(@rendered_html, file.file_name, %{old_html: nil, new_html: nil})}
+          :if={not entry.collapsed? and entry.rendered?}
+          sides={entry.rendered_sides}
           read_errors={file.read_errors}
         />
-        <ul
-          :if={
-            not file_section_collapsed?(
-              @state,
-              @expanded_approved,
-              @collapsed_unapproved,
-              file.file_name
-            )
-          }
-          class="file-comments"
-        >
+        <ul :if={not entry.collapsed?} class="file-comments">
           <li
-            :for={comment <- Map.get(@file_comments_by_file, idx, [])}
+            :for={comment <- entry.file_comments}
             class={"note note-#{comment.finding_type} file-note"}
           >
             <header>
@@ -1753,15 +1706,7 @@ defmodule MeerkatWeb.ReviewLive do
           </li>
         </ul>
         <button
-          :if={
-            not file_section_collapsed?(
-              @state,
-              @expanded_approved,
-              @collapsed_unapproved,
-              file.file_name
-            ) and
-              not new_form_open?(@open_forms, :file, %{file_index: idx})
-          }
+          :if={not entry.collapsed? and not entry.new_file_form_open?}
           type="button"
           phx-click="comment_form.show_file"
           phx-value-file_index={idx}
@@ -1769,21 +1714,12 @@ defmodule MeerkatWeb.ReviewLive do
           + Add file comment
         </button>
         <.svelte
-          :for={form <- file_forms_for(@open_forms, idx)}
-          :if={
-            not file_section_collapsed?(
-              @state,
-              @expanded_approved,
-              @collapsed_unapproved,
-              file.file_name
-            )
-          }
+          :for={form <- entry.file_forms}
+          :if={not entry.collapsed?}
           :key={OpenForms.key(form)}
           id={form_dom_id(form)}
           name="CommentForm"
-          props={
-            Map.put(file_form_props(form, idx, @state, @review_id), :rulerColumns, @ruler_columns)
-          }
+          props={Map.put(file_form_props(form, idx, file, @review_id), :rulerColumns, @ruler_columns)}
           socket={@socket}
         />
       </article>
@@ -1828,7 +1764,10 @@ defmodule MeerkatWeb.ReviewLive do
     not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
   end
 
-  # The extensions DiffViewer.svelte's `isPlantUml` previews.
+  # Whether DiffViewer previews PlantUML (true) or shows an "install
+  # plantuml" hint (false). The extensions are those DiffViewer.svelte's
+  # `isPlantUml` previews; a review without such a file skips the
+  # probe's JVM start.
   defp plantuml_available?(files) do
     Enum.any?(files, &(String.downcase(Path.extname(&1.file_name)) in [".puml", ".plantuml"])) and
       Meerkat.PlantUML.available?()
@@ -1848,22 +1787,20 @@ defmodule MeerkatWeb.ReviewLive do
     # "hide *.ext" and "only" buttons, plus a `.filter-input` for substring
     # narrowing. The tree filters by `filter_input` (substring on
     # base_name); the title count and the main `.file-list` use
-    # `@visible_indices` (see `visible_indices/3`).
-    visible_in_sidebar =
-      filter_sidebar_entries(assigns.state.files, assigns.filter_input)
-
-    matched_visible? =
-      Enum.all?(visible_in_sidebar, fn {_f, idx} ->
-        MapSet.member?(assigns.visible_indices, idx)
-      end)
+    # `@visible_indices` (see `visible_indices/3`). Each tree row holds
+    # whether the main list shows its file, so, as in `file_list/1`, a
+    # change to which files the list shows re-sends only their rows.
+    rows =
+      for {file, idx} <- filter_sidebar_entries(assigns.state.files, assigns.filter_input),
+          do: {file, idx, MapSet.member?(assigns.visible_indices, idx)}
 
     assigns =
       assign(assigns,
-        tree: FileTree.build(visible_in_sidebar),
+        tree: FileTree.build(rows),
         shown_collapsed_dirs: Map.fetch!(assigns, collapsed_dirs_key(assigns.filter_input)),
         total_count: length(assigns.state.files),
         visible_count: MapSet.size(assigns.visible_indices),
-        matched_visible?: matched_visible?
+        matched_visible?: Enum.all?(rows, &elem(&1, 2))
       )
 
     ~H"""
@@ -1950,7 +1887,6 @@ defmodule MeerkatWeb.ReviewLive do
           rows={@tree}
           depth={0}
           collapsed_dirs={@shown_collapsed_dirs}
-          visible_indices={@visible_indices}
         />
       </div>
     </div>
@@ -1970,8 +1906,6 @@ defmodule MeerkatWeb.ReviewLive do
   attr :depth, :integer, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :collapsed_dirs, :any, required: true
-  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
-  attr :visible_indices, :any, required: true
 
   # One level of the file filter's folder tree (see `Meerkat.FileTree`).
   defp file_tree(assigns) do
@@ -2004,14 +1938,13 @@ defmodule MeerkatWeb.ReviewLive do
             rows={row.children}
             depth={@depth + 1}
             collapsed_dirs={@collapsed_dirs}
-            visible_indices={@visible_indices}
           />
         <% else %>
           <.file_entry
             file={elem(row.file, 0)}
             idx={elem(row.file, 1)}
             depth={@depth}
-            visible?={MapSet.member?(@visible_indices, elem(row.file, 1))}
+            visible?={elem(row.file, 2)}
           />
         <% end %>
       </li>
@@ -2782,6 +2715,41 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
+  # One entry per file in the review, holding the per-file values its
+  # section renders.
+  defp file_entries(
+         state,
+         expanded_approved,
+         collapsed_unapproved,
+         rendered,
+         html,
+         open_forms,
+         rid
+       ) do
+    inline_comments = group_inline_by_file(state.comments)
+    file_comments = group_file_by_file_with_html(state.file_comments)
+
+    state.files
+    |> Enum.with_index()
+    |> Enum.map(fn {file, idx} ->
+      name = file.file_name
+
+      %{
+        file: file,
+        idx: idx,
+        approved?: MapSet.member?(state.approved_file_names, name),
+        collapsed?: file_section_collapsed?(state, expanded_approved, collapsed_unapproved, name),
+        rendered?: MapSet.member?(rendered, name),
+        rendered_sides: Map.get(html, name, %{old_html: nil, new_html: nil}),
+        comments: Map.get(inline_comments, idx, []),
+        file_comments: Map.get(file_comments, idx, []),
+        inline_forms: inline_forms_for_diff(open_forms, idx, file, rid),
+        file_forms: file_forms_for(open_forms, idx),
+        new_file_form_open?: new_form_open?(open_forms, :file, %{file_index: idx})
+      }
+    end)
+  end
+
   # The files the main list shows with their diff open: the filter
   # shows them and they are not collapsed.
   defp expanded_files(state, visible_indices, expanded_approved, collapsed_unapproved) do
@@ -3045,8 +3013,8 @@ defmodule MeerkatWeb.ReviewLive do
     do: assign(socket, ruler_input: Enum.join(columns, ", "), ruler_input_invalid: false)
 
   # The columns the diff and the suggestion editor draw rulers after.
-  defp shown_rulers(%{rulers: true, ruler_columns: columns}), do: columns
-  defp shown_rulers(_), do: []
+  defp shown_rulers(true, columns), do: columns
+  defp shown_rulers(false, _columns), do: []
 
   defp anchor_for(:file, %{file_index: idx}), do: %{file_index: idx}
 
@@ -3078,13 +3046,11 @@ defmodule MeerkatWeb.ReviewLive do
     })
   end
 
-  defp file_form_props(form, file_index, state, review_id) do
-    file = Enum.at(state.files, file_index)
-
+  defp file_form_props(form, file_index, file, review_id) do
     base_form_props(form, %{
       submitLabel: if(Map.get(form, :edit_id), do: "Save", else: "Add File Comment"),
       extraPayload: %{file_index: file_index},
-      fileName: Map.get(file || %{}, :file_name, ""),
+      fileName: file.file_name,
       draftKey: draft_key_for(form, review_id)
     })
   end
@@ -3119,19 +3085,18 @@ defmodule MeerkatWeb.ReviewLive do
   # descriptor carries the form's key, the props CommentForm needs,
   # and the anchor coordinates DiffViewer uses to inject the form
   # below the right diff row.
-  defp inline_forms_for_diff(open_forms, idx, state, review_id) do
+  defp inline_forms_for_diff(open_forms, idx, file, review_id) do
     for %{anchor: %{file_index: ^idx} = anchor} = form <- forms_for(open_forms, :inline) do
       %{
         key: OpenForms.key(form),
         anchor: anchor,
-        props: inline_form_props(form, state, review_id)
+        props: inline_form_props(form, file, review_id)
       }
     end
   end
 
-  defp inline_form_props(form, state, review_id) do
+  defp inline_form_props(form, file, review_id) do
     %{anchor: anchor} = form
-    file = Enum.at(state.files, anchor.file_index)
     initial_code = extract_snippet(file, anchor.start_line, anchor.end_line, anchor.side)
 
     base_form_props(form, %{
@@ -3142,7 +3107,7 @@ defmodule MeerkatWeb.ReviewLive do
         end_line: anchor.end_line,
         side: anchor.side
       },
-      fileName: Map.get(file || %{}, :file_name, ""),
+      fileName: file.file_name,
       initialCode: initial_code,
       draftKey: draft_key_for(form, review_id)
     })

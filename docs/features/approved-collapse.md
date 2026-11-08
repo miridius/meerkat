@@ -82,6 +82,7 @@ is the single read path.
 - `<article class="file-section collapsed">` — unapproved but
   user-collapsed.
 - The `DiffViewer` Svelte component renders only when the section
-  is NOT collapsed — the `:if={not file_section_collapsed?/4}` on
-  the `<.svelte name="DiffViewer" .../>` controls it. There's no
+  is NOT collapsed — the `:if={not entry.collapsed?}` on the
+  `<.svelte name="DiffViewer" .../>`, set from
+  `file_section_collapsed?/4`, controls it. There's no
   DOM cost to a collapsed file beyond the header.
