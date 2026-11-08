@@ -42,9 +42,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    line counts (see [Line counts](#line-counts)), connection pill,
    Split / Unified, Wrap, `⚙` settings popover (font size, tab size,
    rulers). The popover settings, Split / Unified and Wrap are saved
-   in `settings.json` in meerkat's config dir,
-   `$XDG_CONFIG_HOME/meerkat`, or `~/.config/meerkat` when
-   `XDG_CONFIG_HOME` is unset, empty or relative, and are shared by
+   in `settings.json` in meerkat's config dir, `$MEERKAT_CONFIG_DIR`,
+   else `$XDG_CONFIG_HOME/meerkat`, else `~/.config/meerkat`, taking
+   each variable only when it is an absolute path, and are shared by
    every review. A change applies at once in every open tab of the
    same review; tabs of other running reviews pick it up when they
    next load or reconnect. A change saves only the setting it

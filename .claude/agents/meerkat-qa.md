@@ -54,7 +54,7 @@ End each `startMeerkat` run with its `kill()` in a `finally`.
 Use this checkout's `bin/meerkat-beam` for direct CLI checks.
 For direct CLI checks, in the same Bash call that starts meerkat, set
 `MEERKAT_RUNS_DIR` to `<run>/meerkat-e2e-owned/meerkat-runs-$$-cli` and
-`XDG_CONFIG_HOME` to `<run>/meerkat-e2e-owned/meerkat-runs-$$-clicfg`,
+`MEERKAT_CONFIG_DIR` to `<run>/meerkat-e2e-owned/meerkat-runs-$$-clicfg`,
 where `<run>` is your run directory.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
