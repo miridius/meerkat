@@ -1763,6 +1763,9 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   # The extensions DiffViewer.svelte's `isPlantUml` previews.
+  # Drives the inline PlantUML preview: the diff preview when true, an
+  # "install plantuml" hint when false. Only a `.puml` or `.plantuml`
+  # file reads it, so a review without one skips the probe's JVM start.
   defp plantuml_available?(files) do
     Enum.any?(files, &(String.downcase(Path.extname(&1.file_name)) in [".puml", ".plantuml"])) and
       Meerkat.PlantUML.available?()
