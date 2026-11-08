@@ -1,4 +1,5 @@
 import { type IndentContext, indentService, syntaxTree } from "@codemirror/language";
+import { forms, holder, holds, inString, isColl, type SyntaxNode } from "./clojureTree.js";
 
 /** Clojure indentation by cljfmt's default rules (`:community` function
  *  arguments, its default indent table), computed over the Lezer tree of
@@ -11,8 +12,6 @@ import { type IndentContext, indentService, syntaxTree } from "@codemirror/langu
  *  The rule names below are cljfmt's (`cljfmt/core.cljc`): `zloc` is the
  *  element that starts the line being indented, and its index counts the
  *  list's head as 0. */
-
-type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
 
 type Spec = { kind: "inner"; depth: number; index?: number } | { kind: "block"; index: number };
 
@@ -126,50 +125,21 @@ const SORTED_INDENTS = DEFAULT_INDENTS.map((entry) => ({ entry, order: indentOrd
 	})
 	.map(({ entry }) => entry);
 
-const CLOSERS: Record<string, string> = { List: ")", Vector: "]", Map: "}" };
-const STRINGS = new Set(["String", "RegExp"]);
-const BRACKETS = new Set(["(", ")", "[", "]", "{", "}"]);
 const SYMBOLS = new Set(["Symbol", "Operator", "DefLike", "NS"]);
-
-function isColl(node: SyntaxNode): boolean {
-	return node.name in CLOSERS;
-}
-
-/** The forms in `coll`, `#_` forms included, as rewrite-clj's zipper
- *  steps through them: comments are skipped. */
-function forms(coll: SyntaxNode): SyntaxNode[] {
-	const out: SyntaxNode[] = [];
-	for (let child = coll.firstChild; child; child = child.nextSibling) {
-		if (!BRACKETS.has(child.name) && child.name !== "LineComment" && !child.type.isError) {
-			out.push(child);
-		}
-	}
-	return out;
-}
 
 /** The forms cljfmt's `index-of` counts: `#_` forms are left out. */
 function elements(coll: SyntaxNode): SyntaxNode[] {
 	return forms(coll).filter((node) => node.name !== "Discard");
 }
 
-/** Whether `node`, a String, has its closing quote: the quote it opens
- *  with is its first child. */
-function closedString(node: SyntaxNode): boolean {
-	const last = node.lastChild;
-	return last !== null && last.name === '"' && last.from > node.from;
-}
-
-/** The collection that `pos` sits inside, "string" inside a string, or
- *  null at the top level. An unclosed collection or string, such as one
+/** The collection that `pos` sits inside, "string" inside a string or
+ *  regex (between its `#` and quote too), or null at the top level. An unclosed collection or string, such as one
  *  the editor's lines cut off from its closer, still holds every position
  *  after its opener. */
 function enclosing(tree: ReturnType<typeof syntaxTree>, pos: number): SyntaxNode | "string" | null {
 	for (let node: SyntaxNode | null = tree.resolveInner(pos, -1); node; node = node.parent) {
-		if (STRINGS.has(node.name) && node.from < pos && pos < node.to) return "string";
-		if (node.name === "String" && node.from < pos && !closedString(node)) return "string";
-		if (isColl(node) && node.from < pos && (pos < node.to || node.lastChild?.name !== CLOSERS[node.name])) {
-			return node;
-		}
+		if (inString(node, pos) || (node.name === "RegExp" && node.from < pos && pos < node.to)) return "string";
+		if (isColl(node) && node.from < pos && holds(node, pos)) return node;
 	}
 	return null;
 }
@@ -204,8 +174,7 @@ function matches(key: string | RegExp, name: string | null): boolean {
 /** Whether `list` is the body of `#?(...)` or, parsed as a deref inside
  *  one, `#?@(...)`. */
 function inReaderConditional(list: SyntaxNode): boolean {
-	const parent = list.parent?.name === "Deref" ? list.parent.parent : list.parent;
-	return parent?.name === "ReaderConditional";
+	return holder(list)?.name === "ReaderConditional";
 }
 
 /** Whether `node` starts its line. */
