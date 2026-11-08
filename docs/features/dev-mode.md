@@ -30,7 +30,11 @@ Two halves:
    `mix run --no-start --no-compile`. Before each BEAM start it runs
    `mix compile` when a source is newer than the build or the launcher
    last compiled it in another checkout, so a build copied into a new
-   worktree never stands in for that worktree's sources. Exit code 75
+   worktree never stands in for that worktree's sources. It then
+   rebuilds the assets with Vite when there is no build, or when an
+   asset source, `assets/package.json`, `pnpm-lock.yaml` or the
+   installed JS packages changed since the last build, so a
+   `pnpm install` never leaves a build of other packages. Exit code 75
    restarts after a code change; after every BEAM exit, the loop
    reads the run dir's `port` file, sets `MEERKAT_PREFERRED_PORT` to
    its port for the next BEAM, and deletes the file. With the default port or `--port 0`,
@@ -38,9 +42,9 @@ Two halves:
    OS-assigned port if it is occupied; an explicit nonzero port is
    bound again. In `MIX_ENV=dev`, every exit other than 75 is
    propagated, including crash exit 2. After a failed compile or asset
-   build, the shepherd waits for a source change before retrying; if
-   its checkout or `$MEERKAT_PWD` is deleted while it waits, it exits
-   2 with a REJECT message.
+   build, the shepherd waits for a source change or a JS install
+   before retrying; if its checkout or `$MEERKAT_PWD` is deleted while
+   it waits, it exits 2 with a REJECT message.
 
 Phoenix LiveView's client auto-reconnects when the BEAM dies on
 exit 75. The tab stays put because the dev shepherd keeps one

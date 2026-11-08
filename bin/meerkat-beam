@@ -46,10 +46,15 @@ precompile_if_stale() {
   return 0
 }
 
+# pnpm rewrites its record of the installed JS packages on every
+# install, so the record is newer than any build made before it.
+INSTALLED_JS="node_modules/.pnpm/lock.yaml"
+
 # Block until a file under `lib`, `config`, `mix.exs`, `mix.lock`,
-# `assets/svelte`, `assets/js`, `assets/ts` or `assets/css` is newer
-# than a marker. The shepherd uses this after a failed compile or
-# asset build so it can retry once the user fixes the broken file.
+# `assets/svelte`, `assets/js`, `assets/ts` or `assets/css`, or
+# `$INSTALLED_JS`, is newer than a marker. The shepherd uses this after
+# a failed compile or asset build so it can retry once the user fixes
+# the broken file or reinstalls the JS packages.
 # Poll once a second with `find -newer` rather than using fswatch —
 # the project tree is small, so the cost is low. If the checkout
 # (`$ROOT`) or `$MEERKAT_PWD` is deleted, no change can arrive, so
@@ -67,17 +72,17 @@ wait_for_source_change() {
       echo >&2 "meerkat: $ROOT or $MEERKAT_PWD was deleted — defaulting to REJECT (commit aborted)."
       exit 2
     fi
-    if [[ -n "$(find lib config mix.exs mix.lock assets/svelte assets/js assets/ts assets/css -newer "$marker" -print -quit 2>/dev/null)" ]]; then
+    if [[ -n "$(find lib config mix.exs mix.lock assets/svelte assets/js assets/ts assets/css "$INSTALLED_JS" -newer "$marker" -print -quit 2>/dev/null)" ]]; then
       return 0
     fi
   done
 }
 
-# Asset build — same guard.
+# Asset build — same guard, which also rebuilds after a JS install.
 build_assets_if_stale() {
   local manifest="priv/static/.vite/manifest.json"
   if [[ ! -f "$manifest" ]] || \
-     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json pnpm-lock.yaml -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
+     [[ -n "$(find assets/svelte assets/js assets/css assets/ts assets/package.json pnpm-lock.yaml "$INSTALLED_JS" -newer "$manifest" -print -quit 2>/dev/null)" ]]; then
     MIX_BUILD_PATH="$ROOT/_build/${MIX_ENV}" \
       bash -c 'cd assets && bunx vite build' >&2
   fi

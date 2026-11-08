@@ -205,8 +205,8 @@ restarts the BEAM only for exit 75, preferring the port the exited
 BEAM bound (see [dev-mode.md](dev-mode.md) for when it falls back to
 another port); it propagates every other exit, including crash exit
 2. After a failed compile or asset build, it waits for a source change
-before retrying; if its checkout or `$MEERKAT_PWD` is deleted while
-it waits, it exits 2 with a REJECT message. The prod launcher
+or a JS install before retrying; if its checkout or `$MEERKAT_PWD` is
+deleted while it waits, it exits 2 with a REJECT message. The prod launcher
 (`bin/meerkat-shepherd`) retries crash exit 2 once, then exits with
 the code.
 

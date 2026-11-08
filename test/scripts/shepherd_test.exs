@@ -15,6 +15,17 @@ defmodule Meerkat.ShepherdTest do
   # the 180 s test timeout, so a hang fails with this file's message.
   @timeout_ms 150_000
 
+  # A file under each path the dev launcher's asset build is made from.
+  @asset_inputs [
+    "assets/svelte/App.svelte",
+    "assets/js/app.js",
+    "assets/css/app.css",
+    "assets/ts/lib.ts",
+    "assets/package.json",
+    "pnpm-lock.yaml",
+    "node_modules/.pnpm/lock.yaml"
+  ]
+
   test "restarts on exit 75, then propagates a clean decision" do
     assert run_shepherd([75, 75, 0]) == %{code: 0, iterations: 3}
   end
@@ -1273,6 +1284,30 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  describe "the dev launcher's asset build" do
+    for input <- @asset_inputs do
+      test "rebuilds when #{input} is newer than the build" do
+        assert assets_rebuilt?(unquote(input))
+      end
+    end
+
+    test "keeps a build newer than every asset input" do
+      refute assets_rebuilt?(nil)
+    end
+
+    test "is retried after a failure once the JS packages are reinstalled" do
+      {port, dir} = open_dev_shepherd(build_code: 1)
+      await_output(port, dir, "waiting for source change")
+
+      installed = Path.join(dir, "root/node_modules/.pnpm/lock.yaml")
+      File.mkdir_p!(Path.dirname(installed))
+      File.write!(installed, "")
+
+      await_output(port, dir, "vite build 2")
+      kill_launcher(port, dir)
+    end
+  end
+
   # Returns the shepherd's exit code, how many times the fake BEAM ran,
   # and, when `input` is given, what the BEAM read on stdin. On each
   # iteration i, the fake BEAM writes `<i+1> <pid>` to
@@ -1436,9 +1471,10 @@ defmodule Meerkat.ShepherdTest do
   # `built` is given, from a fresh `review` dir, with `mix` and `bunx`
   # replaced by stubs: `mix compile` exits `compile_code`, and each `mix
   # run` exits the next of `exit_codes`, counting runs in the temp dir's
-  # `i`. With `built`, `root` has a source, a build manifest newer than
-  # it, and a stamp naming `built` as the checkout that compiled the build
-  # (`:root` names `root` itself).
+  # `i`. Each asset build prints `vite build <n>`, counting builds, and
+  # exits `build_code`. With `built`, `root` has a source, a build
+  # manifest newer than it, and a stamp naming `built` as the checkout
+  # that compiled the build (`:root` names `root` itself).
   defp open_dev_shepherd(opts) do
     dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
     on_exit(fn -> File.rm_rf!(dir) end)
@@ -1481,7 +1517,15 @@ defmodule Meerkat.ShepherdTest do
     exit "${codes[$i]:-0}"
     """)
 
-    File.write!(Path.join(stubs, "bunx"), "#!/usr/bin/env bash\nexit 0\n")
+    File.write!(Path.join(stubs, "bunx"), """
+    #!/usr/bin/env bash
+    builds=#{Path.join(dir, "builds")}
+    n=$(( $(cat "$builds" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$builds"
+    echo >&2 "vite build $n"
+    exit #{Keyword.get(opts, :build_code, 0)}
+    """)
+
     File.chmod!(Path.join(stubs, "mix"), 0o755)
     File.chmod!(Path.join(stubs, "bunx"), 0o755)
 
@@ -1502,6 +1546,53 @@ defmodule Meerkat.ShepherdTest do
       )
 
     {port, dir}
+  end
+
+  # Whether the dev launcher's build-only run, in a checkout whose asset
+  # build is newer than every asset input but `changed`, runs `bunx`.
+  defp assets_rebuilt?(changed) do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-assets")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    root = Path.join(dir, "root")
+    stubs = Path.join(dir, "stubs")
+    built = Path.join(dir, "built")
+    File.mkdir_p!(Path.join(root, "bin"))
+    File.mkdir_p!(Path.join(root, "_build/dev"))
+    File.mkdir_p!(stubs)
+    File.cp!(Path.join(File.cwd!(), "bin/meerkat-beam"), Path.join(root, "bin/meerkat-beam"))
+    File.write!(Path.join(stubs, "mix"), "#!/usr/bin/env bash\nexit 0\n")
+    File.write!(Path.join(stubs, "bunx"), "#!/usr/bin/env bash\ntouch #{built}\n")
+    File.chmod!(Path.join(stubs, "mix"), 0o755)
+    File.chmod!(Path.join(stubs, "bunx"), 0o755)
+
+    manifest = "priv/static/.vite/manifest.json"
+
+    for path <- [manifest | @asset_inputs] do
+      file = Path.join(root, path)
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file, "")
+    end
+
+    # Directories too, as `find` lists the asset source dirs themselves.
+    for path <- @asset_inputs,
+        file <- [Path.join(root, path), Path.dirname(Path.join(root, path))],
+        do: File.touch!(file, {{2020, 1, 1}, {0, 0, 0}})
+
+    File.touch!(Path.join(root, manifest), {{2021, 1, 1}, {0, 0, 0}})
+
+    if changed, do: File.touch!(Path.join(root, changed), {{2022, 1, 1}, {0, 0, 0}})
+
+    {_, 0} =
+      System.cmd(Path.join(root, "bin/meerkat-beam"), [],
+        env: [
+          {"MEERKAT_BUILD_ONLY", "1"},
+          {"MIX_ENV", "dev"},
+          {"PATH", stubs <> ":" <> System.fetch_env!("PATH")}
+        ],
+        stderr_to_stdout: true
+      )
+
+    File.exists?(built)
   end
 
   # Points `dir`'s `current` at a release whose BEAM runs `body`.
