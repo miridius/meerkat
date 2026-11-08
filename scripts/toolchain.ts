@@ -1,8 +1,8 @@
 // Keeps the toolchain on the 24h release-age floor that Hex and pnpm
 // apply to dependencies. Each pin, in .tool-versions (which mise and CI
 // install from), .github/toolchain.env, package.json's packageManager, or
-// a workflow's or the toolchain action's `uses: owner/repo@sha # tag`, must be the
-// newest stable release at least 24h old. When a published advisory covers
+// a workflow's or the toolchain action's `uses: owner/repo@sha # tag`,
+// must be the newest stable release at least 24h old. When a published advisory covers
 // that release, the pin must instead be the lowest newer release, not
 // older than the pin, that no advisory covers, however young. While there
 // is none, the pin moves to the newest release no advisory covers that is

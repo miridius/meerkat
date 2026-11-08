@@ -22,7 +22,8 @@
 #   floor lifted for it.
 # - Toolchain: scripts/toolchain.ts moves the pins in
 #   .tool-versions, .github/toolchain.env, package.json's packageManager and the
-#   actions that the workflows and .github/actions/toolchain use onto their targets. Then scripts/setup-toolchain.ts
+#   actions that the workflows and .github/actions/toolchain use onto their
+#   targets. Then scripts/setup-toolchain.ts
 #   installs any pinned Hex or rebar3 still missing, and with mise any
 #   pinned Erlang, Elixir or Bun, so the checks do not run without them.
 #
