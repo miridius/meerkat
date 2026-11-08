@@ -1,0 +1,81 @@
+name: Toolchain
+description: >-
+  Loads the toolchain pins into the job's environment and installs Bun,
+  Erlang, Elixir, Hex and rebar3 from them. Each download is cached per
+  pin, and a cache is saved as soon as its install succeeds, so once a pin
+  has been fetched no run needs its download host.
+
+runs:
+  using: composite
+  steps:
+    # ImageOS keys the BEAM cache: setup-beam picks the Linux OTP build for
+    # the runner image.
+    - name: Load toolchain pins
+      shell: bash
+      run: |
+        grep -v '^#' .github/toolchain.env >> "$GITHUB_ENV"
+        sed -n 's/^erlang /ERLANG_VERSION=/p; s/^elixir /ELIXIR_VERSION=/p' .tool-versions >> "$GITHUB_ENV"
+        echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+
+    # Caches the Bun binary per version itself.
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version-file: .tool-versions
+
+    # setup-beam fetches its version lists before it looks in any cache,
+    # so a run that restores Erlang and Elixir skips it.
+    - id: beam
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/.setup-beam
+        key: beam-${{ env.IMAGE_OS }}-${{ runner.arch }}-otp${{ env.ERLANG_VERSION }}-elixir${{ env.ELIXIR_VERSION }}
+
+    - if: steps.beam.outputs.cache-hit != 'true'
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        version-file: .tool-versions
+        version-type: strict
+        install-hex: false
+        install-rebar: false
+        disable_problem_matchers: true
+
+    - if: steps.beam.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/.setup-beam
+        key: ${{ steps.beam.outputs.cache-primary-key }}
+
+    - if: steps.beam.outputs.cache-hit == 'true'
+      name: Put Erlang and Elixir on PATH
+      shell: bash
+      run: |
+        echo "$RUNNER_TEMP/.setup-beam/otp/bin" >> "$GITHUB_PATH"
+        echo "$RUNNER_TEMP/.setup-beam/elixir/bin" >> "$GITHUB_PATH"
+
+    # setup-beam's own problem matchers, from erlef/setup-beam at
+    # 54075bcc5e249e4758d363f27d099f55d843f124, matchers/*-matchers.json,
+    # registered here so a run that skips setup-beam still annotates
+    # compiler errors.
+    - name: Register Erlang and Elixir problem matchers
+      shell: bash
+      run: |
+        echo "::add-matcher::$GITHUB_WORKSPACE/.github/setup-beam-matchers/erlang-matchers.json"
+        echo "::add-matcher::$GITHUB_WORKSPACE/.github/setup-beam-matchers/elixir-matchers.json"
+
+    # scripts/setup-toolchain.ts installs Hex and rebar3 into ~/.mix only
+    # when they are missing, and checks rebar3 against REBAR3_SHA256 on
+    # every run.
+    - id: mix-home
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.mix
+        key: mix-home-${{ runner.os }}-${{ runner.arch }}-otp${{ env.ERLANG_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-hex${{ env.HEX_VERSION }}-rebar3-${{ env.REBAR3_SHA256 }}
+
+    - shell: bash
+      run: bun scripts/setup-toolchain.ts
+
+    - if: steps.mix-home.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.mix
+        key: ${{ steps.mix-home.outputs.cache-primary-key }}

@@ -1,7 +1,7 @@
 // Keeps the toolchain on the 24h release-age floor that Hex and pnpm
 // apply to dependencies. Each pin, in .tool-versions (which mise and CI
 // install from), .github/toolchain.env, package.json's packageManager, or
-// a workflow's `uses: owner/repo@sha # tag`, must be the
+// a workflow's or the toolchain action's `uses: owner/repo@sha # tag`, must be the
 // newest stable release at least 24h old. When a published advisory covers
 // that release, the pin must instead be the lowest newer release, not
 // older than the pin, that no advisory covers, however young. While there
@@ -32,7 +32,11 @@ import { join } from "node:path";
 import { readExcludes, untilAccepted, WORKSPACE } from "./age-excludes";
 
 const DAY_MS = 86_400_000;
-const WORKFLOWS = [".github/workflows/ci.yml", ".github/workflows/audit.yml"];
+const WORKFLOWS = [
+	".github/workflows/ci.yml",
+	".github/workflows/audit.yml",
+	".github/actions/toolchain/action.yml",
+];
 const now = Date.now();
 
 export type Release = { version: string; date: Date };
