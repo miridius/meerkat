@@ -11,7 +11,7 @@ defmodule Meerkat.E2eInputsTest do
     test/scripts/pre_commit_test.exs
     test/support/test_helpers.ex
     scripts/mix-test.sh
-    scripts/e2e-inputs.ts
+    scripts/check.sh.bak
     .github/workflows/ci.yml
     .lefthook/pre-push/pre-push.sh
     lefthook.yml
@@ -24,6 +24,8 @@ defmodule Meerkat.E2eInputsTest do
 
   @inputs ~w(
     scripts/check.sh
+    scripts/checked-trees.sh
+    scripts/e2e-inputs.ts
     lib/meerkat/git.ex
     config/dev.exs
     assets/svelte/DiffViewer.svelte

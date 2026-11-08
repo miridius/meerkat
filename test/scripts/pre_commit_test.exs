@@ -262,6 +262,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     assert {_, 0} = commit(ctx, ["-m", "change code"], [{"STUB_EDIT", "mix credo --strict"}])
     refute checked?(ctx, "HEAD")
+    refute e2e_checked?(ctx, "HEAD")
   end
 
   describe "check.sh --head" do
@@ -289,6 +290,7 @@ defmodule Meerkat.PreCommitHookTest do
     test "records nothing when the worktree changes while the checks run", ctx do
       assert {_, 0} = check_head(ctx, [{"STUB_EDIT", "mix credo --strict"}])
       refute checked?(ctx, "HEAD")
+      refute e2e_checked?(ctx, "HEAD")
     end
 
     test "records nothing when its checks fail", ctx do
@@ -391,21 +393,27 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
-  for {name, path} <- [
-        {"a new file outside the allowlist", "new/thing.txt"},
-        {"scripts/check.sh", "scripts/check.sh"},
-        {"the e2e suite", "tests/e2e/lib/setup.ts"}
-      ] do
-    test "a commit changing #{name} runs the e2e steps and records them", ctx do
-      file = Path.join(ctx.work, unquote(path))
-      old = if File.exists?(file), do: File.read!(file), else: ""
-      stage(ctx.work, unquote(path), old <> "# changed\n")
+  # Which paths are e2e inputs is unit-tested in e2e_inputs_test.exs.
+  test "a commit changing an e2e input runs the e2e steps and records them", ctx do
+    stage(ctx.work, "new/thing.txt", "new\n")
 
-      assert {_, 0} = commit(ctx, ["-m", "change"])
-      assert gates_run(ctx) == @gates
-      assert e2e_checked?(ctx, "HEAD")
-      assert checked?(ctx, "HEAD")
-    end
+    assert {_, 0} = commit(ctx, ["-m", "change"])
+    assert gates_run(ctx) == @gates
+    assert e2e_checked?(ctx, "HEAD")
+    assert checked?(ctx, "HEAD")
+  end
+
+  test "the e2e record matches contents with the same e2e inputs, and only those", ctx do
+    bash = fn args -> System.cmd("bash", args, cd: ctx.work, env: hook_env()) end
+    assert {_, 0} = bash.(["scripts/checked-trees.sh", "--e2e", "mark", "HEAD"])
+
+    stage_tooling(ctx)
+    no_hooks(ctx.work, ["commit", "-qm", "tooling"])
+    assert e2e_checked?(ctx, "HEAD")
+
+    stage(ctx.work, "code.txt", "other\n")
+    no_hooks(ctx.work, ["commit", "-qm", "code"])
+    refute e2e_checked?(ctx, "HEAD")
   end
 
   # --no-renames lists the old path too, which is an e2e input.

@@ -10,14 +10,15 @@
 # In pre-commit mode, a commit that changes only Markdown files, or nothing,
 # skips the checks, and one that changes no e2e input, as
 # scripts/e2e-inputs.ts judges, skips the e2e steps; CI still runs them all
-# on the PR. Otherwise the checks wait for a slot from scripts/gate-lock.sh.
+# on the PR. The checks that run wait for a slot from scripts/gate-lock.sh.
 #
 # When the checks pass and the worktree held exactly the contents checked,
 # with no untracked file, both when they started and when they finished,
 # scripts/checked-trees.sh records those contents: with --e2e when the e2e
 # steps ran, and as checked when they ran or the contents' e2e inputs
-# already passed them. A commit that skipped them on a parent never recorded
-# that way is left for the pre-push check to run in full.
+# already passed them. Contents that skipped them on inputs never recorded
+# that way stay unchecked, so the pre-push check runs every step on a tip
+# that holds them.
 set -euo pipefail
 
 # Stop at Ctrl-C, however the interrupted step exited: bash carries on after
@@ -90,8 +91,10 @@ run_checks() {
 
   # Checked again in case the worktree changed while the checks ran.
   if [[ "$clean" == 1 ]] && holds; then
-    [[ "$e2e" == 0 ]] || bash scripts/checked-trees.sh --e2e mark "$tree"
-    if bash scripts/checked-trees.sh --e2e has "$tree"; then
+    if [[ "$e2e" == 1 ]]; then
+      bash scripts/checked-trees.sh --e2e mark "$tree"
+      bash scripts/checked-trees.sh mark "$tree"
+    elif bash scripts/checked-trees.sh --e2e has "$tree"; then
       bash scripts/checked-trees.sh mark "$tree"
     else
       echo

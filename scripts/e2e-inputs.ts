@@ -21,10 +21,11 @@ const notInputs: RegExp[] = [
 	// test/support/test.gitconfig.
 	/^test\/(?!support\/test\.gitconfig$)/,
 	// No script here runs in the e2e suite, but check.sh runs the e2e steps
-	// and sets their build environment.
-	/^scripts\/(?!check\.sh$)/,
-	// The pre-commit hook installs the Hex and rebar3 toolchain.env pins, which
-	// build the e2e run's dependencies.
+	// and sets their build environment, and this file and checked-trees.sh
+	// decide when they may be skipped.
+	/^scripts\/(?!(check\.sh|checked-trees\.sh|e2e-inputs\.ts)$)/,
+	// The toolchain.env pins pick the Hex and rebar3 that build the e2e run's
+	// dependencies.
 	/^\.github\/(?!toolchain\.env$)/,
 	/^\.lefthook\//,
 	/^lefthook\.yml$/,

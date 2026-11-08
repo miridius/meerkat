@@ -160,7 +160,7 @@ defmodule Meerkat.BumpDepsCase do
     cmd="$(basename "$0") $*"
     # The real bun judges which paths are e2e inputs.
     case "$cmd" in
-      "bun scripts/e2e-inputs.ts"*) exec '#{System.find_executable("bun")}' "$@" ;;
+      "bun "*e2e-inputs.ts*) exec '#{System.find_executable("bun")}' "$@" ;;
     esac
     echo "$cmd" >> '#{log}'
     case "$cmd" in
