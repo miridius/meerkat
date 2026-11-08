@@ -349,9 +349,10 @@ The in-progress snapshot lives at
 `<gitdir>/meerkat-precommit/in-progress/<review_id>.json`.
 
 Right after any decision but `ended`, before delivery, the CLI calls
-`ReviewServer.delete_snapshot/2` once. If a `ReviewServer` is
+`ReviewServer.delete_snapshot/2` once. If a live `ReviewServer` is
 registered, deletion runs inside that process after any save already
-in progress; otherwise, the file is deleted directly. Once
+in progress; otherwise, the file is deleted directly, even while the
+registry still lists a server that has just died. Once
 `Decision.current/0` is non-nil, `ReviewServer` still applies and
 broadcasts mutations but no longer saves the snapshot, so it stays
 deleted.

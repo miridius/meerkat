@@ -334,6 +334,34 @@ defmodule Meerkat.ReviewServerTest do
       assert :ok = ReviewServer.delete_snapshot(repo, id)
       refute File.exists?(Persistence.path_for(repo, id))
     end
+
+    test "deletes the snapshot of a server that died but is still registered",
+         %{repo: repo, review_id: id} do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{repo_path: repo, initial_state: %ReviewState{}})
+
+      _ = ReviewServer.set_approved(id, "a.ex", true)
+      assert File.exists?(Persistence.path_for(repo, id))
+
+      # Hold the registry's cleanup and the supervisor's restart so the
+      # dead server's entry stays registered, as it does briefly after a crash.
+      partition = Module.concat(Meerkat.ReviewRegistry, "PIDPartition0")
+      :ok = :sys.suspend(partition)
+      :ok = :sys.suspend(Meerkat.ReviewServerSup)
+
+      try do
+        ref = Process.monitor(pid)
+        Process.exit(pid, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+        assert [{^pid, _}] = Registry.lookup(Meerkat.ReviewRegistry, id)
+
+        assert :ok = ReviewServer.delete_snapshot(repo, id)
+        refute File.exists?(Persistence.path_for(repo, id))
+      after
+        :ok = :sys.resume(Meerkat.ReviewServerSup)
+        :ok = :sys.resume(partition)
+      end
+    end
   end
 
   describe "clear_all_comments/1" do

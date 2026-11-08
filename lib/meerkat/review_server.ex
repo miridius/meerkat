@@ -201,8 +201,10 @@ defmodule Meerkat.ReviewServer do
 
   @doc """
   Deletes `review_id`'s snapshot now; if a server is running, deletion
-  runs there after any save already in progress. The snapshot stays
-  deleted because the server stops saving once a decision exists.
+  runs there after any save already in progress; if none is, or the
+  registered one has already died, the file is deleted directly. The
+  snapshot stays deleted because the server stops saving once a
+  decision exists.
   """
   @spec delete_snapshot(String.t(), review_id) :: :ok
   def delete_snapshot(repo_path, review_id) do
@@ -210,6 +212,8 @@ defmodule Meerkat.ReviewServer do
       [{pid, _}] -> GenServer.call(pid, :delete_snapshot, call_timeout_ms())
       [] -> Persistence.delete(repo_path, review_id)
     end
+  catch
+    :exit, {:noproc, _} -> Persistence.delete(repo_path, review_id)
   end
 
   ## GenServer plumbing
