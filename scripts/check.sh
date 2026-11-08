@@ -99,7 +99,7 @@ run_checks() {
     else
       echo
       echo "$label: these contents' e2e inputs never passed the e2e steps here;"
-      echo "the pre-push check will run every check on them."
+      echo "the pre-push check will run every check on a pushed tip that holds them."
     fi
   fi
 

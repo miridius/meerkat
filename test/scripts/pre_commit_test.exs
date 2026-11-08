@@ -378,7 +378,7 @@ defmodule Meerkat.PreCommitHookTest do
       stage_tooling(ctx)
 
       assert {out, 0} = commit(ctx, ["-m", "tooling"])
-      assert out =~ "the pre-push check will run every check on them"
+      assert out =~ "the pre-push check will run every check on a pushed tip that holds them"
       refute checked?(ctx, "HEAD")
       refute e2e_checked?(ctx, "HEAD")
     end
@@ -404,8 +404,7 @@ defmodule Meerkat.PreCommitHookTest do
   end
 
   test "the e2e record matches contents with the same e2e inputs, and only those", ctx do
-    bash = fn args -> System.cmd("bash", args, cd: ctx.work, env: hook_env()) end
-    assert {_, 0} = bash.(["scripts/checked-trees.sh", "--e2e", "mark", "HEAD"])
+    mark(ctx, "--e2e", "HEAD")
 
     stage_tooling(ctx)
     no_hooks(ctx.work, ["commit", "-qm", "tooling"])
@@ -754,7 +753,7 @@ defmodule Meerkat.PreCommitHookTest do
     test "a commit staging no lib lines on a recorded HEAD records its contents", ctx do
       stage(ctx.work, "lib/meerkat/two.ex", "two\nrebased\n")
       no_hooks(ctx.work, ["commit", "-qm", "rebased"])
-      mark_mutated(ctx, "HEAD")
+      mark(ctx, "--mutated", "HEAD")
       stage(ctx.work, "code.txt", "staged\n")
 
       assert {out, 0} = commit(ctx, ["-m", "change code"])
@@ -966,9 +965,9 @@ defmodule Meerkat.PreCommitHookTest do
     code == 0
   end
 
-  defp mark_mutated(ctx, rev) do
+  defp mark(ctx, store, rev) do
     {_, 0} =
-      System.cmd("bash", ["scripts/checked-trees.sh", "--mutated", "mark", rev],
+      System.cmd("bash", ["scripts/checked-trees.sh", store, "mark", rev],
         cd: ctx.work,
         env: hook_env()
       )

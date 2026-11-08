@@ -12,6 +12,7 @@ defmodule Meerkat.E2eInputsTest do
     test/support/test_helpers.ex
     scripts/mix-test.sh
     scripts/check.sh.bak
+    scripts/checked-trees.sh
     .github/workflows/ci.yml
     .lefthook/pre-push/pre-push.sh
     lefthook.yml
@@ -24,7 +25,6 @@ defmodule Meerkat.E2eInputsTest do
 
   @inputs ~w(
     scripts/check.sh
-    scripts/checked-trees.sh
     scripts/e2e-inputs.ts
     lib/meerkat/git.ex
     config/dev.exs
@@ -73,8 +73,8 @@ defmodule Meerkat.E2eInputsTest do
   end
 
   # Catches the allowlist drifting over a file the e2e run reads: every
-  # tracked path a string literal in the e2e suite or its config names, as
-  # written or relative to that file, must count as an e2e input.
+  # tracked path a quoted string containing `/` in the e2e suite or its config
+  # names, as written or relative to that file, must count as an e2e input.
   test "every repo path the e2e suite names is an e2e input" do
     tracked = String.split(Meerkat.TestHelpers.git(@root, ["ls-files"]), "\n", trim: true)
 

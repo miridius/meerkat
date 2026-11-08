@@ -9,7 +9,8 @@
 // runs them.
 //
 // The test is an allowlist of paths nothing in the e2e run reads or
-// executes; every other path, a new one included, counts as an e2e input.
+// executes, leaving out this file, which decides when the run is skipped;
+// every other path, a new one included, counts as an e2e input.
 // scripts/check.sh skips the e2e steps of a commit that changes no e2e
 // input, and scripts/checked-trees.sh --e2e keys its record on the e2e
 // inputs alone. A path git quotes, for its unusual characters, matches
@@ -21,9 +22,9 @@ const notInputs: RegExp[] = [
 	// test/support/test.gitconfig.
 	/^test\/(?!support\/test\.gitconfig$)/,
 	// No script here runs in the e2e suite, but check.sh runs the e2e steps
-	// and sets their build environment, and this file and checked-trees.sh
-	// decide when they may be skipped.
-	/^scripts\/(?!(check\.sh|checked-trees\.sh|e2e-inputs\.ts)$)/,
+	// and sets their build environment, and this file decides when they may
+	// be skipped.
+	/^scripts\/(?!(check\.sh|e2e-inputs\.ts)$)/,
 	// The toolchain.env pins pick the Hex and rebar3 that build the e2e run's
 	// dependencies.
 	/^\.github\/(?!toolchain\.env$)/,
