@@ -310,38 +310,3 @@ Any other outcome is a deployment failure.
 Report any deployment failure.
 If a pull hook or explicit install ran and the clean install did not
 succeed, report that a `-wip` build may be live.
-
-## Local dev mode
-
-When iterating on UI / Svelte / CSS: `scripts/dev-install.sh`
-overwrites `~/.local/bin/meerkat` with a thin launcher that runs
-`bin/meerkat-beam` from THIS checkout under `MIX_ENV=dev`. Every
-`meerkat` invocation (from any repo) boots a BEAM whose code is
-read directly from this tree, so:
-
-- Edits to `assets/svelte/*.svelte` / `assets/css/*.css` need a
-  meerkat restart so `bin/meerkat-beam`'s pre-flight rebuilds
-  `priv/static/` via `vite build`. There is no Vite dev server / HMR
-  in this setup — see `config/dev.exs` for the rationale.
-- Edits to `lib/meerkat/*.ex` / `lib/meerkat_web/**/*.ex` are
-  picked up by `Meerkat.DevWatcher` — it halts the BEAM with exit
-  code 75 on any file change under `lib/`, the shepherd loop in
-  `bin/meerkat-beam` respawns, preferring the port its previous BEAM
-  bound, and LiveView's client auto-reconnects to the new BEAM only
-  when it binds the port the previous BEAM bound.
-  Phoenix's request-time code reloader is off in dev (it fought
-  `Meerkat.CLI`'s `Application.put_env` + manual-supervisor startup
-  pattern).
-
-```bash
-scripts/dev-install.sh        # ~/.local/bin/meerkat → this branch
-meerkat                       # any repo, restart on lib/ or assets/ edits
-scripts/install.sh            # revert to prod release
-```
-
-`dev-install.sh` refuses to run while HEAD is `main` — dev mode is
-for unmerged work. Bringing local `main` up to date — via `git pull`,
-or by `git switch`/`git checkout main` after a GitHub squash-merge —
-fires the lefthook `post-merge` / `post-checkout` hooks, which run
-`scripts/install.sh` (via `scripts/auto-install.sh`) and replace the
-dev launcher with the prod release.

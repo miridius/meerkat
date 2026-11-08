@@ -109,8 +109,8 @@ WRAPPER_EOF
 # is already a clean build of this commit. Keyed on the commit stamp in
 # the current version dir, not its name, so a forced rebuild can land in
 # a fresh immutable dir without making every later run rebuild. The
-# launcher must also be this script's, so a dev launcher from
-# scripts/dev-install.sh is still replaced.
+# launcher must also be this script's, so any other launcher is
+# replaced.
 CURRENT_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 CURRENT_STAMP="$(cat "$CURRENT_TARGET/INSTALLED_COMMIT" 2>/dev/null || true)"
 if [[ "${1:-}" != "--force" && -n "$HEAD_COMMIT" && -z "$DIRTY" && -x "$WRAPPER" \

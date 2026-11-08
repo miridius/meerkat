@@ -3,10 +3,6 @@ defmodule Meerkat.Application do
 
   use Application
 
-  # Compile-time env captured here so release builds don't need Mix
-  # at runtime to gate the dev-watcher.
-  @env Mix.env()
-
   @impl true
   def start(_type, _args) do
     children =
@@ -23,29 +19,14 @@ defmodule Meerkat.Application do
         {Registry, keys: :duplicate, name: Meerkat.ViewerRegistry},
         {DynamicSupervisor, name: Meerkat.ReviewServerSup, strategy: :one_for_one},
         Meerkat.Decision
-      ] ++ dev_watcher_child() ++ version_watcher_child() ++ endpoint_child()
+      ] ++ version_watcher_child() ++ endpoint_child()
 
     opts = [strategy: :one_for_one, name: Meerkat.Supervisor]
     Supervisor.start_link(children, opts)
   end
 
-  # Dev mode only: watch lib/ + assets/ and halt the BEAM with exit
-  # code 75 on any change. After each BEAM exit, `bin/meerkat-beam`
-  # reads and deletes the run dir's `port` file, then sets
-  # `MEERKAT_PREFERRED_PORT` to its recorded port for the next BEAM.
-  # With the default port or `--port 0`, the next BEAM tries that port
-  # first; if occupied, the CLI uses an OS-assigned port. Gated on
-  # @env so the release supervisor never tries to start the watcher.
-  defp dev_watcher_child do
-    if @env == :dev and Application.get_env(:meerkat, :start_endpoint, false) do
-      [Meerkat.DevWatcher]
-    else
-      []
-    end
-  end
-
-  # Prod analogue: watch the install's `current` symlink and live-restart
-  # onto a newly-installed version. Gated on MEERKAT_CURRENT_LINK (set by
+  # Watch the install's `current` symlink and live-restart onto a
+  # newly-installed version. Gated on MEERKAT_CURRENT_LINK (set by
   # the shepherd), so it only starts under a versioned prod install.
   defp version_watcher_child do
     if Application.get_env(:meerkat, :start_endpoint, false) and

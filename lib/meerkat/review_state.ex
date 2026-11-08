@@ -48,8 +48,8 @@ defmodule Meerkat.ReviewState do
             # In-progress open comment forms (which surface, anchor,
             # edit_id), in the order opened; see `Meerkat.OpenForms`.
             # Persisted to disk so the forms survive a BEAM restart
-            # (DevWatcher, crash) or a fresh tab reconnect. Body
-            # content is held in localStorage via each form's
+            # (onto a new version, after a crash) or a fresh tab
+            # reconnect. Body content is held in localStorage via each form's
             # `draftKey`, so re-opening at the same anchor restores
             # the typed text too.
             open_forms: [],

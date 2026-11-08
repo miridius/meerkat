@@ -8,7 +8,7 @@ defmodule Meerkat.Restart do
   the request instead of taking the test VM down.
   """
 
-  # The prod and dev shepherds read 75 as a respawn request; with
+  # Both shepherds read 75 as a respawn request; with
   # port 0, the next BEAM tries the last-bound port first.
   # Outside the CLI's 0/1/2 decision codes, so a real decision never
   # collides with it.

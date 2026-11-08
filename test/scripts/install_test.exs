@@ -54,11 +54,8 @@ defmodule Meerkat.InstallScriptTest do
     refute File.exists?(ctx.marker)
   end
 
-  test "rebuilds when a dev launcher is installed, so it gets replaced", ctx do
-    executable(
-      ctx.launcher,
-      "#!/usr/bin/env bash\n# meerkat dev launcher (installed by scripts/dev-install.sh)\n"
-    )
+  test "rebuilds when another launcher is installed, so it gets replaced", ctx do
+    executable(ctx.launcher, "#!/usr/bin/env bash\n# another meerkat launcher\n")
 
     assert {_, status} = install(ctx)
     assert status != 0

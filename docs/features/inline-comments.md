@@ -275,6 +275,5 @@ edits. Add forms restore suggestion code, finding type and
 agent-instruction flags to their defaults; edit forms reopen with those values from the saved
 comment, but unsaved changes to them are lost.
 
-This is the contract the user relies on during dev iteration: a
-hot reload **never** loses an open form or the prose typed into an
+A BEAM restart **never** loses an open form or the prose typed into an
 add form.

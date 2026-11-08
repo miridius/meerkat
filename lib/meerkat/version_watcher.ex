@@ -1,7 +1,6 @@
 defmodule Meerkat.VersionWatcher do
   @moduledoc """
-  Prod analogue of `Meerkat.DevWatcher`. Polls the install's `current`
-  symlink (path from `MEERKAT_CURRENT_LINK`); when it points at a version
+  Polls the install's `current` symlink (path from `MEERKAT_CURRENT_LINK`); when it points at a version
   other than the one this BEAM booted from, a newer release is live.
 
   It broadcasts `{:meerkat_version_available, target}` on `topic/0` so

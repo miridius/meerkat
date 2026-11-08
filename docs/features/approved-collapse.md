@@ -58,8 +58,8 @@ approving.
 `expanded_approved` and `collapsed_unapproved` are in-LV
 ephemeral state, NOT persisted to `ReviewState`. Reasons:
 
-- The overrides are intentionally ephemeral: a DevWatcher
-  hot reload clears them and the user re-expands files they want to
+- The overrides are intentionally ephemeral: a BEAM restart
+  clears them and the user re-expands files they want to
   revisit. The trade-off is one click per file vs persisting
   per-session UI state past a BEAM restart — comment-form state
   IS persisted because losing typed content costs more than
@@ -69,7 +69,7 @@ ephemeral state, NOT persisted to `ReviewState`. Reasons:
   keeps the model clean.
 
 If a future iteration shows users repeatedly hate the
-re-expansion cost across hot reloads, the fields can graduate to
+re-expansion cost across restarts, the fields can graduate to
 persisted assigns at any time — the helper `file_section_collapsed?/4`
 is the single read path.
 

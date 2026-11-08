@@ -25,12 +25,6 @@ defmodule MeerkatWeb.Endpoint do
     only: MeerkatWeb.static_paths(),
     raise_on_missing_only: code_reloading?
 
-  if code_reloading? do
-    socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader
-    plug Phoenix.CodeReloader
-  end
-
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 

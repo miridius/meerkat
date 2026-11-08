@@ -416,7 +416,7 @@ defmodule Meerkat.CLI do
           :live | {:auto, String.t()}
   defp auto_approve_decision({:staged, _} = target, repo_path, serve_dir) do
     # A BEAM respawned for a review its serve dir already served (a restart
-    # onto a new version or after a code change, a crash retry) resumes it:
+    # onto a new version, a crash retry) resumes it:
     # ticking a file Approved records it in the approval cache at once, so
     # with every file ticked the fast path would exit 0 with no Approve
     # click and drop the comments.
@@ -518,9 +518,9 @@ defmodule Meerkat.CLI do
     end
   end
 
-  # A review whose BEAM died undecided and was not respawned (a dev-mode
-  # crash, a SIGKILL) left its comments in the in-progress snapshot, and the
-  # rerun gets a fresh serve dir. Resume it so a decision delivers them.
+  # A review whose BEAM died undecided and was not respawned (a crash
+  # under `bin/meerkat-beam`, a SIGKILL) left its comments in the
+  # in-progress snapshot, and the rerun gets a fresh serve dir. Resume it so a decision delivers them.
   # The signature comes from the file list the review itself loads, which
   # leaves out whitespace-only changes, so only a snapshot it would restore
   # keeps the rerun live. A load failure keeps it live too: the review
@@ -828,13 +828,9 @@ defmodule Meerkat.CLI do
     # Prod (mix release): override dev.exs's runtime checks with
     # one-shot CLI flags.
     # Dev (`bin/meerkat-beam` + MIX_ENV=dev): keep dev.exs intact.
-    # Source-change reloads come from `Meerkat.DevWatcher` halting
-    # the BEAM and the shepherd respawning it, not from Phoenix's
-    # request-time code reloader (which is off in dev too).
     prod_overrides = [
       code_reloader: false,
       debug_errors: false,
-      live_reload: nil,
       watchers: [],
       static_url: nil
     ]
@@ -978,7 +974,7 @@ defmodule Meerkat.CLI do
   defp open_browser_unless_disabled(true, _url, _open), do: :ok
 
   defp open_browser_unless_disabled(false, url, open) do
-    # Shepherd-managed marker so a DevWatcher restart doesn't spawn a
+    # Shepherd-managed marker so a restart doesn't spawn a
     # duplicate tab. The shepherd creates the file empty; we check
     # for non-empty contents on every call and only open + stamp it
     # on the very first invocation. Absent env var = no shepherd, so
