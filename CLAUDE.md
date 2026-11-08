@@ -244,31 +244,16 @@ post-merge steps in this section.
 
 ### Mutation-test the PR
 
-Run the check on every changed `lib/**/*.ex` file in the PR.
+Mutate only the lines the PR changes, never whole files:
 
 ```bash
-set -euo pipefail
-
-CHANGED=$(git diff --name-only --diff-filter=d <base>...HEAD -- 'lib/*.ex')
-if [ -z "$CHANGED" ]; then
-  echo "No changed lib/**/*.ex files; skipping mutation testing."
-else
-  scripts/mutate.sh $CHANGED
-fi
+git fetch origin
+BASE_BRANCH=origin/<base> scripts/mutate.sh changed
 ```
 
-Run `git fetch origin` before the check.
-Use the PR's base branch on the refreshed `origin` as `<base>`, on
-reruns after fix commits too, so a fix that only adds tests still
-re-checks the files whose mutants it targets.
+Use the PR's base branch as `<base>`, on reruns after fix commits too,
+so a fix that only adds tests still re-checks the lines it targets.
 The PR branch must be checked out for this command.
-The `lib/*.ex` pathspec matches `.ex` files at any depth under `lib/`.
-The `--diff-filter=d` option omits deleted files.
-This keeps deleted paths out of the file list passed to muex.
-With `set -euo pipefail`, a failing `git diff` aborts instead of
-producing an empty list.
-The empty-list guard prevents an empty file list from invoking the
-default mutation scope.
 
 ### Post-merge deploy
 
