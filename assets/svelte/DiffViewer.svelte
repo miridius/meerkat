@@ -89,6 +89,8 @@
 
   // A code cell font's `2em` and `1ch` in px, by font, for the rulers.
   const fontWidthCache = new Map<string, { offset: number; ch: number }>();
+  // How many columns a row of wrapped code holds, by font and width.
+  const rowColumnsCache = new Map<string, number>();
 </script>
 
 <script lang="ts">
@@ -102,7 +104,7 @@
   import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
   import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
-  import { fittingColumns, rulerBackground } from "../ts/rulers";
+  import { fittingColumns, rulerBackground, wrappedRulerBackground } from "../ts/rulers";
   import { unifiedDiff } from "../ts/unifiedDiff";
 
   // Renders ONE file's diff body via `@git-diff-view`, the read-only
@@ -426,10 +428,11 @@
   });
 
   // Rulers: each side's code cells get, as a CSS variable, a background
-  // drawing the rulers whose column fits in that side's code column:
-  // its visible width with wrap on, its scroll width with wrap off. The
-  // rest are not drawn. Redrawn when the setting, the table (view mode,
-  // wrap, font size, tab size) or the width changes.
+  // for their code. With wrap off it draws the rulers whose column fits
+  // in the scroll width of that side's code column; the rest are not
+  // drawn. With wrap on it draws each ruler on the row its column falls
+  // on. Redrawn when the setting, the table (view mode, wrap, font size,
+  // tab size) or the width changes.
   const RULER_COLOR = "color-mix(in srgb, var(--muted) 35%, transparent)";
   const RULER_SIDES = [
     ["--meerkat-rulers-old", "td.diff-line-old-content"],
@@ -441,27 +444,25 @@
     if (!diffContainer) return;
     for (const [variable, selector] of RULER_SIDES) {
       const td = diffContainer.querySelector<HTMLTableCellElement>(selector);
-      const view = td?.closest("table")?.parentElement;
-      if (!td || !view || ruler_columns.length === 0) {
+      // A collapsed file's cells have no width to measure; the resize
+      // when it opens draws them.
+      if (!td || ruler_columns.length === 0 || td.getClientRects().length === 0) {
         diffContainer.style.removeProperty(variable);
         continue;
       }
-      const cell = td.getBoundingClientRect();
-      // Text stops at the cell's right padding, so a ruler there marks
-      // a column no line reaches.
-      const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
-      // With wrap off the cell is as wide as the longest line, and
-      // scrolling the side's view reaches all of it. With wrap on, only
-      // what fits in the view counts, measured as if scrolled to the
-      // start, so the answer doesn't change with the scroll.
-      let visible = textRight;
       if (wrap_lines) {
-        const viewRight = view.getBoundingClientRect().left + view.clientLeft + view.clientWidth;
-        visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
+        const perRow = rowColumns(td, fontWidths(td));
+        diffContainer.style.setProperty(variable, wrappedRulerBackground(ruler_columns, perRow, "2em", RULER_COLOR));
+        continue;
       }
+      // With wrap off the cell is as wide as the longest line, and
+      // scrolling the side's view reaches all of it. Text stops at the
+      // cell's right padding, so a ruler there marks a column no line
+      // reaches.
+      const textRight = td.getBoundingClientRect().width - Number.parseFloat(getComputedStyle(td).paddingRight);
       // The code starts 2em into the cell, after the +/- marker.
       const { offset, ch } = fontWidths(td);
-      const columns = fittingColumns(ruler_columns, visible, offset, ch);
+      const columns = fittingColumns(ruler_columns, textRight, offset, ch);
       diffContainer.style.setProperty(variable, rulerBackground(columns, "2em", RULER_COLOR));
     }
   }
@@ -488,6 +489,45 @@
     const width = probe.getBoundingClientRect().width;
     probe.remove();
     return width;
+  }
+
+  // How many columns a row of `cell`'s wrapped code holds. Wrapped code
+  // breaks at exact character widths, so every row but a line's last
+  // holds the same number. Counted on a probe as wide as the code, as
+  // dividing the widths can be one off from where the browser breaks;
+  // kept per width, as the probe forces a layout.
+  function rowColumns(cell: HTMLElement, { offset, ch }: { offset: number; ch: number }): number {
+    const code = cell.querySelector(".diff-line-content-item") ?? cell;
+    const width = code.getBoundingClientRect().width;
+    const key = `${offset}|${ch}|${width}`;
+    let columns = rowColumnsCache.get(key);
+    if (columns === undefined) {
+      const probe = document.createElement("div");
+      probe.style.cssText = `position: absolute; visibility: hidden; top: 0; left: 0; box-sizing: border-box; width: ${width}px; padding-left: 2em; white-space: break-spaces; line-break: anywhere; word-break: break-all`;
+      // One more character than can fit, so it wraps.
+      probe.textContent = "0".repeat(Math.ceil(width / ch) + 1);
+      cell.append(probe);
+      const text = probe.firstChild as Text;
+      const range = document.createRange();
+      const top = (i: number) => {
+        range.setStart(text, i);
+        range.setEnd(text, i + 1);
+        return range.getBoundingClientRect().top;
+      };
+      // The first character on the second row.
+      const firstTop = top(0);
+      let lo = 1;
+      let hi = text.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (top(mid) > firstTop) hi = mid;
+        else lo = mid + 1;
+      }
+      probe.remove();
+      columns = lo;
+      rowColumnsCache.set(key, columns);
+    }
+    return columns;
   }
 
   $effect(() => {
@@ -1352,15 +1392,29 @@
        handled by the page body */
     overflow-x: auto;
   }
-  /* Rulers, set per side by `drawRulers`. */
-  :global(.diff-content td.diff-line-old-content) {
-    background-image: var(--meerkat-rulers-old, none);
+  /* Rulers, set per side by `drawRulers`. They are drawn behind the
+     code, not the cell, so they stop where its text does. */
+  :global(.diff-content td.diff-line-old-content .diff-line-content-item) {
+    background: var(--meerkat-rulers-old, none);
   }
-  :global(.diff-content td.diff-line-new-content) {
-    background-image: var(--meerkat-rulers-new, none);
+  :global(.diff-content td.diff-line-new-content .diff-line-content-item) {
+    background: var(--meerkat-rulers-new, none);
   }
-  :global(.diff-content td.diff-line-content) {
-    background-image: var(--meerkat-rulers-unified, none);
+  :global(.diff-content td.diff-line-content .diff-line-content-item) {
+    background: var(--meerkat-rulers-unified, none);
+  }
+  /* With wrap on, code breaks at exact character widths, so each row
+     holds the same number of columns for `drawRulers`. */
+  .diff-content:not(.no-wrap) :global(.diff-line-content-item) {
+    /* biome-ignore lint/complexity/noImportantStyles: the diff library sets the code's white-space inline, which only `!important` can override. */
+    white-space: break-spaces !important;
+    line-break: anywhere;
+  }
+  /* The "no newline at end of file" mark follows the text, as with wrap
+     off, rather than taking a row of its own beside the next row's rulers. */
+  .diff-content:not(.no-wrap) :global([data-no-newline-at-end-of-file-symbol]) {
+    display: inline-block;
+    vertical-align: middle;
   }
   /* Line-number gutter cells: drag-select-only zone. Disabling user
      selection here prevents the drag from looking like a text
@@ -1516,8 +1570,8 @@
     margin: 4px 0;
     padding-left: 20px;
   }
-  /* Moved-line highlighting — 4 colors cycled by pair id. Each content
-     cell draws its rulers over the tint. */
+  /* Moved-line highlighting — 4 colors cycled by pair id. The code
+     draws its rulers over the tint. */
   :global(.diff-content .moved-line.moved-pair-0) {
     --meerkat-moved-tint: rgba(96, 165, 250, 0.18);
   }
@@ -1530,23 +1584,9 @@
   :global(.diff-content .moved-line.moved-pair-3) {
     --meerkat-moved-tint: rgba(251, 191, 36, 0.18);
   }
-  :global(.diff-content tr.diff-line.moved-line) {
+  :global(.diff-content tr.diff-line.moved-line),
+  :global(.diff-content td.moved-line) {
     background-image: linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
-  }
-  :global(.diff-content td.diff-line-old-content.moved-line) {
-    background-image:
-      var(--meerkat-rulers-old, none),
-      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
-  }
-  :global(.diff-content td.diff-line-new-content.moved-line) {
-    background-image:
-      var(--meerkat-rulers-new, none),
-      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
-  }
-  :global(.diff-content td.diff-line-content.moved-line) {
-    background-image:
-      var(--meerkat-rulers-unified, none),
-      linear-gradient(var(--meerkat-moved-tint), var(--meerkat-moved-tint));
   }
   /* A moved line's arrow covers its +/− mark, which turns invisible. */
   :global(.diff-content .diff-line-content-operator.moved-mark) {
