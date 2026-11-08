@@ -421,26 +421,34 @@ function inText(state: EditorState, pos: number): boolean {
 	return state.doc.sliceString(pos - 1, pos) === "\\";
 }
 
-/** Whether `pos` splits a matched collection's opener from its prefix, as
- *  one between `#` and `{`, or in or after the namespace of `#:ns{`, does. */
-function splitsOpener(state: EditorState, pos: number): boolean {
+/** Whether a selection end at `pos` splits a prefix from what it applies
+ *  to: a matched collection's opener from the prefix that is part of it,
+ *  as one between `#` and `{`, or in or after the namespace of `#:ns{`,
+ *  does; or a prefix form (`'`, `^:m`, `#_`, `#'`, `#inst`) from its
+ *  form. The selection's start (`end` false) may sit at that form, but
+ *  its end may not, as wrapping would leave the prefix without one. */
+function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		const coll = PREFIXED.has(node.name) ? prefixedColl(node) : null;
-		if (coll?.firstChild && node.from < pos && pos < coll.firstChild.to) return true;
+		if (node.from >= pos) continue;
+		if (PREFIXED.has(node.name)) {
+			const coll = prefixedColl(node);
+			if (coll?.firstChild && pos < coll.firstChild.to) return true;
+			continue;
+		}
+		const form = node.lastChild;
+		if (!node.parent || isColl(node) || !form || form.to !== node.to || form.from <= node.from) continue;
+		if (end ? pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }
 
 /** Whether `range` cuts across brackets: it holds a bracket whose partner
- *  is outside it or missing, one of its ends `splitsOpener`, it ends
- *  where `inText` says brackets are text, or it starts just after a `#`,
- *  which the opener would join into another reader form, as `#(` from
- *  `#_`. */
+ *  is outside it or missing, one of its ends `splitsPrefix`, or it ends
+ *  where `inText` says brackets are text. */
 function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 	if (range.empty) return false;
 	const { from, to } = range;
-	if (splitsOpener(state, from) || splitsOpener(state, to) || inText(state, to)) return true;
-	if (state.doc.sliceString(from - 1, from) === "#") return true;
+	if (splitsPrefix(state, from, false) || splitsPrefix(state, to, true) || inText(state, to)) return true;
 	let cut = false;
 	syntaxTree(state).iterate({
 		from,

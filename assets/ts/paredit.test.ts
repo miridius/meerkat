@@ -409,18 +409,35 @@ describe("typeBracket", () => {
 		expect(typeOver("(", "#:a{x}", 0, 3)).toBe("#:a{x}");
 		expect(typeOver("(", "#:ab{x}", 3, 4)).toBe("#:ab{x}");
 		expect(typeOver("(", "#:a{x} y", 0, 6)).toBe("(#:a{x}) y");
+		// A form inside a prefixed collection still wraps.
+		expect(typeOver("(", "#:a{x}", 4, 5)).toBe("#:a{(x)}");
+		expect(typeOver("(", "#{a}", 2, 3)).toBe("#{(a)}");
 	});
 
 	test("an opener does nothing to a selection from code into a string or comment", () => {
 		expect(typeOver("(", 'x "a b"', 0, 4)).toBe('x "a b"');
 		expect(typeOver("(", "x ; note", 0, 6)).toBe("x ; note");
+		expect(typeOver("(", "a \\b", 0, 3)).toBe("a \\b");
 		expect(typeOver("(", 'x "a b" y', 0, 7)).toBe('(x "a b") y');
 	});
 
-	test("an opener does nothing to a selection starting just after a #", () => {
+	test("an opener does nothing to a selection that splits a prefix from its form", () => {
 		expect(typeOver("(", "#_a b", 1, 3)).toBe("#_a b");
 		expect(typeOver("{", "#'foo", 1, 5)).toBe("#'foo");
+		expect(typeOver("(", "^:k x", 1, 3)).toBe("^:k x");
+		expect(typeOver("(", "a #_b", 0, 3)).toBe("a #_b");
+		expect(typeOver("(", "a #_b", 0, 4)).toBe("a #_b");
+		expect(typeOver("(", "'(a b)", 0, 1)).toBe("'(a b)");
+		expect(typeOver("(", "#my.Rec{:a 1}", 0, 7)).toBe("#my.Rec{:a 1}");
+	});
+
+	test("an opener wraps a whole prefix form, or the form inside its prefix", () => {
 		expect(typeOver("(", "#_a b", 0, 3)).toBe("(#_a) b");
+		expect(typeOver("(", "'(a b)", 1, 6)).toBe("'((a b))");
+		expect(typeOver("(", "^:k x", 4, 5)).toBe("^:k (x)");
+		// A `#` that ends a symbol or a character is no prefix.
+		expect(typeOver("(", "x# 1", 2, 4)).toBe("x#( 1)");
+		expect(typeOver("(", "\\# a", 2, 4)).toBe("\\#( a)");
 	});
 
 	test("an opener is typed as text over a selection in a string, while other selections wrap", () => {

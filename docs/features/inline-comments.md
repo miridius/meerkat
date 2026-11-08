@@ -193,12 +193,15 @@ changes each list once.
 
 - Typing an opening bracket inserts its closer, around the selection
   if there is one. When the selection cuts across brackets, holding a
-  bracket without its partner or splitting an opener from its prefix
-  (`#` in `#{`), as `b) (c` does in `(a b) (c d)`, or when it starts
-  in code and ends inside a string or comment, or starts just after a
-  `#`, which the opener would join (`#_a` would become `#(_a)`),
-  typing an opening bracket does nothing. Typing a closer just before the same matched
-  closer steps over it. `'` is a quote and gets no partner.
+  bracket without its partner or splitting an opener from the prefix
+  that is part of it (the `#` of `#{`, the `#?` of `#?(`, the `#:ns`
+  of `#:ns{`), as `b) (c` does in `(a b) (c d)`, or splits a prefix
+  such as `'`, `^:m`, `#_` or `#inst` from its form (`#_a` would
+  become `#(_a)`), or starts in code and ends where brackets are text
+  (in a string, regex, comment or character literal, or after a `\`),
+  typing an opening bracket does nothing. Where brackets are text, an opening
+  bracket is typed as text. Typing a closer just before the same
+  matched closer steps over it. `'` is a quote and gets no partner.
 - Backspace or Delete on one bracket of a matched pair, or on the
   prefix of its opener (the `#` of `#{` and `#(`, the `#?` of `#?(`,
   the `#?@` of `#?@(`, the `#:` of `#:ns{`), is blocked: the caret
