@@ -496,10 +496,15 @@ describe("typeBracket", () => {
 		expect(type("(", "; a|")).toBeNull();
 		expect(type("(", "\\|")).toBeNull();
 		expect(type("(", '#"a|"')).toBeNull();
+		expect(type("(", '#"|a"')).toBeNull();
 	});
 
 	test("brackets between a regex's # and its quote are code", () => {
 		expect(type("(", '#|"a"')).toBe('#(|)"a"');
+		expect(type("(", '#"a"|')).toBe('#"a"(|)');
+		// No selection may split a regex's `#` from its string.
+		expect(typeOver("(", '#"a"', 1, 4)).toBe('#"a"');
+		expect(typeOver("(", 'a #"b"', 0, 3)).toBe('a #"b"');
 	});
 
 	test("other text is left to the editor", () => {

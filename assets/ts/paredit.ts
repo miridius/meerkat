@@ -24,6 +24,9 @@ const PREFIXED = new Set(["Set", "AnonymousFunction", "ReaderConditional", "Name
 /** Forms of a prefix and the form it applies to: `^:private foo`,
  *  `#inst "…"`, `#my.Rec{…}`. */
 const PREFIX_CONTAINERS = new Set(["Meta", "TaggedLiteral", "ConstructorCall"]);
+/** Forms whose prefix makes its form something else: `#my.Rec{…}`,
+ *  `#"…"`. */
+const NAMED_BY_PREFIX = new Set(["ConstructorCall", "RegExp"]);
 
 /** The closing bracket of `coll`, or null when the text lacks it. */
 function closerOf(coll: SyntaxNode): SyntaxNode | null {
@@ -56,14 +59,19 @@ function openStart(coll: SyntaxNode): number {
 	return parent && PREFIXED.has(parent.name) ? parent.from : coll.from;
 }
 
+/** Whether `pos`, after `coll`'s opener starts, is before its closer. A
+ *  collection with no closer holds everything after its opener. */
+function holds(coll: SyntaxNode, pos: number): boolean {
+	const closer = closerOf(coll);
+	return !closer || pos <= closer.from;
+}
+
 /** The innermost collection whose brackets hold `pos`, or null at the
- *  top level. A collection with no closer holds everything after its
- *  opener. */
+ *  top level. */
 function enclosing(state: EditorState, pos: number): SyntaxNode | null {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (!isColl(node) || !node.firstChild || pos < node.firstChild.to) continue;
-		const closer = closerOf(node);
-		if (!closer || pos <= closer.from) return node;
+		if (holds(node, pos)) return node;
 	}
 	return null;
 }
@@ -414,9 +422,8 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
  *  literal, or just after a `\`, where brackets are text. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
+		// A regex's text is its string, after its `#`.
 		if (node.name === "String") return node.from < pos && pos < node.to;
-		// A regex's text starts after its `#"`.
-		if (node.name === "RegExp") return node.from + 1 < pos && pos < node.to;
 		if (node.name === "LineComment") return node.from < pos;
 		if (node.name === "Character") return node.from < pos && pos < node.to;
 	}
@@ -430,17 +437,17 @@ function inText(state: EditorState, pos: number): boolean {
  *  any other node that is no collection, such as a prefix form (`'`,
  *  `^:m`, `#_`, `#'`, `#inst`), from the child it ends with. The selection's start (`end` false) may
  *  sit at that child, but its end may not, as wrapping would leave the
- *  prefix without one; a record literal's child is its map or vector,
- *  which no selection may start at either, as its name needs one. A
+ *  prefix without one. No selection may start at the child of a form in
+ *  `NAMED_BY_PREFIX` either: a record literal's map or vector, as its
+ *  name needs one, or a regex's string, as its `#` would open it. A
  *  `pos` inside a collection, as in a metadata map, splits no prefix
  *  outside that collection. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.from >= pos) continue;
-		// Inside a collection, no prefix outside it can be split. One with
-		// no closer holds everything after its opener.
+		// Inside a collection, no prefix outside it can be split.
 		if (isColl(node)) {
-			if (pos < node.to || !closerOf(node)) return false;
+			if (holds(node, pos)) return false;
 			continue;
 		}
 		if (node.name === "SymbolicValue" && pos < node.to) return true;
@@ -448,7 +455,7 @@ function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 		if (coll?.firstChild && pos < coll.firstChild.to) return true;
 		const form = node.lastChild;
 		if (!node.parent || !form || form.to !== node.to) continue;
-		if (end || node.name === "ConstructorCall" ? pos <= form.from : pos < form.from) return true;
+		if (end || NAMED_BY_PREFIX.has(node.name) ? pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }
