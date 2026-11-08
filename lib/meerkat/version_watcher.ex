@@ -1,7 +1,8 @@
 defmodule Meerkat.VersionWatcher do
   @moduledoc """
-  Polls the install's `current` symlink (path from `MEERKAT_CURRENT_LINK`); when it points at a version
-  other than the one this BEAM booted from, a newer release is live.
+  Polls the install's `current` symlink (path from
+  `MEERKAT_CURRENT_LINK`); when it points at a version other than the
+  one this BEAM booted from, a newer release is live.
 
   It broadcasts `{:meerkat_version_available, target}` on `topic/0` so
   connected review LiveViews request the restart at a safe point (no

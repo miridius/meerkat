@@ -1245,7 +1245,10 @@ defmodule Meerkat.ShepherdTest do
       assert File.read!(Path.join(dir, "root/_build/dev/.meerkat-root")) == "/elsewhere\n"
     end
 
-    for {failed, opts} <- [compile: [compile_code: 1], "asset build": [build_code: 1]] do
+    for {failed, opts} <- [
+          compile: [compile_code: 1],
+          "asset build": [built: :root, build_code: 1]
+        ] do
       test "the dev shepherd exits 2 with a REJECT message, starting no BEAM, after a failed #{failed}" do
         {port, dir} = open_dev_shepherd(unquote(opts) ++ [exit_codes: [0]])
 

@@ -520,7 +520,8 @@ defmodule Meerkat.CLI do
 
   # A review whose BEAM died undecided and was not respawned (a crash
   # under `bin/meerkat-beam`, a SIGKILL) left its comments in the
-  # in-progress snapshot, and the rerun gets a fresh serve dir. Resume it so a decision delivers them.
+  # in-progress snapshot, and the rerun gets a fresh serve dir. Resume it
+  # so a decision delivers them.
   # The signature comes from the file list the review itself loads, which
   # leaves out whitespace-only changes, so only a snapshot it would restore
   # keeps the rerun live. A load failure keeps it live too: the review

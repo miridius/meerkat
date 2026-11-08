@@ -131,7 +131,7 @@ questions are unanswered, or while answers await the reviewer's reading.
 A BEAM respawned by the shepherd for the same review skips the fast
 path and resumes the live review with its Approved ticks and comments,
 even when every staged file is ticked Approved. This covers exit-75
-restarts onto a new version, and the prod
+restarts onto a new version and the prod
 shepherd's single retry after crash exit 2. When the CLI announces the
 review, it writes a `served` marker file in the review's run dir;
 a BEAM that starts and finds this marker skips the fast path. The
@@ -338,7 +338,8 @@ Otherwise the server stays up until a later invocation of the same
 review attaches to it. Deleting the review's comments afterwards does
 not end it; only another invocation that attaches and then goes away
 is judged again. The server records the kept judgement in the run dir
-as `kept`, so a BEAM respawned for the review, after an install, does not check the dead invocation again. A decision
+as `kept`, so a BEAM respawned for the review, after an install, does
+not check the dead invocation again. A decision
 clicked before the invocation went away is held for the next one, as
 above.
 

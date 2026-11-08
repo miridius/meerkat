@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Dev launcher: runs meerkat from this checkout under Mix. Wraps `mix
 # run` in a shepherd loop so the BEAM can self-halt with exit code 75
-# to restart onto a new version and the launcher respawns it,
+# to restart onto a new version (only when `MEERKAT_CURRENT_LINK` is
+# set, as the e2e restart test does) and the launcher respawns it,
 # preferring the port it bound. The user's browser sees a brief
 # WebSocket drop + LV auto-reconnects to the new BEAM;
 # `ReviewServer.init` reloads in-progress comments via
@@ -197,7 +198,7 @@ while true; do
   beam_pid=""
   # The port file records "<port> <pid>" for the port this BEAM bound.
   # Carry it forward after every exit, including runs using explicit
-  # --port 0, so the BEAM after a code-change restart tries it first
+  # --port 0, so the BEAM after a restart tries it first
   # and the open browser tab can reconnect.
   if [[ -f "$MEERKAT_SERVE_DIR/port" ]]; then
     read -r bound_port _ <"$MEERKAT_SERVE_DIR/port"
