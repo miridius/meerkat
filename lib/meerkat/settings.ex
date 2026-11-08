@@ -31,26 +31,34 @@ defmodule Meerkat.Settings do
 
   @doc """
   The settings file: the `:settings_path` app env when set (tests),
-  else `settings.json` in `config_dir/2` of the environment.
+  else `settings.json` in `config_dir/3` of the environment.
   """
   def path do
     Application.get_env(:meerkat, :settings_path) ||
       Path.join(
-        config_dir(System.get_env("XDG_CONFIG_HOME"), System.user_home!()),
+        config_dir(
+          System.get_env("MEERKAT_CONFIG_DIR"),
+          System.get_env("XDG_CONFIG_HOME"),
+          System.user_home!()
+        ),
         "settings.json"
       )
   end
 
   @doc """
-  Meerkat's config dir: `meerkat` under `xdg_config_home`, or under
-  `~/.config` when that is unset, empty or relative, as the XDG Base
-  Directory spec says.
+  Meerkat's config dir: `meerkat_config_dir` when it is absolute, else
+  `meerkat` under `xdg_config_home`, or under `~/.config` when that is
+  unset, empty or relative, as the XDG Base Directory spec says.
   """
-  def config_dir(xdg_config_home, home) do
-    if is_binary(xdg_config_home) and Path.type(xdg_config_home) == :absolute,
-      do: Path.join(xdg_config_home, "meerkat"),
-      else: Path.join([home, ".config", "meerkat"])
+  def config_dir(meerkat_config_dir, xdg_config_home, home) do
+    cond do
+      absolute?(meerkat_config_dir) -> meerkat_config_dir
+      absolute?(xdg_config_home) -> Path.join(xdg_config_home, "meerkat")
+      true -> Path.join([home, ".config", "meerkat"])
+    end
   end
+
+  defp absolute?(path), do: is_binary(path) and Path.type(path) == :absolute
 
   @doc """
   The saved settings, as `valid/1` gives them. A file that cannot be

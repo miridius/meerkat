@@ -1,6 +1,6 @@
 defmodule Meerkat.SettingsTest do
   # async: false — each test points the `:settings_path` app env, and
-  # one the XDG_CONFIG_HOME env var, at its own file.
+  # one the config dir env vars, at its own file.
   use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
@@ -26,28 +26,27 @@ defmodule Meerkat.SettingsTest do
     %{dir: dir, path: path}
   end
 
-  test "the config dir is meerkat under an absolute XDG_CONFIG_HOME, else under ~/.config" do
-    assert Settings.config_dir("/xdg", "/home/u") == "/xdg/meerkat"
+  test "the config dir is an absolute MEERKAT_CONFIG_DIR, else meerkat under an absolute XDG_CONFIG_HOME, else under ~/.config" do
+    assert Settings.config_dir("/mk", "/xdg", "/home/u") == "/mk"
 
     for unset <- [nil, "", "relative/dir"] do
-      assert Settings.config_dir(unset, "/home/u") == "/home/u/.config/meerkat", inspect(unset)
+      assert Settings.config_dir(unset, "/xdg", "/home/u") == "/xdg/meerkat", inspect(unset)
+
+      assert Settings.config_dir(nil, unset, "/home/u") == "/home/u/.config/meerkat",
+             inspect(unset)
     end
   end
 
-  test "without the app env, the file is settings.json in XDG_CONFIG_HOME's meerkat dir", %{
-    dir: dir
-  } do
+  test "without the app env, the file is settings.json in MEERKAT_CONFIG_DIR, else in XDG_CONFIG_HOME's meerkat dir",
+       %{dir: dir} do
     Application.delete_env(:meerkat, :settings_path)
-    prev = System.get_env("XDG_CONFIG_HOME")
 
-    on_exit(fn ->
-      if prev,
-        do: System.put_env("XDG_CONFIG_HOME", prev),
-        else: System.delete_env("XDG_CONFIG_HOME")
-    end)
-
-    System.put_env("XDG_CONFIG_HOME", dir)
+    Meerkat.TestHelpers.put_env("MEERKAT_CONFIG_DIR", nil)
+    Meerkat.TestHelpers.put_env("XDG_CONFIG_HOME", dir)
     assert Settings.path() == Path.join([dir, "meerkat", "settings.json"])
+
+    Meerkat.TestHelpers.put_env("MEERKAT_CONFIG_DIR", Path.join(dir, "mk"))
+    assert Settings.path() == Path.join([dir, "mk", "settings.json"])
   end
 
   test "a missing file gives the defaults, with no warning", %{path: path} do

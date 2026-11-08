@@ -77,3 +77,8 @@ either way because:
   runner gives each test its own. The default is outside `$TMPDIR`
   because macOS deletes files there that are more than three days
   old, which would strand a review left waiting that long.
+- `MEERKAT_CONFIG_DIR` — meerkat's config dir, which holds
+  `settings.json` (default `meerkat` under `XDG_CONFIG_HOME` when that
+  is absolute, else `~/.config/meerkat`). Taken only when it is an
+  absolute path. Intended for tests, to keep a run's settings apart
+  without changing the `XDG_CONFIG_HOME` that git reads.
