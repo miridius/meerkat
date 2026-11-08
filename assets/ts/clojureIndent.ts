@@ -132,8 +132,8 @@ function elements(coll: SyntaxNode): SyntaxNode[] {
 	return forms(coll).filter((node) => node.name !== "Discard");
 }
 
-/** The collection that `pos` sits inside, "string" inside a string, or
- *  null at the top level. An unclosed collection or string, such as one
+/** The collection that `pos` sits inside, "string" inside a string or
+ *  regex (between its `#` and quote too), or null at the top level. An unclosed collection or string, such as one
  *  the editor's lines cut off from its closer, still holds every position
  *  after its opener. */
 function enclosing(tree: ReturnType<typeof syntaxTree>, pos: number): SyntaxNode | "string" | null {

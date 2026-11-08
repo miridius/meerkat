@@ -33,9 +33,9 @@ function closedString(node: SyntaxNode): boolean {
 	return last !== null && last.name === '"' && last.from > node.from;
 }
 
-/** Whether `node` is a String holding `pos` between its quotes. One with
- *  no closing quote, such as one the editor's lines cut off, runs to the
- *  end of the text. */
+/** Whether `node`, around `pos`, is a String holding `pos` after its
+ *  opening quote and before any closing one. One with no closing quote,
+ *  such as one the editor's lines cut off, runs to the end of the text. */
 export function inString(node: SyntaxNode, pos: number): boolean {
 	return node.name === "String" && node.from < pos && (pos < node.to || !closedString(node));
 }

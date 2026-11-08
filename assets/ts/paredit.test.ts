@@ -499,7 +499,7 @@ describe("typeBracket", () => {
 		expect(type("(", '#"|a"')).toBeNull();
 	});
 
-	test("brackets between a regex's # and its quote are code", () => {
+	test("brackets before or after a regex's string are code", () => {
 		expect(type("(", '#|"a"')).toBe('#(|)"a"');
 		expect(type("(", '#"a"|')).toBe('#"a"(|)');
 	});

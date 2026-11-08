@@ -414,9 +414,9 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 	return { ...spec, scrollIntoView: true, userEvent: dir < 0 ? "delete.backward" : "delete.forward" };
 }
 
-/** Whether `pos` sits in a string (a regex's included, after its `#`), a
- *  comment or a character literal, or just after a `\`, where brackets
- *  are text. A string with no closing quote runs to the end of
+/** Whether `pos` sits in a string (a regex's included, after its `#`),
+ *  a comment or a character literal, or just after a `\`, where
+ *  brackets are text. A string with no closing quote runs to the end of
  *  the text. */
 function inText(state: EditorState, pos: number): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
@@ -437,9 +437,8 @@ function inText(state: EditorState, pos: number): boolean {
  *  may not, as wrapping would leave the prefix without one. No selection
  *  may start at the child of a form in `NARROW_PREFIXED` either: a
  *  record literal's map or vector, a regex's string or a var's symbol,
- *  as its prefix takes no other. A
- *  `pos` inside a collection, as in a metadata map, splits no prefix
- *  outside that collection. */
+ *  as its prefix takes no other. A `pos` inside a collection, as in a
+ *  metadata map, splits no prefix outside that collection. */
 function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.from >= pos) continue;
@@ -453,7 +452,7 @@ function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 		if (coll?.firstChild && pos < coll.firstChild.to) return true;
 		const form = node.lastChild;
 		if (!node.parent || !form || form.to !== node.to) continue;
-		if (end || NARROW_PREFIXED.has(node.name) ? pos <= form.from : pos < form.from) return true;
+		if ((end || NARROW_PREFIXED.has(node.name)) ? pos <= form.from : pos < form.from) return true;
 	}
 	return false;
 }
