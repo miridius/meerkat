@@ -464,12 +464,14 @@ function splitsPrefix(state: EditorState, pos: number, end: boolean): boolean {
 }
 
 /** Whether `range` cuts across brackets: it holds a bracket whose partner
- *  is outside it or missing, one of its ends `splitsPrefix`, or it ends
- *  where `inText` says brackets are text. */
+ *  is outside it or missing, one of its ends `splitsPrefix`, or one of
+ *  its ends is where `inText` says brackets are text, as `typeBracket`
+ *  asks only of a range not within one text. */
 function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 	if (range.empty) return false;
 	const { from, to } = range;
-	if (splitsPrefix(state, from, false) || splitsPrefix(state, to, true) || inText(state, to)) return true;
+	if (inText(state, from) || inText(state, to)) return true;
+	if (splitsPrefix(state, from, false) || splitsPrefix(state, to, true)) return true;
 	let cut = false;
 	syntaxTree(state).iterate({
 		from,
@@ -486,13 +488,13 @@ function cutsAcross(state: EditorState, range: SelectionRange): boolean {
 }
 
 /** Typing `text`: an opener inserts its closer too, around a selection if
- *  there is one, and leaves a selection that `cutsAcross` brackets, or
- *  that starts where `inText` says brackets are text and ends anywhere
- *  but the same text, as it is; a closer before the same matched closer
- *  steps over it. Where both ends are in the same text, an opener is
- *  typed as text. Null, so the editor types `text` itself, for anything
- *  else, for an opener where every range is in text, and for a closer
- *  where any range is, as no bracket in text is matched. */
+ *  there is one, and leaves a selection that `cutsAcross` brackets as it
+ *  is; a closer before the same matched closer steps over it. At a caret
+ *  where `inText` says brackets are text, or over a selection within one
+ *  such text, an opener is typed as text. Null, so the editor types
+ *  `text` itself, for anything else, for an opener where every range is
+ *  so typed as text, and for a closer where any range is in text, as no
+ *  bracket in text is matched. */
 export function typeBracket(state: EditorState, text: string): TransactionSpec | null {
 	if (!(text in PAIRS || Object.values(PAIRS).includes(text))) return null;
 	const ranges = state.selection.ranges;
@@ -510,7 +512,7 @@ export function typeBracket(state: EditorState, text: string): TransactionSpec |
 						range: EditorSelection.cursor(range.from + 1),
 					};
 				}
-				if (inText(state, range.from) || cutsAcross(state, range)) return { range };
+				if (cutsAcross(state, range)) return { range };
 				return {
 					changes: [
 						{ from: range.from, insert: text },
