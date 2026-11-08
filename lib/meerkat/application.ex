@@ -5,24 +5,28 @@ defmodule Meerkat.Application do
 
   @impl true
   def start(_type, _args) do
-    children =
-      [
-        MeerkatWeb.Telemetry,
-        {DNSCluster, query: Application.get_env(:meerkat, :dns_cluster_query) || :ignore},
-        {Phoenix.PubSub, name: Meerkat.PubSub},
-        # Registry + DynamicSupervisor for `Meerkat.ReviewServer` —
-        # one coordinator GenServer per review_id, started lazily on
-        # first mount. Single-writer guarantee for review state.
-        {Registry, keys: :unique, name: Meerkat.ReviewRegistry},
-        # Connected review LiveViews register here so Meerkat.VersionWatcher
-        # can tell whether anyone is watching before it live-restarts.
-        {Registry, keys: :duplicate, name: Meerkat.ViewerRegistry},
-        {DynamicSupervisor, name: Meerkat.ReviewServerSup, strategy: :one_for_one},
-        Meerkat.Decision
-      ] ++ version_watcher_child() ++ endpoint_child()
-
     opts = [strategy: :one_for_one, name: Meerkat.Supervisor]
-    Supervisor.start_link(children, opts)
+    Supervisor.start_link(children(), opts)
+  end
+
+  # The endpoint starts last, so everything its LiveViews use is up
+  # before it accepts a connection.
+  @doc false
+  def children do
+    [
+      MeerkatWeb.Telemetry,
+      {DNSCluster, query: Application.get_env(:meerkat, :dns_cluster_query) || :ignore},
+      {Phoenix.PubSub, name: Meerkat.PubSub},
+      # Registry + DynamicSupervisor for `Meerkat.ReviewServer` —
+      # one coordinator GenServer per review_id, started lazily on
+      # first mount. Single-writer guarantee for review state.
+      {Registry, keys: :unique, name: Meerkat.ReviewRegistry},
+      # Connected review LiveViews register here so Meerkat.VersionWatcher
+      # can tell whether anyone is watching before it live-restarts.
+      {Registry, keys: :duplicate, name: Meerkat.ViewerRegistry},
+      {DynamicSupervisor, name: Meerkat.ReviewServerSup, strategy: :one_for_one},
+      Meerkat.Decision
+    ] ++ version_watcher_child() ++ endpoint_child()
   end
 
   # Watch the install's `current` symlink and live-restart onto a
