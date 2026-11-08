@@ -8,12 +8,17 @@
 # of the commit being made.
 #
 # In pre-commit mode, a commit that changes only Markdown files, or nothing,
-# skips the checks; CI still runs them on the PR. Otherwise the checks wait
-# for a slot from scripts/gate-lock.sh.
+# skips the checks, and one that changes no e2e input, as
+# scripts/e2e-inputs.ts judges, skips the e2e steps; CI still runs them all
+# on the PR. The checks that run wait for a slot from scripts/gate-lock.sh.
 #
 # When the checks pass and the worktree held exactly the contents checked,
 # with no untracked file, both when they started and when they finished,
-# scripts/checked-trees.sh records those contents.
+# scripts/checked-trees.sh records those contents: with --e2e when the e2e
+# steps ran, and as checked when they ran or the contents' e2e inputs
+# already passed them. Contents that skipped them on inputs never recorded
+# that way stay unchecked, so the pre-push check runs every step on a tip
+# that holds them.
 set -euo pipefail
 
 # Stop at Ctrl-C, however the interrupted step exited: bash carries on after
@@ -25,6 +30,7 @@ trap 'trap - INT; kill -INT $$' INT
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
+e2e=1
 if [[ "${1:-}" == --head ]]; then
   label=pre-push
   # Resolved now: HEAD can move while the checks run.
@@ -39,6 +45,9 @@ else
   if [[ -z "$changed" ]] || ! grep -qv '\.md$' <<<"$changed"; then
     echo "pre-commit: no files other than Markdown changed; skipping checks."
     exit 0
+  fi
+  if bun scripts/e2e-inputs.ts --none <<<"$changed"; then
+    e2e=0
   fi
 
   tree=$(git write-tree)
@@ -71,13 +80,27 @@ run_checks() {
   step bash scripts/mix-test.sh
   (cd assets && step bun test)
   step bun test tests/e2e/lib
-  (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
-  step bunx playwright install --only-shell chromium
-  step bun run test:e2e
+  if [[ "$e2e" == 1 ]]; then
+    (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
+    step bunx playwright install --only-shell chromium
+    step bun run test:e2e
+  else
+    echo
+    echo "=== $label: no e2e input changed; skipping the build and e2e steps ==="
+  fi
 
   # Checked again in case the worktree changed while the checks ran.
   if [[ "$clean" == 1 ]] && holds; then
-    bash scripts/checked-trees.sh mark "$tree"
+    if [[ "$e2e" == 1 ]]; then
+      bash scripts/checked-trees.sh --e2e mark "$tree"
+      bash scripts/checked-trees.sh mark "$tree"
+    elif bash scripts/checked-trees.sh --e2e has "$tree"; then
+      bash scripts/checked-trees.sh mark "$tree"
+    else
+      echo
+      echo "$label: these contents' e2e inputs never passed the e2e steps here;"
+      echo "the pre-push check will run every check on a pushed tip that holds them."
+    fi
   fi
 
   echo

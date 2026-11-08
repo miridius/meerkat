@@ -3,7 +3,7 @@ defmodule Meerkat.BumpDepsCase do
   Shared fixture and helpers for the tests that commit or rebase through the
   repo's real lefthook.yml and the scripts `build_fixture/1` copies. Only mix,
   pnpm, bun, bunx and curl are replaced, by stubs on PATH (the bun stub hands
-  hex-cooldown.ts and rebase-bump.ts to the real bun), plus the fixture's own
+  hex-cooldown.ts, rebase-bump.ts and e2e-inputs.ts to the real bun), plus the fixture's own
   mix-test.sh, mutate.sh and dep-exemptions.json: the stubs log each run,
   report the outdated packages a test sets up, and record an update by
   appending a line to the lockfile or manifest it would change. The tests are
@@ -113,8 +113,8 @@ defmodule Meerkat.BumpDepsCase do
     File.cp!(Path.join(root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh checked-trees.sh no-main-commits.sh bump-deps.sh bump-hex-requirements.exs
-             deps-common.sh gate-lock.sh hex-cooldown.ts rebase-bump.ts) do
+          ~w(check.sh checked-trees.sh e2e-inputs.ts no-main-commits.sh bump-deps.sh
+             bump-hex-requirements.exs deps-common.sh gate-lock.sh hex-cooldown.ts rebase-bump.ts) do
       File.cp!(Path.join([root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -158,6 +158,10 @@ defmodule Meerkat.BumpDepsCase do
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
     cmd="$(basename "$0") $*"
+    # The real bun judges which paths are e2e inputs.
+    case "$cmd" in
+      "bun "*e2e-inputs.ts*) exec '#{System.find_executable("bun")}' "$@" ;;
+    esac
     echo "$cmd" >> '#{log}'
     case "$cmd" in
       "mix deps.get --check-locked" | "pnpm install --frozen-lockfile "*)
