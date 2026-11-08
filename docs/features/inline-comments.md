@@ -137,9 +137,9 @@ When `finding_type === "suggestion"`:
 
 ### Editor hotkeys
 
-The keys follow Cursive's macOS keymap, except ⌃J. On Windows and
-Linux, ⌘ becomes Ctrl and ⌃⌘ becomes Ctrl+Alt. ⌃J becomes Alt+J there,
-since Chrome takes Ctrl+J for Downloads.
+The keys follow Cursive's macOS keymap, except ⌃J, and exist on macOS
+only: on Windows and Linux, every key below keeps CodeMirror's own
+binding. Structural typing in Clojure works everywhere.
 
 **Every language**, including files with no grammar:
 
@@ -167,7 +167,7 @@ a node holding a syntax error, such as a list the seeded lines cut
 off from its closer, or past one, and never moves an item of a comma
 list or map that holds one. In a file with no grammar, ⌥↑ and ⌥↓ do
 nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
-(on macOS, select to the start / end).
+(select to the start / end).
 
 **Clojure only:**
 
@@ -180,10 +180,8 @@ nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
 | ⌥S | Splice: remove the enclosing brackets with any prefix on them, such as `#`, `'`, `@`, `^:m ` or `#my.Rec` (also works where ⌥S types ß) |
 
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, and ⌥← / ⌥→
-keep CodeMirror's own binding (on macOS, move by word; elsewhere, by
-syntax node). ⌥⇧← / ⌥⇧→ keep CodeMirror's own binding everywhere
-(select by word on macOS, by syntax node elsewhere),
-as in Cursive, which has no selecting form move. The Clojure keys
+keep CodeMirror's move by word. ⌥⇧← / ⌥⇧→ keep CodeMirror's select
+by word in every language, as in Cursive, which has no selecting form move. The Clojure keys
 leave a list the seeded lines cut off from its closer alone, and
 never move a bracket past one cut off from its partner. Slurp, barf,
 raise and splice also leave alone a collection used as metadata, and a
@@ -194,7 +192,11 @@ changes each list once.
 **Structural typing in Clojure:**
 
 - Typing an opening bracket inserts its closer, around the selection
-  if there is one. Typing a closer just before the same matched closer
+  if there is one. When the selection cuts across brackets, holding a
+  bracket without its partner or splitting an opener from its prefix
+  (`#` in `#{`), as
+  `b) (c` does in `(a b) (c d)`, typing an opening bracket does
+  nothing. Typing a closer just before the same matched closer
   steps over it. `'` is a quote and gets no partner.
 - Backspace or Delete on one bracket of a matched pair, or on the
   prefix of its opener (the `#` of `#{` and `#(`, the `#?` of `#?(`,
@@ -208,10 +210,9 @@ changes each list once.
 - Lines that slurp, barf, raise, splice, a node move or a paste
   change re-indent, as Enter indents them.
 
-**Keys cheat sheet:** a "Keys" link in the editor's corner opens the
-list of keys for this file's language, ⌃J join lines included,
-written in ⌘/⌃/⌥/⇧ symbols on macOS and Ctrl/Alt/Shift names
-elsewhere. Clicking outside it or
+**Keys cheat sheet:** on macOS, a "Keys" link in the editor's corner
+opens the list of keys for this file's language, ⌃J join lines
+included, written in ⌘/⌃/⌥/⇧ symbols. Clicking outside it or
 pressing Escape closes it and leaves the form open.
 
 ## Rendered comment
