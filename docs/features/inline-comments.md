@@ -100,9 +100,9 @@ When `finding_type === "suggestion"`:
 - Lines don't wrap; the editor scrolls sideways only when a line is
   wider than it. Vertical rulers are drawn after the columns set in
   the toolbar's `⚙` popover (80 and 110 by default; see
-  [overview.md](overview.md)), so a line past one shows. Unlike the
-  diff's, a ruler beyond the editor's width shows once a line
-  reaches it and the editor is scrolled there. Changing the setting
+  [overview.md](overview.md)), so a line past one shows. As in the
+  diff with Wrap off, a ruler beyond the editor's width shows once a
+  line reaches it and the editor is scrolled there. Changing the setting
   updates open editors.
 - In Clojure, Enter indents the new line as it would sit in the file,
   by cljfmt's default indentation. That indentation depends only on

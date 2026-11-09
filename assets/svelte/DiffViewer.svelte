@@ -426,9 +426,10 @@
   });
 
   // Rulers: each side's code cells get, as a CSS variable, a background
-  // drawing the rulers whose column fits in the visible width of that
-  // side's code column; the rest are not drawn. Redrawn when the
-  // setting, the table (view mode, wrap, font size) or the width changes.
+  // drawing the rulers whose column fits in that side's code column:
+  // its visible width with wrap on, its scroll width with wrap off. The
+  // rest are not drawn. Redrawn when the setting, the table (view mode,
+  // wrap, font size, tab size) or the width changes.
   const RULER_COLOR = "color-mix(in srgb, var(--muted) 35%, transparent)";
   const RULER_SIDES = [
     ["--meerkat-rulers-old", "td.diff-line-old-content"],
@@ -445,16 +446,19 @@
         diffContainer.style.removeProperty(variable);
         continue;
       }
-      // With wrap off the cell is as wide as the longest line, so the
-      // visible part ends at the edge of the side's scroll view.
-      // Measured as if scrolled to the start, so the answer doesn't
-      // change with the scroll.
       const cell = td.getBoundingClientRect();
-      const viewRight = view.getBoundingClientRect().left + view.clientLeft + view.clientWidth;
       // Text stops at the cell's right padding, so a ruler there marks
       // a column no line reaches.
       const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
-      const visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
+      // With wrap off the cell is as wide as the longest line, and
+      // scrolling the side's view reaches all of it. With wrap on, only
+      // what fits in the view counts, measured as if scrolled to the
+      // start, so the answer doesn't change with the scroll.
+      let visible = textRight;
+      if (wrap_lines) {
+        const viewRight = view.getBoundingClientRect().left + view.clientLeft + view.clientWidth;
+        visible = Math.min(textRight, viewRight - (cell.left + view.scrollLeft));
+      }
       // The code starts 2em into the cell, after the +/- marker.
       const { offset, ch } = fontWidths(td);
       const columns = fittingColumns(ruler_columns, visible, offset, ch);
@@ -492,6 +496,7 @@
     void diffViewMode;
     void wrap_lines;
     void font_size_px;
+    void tab_size;
     const cancel = afterTwoFrames(drawRulers);
     const resize = new ResizeObserver(() => drawRulers());
     resize.observe(diffContainer);
