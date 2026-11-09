@@ -142,7 +142,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    Each line's code starts right after its `+` / `-` mark, so its
    tabs reach the columns the Tab setting gives them and copied code
    has no space added before it. A last line without a newline ends
-   in a red mark right after its text, with Wrap on or off.
+   in a red mark right after its text, with Wrap on or off, when the
+   diff highlights a change within that line; other such lines show
+   no mark.
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
    In Split view, buttons that reveal hidden context lines around
