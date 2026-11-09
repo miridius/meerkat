@@ -6,7 +6,8 @@ import { startMeerkat } from "./lib/runner";
 import { afterNextFrame, expect, test } from "./lib/test";
 
 // The browser seam of the ruler setting: DiffViewer.svelte measures each
-// side's code width to choose which rulers to draw, and the
+// side's code width to choose which rulers to draw, or with Wrap on,
+// where its rows break to place each on its row, and the
 // suggestion editor redraws its rulers when the setting changes. Parsing
 // and persisting the setting are covered by the LiveView tests.
 
@@ -54,8 +55,13 @@ async function numberInsets(cell: Locator): Promise<{ fromBar: number; fromPaddi
 }
 
 type RulerProbe = {
-	// The rulers a code cell draws: the columns in its ruler variable.
+	// The rulers a code cell draws with Wrap off: the columns in its ruler
+	// variable.
 	rulersOn: (td: Element) => string[];
+	// The code columns whose right edge, on their own row, a code cell's
+	// rulers mark, in its ruler variable's order; null for a ruler marking
+	// none.
+	markedColumns: (td: Element) => (number | null)[];
 	// The rulers a code cell draws in its right padding, past where its
 	// text wraps.
 	rulersPastText: (td: Element) => number[];
@@ -75,17 +81,55 @@ declare global {
 // each took 70-90 ms, and the sweeps take over a hundred steps.
 async function installRulerProbe(page: Page) {
 	await page.addInitScript(() => {
-		const rulersOn = (td: Element) => {
+		const rulerVariable = (td: Element) => {
 			const side = td.classList.contains("diff-line-old-content")
 				? "old"
 				: td.classList.contains("diff-line-new-content")
 					? "new"
 					: "unified";
-			const value = getComputedStyle(td).getPropertyValue(`--meerkat-rulers-${side}`);
-			return [...value.matchAll(/transparent calc\(2em \+ (\d+)ch\),/g)].map((m) => m[1]);
+			return getComputedStyle(td).getPropertyValue(`--meerkat-rulers-${side}`);
 		};
+		const rulersOn = (td: Element) =>
+			[...rulerVariable(td).matchAll(/transparent calc\(2em \+ (\d+)ch\),/g)].map((m) => m[1]);
 		window.rulerProbe = {
 			rulersOn,
+			markedColumns: (td) => {
+				const code = td.querySelector(".diff-line-content-item") as HTMLElement;
+				const style = getComputedStyle(code);
+				const em = Number.parseFloat(style.fontSize);
+				const lineHeight = Number.parseFloat(style.lineHeight);
+				const probe = document.createElement("span");
+				probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
+				code.append(probe);
+				const ch = probe.getBoundingClientRect().width / 100;
+				probe.remove();
+				const box = code.getBoundingClientRect();
+				const range = document.createRange();
+				const chars: DOMRect[] = [];
+				const marker = code.querySelector(".diff-line-content-operator") as Element;
+				const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+					if (marker.contains(node)) continue;
+					for (let i = 0; i < node.length; i++) {
+						range.setStart(node, i);
+						range.setEnd(node, i + 1);
+						chars.push(range.getClientRects()[0]);
+					}
+				}
+				return rulerVariable(td)
+					.split(/, (?=linear-gradient)/)
+					.filter((layer) => layer.startsWith("linear-gradient"))
+					.map((layer) => {
+						const at = Number(layer.match(/transparent calc\(2em \+ (\d+)ch\),/)?.[1]);
+						const row = Number(layer.match(/ 0 calc\((\d+)lh/)?.[1] ?? 0);
+						const left = box.left + 2 * em + at * ch;
+						const top = box.top + row * lineHeight;
+						const i = chars.findIndex(
+							(r) => Math.abs(r.right - left) < 1 && r.top >= top - 1 && r.top < top + lineHeight - 1,
+						);
+						return i < 0 ? null : i + 1;
+					});
+			},
 			rulersPastText: (td) => {
 				const probe = document.createElement("span");
 				probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
@@ -114,7 +158,7 @@ async function openSettings(page: Page) {
 	if ((await page.locator(".toolbar-settings[open]").count()) === 0) await summary.click();
 }
 
-test("diff rulers show only where the code column fits them and follow the ⚙ setting", async ({
+test("with Wrap off, diff rulers show only where the code column fits them and follow the ⚙ setting", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: wideFixture() });
@@ -123,13 +167,22 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		await page.setViewportSize({ width: 2000, height: 800 });
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
-		const oldCell = file.locator("td.diff-line-old-content").first();
-		const newCell = file.locator("td.diff-line-new-content").first();
+		// Short lines leave the code column as wide as its view.
+		const twelve = page.locator(".file-section").filter({ hasText: "twelve.txt" });
+		const oldCell = twelve.locator("td.diff-line-old-content").first();
+		const newCell = twelve.locator("td.diff-line-new-content").first();
 		await expect(newCell).toBeVisible();
+		await page.getByRole("checkbox", { name: "Wrap" }).click();
+		await expect(page.getByRole("checkbox", { name: "Wrap" })).not.toBeChecked();
+		// Wrap on draws these rulers in the same form, so wait for its table to go.
+		await expect(twelve.locator(".diff-content.no-wrap")).toBeVisible();
 
-		// Wide enough for both on each side of Split view.
+		// Wide enough for both on each side of Split view, each at the
+		// right edge of its column.
 		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
 		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
+		const longCell = file.locator("td.diff-line-new-content").nth(1);
+		await expect.poll(() => longCell.evaluate((td) => window.rulerProbe.markedColumns(td))).toEqual([80, 110]);
 
 		// The rulers follow a font size change, and back: at 17px each side
 		// fits only 80.
@@ -149,18 +202,18 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		}
 		await page.locator(".toolbar-settings > summary").click();
 
-		// A moved line's tint keeps its rulers.
+		// A moved line's code draws its rulers over the cell's tint.
 		const movedCell = page.locator(".file-section").filter({ hasText: "moved.txt" }).locator("td.moved-line").first();
 		await expect(movedCell).toBeVisible();
-		await expect
-			.poll(() => movedCell.evaluate((td) => getComputedStyle(td).backgroundImage.split("linear-gradient").length - 1))
-			.toBe(3);
+		const gradients = (element: Element) => getComputedStyle(element).backgroundImage.split("linear-gradient").length - 1;
+		await expect.poll(() => movedCell.evaluate(gradients)).toBe(1);
+		await expect.poll(() => movedCell.locator(".diff-line-content-item").evaluate(gradients)).toBe(2);
 
 		// Split view's halves are equally wide, so at every width each
 		// draws the same rulers; 10px steps cross each ruler's threshold.
 		for (let width = 1300; width <= 2000; width += 10) {
 			await page.setViewportSize({ width, height: 800 });
-			const sides = await file.evaluate(async (section) => {
+			const sides = await twelve.evaluate(async (section) => {
 				await window.rulerProbe.nextFrame();
 				const first = (selector: string) => section.querySelector(selector) as Element;
 				return {
@@ -179,7 +232,7 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		// At 950px, Unified view's one code column fits 80 but not 110.
 		await page.setViewportSize({ width: 950, height: 800 });
 		await page.getByRole("button", { name: /^Unified$/ }).click();
-		const unifiedCell = file.locator("td.diff-line-content").first();
+		const unifiedCell = twelve.locator("td.diff-line-content").first();
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		// Around the width where 110 starts to fit, it is never drawn in
 		// the cell's right padding.
@@ -199,7 +252,6 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		await expect.poll(() => rulersOn(unifiedCell)).toEqual(["80"]);
 		// With wrap on or off, Unified's numbers keep clear of the
 		// inline-comment bar and of the code.
-		const twelve = page.locator(".file-section").filter({ hasText: "twelve.txt" });
 		const gutter = twelve.locator('td.diff-line-num:has(span[data-line-new-num="12"])');
 		const expectNumbersClear = async () => {
 			await expect.poll(async () => (await numberInsets(gutter)).fromBar).toBeGreaterThanOrEqual(6);
@@ -207,11 +259,14 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		};
 		await expectNumbersClear();
 		await page.getByRole("checkbox", { name: "Wrap" }).click();
+		await expect(page.getByRole("checkbox", { name: "Wrap" })).toBeChecked();
+		await expectNumbersClear();
+		await page.getByRole("checkbox", { name: "Wrap" }).click();
 		await expect(page.getByRole("checkbox", { name: "Wrap" })).not.toBeChecked();
 		await afterNextFrame(page);
-		// With wrap off, the 130-character lines widen the cell past the
-		// view, so 110 shows where scrolling reaches it, in Unified view and
-		// on each side of Split view, and never in the right padding.
+		// The 130-character lines widen wide.txt's cell past the view, so
+		// 110 shows where scrolling reaches it, in Unified view and on each
+		// side of Split view, and never in the right padding.
 		await expect.poll(() => rulersOn(file.locator("td.diff-line-content").first())).toEqual(["80", "110"]);
 		expect(
 			await file
@@ -219,10 +274,9 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 				.first()
 				.evaluate((td) => window.rulerProbe.rulersPastText(td)),
 		).toEqual([]);
-		await expectNumbersClear();
 		await page.getByRole("button", { name: /^Split$/ }).click();
-		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
-		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
+		await expect.poll(() => rulersOn(file.locator("td.diff-line-old-content").first())).toEqual(["80", "110"]);
+		await expect.poll(() => rulersOn(file.locator("td.diff-line-new-content").first())).toEqual(["80", "110"]);
 		await page.getByRole("button", { name: /^Unified$/ }).click();
 		// A Tab change widens or narrows a tabbed line, and the rulers follow.
 		const tabsCell = page.locator(".file-section").filter({ hasText: "tabs.txt" }).locator("td.diff-line-content");
@@ -263,8 +317,104 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		await file.locator('td.diff-line-num span[data-line-new-num="3"]').hover();
 		const dragged = file.locator("tr.diff-line.drag-selecting > td.diff-line-content").first();
 		await expect(dragged).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
-		await expect(dragged).toHaveCSS("background-image", /linear-gradient/);
+		await expect(dragged.locator(".diff-line-content-item")).toHaveCSS("background-image", /linear-gradient/);
 		await page.mouse.up();
+	} finally {
+		await meerkat.kill();
+	}
+});
+
+test("with Wrap on, each diff ruler shows only on the row its column falls on, and stops where its line's text does", async ({
+	page,
+}) => {
+	// The last line loses its newline, so it ends in the "no newline" mark;
+	// only a reviewed range shows that change.
+	const fixture = makeFixture({ files: { "digits.txt": "short\n\tx\n" } });
+	fixture.git("commit", "-q", "-m", "base");
+	writeFileSync(join(fixture.dir, "digits.txt"), `${"1234567890".repeat(30)}\n\tx`);
+	fixture.git("commit", "-q", "-a", "-m", "change");
+	const meerkat = await startMeerkat({ fixture, args: ["HEAD~1..HEAD"] });
+	try {
+		await installRulerProbe(page);
+		await page.setViewportSize({ width: 1200, height: 800 });
+		await page.goto(meerkat.url);
+		await openSettings(page);
+		await page.getByLabel("Ruler columns").fill("1, 40, 80, 110, 200");
+		await page.locator(".toolbar-settings > summary").click();
+
+		// Each side of Split view wraps the 300 columns onto several rows.
+		const short = page.locator("td.diff-line-old-content").first();
+		const wrapped = page.locator("td.diff-line-new-content").first();
+		await expect(wrapped).toBeVisible();
+		await expect.poll(() => wrapped.evaluate((td) => window.rulerProbe.markedColumns(td))).toEqual([1, 40, 80, 110, 200]);
+		// Unified view, wider, wraps it at another column.
+		await page.getByRole("button", { name: /^Unified$/ }).click();
+		const unified = page.locator("td.diff-line-content").filter({ hasText: "1234567890" });
+		await expect.poll(() => unified.evaluate((td) => window.rulerProbe.markedColumns(td))).toEqual([1, 40, 80, 110, 200]);
+		await page.getByRole("button", { name: /^Split$/ }).click();
+
+		// A file collapsed while the width changes places them for the new
+		// width when it opens.
+		const header = page.getByRole("button", { name: /digits\.txt/ });
+		await header.click();
+		await expect(wrapped).toBeHidden();
+		await page.setViewportSize({ width: 1500, height: 800 });
+		await header.click();
+		await expect.poll(() => wrapped.evaluate((td) => window.rulerProbe.markedColumns(td))).toEqual([1, 40, 80, 110, 200]);
+
+		// Beside the taller wrapped line, the short line's rulers stop at
+		// its one row: they are drawn behind the code, not the cell.
+		const heights = () =>
+			short.evaluate((td) => ({
+				cell: td.getBoundingClientRect().height,
+				code: (td.querySelector(".diff-line-content-item") as Element).getBoundingClientRect().height,
+				cellImage: getComputedStyle(td).backgroundImage,
+				lineHeight: Number.parseFloat(getComputedStyle(td).lineHeight),
+			}));
+		await expect.poll(async () => (await heights()).cell).toBeGreaterThan(3 * (await heights()).lineHeight);
+		const measured = await heights();
+		expect(measured.code).toBeCloseTo(measured.lineHeight, 0);
+		expect(measured.cellImage).toBe("none");
+
+		// The code starts right after its marker: a tab reaches the column
+		// the Tab setting gives it, and copying the line adds no space. Its
+		// "no newline" mark follows the text rather than taking a row, so
+		// no other row's rulers show beside it.
+		const tabbed = await page
+			.locator("td.diff-line-new-content")
+			.nth(1)
+			.evaluate((td) => {
+				const code = td.querySelector(".diff-line-content-item") as HTMLElement;
+				const style = getComputedStyle(code);
+				const probe = document.createElement("span");
+				probe.style.cssText = "position: absolute; visibility: hidden; width: 100ch";
+				code.append(probe);
+				const ch = probe.getBoundingClientRect().width / 100;
+				probe.remove();
+				const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+				let x = walker.nextNode() as Text;
+				while (!x.data.includes("x")) x = walker.nextNode() as Text;
+				const range = document.createRange();
+				range.setStart(x, x.data.indexOf("x"));
+				range.setEnd(x, x.data.indexOf("x") + 1);
+				const selection = getSelection() as Selection;
+				selection.selectAllChildren(code);
+				const copied = selection.toString();
+				selection.removeAllRanges();
+				return {
+					column:
+						(range.getBoundingClientRect().left - code.getBoundingClientRect().left - 2 * Number.parseFloat(style.fontSize)) /
+						ch,
+					tabSize: Number(style.tabSize),
+					copied,
+					rows: code.getBoundingClientRect().height / Number.parseFloat(style.lineHeight),
+					noNewline: code.querySelector("[data-no-newline-at-end-of-file-symbol]") !== null,
+				};
+			});
+		expect(tabbed.noNewline).toBe(true);
+		expect(tabbed.column).toBeCloseTo(tabbed.tabSize, 1);
+		expect(tabbed.copied).toBe("\tx");
+		expect(tabbed.rows).toBeCloseTo(1, 1);
 	} finally {
 		await meerkat.kill();
 	}

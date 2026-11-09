@@ -39,7 +39,10 @@ patchedDependencies:
   # 3000-line diff with 100 hunks ran about 200 layouts. The patch
   # batches those syncs into one pass per frame. It also registers the
   # cleanup of a second row watching an already-watched element, which
-  # upstream drops.
+  # upstream drops. And it drops the space upstream renders between a
+  # line's +/- marker and its code, which put the code a column right
+  # of the rulers, made a leading tab a column narrow, and was copied
+  # with the code.
   "@git-diff-view/svelte": patches/@git-diff-view__svelte.patch
   # GHSA-gcqx-w48m-w2h4: merge() lets a `__proto__` key set the
   # prototype of the object it returns when the target has a null

@@ -1,5 +1,19 @@
+diff --git a/dist/components/DiffContent.svelte b/dist/components/DiffContent.svelte
+index 368df7e98981f48500211cb3be15cfadf622bf83..2d8156b71fde4b03774354ae04567c93d90324a5 100644
+--- a/dist/components/DiffContent.svelte
++++ b/dist/components/DiffContent.svelte
+@@ -36,8 +36,7 @@
+ 		class="diff-line-content-operator ml-[-1.5em] inline-block w-[1.5em] select-none indent-[0.2em]"
+ 	>
+ 		{isAdded ? '+' : isDelete ? '-' : ' '}
+-	</span>
+-	{#if props.enableHighlight && props.syntaxLine && !isMaxLineLengthToIgnoreSyntax}
++	</span>{#if props.enableHighlight && props.syntaxLine && !isMaxLineLengthToIgnoreSyntax}
+ 		<DiffSyntax
+ 			operator={isAdded ? 'add' : isDelete ? 'del' : undefined}
+ 			rawLine={props.rawLine}
 diff --git a/dist/hooks/useSyncHeight.svelte.js b/dist/hooks/useSyncHeight.svelte.js
-index a5902d94be7edb5dfd0640799c911b197b9914eb..33bdb76e93c8e7b1ec8e570be9afb8d25e052b68 100644
+index a5902d94be7edb5dfd0640799c911b197b9914eb..330676a560ee96afc55f41b9e8215571a2339aea 100644
 --- a/dist/hooks/useSyncHeight.svelte.js
 +++ b/dist/hooks/useSyncHeight.svelte.js
 @@ -2,6 +2,43 @@ import { getDom } from '../context/dom.js';

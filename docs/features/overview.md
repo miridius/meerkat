@@ -101,13 +101,20 @@ When the UI does open, the reviewer sees, top-to-bottom:
      the suggestion editor (see
      [inline-comments.md](inline-comments.md)).
    - In the diff, each ruler is a vertical line after its column on
-     code lines, counting tabs at the Tab setting, judged for each
-     side separately in Split view. With Wrap on, a ruler shows only
-     when its column fits in the visible width of the code column;
-     otherwise it is not drawn. A wrapped line's continuation rows
-     show it too. With Wrap off, a ruler shows when its column fits
-     in the code column's full scroll width, so one past the visible
-     width shows once the side is scrolled to it.
+     code lines, counting tabs at the Tab setting. With Wrap off, a
+     ruler shows when its column fits in the code column's full scroll
+     width, judged for each side separately in Split view, so one past
+     the visible width shows once the side is scrolled to it; otherwise
+     it is not drawn. With Wrap on, code lines break at
+     exactly the width of the code column, even inside a word or
+     before `)`, `,` or `;`, and spaces at a break wrap onto the next
+     row. Each ruler shows only on the row its column falls on, at its
+     place in that row, so a row a line wraps onto shows the rulers
+     past the break and none before it. A ruler stops where its
+     line's text ends, so in Split view it leaves blank the space
+     below a line beside a taller wrapped one. Tab stops restart on
+     each row a line wraps onto, so on such a row a ruler after a tab
+     can sit up to a tab's width off its column.
 2. **Flash error banner** (only when a handler set `flash_error`,
    e.g. a stale-OID approve or a `gh api` failure).
 3. **Pending answers** banner (only if a prior review had question
@@ -132,6 +139,12 @@ When the UI does open, the reviewer sees, top-to-bottom:
    UTF-8, which the page needs, shows the file's diff and line counts
    like any text file's. A file whose name holds a newline or ends in
    a carriage return, or whose sides can't be read, stays binary.
+   Each line's code starts right after its `+` / `-` mark, so its
+   tabs reach the columns the Tab setting gives them and copied code
+   has no space added before it. A last line without a newline ends
+   in a red mark right after its text, with Wrap on or off, when the
+   diff highlights a change within that line; other such lines show
+   no mark.
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
    In Split view, buttons that reveal hidden context lines around
