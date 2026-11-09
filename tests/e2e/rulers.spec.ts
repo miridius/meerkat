@@ -18,8 +18,9 @@ const STAYS = "stays one\nstays two\nstays three\nstays four\nstays five\n";
 const TWELVE = Array.from({ length: 12 }, (_, i) => `line ${i + 1}\n`).join("");
 
 // A modified file, so the diff can show Split view, a file whose block
-// moves, so its lines get the moved-line tint, and a file with two-digit
-// line numbers, the narrowest gutter for its digits.
+// moves, so its lines get the moved-line tint, a file with two-digit
+// line numbers, the narrowest gutter for its digits, and a new file whose
+// line is 68 columns at Tab 2 and 152 at Tab 8.
 function wideFixture() {
 	const fixture = makeFixture({
 		files: { "wide.txt": `short\n${LONG}`, "moved.txt": `${BLOCK}${STAYS}`, "twelve.txt": TWELVE },
@@ -28,7 +29,8 @@ function wideFixture() {
 	writeFileSync(join(fixture.dir, "wide.txt"), `shorter\n${LONG}${LONG}`);
 	writeFileSync(join(fixture.dir, "moved.txt"), `${STAYS}${BLOCK}`);
 	writeFileSync(join(fixture.dir, "twelve.txt"), `${TWELVE}line 13\n`);
-	fixture.git("add", "wide.txt", "moved.txt", "twelve.txt");
+	writeFileSync(join(fixture.dir, "tabs.txt"), `${"\t".repeat(14)}${"y".repeat(40)}\n`);
+	fixture.git("add", "wide.txt", "moved.txt", "twelve.txt", "tabs.txt");
 	return fixture;
 }
 
@@ -222,6 +224,18 @@ test("diff rulers show only where the code column fits them and follow the ⚙ s
 		await expect.poll(() => rulersOn(oldCell)).toEqual(["80", "110"]);
 		await expect.poll(() => rulersOn(newCell)).toEqual(["80", "110"]);
 		await page.getByRole("button", { name: /^Unified$/ }).click();
+		// A Tab change widens or narrows a tabbed line, and the rulers follow.
+		const tabsCell = page.locator(".file-section").filter({ hasText: "tabs.txt" }).locator("td.diff-line-content");
+		await expect.poll(() => rulersOn(tabsCell)).toEqual(["80"]);
+		await openSettings(page);
+		for (const [tab, expected] of [
+			["8", ["80", "110"]],
+			["2", ["80"]],
+		] as const) {
+			await page.getByRole("button", { name: new RegExp(`^${tab}$`) }).click();
+			await expect(page.getByRole("button", { name: new RegExp(`^${tab}$`) })).toHaveClass(/active/);
+			await expect.poll(() => rulersOn(tabsCell)).toEqual(expected);
+		}
 
 		// The ⚙ popover hides them, and sets their columns.
 		await openSettings(page);

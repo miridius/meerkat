@@ -429,7 +429,7 @@
   // drawing the rulers whose column fits in that side's code column:
   // its visible width with wrap on, its scroll width with wrap off. The
   // rest are not drawn. Redrawn when the setting, the table (view mode,
-  // wrap, font size) or the width changes.
+  // wrap, font size, tab size) or the width changes.
   const RULER_COLOR = "color-mix(in srgb, var(--muted) 35%, transparent)";
   const RULER_SIDES = [
     ["--meerkat-rulers-old", "td.diff-line-old-content"],
@@ -446,9 +446,9 @@
         diffContainer.style.removeProperty(variable);
         continue;
       }
+      const cell = td.getBoundingClientRect();
       // Text stops at the cell's right padding, so a ruler there marks
       // a column no line reaches.
-      const cell = td.getBoundingClientRect();
       const textRight = cell.width - Number.parseFloat(getComputedStyle(td).paddingRight);
       // With wrap off the cell is as wide as the longest line, and
       // scrolling the side's view reaches all of it. With wrap on, only
@@ -496,6 +496,7 @@
     void diffViewMode;
     void wrap_lines;
     void font_size_px;
+    void tab_size;
     const cancel = afterTwoFrames(drawRulers);
     const resize = new ResizeObserver(() => drawRulers());
     resize.observe(diffContainer);
