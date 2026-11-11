@@ -40,5 +40,7 @@ defmodule Meerkat.BuildToolTest do
 
     assert [curl] = ctx.base |> Path.join("log") |> File.read!() |> String.split("\n", trim: true)
     assert curl =~ "graphviz-releases/16.1.0/graphviz-16.1.0.tar.xz"
+    # A brief outage at the download host is retried rather than failing CI.
+    assert curl =~ "--retry 5 --retry-all-errors"
   end
 end

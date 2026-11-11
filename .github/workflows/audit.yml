@@ -24,19 +24,6 @@ jobs:
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
-      - id: deps
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: deps
-          key: audit-deps-${{ hashFiles('mix.lock') }}
-
       - run: mix deps.get
-
-      - if: steps.deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: deps
-          key: ${{ steps.deps.outputs.cache-primary-key }}
-
       - run: bun scripts/hex-audit.ts
       - run: pnpm audit

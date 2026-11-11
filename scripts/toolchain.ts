@@ -2,14 +2,15 @@
 // apply to dependencies. Each pin, in .tool-versions (which mise and CI
 // install from), .github/toolchain.env, package.json's packageManager, or
 // a workflow's or the toolchain action's `uses: owner/repo@sha # tag`,
-// must be the newest stable release at least 24h old. When a published advisory covers
-// that release, the pin must instead be the lowest newer release, not
-// older than the pin, that no advisory covers, however young. While there
-// is none, the pin moves to the newest release no advisory covers that is
-// 24h old or the pin itself and not older than the pin, or else to the
-// lowest newer one, however young. Without one, it stays where it is if
-// it is still a release and newer than the newest release 24h old, or
-// else moves to that release. Either way the check passes it with a note.
+// must be the newest stable release at least 24h old. When a published
+// advisory covers that release, the pin must instead be the lowest newer
+// release, not older than the pin, that no advisory covers, however young.
+// While there is none, the pin moves to the newest release no advisory
+// covers that is 24h old or the pin itself and not older than the pin, or
+// else to the lowest newer one, however young. Without one, it stays where
+// it is if it is still a release and newer than the newest release 24h
+// old, or else moves to that release. Either way the check passes it with
+// a note.
 //
 //   bun scripts/toolchain.ts check   lists each pin that is off target and
 //                                    exits 1 if any is (scripts/outdated.sh)
@@ -686,7 +687,7 @@ function pnpmPin(): Pin {
 	};
 }
 
-// actionPins: one pin per action repo the workflows use, as
+// actionPins: one pin per action repo the WORKFLOWS files use, as
 // `uses: owner/repo[/path]@<40-hex sha> # <tag>`.
 function actionPins(): Pin[] {
 	const uses = new Map<string, { sha: string; tag: string }>();

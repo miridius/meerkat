@@ -2,7 +2,7 @@ name: Toolchain
 description: >-
   Loads the toolchain pins into the job's environment and installs Bun,
   Erlang, Elixir, Hex and rebar3 from them. Each is cached per pin, so
-  once a pin has been fetched no run needs its download host.
+  once a pin is cached on main no run needs its download host.
 
 runs:
   using: composite
