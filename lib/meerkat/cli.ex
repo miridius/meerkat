@@ -680,9 +680,10 @@ defmodule Meerkat.CLI do
     :ok
   end
 
-  # The root of the caller's work tree. Git reports paths from the root
-  # and reads the paths it is given from where it runs, so every git
-  # command runs from the root, wherever in the tree meerkat started.
+  # The root of the caller's work tree. Git reads the paths it is given
+  # from where it runs, and some commands, such as `ls-files`, report
+  # paths from there while others report them from the root, so every
+  # git command runs from the root, wherever in the tree meerkat started.
   # The review is keyed on it too: the same tree's staged diff is the
   # same review from any of its directories. Resolved once per directory.
   defp repo_path do
@@ -700,8 +701,8 @@ defmodule Meerkat.CLI do
   defp cwd do
     # `bin/meerkat-beam` cd's into the Mix root before invoking the
     # CLI; the launcher re-cd's via $MEERKAT_PWD. Use that env var
-    # if present so git operations target the user's cwd, not the
-    # Mix project.
+    # if present so the review targets the user's work tree, not the
+    # Mix project's.
     System.get_env("MEERKAT_PWD") || File.cwd!()
   end
 

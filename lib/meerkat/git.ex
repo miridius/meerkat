@@ -1150,16 +1150,12 @@ defmodule Meerkat.Git do
   defp index_override(_repo_path, name) when name in [nil, ""], do: nil
   defp index_override(repo_path, name), do: index_path(repo_path, name)
 
-  # Git takes a relative GIT_INDEX_FILE from the top of the work tree, which
-  # is not `repo_path` when a hook runs meerkat from a subdirectory.
+  # Git takes a relative GIT_INDEX_FILE from the top of the work tree.
   defp index_path(repo_path, name) do
     if Path.type(name) == :absolute do
       Path.expand(name)
     else
-      case toplevel(repo_path) do
-        {:ok, top} -> Path.expand(name, top)
-        {:error, _} -> Path.expand(name, repo_path)
-      end
+      Path.expand(name, root(repo_path))
     end
   end
 
