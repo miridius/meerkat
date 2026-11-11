@@ -99,9 +99,10 @@ fi
 # Explicit --port and --port=N (including --port 0) pass through
 # unchanged and leave MEERKAT_PREFERRED_PORT unset. Without an explicit
 # port, prefer MEERKAT_PORT (useful for tests/debugging) or hash
-# (cwd,args) to int(shasum256(cwd:args)[:8]) % 20000 + 40000. This
-# stable port keeps a fresh invocation of the same review, with the
-# same args in the same repo, on the same port so its browser tab needs
+# (root,args) to int(shasum256(root:args)[:8]) % 20000 + 40000, with
+# root from `meerkat_review_root`. This stable port keeps a fresh
+# invocation of the same review, with the same args in the same work
+# tree, from any of its directories, on the same port so its browser tab needs
 # no re-navigation. The 40000-59999 range is above privileged ports;
 # its portion below 49152 is outside macOS's default ephemeral range,
 # making OS-allocation collisions rare. If the preferred port is taken,
@@ -117,7 +118,7 @@ if [[ "$explicit_port" == "false" ]]; then
   if [[ -n "${MEERKAT_PORT:-}" ]]; then
     export MEERKAT_PREFERRED_PORT="$MEERKAT_PORT"
   else
-    hash_input="${ORIG_PWD}:$*"
+    hash_input="$(meerkat_review_root):$*"
     hex8=$(printf '%s' "$hash_input" | shasum -a 256 | head -c 8)
     # Convert lowercase-hex 8 chars → decimal → modulo 20000 + 40000.
     export MEERKAT_PREFERRED_PORT=$(( 16#${hex8} % 20000 + 40000 ))

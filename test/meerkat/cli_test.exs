@@ -602,17 +602,25 @@ defmodule Meerkat.CLITest do
   describe "repo_path/0" do
     # async: true is safe — these are the only tests touching
     # MEERKAT_PWD, and the var is restored before exit.
-    test "prefers MEERKAT_PWD over the BEAM's cwd" do
+    test "is the work tree root of MEERKAT_PWD, else of the BEAM's cwd" do
       prev = System.get_env("MEERKAT_PWD")
+      repo = Meerkat.TestHelpers.make_git_repo("meerkat-cli-repo-path")
+      sub = Path.join(repo, "sub")
+      File.mkdir_p!(sub)
 
       try do
-        System.put_env("MEERKAT_PWD", "/somewhere/else")
-        assert CLI.repo_path_for_test() == "/somewhere/else"
+        System.put_env("MEERKAT_PWD", sub)
+        root = File.cd!(repo, &File.cwd!/0)
+        assert CLI.repo_path_for_test() == root
+        # Resolved once per directory: without its repo, still the root.
+        File.rm_rf!(Path.join(repo, ".git"))
+        assert CLI.repo_path_for_test() == root
 
         System.delete_env("MEERKAT_PWD")
         assert CLI.repo_path_for_test() == File.cwd!()
       after
         if prev, do: System.put_env("MEERKAT_PWD", prev), else: System.delete_env("MEERKAT_PWD")
+        File.rm_rf!(repo)
       end
     end
   end

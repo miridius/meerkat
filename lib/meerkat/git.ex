@@ -469,6 +469,21 @@ defmodule Meerkat.Git do
   end
 
   @doc """
+  The root of the work tree holding `path`, or `path` itself when it is
+  in none. Resolving the root first lets `git_dir/1` and
+  `git_common_dir/1` find a repo's gitdir from however deep a path sits.
+  A path in no repo has no root to find, and their ceiling then keeps
+  the lookup from walking up into an ancestor repo.
+  """
+  @spec root(String.t()) :: String.t()
+  def root(path) do
+    case toplevel(path) do
+      {:ok, root} -> root
+      {:error, _} -> path
+    end
+  end
+
+  @doc """
   Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`,
   for the worktree holding `repo_path`. A subdirectory of the
   worktree resolves to the same directory as its root, so state
@@ -493,15 +508,7 @@ defmodule Meerkat.Git do
   end
 
   defp resolve_meerkat_dir(repo_path) do
-    # Resolve the worktree root first, so a path inside a repo lands on
-    # that repo's gitdir however deep it sits. A path in no repo has no
-    # root to find, and `git_dir/1`'s ceiling then keeps the fallback
-    # local instead of walking up into an ancestor repo.
-    root =
-      case toplevel(repo_path) do
-        {:ok, root} -> root
-        {:error, _} -> repo_path
-      end
+    root = root(repo_path)
 
     base =
       case git_dir(root) do

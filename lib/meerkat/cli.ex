@@ -680,7 +680,24 @@ defmodule Meerkat.CLI do
     :ok
   end
 
+  # The root of the caller's work tree. Git reports paths from the root
+  # and reads the paths it is given from where it runs, so every git
+  # command runs from the root, wherever in the tree meerkat started.
+  # The review is keyed on it too: the same tree's staged diff is the
+  # same review from any of its directories. Resolved once per directory.
   defp repo_path do
+    cwd = cwd()
+    # muex:ignore equivalent: the key need only be the one both calls below use
+    key = {__MODULE__, :root, cwd}
+
+    with nil <- Process.get(key) do
+      root = Git.root(cwd)
+      Process.put(key, root)
+      root
+    end
+  end
+
+  defp cwd do
     # `bin/meerkat-beam` cd's into the Mix root before invoking the
     # CLI; the launcher re-cd's via $MEERKAT_PWD. Use that env var
     # if present so git operations target the user's cwd, not the

@@ -56,11 +56,13 @@ see [pending-answers.md](pending-answers.md).
 With no explicit `--port N` or `--port=N`, both launchers discard any
 inherited `MEERKAT_PREFERRED_PORT` and set it to `MEERKAT_PORT` if
 nonempty, or to the review's stable port:
-`int(shasum256(cwd:args)[:8]) % 20000 + 40000`. The CLI's `--port`
-defaults to `0`; with port `0`, it tries a valid preferred port first.
+`int(shasum256(root:args)[:8]) % 20000 + 40000`, where `root` is the
+root of the work tree meerkat runs in, or outside one its directory.
+The CLI's `--port` defaults to `0`; with port `0`, it tries a valid
+preferred port first.
 
 Absent a `MEERKAT_PORT` override, a fresh invocation of the same review
-(same repo and args) that starts a new server uses the same port when
+(same work tree, from any of its directories, and args) that starts a new server uses the same port when
 available, so a browser tab left open on that port needs no
 re-navigation. The 40000–59999 range is above privileged ports; its
 portion below 49152 is outside macOS's default ephemeral range
