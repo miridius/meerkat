@@ -56,8 +56,9 @@ remove commits a merged PR still references). Before committing:
   `.github/toolchain.env`, `package.json`'s `packageManager`, or an
   action SHA in a workflow or `.github/actions/toolchain` is not the
   newest release at least 24h old, and the pre-commit hook bumps them.
-  The one exception is a security fix: when a published advisory affects a dependency's current
-  version, or a tool's newest release 24h old, the release that fixes
+  The one exception is a security fix: when a published advisory
+  affects a dependency's current version, or a tool's newest release
+  24h old, the release that fixes
   it is taken however young. While none does, a tool's pin moves to
   the newest release no advisory covers that is 24h old and not older
   than the pin, or else to a newer one however young, and otherwise

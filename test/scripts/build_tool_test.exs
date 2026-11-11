@@ -24,7 +24,8 @@ defmodule Meerkat.BuildToolTest do
     %{base: base, path: stubs <> ":" <> System.fetch_env!("PATH")}
   end
 
-  test "a download that does not match its pinned checksum builds nothing", ctx do
+  test "a download is retried, and one that does not match its pinned checksum builds nothing",
+       ctx do
     assert {out, 1} =
              System.cmd("bun", [@script, "graphviz", Path.join(ctx.base, "prefix")],
                env: [

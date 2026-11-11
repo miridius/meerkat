@@ -24,8 +24,8 @@ jobs:
 
       # Each pinned tool but pnpm is cached per pin, so once a pin is cached
       # on main no run needs its download host. Bun aside, a cache is saved
-      # as soon as its tool installs and passes its checks, even if the run
-      # later fails.
+      # as soon as its tool installs and passes any check it has, even if
+      # the run later fails.
       - uses: ./.github/actions/toolchain
 
       # meerkat's own build is left out: checkout leaves lib/ newer than a
