@@ -5,7 +5,7 @@ defmodule Meerkat.GitIntegrationTest do
   alias Meerkat.Git
 
   import Meerkat.TestHelpers,
-    only: [stage: 3, intercept_git: 3, import_commit: 3, stub_git: 1, stub_git: 2]
+    only: [stage: 3, intercept_git: 3, import_commits: 2, stub_git: 1, stub_git: 2]
 
   # Built once; tests only read the repos, and a failure comes from
   # `stub_git`. `rebases` is on `main`, with linked worktrees stopped in
@@ -33,13 +33,21 @@ defmodule Meerkat.GitIntegrationTest do
     git(dir, ["config", "core.hooksPath", "/dev/null"])
   end
 
+  # `main` and `feature/x` each commit over one `base` commit. Parentless
+  # commits of one tree are one commit, so `feature/x` starts at `main`'s.
+  defp branch_off(dir, base, feature, main) do
+    import_commits(dir, [
+      {"refs/heads/main", base},
+      {"refs/heads/feature/x", base},
+      {"refs/heads/feature/x", feature},
+      {"refs/heads/main", main}
+    ])
+  end
+
   defp build_rebases(dir) do
     init(dir)
     base = %{"file.txt" => "base\n"}
-    import_commit(dir, "refs/heads/main", base)
-    import_commit(dir, "refs/heads/feature/x", base)
-    import_commit(dir, "refs/heads/feature/x", %{"file.txt" => "feature\n"})
-    import_commit(dir, "refs/heads/main", %{"file.txt" => "main\n"})
+    branch_off(dir, base, %{"file.txt" => "feature\n"}, %{"file.txt" => "main\n"})
     git(dir, ["reset", "-q", "--hard"])
 
     # A hook-exported GIT_DIR would point this at meerkat's own repo.
@@ -59,10 +67,12 @@ defmodule Meerkat.GitIntegrationTest do
     init(dir)
     before = "first\nsecond\nthird\nfourth\nfifth\n"
     base = %{"conflict.txt" => "base\n", "file.txt" => "before\n", "old.txt" => before}
-    import_commit(dir, "refs/heads/main", base)
-    import_commit(dir, "refs/heads/feature/x", base)
-    import_commit(dir, "refs/heads/feature/x", %{base | "conflict.txt" => "feature\n"})
-    import_commit(dir, "refs/heads/main", %{base | "conflict.txt" => "main\n"})
+
+    branch_off(dir, base, %{base | "conflict.txt" => "feature\n"}, %{
+      base
+      | "conflict.txt" => "main\n"
+    })
+
     git(dir, ["reset", "-q", "--hard"])
 
     unset = Enum.map(~w(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE), &{&1, nil})
@@ -83,9 +93,9 @@ defmodule Meerkat.GitIntegrationTest do
     )
   end
 
-  # `changes` over `base` for two-dot reviews; `topic` off `fork`, and
-  # `moved` past it, for three-dot ones. `refs/pull/42/head` is the tip
-  # of a PR into `main`, fetched from `origin`, the repo itself.
+  # `changes`, compared with `base` for two-dot reviews; `topic` off
+  # `fork`, and `moved` past it, for three-dot ones. `refs/pull/42/head`
+  # is the tip of a PR into `main`, fetched from `origin`, the repo itself.
   defp build_range(dir) do
     init(dir)
     before = "first\nsecond\nthird\nfourth\nfifth\n"
@@ -96,28 +106,28 @@ defmodule Meerkat.GitIntegrationTest do
       "changed.txt" => "before\n"
     }
 
-    import_commit(dir, "refs/heads/base", base)
-
-    import_commit(dir, "refs/heads/changes", %{
-      "new.txt" => before <> "sixth\n",
-      "changed.txt" => "after\n",
-      "added.txt" => "brand new\n"
-    })
-
     fork = %{"file.txt" => "common\n"}
-    import_commit(dir, "refs/heads/fork", fork)
-    import_commit(dir, "refs/heads/topic", fork)
-    import_commit(dir, "refs/heads/topic", %{"file.txt" => "topic\n"})
-    import_commit(dir, "refs/heads/moved", fork)
 
-    import_commit(dir, "refs/heads/moved", %{
-      "file.txt" => "base moved\n",
-      "base-only.txt" => "base only\n"
-    })
+    # As in `branch_off/4`, `topic` and `moved` start at `fork`'s commit.
+    commits =
+      import_commits(dir, [
+        {"refs/heads/base", base},
+        {"refs/heads/changes",
+         %{
+           "new.txt" => before <> "sixth\n",
+           "changed.txt" => "after\n",
+           "added.txt" => "brand new\n"
+         }},
+        {"refs/heads/fork", fork},
+        {"refs/heads/topic", fork},
+        {"refs/heads/topic", %{"file.txt" => "topic\n"}},
+        {"refs/heads/moved", fork},
+        {"refs/heads/moved", %{"file.txt" => "base moved\n", "base-only.txt" => "base only\n"}},
+        {"refs/heads/main", base},
+        {"refs/heads/pr", %{"changed.txt" => "head\n"}}
+      ])
 
-    import_commit(dir, "refs/heads/main", base)
-    head = import_commit(dir, "refs/heads/pr", %{"changed.txt" => "head\n"})
-    git(dir, ["update-ref", "refs/pull/42/head", head])
+    git(dir, ["update-ref", "refs/pull/42/head", List.last(commits)])
     git(dir, ["remote", "add", "origin", dir])
   end
 

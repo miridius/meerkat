@@ -139,6 +139,9 @@ defmodule Meerkat.GitOidsTest do
       end)
 
       assert git(dir, ["rev-parse", "HEAD:kept.rs"]) == blob_oid(@head["kept.rs"])
+
+      assert Git.head_blob_oids_many(dir, ["kept.rs"]) ==
+               {:ok, %{"kept.rs" => blob_oid(@head["kept.rs"])}}
     end
   end
 end

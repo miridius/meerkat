@@ -29,7 +29,8 @@ defmodule Meerkat.GitHubTest do
   end
 
   # Has git show HEAD on the branch `name`, or detached, mid-rebase of
-  # `branch` when given. Git's own rebase states are Meerkat.Git's tests'.
+  # `branch` when given: every `rev-parse --path-format=absolute` then
+  # names `head-name`. Git's own rebase states are Meerkat.Git's tests'.
   defp head(:detached, dir, branch) do
     head_name = Path.join(dir, "head-name")
     if branch, do: File.write!(head_name, "refs/heads/#{branch}\n")

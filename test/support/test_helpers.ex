@@ -353,7 +353,8 @@ defmodule Meerkat.TestHelpers do
   `ref`'s tip, if it has one by then. Its committer and time are fixed,
   so two parentless commits of one tree are the same commit. The objects
   land in one pack, where `git add` and `git commit` would write a file
-  for each.
+  for each: `test.gitconfig`'s `transfer.unpackLimit` keeps fast-import
+  from unpacking them.
   """
   @spec import_commits(String.t(), [
           {String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}}
@@ -379,9 +380,8 @@ defmodule Meerkat.TestHelpers do
     get_marks = marks |> Enum.reverse() |> Enum.map(&"get-mark :#{&1}\n")
 
     # `System.cmd/3` can't write to stdin, and an argument can't hold a
-    # NUL, so `sh` feeds the stream from a file, one per process.
-    stream_file = Process.get(:meerkat_fast_import) || tmp_path("meerkat-fast-import")
-    Process.put(:meerkat_fast_import, stream_file)
+    # NUL, so `sh` feeds the stream from a file.
+    stream_file = tmp_path("meerkat-fast-import")
     File.write!(stream_file, [stream, get_marks])
 
     {out, code} =
@@ -434,7 +434,7 @@ defmodule Meerkat.TestHelpers do
   writes that index file instead, for `Meerkat.Git.with_index/3`.
   """
   @spec read_tree(String.t(), String.t(), String.t() | nil) :: :ok
-  def read_tree(dir, ref, index \\ nil) do
+  def read_tree(dir, ref, index) do
     env = List.keystore(@git_discovery_overrides, "GIT_INDEX_FILE", 0, {"GIT_INDEX_FILE", index})
 
     case System.cmd("git", ["read-tree", ref], cd: dir, stderr_to_stdout: true, env: env) do
@@ -451,8 +451,11 @@ defmodule Meerkat.TestHelpers do
     |> Base.encode16(case: :lower)
   end
 
-  # fast-import's quoted form, for a path with a newline or a carriage
-  # return; Elixir's escapes for those match C's.
+  # fast-import's C-style quoted form, for a path it would otherwise
+  # misread: one holding a newline, carriage return, quote or backslash,
+  # or starting with a space. Elixir's escapes match C's for those
+  # characters, not for `#{`, other control bytes or bytes that aren't
+  # UTF-8.
   defp quote_path(path) do
     if String.contains?(path, ["\n", "\r", "\"", "\\"]) or String.starts_with?(path, " "),
       do: inspect(path, binaries: :as_strings),

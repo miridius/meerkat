@@ -19,7 +19,7 @@ defmodule Meerkat.GitBinaryTest do
   # tests, each in its own dir, with contents no other scenario shares so
   # renames pair only within one. Its own index stages them all; the
   # `submodule` index file stages that dir's change alone. Range reviews
-  # compare its branches. `unborn` has no commit, and an index file for
+  # compare its branches. `unborn`'s HEAD has no commit; it has an index file for
   # each of its scenarios.
   setup_all do
     template =
@@ -38,13 +38,17 @@ defmodule Meerkat.GitBinaryTest do
     })
 
     {result, stderr} =
-      ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(staged) end)
+      try do
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(staged) end)
+      after
+        Meerkat.TestHelpers.put_git_config_env()
+      end
 
-    Meerkat.TestHelpers.put_git_config_env()
     {:ok, files} = result
 
     {:ok,
      staged: staged,
+     staged_files: files,
      by_name: Map.new(files, &{&1.file_name, &1}),
      staged_stderr: stderr,
      unborn: Path.join(template, "unborn")}
@@ -111,7 +115,7 @@ defmodule Meerkat.GitBinaryTest do
       "kinds/latin1.gen" => "caf" <> <<0xE9>> <> "\n",
       "kinds/nul.gen" => "new" <> <<0>> <> "\n",
       "kinds/macro.gen" => "macro new\n",
-      # git's test reads only the first 8000 bytes.
+      # Meerkat's NUL check, like git's, reads only the first 8000 bytes.
       "kinds/late-nul.gen" => String.duplicate("l", 8000) <> <<0>>,
       "kinds/last-nul.gen" => String.duplicate("t", 7999) <> <<0>>,
       "renames/plain.gen" => lines("plain"),
@@ -159,8 +163,9 @@ defmodule Meerkat.GitBinaryTest do
 
     base = Map.merge(attributes, base)
 
-    # Branches off `base`: `tip` for two-dot reviews; `topic`, and
-    # `main-moved` past the fork, for a three-dot one.
+    # `tip`, compared with `base` for two-dot reviews; `topic`, and
+    # `main-moved` past the fork, both branches off `base`, for a
+    # three-dot one. The work tree's `.gitattributes` marks `*.gen` -diff.
     range = %{
       "gen/a.gen" => "one\n",
       "gen/nul.gen" => "nul one\n",
@@ -340,16 +345,16 @@ defmodule Meerkat.GitBinaryTest do
 
   test "the staged text patch names only the -diff text files", %{staged: staged} do
     stub_git("--text", fn argv ->
-      send(self(), {:text_diff, argv})
+      send(self(), {:ran, argv})
       :real
     end)
 
     by_name = staged_by_name(staged)
     refute by_name["patch/a.gen"].is_binary
     assert by_name["patch/logo.bin"].is_binary
-    assert_received {:text_diff, argv}
-    assert "patch/a.gen" in argv
-    refute "patch/logo.bin" in argv
+    assert [_ | _] = ran = collect_ran([])
+    assert Enum.any?(ran, &("patch/a.gen" in &1))
+    refute Enum.any?(ran, &("patch/logo.bin" in &1))
   end
 
   test "a failed staged text patch shows on each -diff text file", %{staged: staged} do
@@ -414,6 +419,7 @@ defmodule Meerkat.GitBinaryTest do
   test "a range review shows a -diff text file's lines and keeps real binaries binary", %{
     staged: range
   } do
+    assert git(range, ["diff", "--numstat", "base", "tip"]) =~ "-\t-\tgen/a.gen"
     assert {:ok, files} = Git.range_file_diffs(range, "base", "tip", :two_dot)
     by_name = Map.new(files, &{&1.file_name, &1})
     a = by_name["gen/a.gen"]
@@ -433,12 +439,13 @@ defmodule Meerkat.GitBinaryTest do
   test "a three-dot review judges a -diff file by the merge base, not the base's tip", %{
     staged: range
   } do
+    assert git(range, ["diff", "--numstat", "main-moved...topic"]) =~ "-\t-\tfork.gen"
     assert {:ok, [fork]} = Git.range_file_diffs(range, "main-moved", "topic", :three_dot)
     refute fork.is_binary
     assert Enum.join(fork.hunks) =~ "-fork one\n+fork two"
   end
 
-  test "actual binary bytes are removed before JSON encoding, even in a binary-only review", %{
+  test "actual binary bytes are removed before JSON encoding", %{
     staged: staged,
     by_name: by_name
   } do
@@ -474,8 +481,11 @@ defmodule Meerkat.GitBinaryTest do
 
   test "mixed text and binary additions, deletions, renames and generated files", %{
     by_name: by_name,
+    staged_files: files,
     staged_stderr: stderr
   } do
+    assert length(files) == map_size(by_name)
+
     assert by_name |> Map.keys() |> Enum.filter(&String.starts_with?(&1, "mixed/")) |> Enum.sort() ==
              ~w(mixed/added.md mixed/generated.blob mixed/gone.blob mixed/new.blob mixed/query.clj)
 

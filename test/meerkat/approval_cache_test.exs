@@ -170,8 +170,9 @@ defmodule Meerkat.ApprovalCacheTest do
   end
 
   describe "key_for/2 and prune_for/1" do
-    # A common dir laid out as git lays one out, which git, stood in for,
-    # names; `main` is the only branch.
+    # A common dir laid out as git lays one out. The stand-in for git
+    # answers `--git-dir` and `--git-common-dir` with it and lists `main`
+    # as the only branch; any other git call fails the test.
     setup do
       dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-keys")
       common = Path.join(dir, "repo/.git")
