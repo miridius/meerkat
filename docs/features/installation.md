@@ -60,7 +60,9 @@ either way because:
 ## Env vars
 
 - `MEERKAT_BIN` — used by the e2e suite to point at the binary
-  under test (defaults to whatever's on PATH).
+  under test (defaults to this checkout's `bin/meerkat-beam`, so
+  `bunx playwright test` tests the checkout, not the installed
+  `meerkat`; `bun run test:e2e` always tests the checkout).
 - `MEERKAT_INSTALL_PREFIX` — release directory location (default
   `~/.local/share/meerkat-beam`).
 - `MEERKAT_BIN_DIR` — launcher destination directory (default

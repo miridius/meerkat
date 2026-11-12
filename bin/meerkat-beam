@@ -8,9 +8,8 @@
 # `ReviewServer.init` reloads in-progress comments via
 # `Meerkat.Persistence`.
 #
-# Tests point `MEERKAT_BIN` at this script:
-#
-#     MEERKAT_BIN=./bin/meerkat-beam bun run test:e2e
+# The e2e suite runs this script: `bun run test:e2e` always, and a bare
+# `bunx playwright test` unless `MEERKAT_BIN` names another.
 #
 # cd into the Mix project root so `mix run` works, but capture the
 # caller's cwd in $MEERKAT_PWD so `Meerkat.CLI` reads git state
