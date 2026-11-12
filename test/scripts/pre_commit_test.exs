@@ -23,6 +23,7 @@ defmodule Meerkat.PreCommitHookTest do
     "mix-test.sh",
     "bun test",
     "bun test tests/e2e/lib",
+    "bun test scripts",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"

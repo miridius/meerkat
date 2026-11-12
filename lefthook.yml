@@ -54,9 +54,9 @@ pre-push:
 post-merge:
   commands:
     install:
-      run: bash scripts/auto-install.sh
+      run: bun scripts/auto-install.ts
 
 post-checkout:
   commands:
     install:
-      run: bash scripts/auto-install.sh
+      run: bun scripts/auto-install.ts

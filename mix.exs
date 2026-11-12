@@ -22,7 +22,7 @@ defmodule Meerkat.MixProject do
   end
 
   defp releases do
-    # `scripts/install.sh` runs `mix release` and wraps the output in
+    # `scripts/install.ts` runs `mix release` and wraps the output in
     # a launcher at ~/.local/bin/meerkat. Auto-install via the
     # lefthook post-merge hook uses this path.
     [

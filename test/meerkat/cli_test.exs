@@ -1102,7 +1102,7 @@ defmodule Meerkat.CLITest do
 
     test "empty staged diff + no pending answers → auto-approves (fast path unchanged)",
          %{dir: dir} do
-      # The smoke-test path in scripts/install.sh and message-only
+      # The smoke-test path in scripts/install.ts and message-only
       # `git commit --amend` rely on this still skipping the UI.
       # Exact message: a mutation that drops the empty-staged clause
       # would surface the vacuous all-generated wording instead.
