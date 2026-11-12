@@ -1,12 +1,11 @@
 defmodule Meerkat.PreCommitHookTest do
   # Commits through the repo's real lefthook.yml, scripts/no-main-commits.ts,
-  # scripts/check.ts and scripts/mutate.sh. Only the tools those scripts run
+  # scripts/check.ts and scripts/mutate.ts. Only the tools those scripts run
   # (mix, pnpm, bun, bunx) are replaced, by stubs on PATH that log each run
   # and can fail it. The `mix muex` stub writes the report STUB_REPORT names,
-  # or none when it is `none`, and exits with STUB_MUEX_EXIT. The logic of
-  # check.ts, checked-trees.ts and no-main-commits.ts is unit-tested beside
-  # them, in scripts/*.test.ts; the check.ts tests here cover only its seams
-  # with git, lefthook, the gate slots and signals.
+  # or none when it is `none`. The scripts' logic is unit-tested beside them,
+  # in scripts/*.test.ts; the tests here cover only their seams with git,
+  # lefthook, the gate slots, the file system and signals.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0, hold_gate_slot: 1]
@@ -32,7 +31,7 @@ defmodule Meerkat.PreCommitHookTest do
     "bun run test:e2e"
   ]
 
-  # What scripts/mutate.sh staged runs after the gates.
+  # What scripts/mutate.ts staged runs after the gates.
   @mutation [
     "mix deps.get",
     "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline",
@@ -80,7 +79,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     for script <-
           ~w(check.ts checked-trees.ts e2e-inputs.ts gate-lock.sh gate-run.sh no-main-commits.ts
-             mutate.sh mutate-paths.ts) do
+             mutate.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -123,7 +122,7 @@ defmodule Meerkat.PreCommitHookTest do
     #!/usr/bin/env bash
     # The real bun runs the gates' own scripts.
     case "$(basename "$0") ${1:-}" in
-    "bun scripts/check.ts" | "bun scripts/checked-trees.ts" | "bun scripts/no-main-commits.ts")
+    "bun scripts/check.ts" | "bun scripts/checked-trees.ts" | "bun scripts/no-main-commits.ts" | "bun scripts/mutate.ts")
       exec '#{System.find_executable("bun")}' "$@" ;;
     esac
     # With STUB_PROBE_SLOTS set, log each tool that runs while it, or a
@@ -151,12 +150,11 @@ defmodule Meerkat.PreCommitHookTest do
       echo "$2" > '#{muex}/output'
       # Like real muex, write no report when there is nothing to mutate.
       [ "${STUB_REPORT:-}" = none ] || cp "${STUB_REPORT:-#{report}}" "$2"
-      [ -z "${STUB_MUEX_EDIT:-}" ] || echo "edited mid-run" >> lib/meerkat/two.ex
       if [ "${STUB_INTERRUPT:-}" = "mix muex" ]; then
         trap 'exit 0' INT
         kill -INT 0
       fi
-      exit "${STUB_MUEX_EXIT:-0}"
+      exit 0
     fi
     cmd="$(basename "$0")${*:+ $*}"
     echo "$cmd" >> '#{log}'
@@ -292,25 +290,20 @@ defmodule Meerkat.PreCommitHookTest do
     assert File.read(ctx.slot_fd) == {:error, :enoent}
   end
 
-  test "a commit staging lib/ lines mutates those lines after the checks", ctx do
+  test "a commit staging lib/ lines mutates those lines after the checks and records them",
+       ctx do
+    track_main(ctx.work)
     stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
 
     assert {out, 0} = commit(ctx, ["-m", "change lib"])
     assert out =~ "no mutant of the staged lib/ lines survived"
     assert gates_run(ctx) == @gates ++ @mutation
-
-    args = muex_args(ctx)
-    assert "--staged" in args
-    assert "--coverage-guided" in args
-    assert "--no-filter" in args
-    assert "--no-optimize" in args
-    assert ["--fail-at", "0"] in Enum.chunk_every(args, 2, 1)
-    assert ["--timeout", "900000"] in Enum.chunk_every(args, 2, 1)
+    assert "--staged" in muex_args(ctx)
     assert muex_staged(ctx) == ["lib/meerkat/one.ex"]
 
     # The test files that drive scripts in subprocesses are left out.
     assert ["--test-paths", "test/meerkat/one_test.exs,test/web/two_test.exs"] in Enum.chunk_every(
-             args,
+             muex_args(ctx),
              2,
              1
            )
@@ -330,6 +323,9 @@ defmodule Meerkat.PreCommitHookTest do
     for var <- ~w(GIT_DIR GIT_WORK_TREE GIT_PREFIX) do
       refute Enum.any?(env, &String.starts_with?(&1, "#{var}=")), "#{var} leaked"
     end
+
+    # HEAD is on origin/main, so every lib line of the commit passed.
+    assert mutated?(ctx, "HEAD")
   end
 
   # Both hand the hook a temporary index holding exactly the commit's
@@ -349,70 +345,17 @@ defmodule Meerkat.PreCommitHookTest do
     assert muex_staged(ctx) == ["lib/meerkat/two.ex"]
   end
 
-  test "staging only deleted lib/ lines skips mutation testing", ctx do
-    stage(ctx.work, "lib/meerkat/one.ex", "one\n")
-
-    assert {out, 0} = commit(ctx, ["-m", "delete a line"])
-    assert out =~ "nothing to mutate"
-    assert gates_run(ctx) == @gates
-  end
-
-  for status <- ~w(survived no_coverage) do
-    test "a #{status} mutant blocks the commit and is listed", ctx do
-      head = git(ctx.work, ["rev-parse", "HEAD"])
-      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-      report =
-        write_report(ctx.base, unquote(status), [mutant("killed"), mutant(unquote(status))])
-
-      assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
-      assert code != 0
-      assert git(ctx.work, ["rev-parse", "HEAD"]) == head
-      assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
-      assert out =~ "    - a == b"
-      assert out =~ "    + a != b"
-      refute out =~ "  killed  "
-      refute out =~ "no test judged"
-    end
-  end
-
-  # A test BEAM on a loaded machine can print nothing for most of a minute,
-  # so a timed-out mutant tells nothing about the tests.
-  test "a timed-out mutant blocks the commit apart from untested behaviour", ctx do
+  test "a surviving mutant in muex's report blocks the commit, which records nothing", ctx do
+    track_main(ctx.work)
     head = git(ctx.work, ["rev-parse", "HEAD"])
     stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-    report = write_report(ctx.base, "timeout", [mutant("killed"), mutant("timeout")])
+    report = write_report(ctx.base, "survived", [mutant("killed"), mutant("survived")])
 
     assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
     assert code != 0
     assert git(ctx.work, ["rev-parse", "HEAD"]) == head
-    assert out =~ "no test judged these mutants"
-    assert out =~ "lib/meerkat/one.ex:2  timeout  Comparison: == to !="
-    assert out =~ "Rerun once the machine is less loaded."
-    refute out =~ "untested behaviour"
-  end
-
-  test "survivors and timed-out mutants are each listed under their own heading", ctx do
-    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-    timed_out = %{mutant("timeout") | location: %{file: "lib/meerkat/one.ex", line: 3}}
-    report = write_report(ctx.base, "mixed", [mutant("survived"), timed_out])
-
-    assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
-    assert code != 0
-    assert [survivors, timeouts] = String.split(out, "no test judged these mutants")
-    assert survivors =~ "untested behaviour"
-    assert survivors =~ "lib/meerkat/one.ex:2  survived  "
-    refute survivors =~ "lib/meerkat/one.ex:3"
-    assert timeouts =~ "lib/meerkat/one.ex:3  timeout  "
-    refute timeouts =~ "lib/meerkat/one.ex:2"
-  end
-
-  test "killed, invalid, equivalent and ignored mutants pass", ctx do
-    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-    statuses = ~w(killed invalid equivalent ignored)
-    report = write_report(ctx.base, "passing", Enum.map(statuses, &mutant/1))
-
-    assert {_, 0} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
+    assert out =~ "lib/meerkat/one.ex:2  survived  Comparison: == to !="
+    refute mutated?(ctx, ":")
   end
 
   # muex writes no report then, so an earlier run's report must not be judged.
@@ -427,24 +370,6 @@ defmodule Meerkat.PreCommitHookTest do
     assert gates_run(ctx) == @gates ++ @mutation
   end
 
-  test "a failed muex run blocks the commit", ctx do
-    head = git(ctx.work, ["rev-parse", "HEAD"])
-    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-    assert {_, code} = commit(ctx, ["-m", "change lib"], [{"STUB_MUEX_EXIT", "1"}])
-    assert code != 0
-    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
-  end
-
-  test "a mutant status the gate does not know blocks the commit", ctx do
-    stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-    report = write_report(ctx.base, "unknown", [mutant("killed"), mutant("pending")])
-
-    assert {out, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
-    assert code != 0
-    assert out =~ "unknown mutant status(es): pending"
-  end
-
   test "an external diff tool does not hide staged lib/ lines", ctx do
     stage(ctx.work, "lib/meerkat_web/live/view.ex", "view\n")
 
@@ -453,74 +378,17 @@ defmodule Meerkat.PreCommitHookTest do
     assert muex_staged(ctx) == ["lib/meerkat_web/live/view.ex"]
   end
 
-  # `changed` scores the same lines a commit would, so it must keep every
-  # mutant the gate keeps.
-  test "`mutate.sh changed` mutates uncommitted lib/ lines with the gate's scoping", ctx do
-    File.write!(Path.join(ctx.work, "lib/meerkat/one.ex"), "one\nchanged\n")
+  # muex finds nothing to mutate in a path that is not a lib/**/*.ex file
+  # and writes no report, which would pass.
+  test "`mutate.ts <path>` refuses a path that is not a lib/**/*.ex file, and mutates those that are",
+       ctx do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    assert {_, 0} =
-             System.cmd("bash", ["scripts/mutate.sh", "changed"],
-               cd: ctx.work,
-               env: [{"PATH", path}, {"BASE_BRANCH", "main"}],
-               stderr_to_stdout: true
-             )
-
-    args = muex_args(ctx)
-    assert ["--since", "main"] in Enum.chunk_every(args, 2, 1)
-    assert "--no-filter" in args
-    assert "--no-optimize" in args
-  end
-
-  # muex's own exit status passes survivors under its default --fail-at
-  # and timed-out mutants and ignores no-coverage ones, so every mode
-  # judges the report.
-  for status <- ~w(survived no_coverage timeout) do
-    test "`mutate.sh <path>` fails on a #{status} mutant and lists it", ctx do
-      report = write_report(ctx.base, unquote(status), [mutant(unquote(status))])
-      path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-      assert {out, 1} =
-               System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
-                 cd: ctx.work,
-                 env: [{"PATH", path}, {"STUB_REPORT", report}],
-                 stderr_to_stdout: true
-               )
-
-      assert out =~ "lib/meerkat/one.ex:2  #{unquote(status)}  Comparison: == to !="
-      pairs = Enum.chunk_every(muex_args(ctx), 2, 1)
-      assert ["--fail-at", "0"] in pairs
-      assert ["--format", "json"] in pairs
-    end
-  end
-
-  # muex's file filter and optimizer would drop a small file's or
-  # function's mutants, and a run with none passes.
-  test "`mutate.sh <path>` keeps every mutant of the file", ctx do
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    assert {_, 0} =
-             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex"],
-               cd: ctx.work,
-               env: [{"PATH", path}],
-               stderr_to_stdout: true
-             )
-
-    args = muex_args(ctx)
-    assert "--no-filter" in args
-    assert "--no-optimize" in args
-  end
-
-  # muex finds nothing to mutate in such a path and writes no report, which
-  # would pass. The path check runs under the real bun.
-  test "`mutate.sh <path>` refuses a path that is not a lib/**/*.ex file", ctx do
-    File.rm!(Path.join(ctx.stubs, "bun"))
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
+    run = &System.cmd("bun", ["scripts/mutate.ts" | &1], cd: ctx.work, env: [{"PATH", path}])
 
     assert {out, 2} =
              System.cmd(
-               "bash",
-               ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/gti.ex", "code.txt"],
+               "bun",
+               ["scripts/mutate.ts", "lib/meerkat/one.ex", "lib/meerkat/gti.ex", "code.txt"],
                cd: ctx.work,
                env: [{"PATH", path}],
                stderr_to_stdout: true
@@ -530,18 +398,8 @@ defmodule Meerkat.PreCommitHookTest do
     assert out =~ "code.txt is not a lib/**/*.ex file"
     refute out =~ "lib/meerkat/one.ex is not"
     refute File.exists?(Path.join(ctx.muex, "args"))
-  end
 
-  test "`mutate.sh <path>` mutates lib/**/*.ex files the path check accepts", ctx do
-    File.rm!(Path.join(ctx.stubs, "bun"))
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    assert {_, 0} =
-             System.cmd("bash", ["scripts/mutate.sh", "lib/meerkat/one.ex", "lib/meerkat/two.ex"],
-               cd: ctx.work,
-               env: [{"PATH", path}],
-               stderr_to_stdout: true
-             )
+    assert {_, 0} = run.(["lib/meerkat/one.ex", "lib/meerkat/two.ex"])
 
     assert ["--files", "lib/meerkat/one.ex,lib/meerkat/two.ex"] in Enum.chunk_every(
              muex_args(ctx),
@@ -570,7 +428,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     test "staged mutation testing waits, saying so, then runs once a gate ends", ctx do
       stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-      port = in_port(ctx, ["bash", "scripts/mutate.sh", "staged"])
+      port = in_port(ctx, ["bun", "scripts/mutate.ts", "staged"])
 
       await_line(port, "waiting for one of this repo's 2 gate slots")
       refute_receive {^port, {:exit_status, _}}, 1_000
@@ -582,74 +440,12 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
-  describe "the mutation record" do
-    test "a commit on a HEAD on origin/main records its contents once its lines pass", ctx do
-      track_main(ctx.work)
-      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-      assert {_, 0} = commit(ctx, ["-m", "change lib"])
-      assert mutated?(ctx, "HEAD")
-    end
-
-    # A rebase makes HEAD without the gate, so a later commit's lines alone
-    # leave HEAD's lines unmutated.
-    test "a commit on a HEAD the gate never recorded records nothing", ctx do
-      track_main(ctx.work)
-      stage(ctx.work, "lib/meerkat/two.ex", "two\nrebased\n")
-      no_hooks(ctx.work, ["commit", "-qm", "rebased"])
-      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-      assert {_, 0} = commit(ctx, ["-m", "change lib"])
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "a commit staging no lib lines on a recorded HEAD records its contents", ctx do
-      stage(ctx.work, "lib/meerkat/two.ex", "two\nrebased\n")
-      no_hooks(ctx.work, ["commit", "-qm", "rebased"])
-      mark(ctx, "--mutated", "HEAD")
-      stage(ctx.work, "code.txt", "staged\n")
-
-      assert {out, 0} = commit(ctx, ["-m", "change code"])
-      assert out =~ "nothing to mutate"
-      assert mutated?(ctx, "HEAD")
-    end
-
-    test "a commit beside an untracked file records nothing", ctx do
-      track_main(ctx.work)
-      File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
-      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-
-      assert {_, 0} = commit(ctx, ["-m", "change lib"])
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "a blocked commit records nothing", ctx do
-      track_main(ctx.work)
-      stage(ctx.work, "lib/meerkat/one.ex", "one\nchanged\n")
-      report = write_report(ctx.base, "survived", [mutant("survived")])
-
-      assert {_, code} = commit(ctx, ["-m", "change lib"], [{"STUB_REPORT", report}])
-      assert code != 0
-      refute mutated?(ctx, ":")
-    end
-  end
-
-  describe "mutate.sh changed" do
+  describe "mutate.ts changed" do
     setup ctx do
       track_main(ctx.work)
       stage(ctx.work, "lib/meerkat/one.ex", "one\nrebased\n")
       no_hooks(ctx.work, ["commit", "-qm", "a rebase skips the pre-commit hook"])
       :ok
-    end
-
-    test "blocks on a surviving mutant and records nothing", ctx do
-      report = write_report(ctx.base, "survived", [mutant("survived")])
-
-      assert {out, code} = mutate_changed(ctx, [{"STUB_REPORT", report}])
-      assert code != 0
-      assert out =~ "changed lib/ lines have untested behaviour"
-      assert out =~ "lib/meerkat/one.ex:2  survived"
-      refute mutated?(ctx, "HEAD")
     end
 
     test "records HEAD once every line since origin/main passes", ctx do
@@ -659,42 +455,11 @@ defmodule Meerkat.PreCommitHookTest do
       assert mutated?(ctx, "HEAD")
     end
 
-    test "records nothing against another base", ctx do
-      assert {_, 0} = mutate_changed(ctx, [{"BASE_BRANCH", "main"}])
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "records nothing when given muex flags, which can narrow the run", ctx do
-      assert {_, 0} = mutate_changed(ctx, [], ["--", "--max-mutations", "1"])
-      assert "--max-mutations" in muex_args(ctx)
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "records nothing when the worktree changes while muex runs", ctx do
-      assert {_, 0} = mutate_changed(ctx, [{"STUB_MUEX_EDIT", "1"}])
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "records nothing with uncommitted lib edits", ctx do
-      File.write!(Path.join(ctx.work, "lib/meerkat/two.ex"), "two\nedited\n")
-
-      assert {_, 0} = mutate_changed(ctx)
-      refute mutated?(ctx, "HEAD")
-    end
-
-    test "records HEAD when no lib line changed since origin/main", ctx do
-      git(ctx.work, ["update-ref", "refs/remotes/origin/main", "HEAD"])
-
-      assert {out, 0} = mutate_changed(ctx)
-      assert out =~ "nothing to mutate"
-      assert mutated?(ctx, "HEAD")
-    end
-
     test "stops at an interrupt muex handled, records nothing, and stops its caller", ctx do
       # In its own process group, so the stub's interrupt reaches only this job.
       driver = """
       set -m
-      { bash scripts/mutate.sh changed; echo "caller carried on after $1"; } &
+      { bun scripts/mutate.ts changed; echo "caller carried on after $1"; } &
       wait $!
       """
 
@@ -702,14 +467,14 @@ defmodule Meerkat.PreCommitHookTest do
       env = [{"PATH", path}, {"STUB_INTERRUPT", "mix muex"} | hook_env()]
 
       assert {out, code} =
-               System.cmd("bash", ["-c", driver, "driver", "mutate.sh"],
+               System.cmd("bash", ["-c", driver, "driver", "mutate.ts"],
                  cd: ctx.work,
                  env: env,
                  stderr_to_stdout: true
                )
 
       assert code != 0
-      refute out =~ "caller carried on after mutate.sh"
+      refute out =~ "caller carried on after mutate.ts"
       refute mutated?(ctx, "HEAD")
     end
   end
@@ -791,21 +556,13 @@ defmodule Meerkat.PreCommitHookTest do
     code == 0
   end
 
-  defp mark(ctx, store, rev) do
-    {_, 0} =
-      System.cmd("bun", ["scripts/checked-trees.ts", store, "mark", rev],
-        cd: ctx.work,
-        env: hook_env()
-      )
-  end
-
   # The fixture has no remote; origin/main stands at main's commit.
   defp track_main(work), do: git(work, ["update-ref", "refs/remotes/origin/main", "main"])
 
   defp mutate_changed(ctx, env \\ [], args \\ []) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
-    System.cmd("bash", ["scripts/mutate.sh", "changed" | args],
+    System.cmd("bun", ["scripts/mutate.ts", "changed" | args],
       cd: ctx.work,
       env: [{"PATH", path} | hook_env()] ++ env,
       stderr_to_stdout: true

@@ -1,5 +1,5 @@
-# Sourced by scripts/gate-run.sh, for scripts/check.ts, and by
-# scripts/mutate.sh, so at most two gates in all worktrees of a repo run
+# Sourced by scripts/gate-run.sh, for scripts/check.ts and scripts/mutate.ts,
+# so at most two gates in all worktrees of a repo run
 # their heavy checks at once, and by scripts/run-test-file.sh, so all test
 # runs in those worktrees together run at most half the online cores' worth
 # of test files at once.

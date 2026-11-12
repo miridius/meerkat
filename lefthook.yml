@@ -24,7 +24,7 @@ pre-commit:
       run: bun scripts/check.ts
     mutate:
       priority: 4
-      run: bash scripts/mutate.sh staged
+      run: bun scripts/mutate.ts staged
 
 # A rebase skips pre-commit, so its dependency bump is committed after it.
 post-rewrite:

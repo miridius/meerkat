@@ -4,7 +4,7 @@ defmodule Meerkat.BumpDepsCase do
   repo's real lefthook.yml and the scripts `build_fixture/1` copies. Only mix,
   pnpm, bun, bunx and curl are replaced, by stubs on PATH (the bun stub hands
   hex-cooldown.ts, rebase-bump.ts and the gate scripts to the real bun), plus the fixture's own
-  mix-test.sh, mutate.sh and dep-exemptions.json: the stubs log each run,
+  mix-test.sh and dep-exemptions.json, and the bun stub passes mutate.ts: the stubs log each run,
   report the outdated packages a test sets up, and record an update by
   appending a line to the lockfile or manifest it would change. The tests are
   split across files to keep each file's BEAM time down.
@@ -127,8 +127,6 @@ defmodule Meerkat.BumpDepsCase do
     # These tests cover the dependency bump, not the runner; keep the fixture's
     # runner as `exec mix test` so check.ts's test step is logged as `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
-    # test/scripts/pre_commit_test.exs covers the mutation gate.
-    File.write!(Path.join([work, "scripts", "mutate.sh"]), "exit 0\n")
 
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.write!(Path.join(work, "mix.exs"), @mix_exs)
@@ -162,6 +160,8 @@ defmodule Meerkat.BumpDepsCase do
     case "$cmd" in
       "bun scripts/check.ts"* | "bun scripts/checked-trees.ts"* | "bun scripts/no-main-commits.ts"*)
         exec '#{System.find_executable("bun")}' "$@" ;;
+      # test/scripts/pre_commit_test.exs covers the mutation gate.
+      "bun scripts/mutate.ts"*) exit 0 ;;
     esac
     echo "$cmd" >> '#{log}'
     case "$cmd" in

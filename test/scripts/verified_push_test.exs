@@ -1,6 +1,6 @@
 defmodule Meerkat.VerifiedPushTest do
   # Runs the repo's real scripts/verified-push.sh and scripts/checked-trees.ts
-  # in a fixture repo. check.ts and mutate.sh are replaced by stubs that log
+  # in a fixture repo. check.ts and mutate.ts are replaced by stubs that log
   # each run and, unless told to fail, record HEAD the way the real ones do.
   use Meerkat.Case, async: false
 
@@ -57,20 +57,23 @@ defmodule Meerkat.VerifiedPushTest do
     [ -n "${STUB_NO_MARK:-}" ] || bun scripts/checked-trees.ts mark HEAD
     """)
 
-    # verified-push.sh runs `bun scripts/check.ts`, which hands over to the stub.
-    File.write!(Path.join([work, "scripts", "check.ts"]), """
-    const r = Bun.spawnSync(["bash", "scripts/check-stub.sh", ...process.argv.slice(2)], {
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    process.exit(r.exitCode ?? 1);
-    """)
-
-    File.write!(Path.join([work, "scripts", "mutate.sh"]), """
+    File.write!(Path.join([work, "scripts", "mutate-stub.sh"]), """
     #!/usr/bin/env bash
-    echo "mutate.sh $* vs ${BASE_BRANCH:-} in $(git rev-parse HEAD)" >> '#{log}'
+    echo "mutate.ts $* vs ${BASE_BRANCH:-} in $(git rev-parse HEAD)" >> '#{log}'
     [ -z "${STUB_MUTATE_FAIL:-}" ] || exit 1
     [ -n "${STUB_NO_MARK:-}" ] || bun scripts/checked-trees.ts --mutated mark HEAD
     """)
+
+    # verified-push.sh runs `bun scripts/check.ts` and `bun scripts/mutate.ts`,
+    # which hand over to the stubs.
+    for gate <- ~w(check mutate) do
+      File.write!(Path.join([work, "scripts", "#{gate}.ts"]), """
+      const r = Bun.spawnSync(["bash", "scripts/#{gate}-stub.sh", ...process.argv.slice(2)], {
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      process.exit(r.exitCode ?? 1);
+      """)
+    end
 
     File.write!(Path.join(work, "code.txt"), "base\n")
     git(work, ["add", "-A"])
@@ -415,7 +418,7 @@ defmodule Meerkat.VerifiedPushTest do
   # What verified-push.sh logs for a commit that passes neither gate yet.
   defp both_gates(sha), do: ["check.ts --head in #{sha}", mutation(sha)]
 
-  defp mutation(sha), do: "mutate.sh changed vs origin/main in #{sha}"
+  defp mutation(sha), do: "mutate.ts changed vs origin/main in #{sha}"
 
   defp verified_push(ctx, revs, env \\ []) do
     shas = Enum.map(revs, &git(ctx.work, ["rev-parse", &1]))

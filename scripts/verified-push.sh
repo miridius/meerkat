@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-push check: every commit pushed as a ref's new tip must have contents
-# that passed scripts/check.ts and the mutation gate of scripts/mutate.sh, as
+# that passed scripts/check.ts and the mutation gate of scripts/mutate.ts, as
 # scripts/checked-trees.ts records them. A rebase or cherry-pick makes a
 # commit without running the pre-commit hook, and git runs no hook that can
 # refuse a finished rebase, so without this its contents would reach CI
@@ -27,15 +27,15 @@ gated() {
 }
 
 # run_gates <commit>: runs, on the checkout of that commit, each gate its
-# contents have not passed: `check.ts --head`, then `mutate.sh changed`
+# contents have not passed: `check.ts --head`, then `mutate.ts changed`
 # against origin/main, which mutates every lib line the commit changed since
-# main. If check.ts fails, mutate.sh is not run.
+# main. If check.ts fails, mutate.ts is not run.
 run_gates() {
   if ! bun scripts/checked-trees.ts has "$1"; then
     bun scripts/check.ts --head || return 1
   fi
   if ! bun scripts/checked-trees.ts --mutated has "$1"; then
-    BASE_BRANCH=origin/main bash scripts/mutate.sh changed || return 1
+    BASE_BRANCH=origin/main bun scripts/mutate.ts changed || return 1
   fi
 }
 

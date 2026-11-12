@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gate-run.sh <command>...: runs the command in one of the repo's two gate
-# slots from scripts/gate-lock.sh, for scripts/check.ts and scripts/mutate.sh,
+# slots from scripts/gate-lock.sh, for scripts/check.ts and scripts/mutate.ts,
 # and exits as it does.
 #
 # This shell holds the slot until it exits. The command runs in a subshell

@@ -1,5 +1,5 @@
 // Records which commit contents have passed scripts/check.ts, or with
-// --mutated the mutation gate of scripts/mutate.sh, so the pre-push hook can
+// --mutated the mutation gate of scripts/mutate.ts, so the pre-push hook can
 // tell whether a commit it is about to push was ever checked. A rebase or
 // cherry-pick makes commits without running the pre-commit hook. With --e2e
 // it records which contents passed check.ts's e2e steps, so a commit that

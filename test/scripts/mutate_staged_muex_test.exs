@@ -1,9 +1,8 @@
 defmodule Meerkat.MutateStagedMuexTest do
   # Runs the pinned muex's `mix muex` task, in this VM, with the flags
-  # scripts/mutate.sh staged gives it, in a throwaway project. Its refusal
-  # raises, and test/scripts/pre_commit_test.exs shows a failed muex run
-  # blocks the commit. It changes directory and the OS environment, so it is
-  # synchronous.
+  # scripts/mutate.ts staged gives it, in a throwaway project. Its refusal
+  # raises, and scripts/mutate.test.ts shows a failed muex run fails the
+  # gate. It changes directory and the OS environment, so it is synchronous.
   use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
@@ -47,7 +46,7 @@ defmodule Meerkat.MutateStagedMuexTest do
     "defmodule Tiny do\n#{comment}  def double(a), do: #{body}\nend\n"
   end
 
-  # scripts/mutate.sh's run_mutate flags, with one test BEAM and only
+  # The flags scripts/mutate.ts's muexArgs gives muex, with one test BEAM and only
   # lib/tiny.ex.
   defp gate_args(dir) do
     ~w(--files lib/tiny.ex --test-paths test/tiny_test.exs --coverage-guided --concurrency 1 --no-filter --no-optimize
