@@ -6,17 +6,17 @@ defmodule Meerkat.GitCommitIndexTest do
   # hook reads must be what the commit records.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, hook_env: 0, stage: 3]
+  import Meerkat.TestHelpers, only: [git: 2, hook_env: 0, import_commit: 3, stage: 3]
 
   # Built once, then copied for each test.
   setup_all do
     template =
       Meerkat.TestHelpers.fixture_template("meerkat-commit-index-template", fn dir ->
-        git(dir, ["init", "-q"])
+        git(dir, ["init", "-q", "--initial-branch=main"])
         git(dir, ["config", "user.email", "t@t.t"])
         git(dir, ["config", "user.name", "t"])
-        for name <- ~w(a.txt b.txt c.txt), do: stage(dir, name, "base\n")
-        git(dir, ["commit", "-qm", "base"])
+        import_commit(dir, "refs/heads/main", Map.new(~w(a.txt b.txt c.txt), &{&1, "base\n"}))
+        git(dir, ["reset", "-q", "--hard"])
         install_hook(Path.join(dir, ".git/hooks"))
       end)
 

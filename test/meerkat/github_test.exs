@@ -3,7 +3,7 @@ defmodule Meerkat.GitHubTest do
   use Meerkat.Case, async: false
 
   import ExUnit.CaptureIO
-  import Meerkat.TestHelpers, only: [git: 2]
+  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, read_tree: 3, stub_git: 1]
 
   # decode_pr/1 is private; we exercise it through the public-but-
   # internal `decode_pr_for_test/1` exposed at the bottom of the
@@ -11,23 +11,47 @@ defmodule Meerkat.GitHubTest do
   # serialisation path.
   alias Meerkat.GitHub
 
-  # Built once, then copied for each `current_pr/1` test.
+  # A repo built once, on feature/x with a.txt staged; tests only read it.
   setup_all do
     template =
-      Meerkat.TestHelpers.fixture_template("meerkat-github-template", fn dir ->
-        git(dir, ["init", "-q"])
-        git(dir, ["config", "user.name", "t"])
-        git(dir, ["config", "user.email", "t@t.t"])
-        git(dir, ["switch", "-q", "-c", "feature/x"])
-        git(dir, ["commit", "--allow-empty", "-qm", "base"])
+      Meerkat.TestHelpers.fixture_template("meerkat-github", fn dir ->
+        git(dir, ["init", "-q", "--initial-branch=feature/x"])
+
+        import_commits(dir, [
+          {"refs/heads/feature/x", %{"a.txt" => "base\n"}},
+          {"refs/meerkat-test/staged", %{"a.txt" => "staged mid-rebase\n"}}
+        ])
+
+        read_tree(dir, "refs/meerkat-test/staged", nil)
       end)
 
-    {:ok, template: template}
+    {:ok, repo: template}
+  end
+
+  # Has git show HEAD on the branch `name`, or detached, mid-rebase of
+  # `branch` when given. Git's own rebase states are Meerkat.Git's tests'.
+  defp head(:detached, dir, branch) do
+    head_name = Path.join(dir, "head-name")
+    if branch, do: File.write!(head_name, "refs/heads/#{branch}\n")
+
+    stub_git(fn
+      [_git, "symbolic-ref" | _] -> {"", 1}
+      [_git, "rev-parse", "--path-format=absolute" | _] -> {head_name <> "\n", 0}
+      _argv -> :real
+    end)
+  end
+
+  defp head(:branch, name) do
+    stub_git(fn
+      [_git, "symbolic-ref" | _] -> {name <> "\n", 0}
+      _argv -> :real
+    end)
   end
 
   describe "current_pr/1" do
-    setup %{template: template} do
-      dir = Meerkat.TestHelpers.copy_fixture(template, "meerkat-github")
+    setup do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-github")
+      on_exit(fn -> File.rm_rf!(dir) end)
 
       # The stub records its arguments, and answers like gh for a
       # branch with a PR.
@@ -51,26 +75,21 @@ defmodule Meerkat.GitHubTest do
     end
 
     test "on a branch, gh resolves the current branch itself", %{dir: dir, calls: calls} do
+      head(:branch, "feature/x")
+
       assert %{number: 7} = GitHub.current_pr(dir)
       assert File.read!(calls) =~ ~r/^pr view --json /
     end
 
     test "mid-rebase, gh is asked for the branch being rebased", %{dir: dir, calls: calls} do
-      git(dir, [
-        "-c",
-        "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
-        "rebase",
-        "-q",
-        "-i",
-        "--root"
-      ])
+      head(:detached, dir, "feature/x")
 
       assert %{number: 7} = GitHub.current_pr(dir)
       assert File.read!(calls) =~ ~r/^pr view feature\/x --json /
     end
 
     test "a commit staged mid-rebase is reviewed on the rebased branch and its PR, without a warning",
-         %{dir: dir, bin: bin} do
+         %{dir: dir, bin: bin, repo: repo} do
       # Like gh, which cannot tell the current branch while HEAD is detached.
       File.write!(Path.join(bin, "gh"), """
       #!/bin/sh
@@ -82,29 +101,23 @@ defmodule Meerkat.GitHubTest do
       exit 1
       """)
 
-      git(dir, [
-        "-c",
-        "sequence.editor=sed -i.bak -e '1s/^pick/edit/'",
-        "rebase",
-        "-q",
-        "-i",
-        "--root"
-      ])
-
-      Meerkat.TestHelpers.stage(dir, "a.txt", "staged mid-rebase\n")
+      head(:detached, dir, "feature/x")
 
       stderr =
         capture_io(:stderr, fn ->
-          assert {:ok, state} = Meerkat.ReviewState.from_target({:staged, nil}, dir)
+          assert {:ok, state} = Meerkat.ReviewState.from_target({:staged, nil}, repo)
           assert %{number: 7} = state.pr
           assert state.head_branch == "feature/x"
           assert state.base_branch == "main"
+          assert [%{file_name: "a.txt", new_content: "staged mid-rebase\n"}] = state.files
         end)
 
       assert stderr == ""
     end
 
     test "a branch with no PR has no PR and no warning", %{dir: dir, bin: bin, calls: calls} do
+      head(:branch, "feature/x")
+
       # As gh answers for a branch it finds no PR for.
       File.write!(Path.join(bin, "gh"), """
       #!/bin/sh
@@ -119,7 +132,7 @@ defmodule Meerkat.GitHubTest do
 
     test "a detached HEAD outside a rebase skips the lookup without a warning",
          %{dir: dir, calls: calls} do
-      git(dir, ["checkout", "-q", "--detach"])
+      head(:detached, dir, nil)
 
       assert capture_io(:stderr, fn -> assert GitHub.current_pr(dir) == nil end) == ""
       refute File.exists?(calls)

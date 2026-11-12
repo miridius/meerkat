@@ -3,513 +3,541 @@ defmodule Meerkat.GitBinaryTest do
 
   alias Meerkat.Git
 
-  import Meerkat.TestHelpers, only: [stage: 3, intercept_git: 3, git: 2]
+  import Meerkat.TestHelpers,
+    only: [
+      import_commit: 3,
+      import_commits: 2,
+      read_tree: 3,
+      intercept_git: 3,
+      git: 2,
+      stub_git: 1,
+      stub_git: 2
+    ]
 
-  # Built once, then copied for each test.
+  # Built once from literal files; tests only read the repos, and a
+  # failure comes from `stub_git`. `staged` holds the scenarios of several
+  # tests, each in its own dir, with contents no other scenario shares so
+  # renames pair only within one. Its own index stages them all; the
+  # `submodule` index file stages that dir's change alone. Range reviews
+  # compare its branches. `unborn` has no commit, and an index file for
+  # each of its scenarios.
   setup_all do
     template =
       Meerkat.TestHelpers.fixture_template("meerkat-binary-template", fn dir ->
-        git(dir, ["init", "-q"])
-        git(dir, ["config", "user.email", "t@t.t"])
-        git(dir, ["config", "user.name", "t"])
-        git(dir, ["config", "core.hooksPath", "/dev/null"])
-        # Tests init with no template, so git makes no info/ dir for their attributes.
-        File.mkdir_p!(Path.join(dir, ".git/info"))
+        build_staged(Path.join(dir, "staged"))
+        build_unborn(Path.join(dir, "unborn"))
       end)
 
-    {:ok, template: template}
+    staged = Path.join(template, "staged")
+
+    # The staged -M must find renames without the config's help.
+    System.put_env(%{
+      "GIT_CONFIG_COUNT" => "1",
+      "GIT_CONFIG_KEY_0" => "diff.renames",
+      "GIT_CONFIG_VALUE_0" => "false"
+    })
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(staged) end)
+
+    Meerkat.TestHelpers.put_git_config_env()
+    {:ok, files} = result
+
+    {:ok,
+     staged: staged,
+     by_name: Map.new(files, &{&1.file_name, &1}),
+     staged_stderr: stderr,
+     unborn: Path.join(template, "unborn")}
   end
 
-  setup %{template: template} do
-    {:ok, dir: Meerkat.TestHelpers.copy_fixture(template, "meerkat-binary")}
+  defp init(dir) do
+    File.mkdir_p!(dir)
+    git(dir, ["init", "-q", "--initial-branch=main"])
   end
 
-  test "a text file git calls binary only through -diff shows its lines", %{dir: dir} do
-    stage(dir, "BUILD.bazel", "a\nb\nc\n")
-    stage(dir, "query.clj", "(old-query)\n")
-    stage(dir, "spaces.txt", "old text\n")
-    git(dir, ["commit", "-qm", "base"])
-    File.write!(Path.join(dir, ".git/info/attributes"), "/BUILD.bazel -diff\n")
-    stage(dir, "BUILD.bazel", "a\nB\nc\nd\n")
-    stage(dir, "query.clj", "(new-query)\n")
-    stage(dir, "spaces.txt", "old   text\n")
+  # The staged review of the repo `dir` through its index file `name`.
+  defp staged_in(dir, name) do
+    Git.with_index(dir, Path.join(dir, ".git/" <> name), fn -> Git.staged_file_diffs(dir) end)
+  end
 
-    assert git(dir, ["diff", "--cached", "--numstat"]) =~ "-\t-\tBUILD.bazel"
+  defp lines(prefix), do: Enum.map_join(1..20, &"#{prefix} #{&1}\n")
 
-    stderr =
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert {:ok, [bazel, text]} = Git.staged_file_diffs(dir)
-        assert bazel.file_name == "BUILD.bazel"
-        refute bazel.is_binary
-        assert Enum.join(bazel.hunks) =~ "-b\n+B\n c\n+d"
-        assert {bazel.additions, bazel.deletions} == {2, 1}
-        assert bazel.new_content == "a\nB\nc\nd\n"
-        assert bazel.read_errors == []
-        refute text.is_binary
-        assert Enum.join(text.hunks) =~ "+(new-query)"
-      end)
+  defp build_staged(dir) do
+    init(dir)
+    first = import_commit(dir, "refs/heads/first", %{"first.txt" => "first\n"})
 
+    attributes = %{
+      ".gitattributes" => "*.gen -diff\ncr.gen? -diff\n",
+      "kinds/.gitattributes" => "macro.gen binary\n",
+      "renames/.gitattributes" => "*.bin binary\n",
+      "mixed/.gitattributes" => "generated.blob linguist-generated=true\n",
+      "submodule/.gitattributes" => "* -diff\n"
+    }
+
+    base = %{
+      "bazel/BUILD.bazel" => "a\nb\nc\n",
+      "bazel/query.clj" => "(old-query)\n",
+      "bazel/spaces.txt" => "old text\n",
+      "kinds/nul.gen" => "nul old\n",
+      "kinds/macro.gen" => "macro old\n",
+      "kinds/late-nul.gen" => "late old\n",
+      "kinds/last-nul.gen" => "last old\n",
+      "kinds/latin1.gen" => "latin old\n",
+      "renames/plain.txt" => lines("plain"),
+      "renames/marked.gen" => lines("marked"),
+      "renames/out.gen" => lines("out"),
+      "renames/was.bin" => lines("was"),
+      "deleted/gone.gen" => "gone one\ngone two\n",
+      "oldnul/a.gen" => "oldnul" <> <<0>>,
+      "space/space.gen" => "keep\nspace here\n",
+      "rename/old.gen" => lines("rename"),
+      "binary/old b/name with spaces.bin" => <<0, 255, 1>>,
+      "binary/gone.blob" => <<0, 254, 2>>,
+      "mixed/gone.blob" => "old deleted" <> <<0>>,
+      "mixed/old.blob" => "renamed content" <> <<0>>,
+      "mixed/query.clj" => "(old-mixed-query)\n",
+      "submodule/z.gen" => "old\n",
+      # One submodule commit this repo's objects lack, and one they hold.
+      "submodule/a.sub" => {:gitlink, String.duplicate("1", 40)},
+      "submodule/b.sub" => {:gitlink, first}
+    }
+
+    staged = %{
+      # A text file git calls binary only through -diff.
+      "bazel/BUILD.bazel" => "a\nB\nc\nd\n",
+      "bazel/query.clj" => "(new-query)\n",
+      "bazel/spaces.txt" => "old   text\n",
+      # The page's JSON can't carry bytes that aren't UTF-8.
+      "kinds/latin1.gen" => "caf" <> <<0xE9>> <> "\n",
+      "kinds/nul.gen" => "new" <> <<0>> <> "\n",
+      "kinds/macro.gen" => "macro new\n",
+      # git's test reads only the first 8000 bytes.
+      "kinds/late-nul.gen" => String.duplicate("l", 8000) <> <<0>>,
+      "kinds/last-nul.gen" => String.duplicate("t", 7999) <> <<0>>,
+      "renames/plain.gen" => lines("plain"),
+      "renames/marked.bin" => lines("marked"),
+      "renames/out.txt" => lines("out") <> "extra\n",
+      "renames/was.gen" => lines("was") <> "extra\n",
+      "oldnul/a.gen" => "oldnul new\n",
+      "big/big.gen" => String.duplicate("x", 5 * 1024 * 1024) <> "\nend\n",
+      "space/space.gen" => "keep\nspace  here\nadded\n",
+      # With a bare `:` prefix, `1:a.gen`'s index side would read as merge
+      # stage 1 of `a.gen`; the probe must use `:0:`.
+      "1:a.gen" => "stage-like\n",
+      "index/text.gen" => "staged\n",
+      "index/nul.gen" => "staged" <> <<0>>,
+      "fail/a.gen" => "fail a\n",
+      "fail/b.gen" => "fail b\n",
+      "names/new\nline.gen" => "newline\n",
+      # cat-file would read `:0:names/cr.gen`, this blob, for `:0:names/cr.gen\r`.
+      "names/cr.gen" => "cr\n",
+      "names/cr.gen\r" => "nul" <> <<0>>,
+      "names/plain.gen" => "names plain\n",
+      # Git reads a CR inside a name as it is.
+      "names/mid\rcr.gen" => "mid cr\n",
+      "patch/a.gen" => "patch a\n",
+      "patch/logo.bin" => <<0, 1>>,
+      "patch/plain.txt" => "patch plain\n",
+      "rename/new.gen" => lines("rename") <> "extra\n",
+      "binary/new b/name with spaces.bin" => <<0, 255, 1>>,
+      "mixed/new.blob" => "renamed content" <> <<0>>,
+      "mixed/query.clj" => "(new-mixed-query)\n",
+      "mixed/added.md" => "# Binary" <> <<0>>,
+      "mixed/generated.blob" => "generated binary content" <> <<0>>
+    }
+
+    gone =
+      ~w(renames/plain.txt renames/marked.gen renames/out.gen renames/was.bin
+         deleted/gone.gen rename/old.gen binary/gone.blob mixed/gone.blob mixed/old.blob) ++
+        ["binary/old b/name with spaces.bin"]
+
+    submodule = %{
+      "submodule/z.gen" => "new\n",
+      "submodule/a.sub" => "now a file\n",
+      "submodule/b.sub" => "now a file\n"
+    }
+
+    base = Map.merge(attributes, base)
+
+    # Branches off `base`: `tip` for two-dot reviews; `topic`, and
+    # `main-moved` past the fork, for a three-dot one.
+    range = %{
+      "gen/a.gen" => "one\n",
+      "gen/nul.gen" => "nul one\n",
+      "gen/moved.gen" => lines("line"),
+      "bin/logo.png" => <<0, 255, 1>>,
+      "bin/moved.bin" => <<0, 253, 3>>,
+      "bin/text.txt" => "old\n",
+      "fork.gen" => "fork one\n"
+    }
+
+    tip = %{
+      "gen/a.gen" => "two\n",
+      "gen/nul.gen" => <<0>>,
+      "gen/renamed.gen" => lines("line") <> "extra\n",
+      "bin/logo.png" => <<0, 254, 2>>,
+      "bin/renamed.bin" => <<0, 253, 3>>,
+      "bin/new.bin" => <<0, 252>>,
+      "bin/text.txt" => "new\n"
+    }
+
+    import_commits(dir, [
+      {"refs/heads/main", base},
+      {"refs/heads/staged", base |> Map.drop(gone) |> Map.merge(staged)},
+      {"refs/heads/submodule", Map.merge(base, submodule)},
+      {"refs/heads/base", range},
+      {"refs/heads/tip", range |> Map.drop(~w(gen/moved.gen bin/moved.bin)) |> Map.merge(tip)},
+      # Over `base`, as the parentless commits of one tree are one commit.
+      {"refs/heads/main-moved", range},
+      {"refs/heads/main-moved", %{range | "fork.gen" => "fork one" <> <<0>>}},
+      {"refs/heads/topic", range},
+      {"refs/heads/topic", %{range | "fork.gen" => "fork two\n"}}
+    ])
+
+    git(dir, ["reset", "-q", "--hard"])
+    read_tree(dir, "staged", nil)
+    read_tree(dir, "submodule", Path.join(dir, ".git/submodule"))
+    # Tests init with no template, so git makes no info/ dir for its attributes.
+    File.mkdir_p!(Path.join(dir, ".git/info"))
+    File.write!(Path.join(dir, ".git/info/attributes"), "/bazel/BUILD.bazel -diff\n")
+    File.mkdir_p!(Path.join(dir, "index"))
+    File.write!(Path.join(dir, "index/text.gen"), "worktree" <> <<0>>)
+    File.write!(Path.join(dir, "index/nul.gen"), "worktree\n")
+  end
+
+  # `plain` holds no -diff file, `text` no binary file.
+  defp build_unborn(dir) do
+    init(dir)
+
+    import_commits(dir, [
+      {"refs/meerkat-test/plain", %{"a.bin" => <<0, 255>>, "a.txt" => "text\n"}},
+      {"refs/meerkat-test/text", %{"a.txt" => "text\n"}}
+    ])
+
+    for name <- ~w(plain text),
+        do: read_tree(dir, "refs/meerkat-test/#{name}", Path.join(dir, ".git/" <> name))
+  end
+
+  test "a text file git calls binary only through -diff shows its lines", %{
+    staged: staged,
+    by_name: by_name,
+    staged_stderr: stderr
+  } do
+    assert git(staged, ["diff", "--cached", "--numstat"]) =~ "-\t-\tbazel/BUILD.bazel"
+
+    bazel = by_name["bazel/BUILD.bazel"]
+    refute bazel.is_binary
+    assert Enum.join(bazel.hunks) =~ "-b\n+B\n c\n+d"
+    assert {bazel.additions, bazel.deletions} == {2, 1}
+    assert bazel.new_content == "a\nB\nc\nd\n"
+    assert bazel.read_errors == []
+    refute by_name["bazel/query.clj"].is_binary
+    assert Enum.join(by_name["bazel/query.clj"].hunks) =~ "+(new-query)"
+    # Whitespace-only under -w.
+    refute Map.has_key?(by_name, "bazel/spaces.txt")
     refute stderr =~ "couldn't parse"
   end
 
-  test "a -diff file stays binary when its content or the binary macro says so", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\nmacro.gen binary\n")
-    stage(dir, "nul.gen", "old\n")
-    stage(dir, "macro.gen", "old\n")
-    stage(dir, "late-nul.gen", "old\n")
-    stage(dir, "last-nul.gen", "old\n")
-    stage(dir, "latin1.gen", "old\n")
-    git(dir, ["commit", "-qm", "base"])
-    # The page's JSON can't carry bytes that aren't UTF-8.
-    stage(dir, "latin1.gen", "caf" <> <<0xE9>> <> "\n")
-    stage(dir, "nul.gen", "new" <> <<0>> <> "\n")
-    stage(dir, "macro.gen", "new\n")
-    # git's test reads only the first 8000 bytes.
-    stage(dir, "late-nul.gen", String.duplicate("x", 8000) <> <<0>>)
-    stage(dir, "last-nul.gen", String.duplicate("x", 7999) <> <<0>>)
-
-    assert {:ok, files} = Git.staged_file_diffs(dir)
-    by_name = Map.new(files, &{&1.file_name, &1})
-    assert_binary(by_name["nul.gen"], :modified)
-    assert_binary(by_name["macro.gen"], :modified)
-    assert_binary(by_name["last-nul.gen"], :modified)
-    assert_binary(by_name["latin1.gen"], :modified)
-    refute by_name["late-nul.gen"].is_binary
+  test "a -diff file stays binary when its content or the binary macro says so", %{
+    by_name: by_name
+  } do
+    assert_binary(by_name["kinds/nul.gen"], :modified)
+    assert_binary(by_name["kinds/macro.gen"], :modified)
+    assert_binary(by_name["kinds/last-nul.gen"], :modified)
+    assert_binary(by_name["kinds/latin1.gen"], :modified)
+    refute by_name["kinds/late-nul.gen"].is_binary
   end
 
   test "a text file renamed into or out of -diff shows its lines, and one renamed into or " <>
          "out of the binary macro stays binary",
-       %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n*.bin binary\n")
-    stage(dir, "plain.txt", Enum.map_join(1..20, &"plain #{&1}\n"))
-    stage(dir, "marked.gen", Enum.map_join(1..20, &"marked #{&1}\n"))
-    stage(dir, "out.gen", Enum.map_join(1..20, &"out #{&1}\n"))
-    stage(dir, "was.bin", Enum.map_join(1..20, &"was #{&1}\n"))
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["mv", "plain.txt", "plain.gen"])
-    git(dir, ["mv", "marked.gen", "marked.bin"])
-    git(dir, ["mv", "out.gen", "out.txt"])
-    git(dir, ["mv", "was.bin", "was.gen"])
-    stage(dir, "out.txt", Enum.map_join(1..20, &"out #{&1}\n") <> "extra\n")
-    stage(dir, "was.gen", Enum.map_join(1..20, &"was #{&1}\n") <> "extra\n")
-    assert git(dir, ["diff", "--cached", "--numstat", "-M"]) =~ "-\t-\tout.gen => out.txt"
+       %{staged: staged, by_name: by_name} do
+    assert git(staged, ["diff", "--cached", "--numstat", "-M"]) =~
+             "-\t-\trenames/{out.gen => out.txt}"
 
-    assert {:ok, files} = Git.staged_file_diffs(dir)
-    by_name = Map.new(files, &{&1.file_name, &1})
-    refute by_name["plain.gen"].is_binary
-    assert by_name["plain.gen"].new_content =~ "plain 20"
-    refute by_name["out.txt"].is_binary
-    assert Enum.join(by_name["out.txt"].hunks) =~ "+extra"
-    assert_binary(by_name["marked.bin"], :renamed)
-    assert_binary(by_name["was.gen"], :renamed)
+    refute by_name["renames/plain.gen"].is_binary
+    assert by_name["renames/plain.gen"].new_content =~ "plain 20"
+    refute by_name["renames/out.txt"].is_binary
+    assert Enum.join(by_name["renames/out.txt"].hunks) =~ "+extra"
+    assert_binary(by_name["renames/marked.bin"], :renamed)
+    assert_binary(by_name["renames/was.gen"], :renamed)
   end
 
-  test "a deleted -diff text file shows its removed lines", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "gone.gen", "one\ntwo\n")
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["rm", "-q", "gone.gen"])
-
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
+  test "a deleted -diff text file shows its removed lines", %{by_name: by_name} do
+    file = by_name["deleted/gone.gen"]
     assert file.status == :deleted
     refute file.is_binary
     assert {file.additions, file.deletions} == {0, 2}
   end
 
-  test "a -diff file whose old side holds a NUL stays binary", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "a.gen", "old" <> <<0>>)
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "a.gen", "new\n")
-
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
-    assert_binary(file, :modified)
+  test "a -diff file whose old side holds a NUL stays binary", %{by_name: by_name} do
+    assert_binary(by_name["oldnul/a.gen"], :modified)
   end
 
-  test "an added -diff text file shows its lines whatever its size", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "big.gen", String.duplicate("x", 5 * 1024 * 1024) <> "\nend\n")
-
-    assert {:ok, [_attributes, big]} = Git.staged_file_diffs(dir)
+  test "an added -diff text file shows its lines whatever its size", %{by_name: by_name} do
+    big = by_name["big/big.gen"]
     refute big.is_binary
     assert {big.additions, big.deletions} == {2, 0}
     assert Enum.join(big.hunks) =~ "+end"
   end
 
   test "a staged -diff text file ignores whitespace changes, and one named like a stage reads",
-       %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "space.gen", "keep\nspace here\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "space.gen", "keep\nspace  here\nadded\n")
-    # With a bare `:` prefix, `1:a.gen`'s index side would read as merge
-    # stage 1 of `a.gen`; the probe must use `:0:`.
-    stage(dir, "1:a.gen", "text\n")
-
-    assert {:ok, [stage_like, space]} = Git.staged_file_diffs(dir)
-    refute stage_like.is_binary
+       %{by_name: by_name} do
+    space = by_name["space/space.gen"]
+    refute by_name["1:a.gen"].is_binary
     refute space.is_binary
     assert Enum.join(space.hunks) =~ "+added"
     refute Enum.join(space.hunks) =~ "-space here"
   end
 
-  test "a staged -diff file is judged by its index content, not the worktree's", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "text.gen", "staged\n")
-    stage(dir, "nul.gen", "staged" <> <<0>>)
-    File.write!(Path.join(dir, "text.gen"), "worktree" <> <<0>>)
-    File.write!(Path.join(dir, "nul.gen"), "worktree\n")
-
-    assert {:ok, [_attributes, nul, text]} = Git.staged_file_diffs(dir)
+  test "a staged -diff file is judged by its index content, not the worktree's", %{
+    by_name: by_name
+  } do
+    text = by_name["index/text.gen"]
     refute text.is_binary
     assert Enum.join(text.hunks) =~ "+staged"
-    assert_binary(nul, :added)
+    assert_binary(by_name["index/nul.gen"], :added)
   end
 
-  for {failure, action} <- [
-        {"fails", "exit 1"},
-        {"is cut short", "printf 'abc123 blob 99\\nshort\\n'; exit 0"},
-        {"answers out of form", "echo garbage; exit 0"}
+  for {failure, answer} <- [
+        {"fails", {"", 1}},
+        {"is cut short", {"abc123 blob 99\nshort\n", 0}},
+        {"answers out of form", {"garbage\n", 0}}
       ] do
-    test "a -diff file stays binary when its content read #{failure}", %{dir: dir} do
-      stage(dir, ".gitattributes", "*.gen -diff\n")
-      stage(dir, "a.gen", "text\n")
-      stage(dir, "b.gen", "text\n")
-      intercept_git(dir, "cat-file", unquote(action))
+    test "a -diff file stays binary when its content read #{failure}", %{staged: staged} do
+      stub_git("sh", unquote(Macro.escape(answer)))
 
-      assert {:ok, [_attributes, a, b]} = Git.staged_file_diffs(dir)
-      assert_binary(a, :added)
-      assert_binary(b, :added)
+      by_name = staged_by_name(staged)
+      assert_binary(by_name["fail/a.gen"], :added)
+      assert_binary(by_name["fail/b.gen"], :added)
     end
   end
 
   test "a -diff text file whose name holds a newline or a carriage return stays binary", %{
-    dir: dir
+    by_name: by_name
   } do
-    stage(dir, ".gitattributes", "*.gen -diff\ncr.gen? -diff\n")
-    stage(dir, "new\nline.gen", "text\n")
-    # cat-file would read `:0:cr.gen`, this blob, for `:0:cr.gen\r`.
-    stage(dir, "cr.gen", "text\n")
-    stage(dir, "cr.gen\r", "nul" <> <<0>>)
-    stage(dir, "plain.gen", "text\n")
-    # Git reads a CR inside a name as it is.
-    stage(dir, "mid\rcr.gen", "text\n")
-
-    assert {:ok, files} = Git.staged_file_diffs(dir)
-    by_name = Map.new(files, &{&1.file_name, &1})
-    assert by_name["new\nline.gen"].is_binary
-    assert by_name["cr.gen\r"].is_binary
-    refute by_name["cr.gen"].is_binary
-    refute by_name["mid\rcr.gen"].is_binary
-    refute by_name["plain.gen"].is_binary
+    assert by_name["names/new\nline.gen"].is_binary
+    assert by_name["names/cr.gen\r"].is_binary
+    refute by_name["names/cr.gen"].is_binary
+    refute by_name["names/mid\rcr.gen"].is_binary
+    refute by_name["names/plain.gen"].is_binary
   end
 
-  test "a submodule side stays binary and leaves later -diff files' probes intact", %{dir: dir} do
-    File.write!(Path.join(dir, ".git/info/attributes"), "* -diff\n")
-    stage(dir, "z.gen", "old\n")
-    git(dir, ["commit", "-qm", "first"])
-    commit = String.trim(git(dir, ["rev-parse", "HEAD"]))
-    # One submodule commit this repo's objects lack, and one they hold.
-    git(dir, ["update-index", "--add", "--cacheinfo", "160000,#{String.duplicate("1", 40)},a.sub"])
-
-    git(dir, ["update-index", "--add", "--cacheinfo", "160000,#{commit},b.sub"])
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["rm", "-q", "--cached", "a.sub", "b.sub"])
-    stage(dir, "a.sub", "now a file\n")
-    stage(dir, "b.sub", "now a file\n")
-    stage(dir, "z.gen", "new\n")
-
-    assert {:ok, files} = Git.staged_file_diffs(dir)
+  test "a submodule side stays binary and leaves later -diff files' probes intact", %{
+    staged: dir
+  } do
+    assert {:ok, files} = staged_in(dir, "submodule")
     by_name = Map.new(files, &{&1.file_name, &1})
-    assert by_name["a.sub"].is_binary
-    assert by_name["b.sub"].is_binary
-    refute by_name["z.gen"].is_binary
-    assert Enum.join(by_name["z.gen"].hunks) =~ "-old\n+new"
+    assert by_name["submodule/a.sub"].is_binary
+    assert by_name["submodule/b.sub"].is_binary
+    refute by_name["submodule/z.gen"].is_binary
+    assert Enum.join(by_name["submodule/z.gen"].hunks) =~ "-old\n+new"
 
-    git(dir, ["commit", "-qm", "head"])
-    assert {:ok, files} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+    assert {:ok, files} = Git.range_file_diffs(dir, "main", "submodule", :two_dot)
     by_name = Map.new(files, &{&1.file_name, &1})
-    assert by_name["a.sub"].is_binary
-    refute by_name["z.gen"].is_binary
+    assert by_name["submodule/a.sub"].is_binary
+    refute by_name["submodule/z.gen"].is_binary
   end
 
-  test "the staged text patch names only the -diff text files", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "a.gen", "text\n")
-    stage(dir, "logo.bin", <<0, 1>>)
-    stage(dir, "plain.txt", "text\n")
-    log = Path.join(dir, "text-diff.log")
-    intercept_git(dir, "--text", "echo \"$*\" >> '#{log}'")
+  test "the staged text patch names only the -diff text files", %{staged: staged} do
+    stub_git("--text", fn argv ->
+      send(self(), {:text_diff, argv})
+      :real
+    end)
 
-    assert {:ok, [_attributes, a, logo, _plain]} = Git.staged_file_diffs(dir)
-    refute a.is_binary
-    assert logo.is_binary
-    assert File.read!(log) =~ "--text -- a.gen"
-    refute File.read!(log) =~ "logo.bin"
+    by_name = staged_by_name(staged)
+    refute by_name["patch/a.gen"].is_binary
+    assert by_name["patch/logo.bin"].is_binary
+    assert_received {:text_diff, argv}
+    assert "patch/a.gen" in argv
+    refute "patch/logo.bin" in argv
   end
 
-  test "a failed staged text patch shows on each -diff text file", %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "a.gen", "text\n")
-    stage(dir, "plain.txt", "text\n")
-    intercept_git(dir, "--text", "echo text-diff-failed >&2; exit 1")
+  test "a failed staged text patch shows on each -diff text file", %{staged: staged} do
+    stub_git("--text", {"text-diff-failed", 1})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [_attributes, a, plain]} = Git.staged_file_diffs(dir)
+      by_name = staged_by_name(staged)
+      a = by_name["patch/a.gen"]
       refute a.is_binary
       assert a.hunks == []
       assert Enum.join(a.read_errors) =~ "text-diff-failed"
-      assert plain.read_errors == []
+      assert by_name["patch/plain.txt"].read_errors == []
     end)
   end
 
-  for {what, arg, flag} <- [
-        {"reads no blob", "cat-file", "--batch"},
-        {"runs no text diff", "diff", "--text"}
-      ] do
-    test "a review with no -diff file #{what}", %{dir: dir} do
-      stage(dir, "a.bin", <<0, 1>>)
-      stage(dir, "a.txt", "text\n")
-      log = Path.join(dir, "git.log")
-      File.write!(log, "")
-      intercept_git(dir, unquote(arg), "echo \"$*\" >> '#{log}'")
+  test "a review with no -diff file reads no blob and runs no text diff", %{unborn: unborn} do
+    stub_git(fn argv ->
+      send(self(), {:ran, argv})
+      :real
+    end)
 
-      assert {:ok, [binary, _text]} = Git.staged_file_diffs(dir)
-      assert binary.is_binary
-      refute File.read!(log) =~ unquote(flag)
-    end
+    assert {:ok, [binary, _text]} = staged_in(unborn, "plain")
+    assert binary.is_binary
+    ran = collect_ran([])
+    refute Enum.any?(ran, &match?(["sh" | _], &1))
+    refute Enum.any?(ran, &("--text" in &1))
   end
 
-  test "a path check-attr leaves out gets an error, not an answer", %{dir: dir} do
-    intercept_git(dir, "check-attr", "exit 0")
+  test "a path check-attr leaves out gets an error, not an answer", %{unborn: unborn} do
+    stub_git("check-attr", {"", 0})
 
-    assert Git.linguist_generated_many(dir, ["a.txt"]) == %{
+    assert Git.linguist_generated_many(unborn, ["a.txt"]) == %{
              "a.txt" => {:error, "`git check-attr` returned no row for a.txt"}
            }
   end
 
-  test "a review with no binary file looks up no diff attribute", %{dir: dir} do
-    stage(dir, "a.txt", "text\n")
-    log = Path.join(dir, "check-attr.log")
-    intercept_git(dir, "check-attr", "echo \"$*\" >> '#{log}'")
+  test "a review with no binary file looks up no diff attribute", %{unborn: unborn} do
+    stub_git("check-attr", fn argv ->
+      send(self(), {:ran, argv})
+      :real
+    end)
 
-    assert {:ok, [_file]} = Git.staged_file_diffs(dir)
-    refute File.read!(log) =~ "diff"
+    assert {:ok, [_file]} = staged_in(unborn, "text")
+    refute Enum.any?(collect_ran([]), &("diff" in &1))
   end
 
   test "a renamed -diff text file shows its lines and an attribute lookup failure keeps it binary",
-       %{dir: dir} do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "old.gen", Enum.map_join(1..20, &"line #{&1}\n"))
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["mv", "old.gen", "new.gen"])
-    stage(dir, "new.gen", Enum.map_join(1..20, &"line #{&1}\n") <> "extra\n")
-
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
+       %{staged: staged, by_name: by_name} do
+    file = by_name["rename/new.gen"]
     assert file.status == :renamed
     refute file.is_binary
     assert Enum.join(file.hunks) =~ "+extra"
     assert {file.additions, file.deletions} == {1, 0}
 
-    intercept_git(dir, "binary", "exit 1")
+    stub_git("binary", {"check-attr failed", 1})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [file]} = Git.staged_file_diffs(dir)
-      assert_binary(file, :renamed)
+      assert_binary(staged_by_name(staged)["rename/new.gen"], :renamed)
     end)
   end
 
   test "a range review shows a -diff text file's lines and keeps real binaries binary", %{
-    dir: dir
+    staged: range
   } do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "a.gen", "one\n")
-    stage(dir, "nul.gen", "one\n")
-    stage(dir, "moved.gen", Enum.map_join(1..20, &"line #{&1}\n"))
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "a.gen", "two\n")
-    stage(dir, "nul.gen", <<0>>)
-    git(dir, ["mv", "moved.gen", "renamed.gen"])
-    stage(dir, "renamed.gen", Enum.map_join(1..20, &"line #{&1}\n") <> "extra\n")
-    git(dir, ["commit", "-qm", "head"])
-
-    assert {:ok, [a, nul, renamed]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+    assert {:ok, files} = Git.range_file_diffs(range, "base", "tip", :two_dot)
+    by_name = Map.new(files, &{&1.file_name, &1})
+    a = by_name["gen/a.gen"]
     refute a.is_binary
     assert Enum.join(a.hunks) =~ "-one\n+two"
     assert {a.additions, a.deletions} == {1, 1}
     assert a.read_errors == []
+    nul = by_name["gen/nul.gen"]
     assert nul.is_binary
     assert nul.hunks == []
+    renamed = by_name["gen/renamed.gen"]
     refute renamed.is_binary
     assert renamed.status == :renamed
     assert Enum.join(renamed.hunks) =~ "+extra"
   end
 
   test "a three-dot review judges a -diff file by the merge base, not the base's tip", %{
-    dir: dir
+    staged: range
   } do
-    stage(dir, ".gitattributes", "*.gen -diff\n")
-    stage(dir, "a.gen", "one\n")
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["branch", "topic"])
-    stage(dir, "a.gen", "one" <> <<0>>)
-    git(dir, ["commit", "-qm", "main moves on"])
-    main = String.trim(git(dir, ["rev-parse", "HEAD"]))
-    git(dir, ["checkout", "-q", "topic"])
-    stage(dir, "a.gen", "two\n")
-    git(dir, ["commit", "-qm", "topic"])
-
-    assert {:ok, [a]} = Git.range_file_diffs(dir, main, "topic", :three_dot)
-    refute a.is_binary
-    assert Enum.join(a.hunks) =~ "-one\n+two"
+    assert {:ok, [fork]} = Git.range_file_diffs(range, "main-moved", "topic", :three_dot)
+    refute fork.is_binary
+    assert Enum.join(fork.hunks) =~ "-fork one\n+fork two"
   end
 
   test "actual binary bytes are removed before JSON encoding, even in a binary-only review", %{
-    dir: dir
+    staged: staged,
+    by_name: by_name
   } do
-    stage(dir, "BUILD.bazel", <<0, 255, 1>>)
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "BUILD.bazel", <<0, 254, 2>>)
-
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
-    assert_binary(file, :modified)
-    assert file.effective_oid == git(dir, ["rev-parse", ":BUILD.bazel"])
+    file = by_name["binary/new b/name with spaces.bin"]
+    assert_binary(file, :renamed)
+    assert file.effective_oid == git(staged, ["rev-parse", ":binary/new b/name with spaces.bin"])
     assert Jason.encode!(file) =~ "is_binary"
   end
 
-  test "a binary deletion whose HEAD blob lookup fails carries an empty OID", %{dir: dir} do
-    stage(dir, "gone.bin", <<0, 255>>)
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["rm", "-q", "gone.bin"])
-    intercept_git(dir, "ls-tree", "exit 1")
+  test "a binary deletion whose HEAD blob lookup fails carries an empty OID", %{staged: staged} do
+    stub_git("ls-tree", {"", 1})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [file]} = Git.staged_file_diffs(dir)
+      file = staged_by_name(staged)["binary/gone.blob"]
       assert file.is_binary
       assert file.effective_oid == ""
     end)
   end
 
-  test "binary additions in an unborn repository are represented explicitly", %{dir: dir} do
-    stage(dir, "new.bin", <<0, 255>>)
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
+  test "binary additions in an unborn repository are represented explicitly", %{unborn: unborn} do
+    assert {:ok, [file, _text]} = staged_in(unborn, "plain")
     assert_binary(file, :added)
   end
 
-  test "binary deletion and exact rename retain status and unambiguous paths", %{dir: dir} do
-    old = "old b/name with spaces.bin"
-    new = "new b/name with spaces.bin"
-    stage(dir, old, <<0, 255, 1>>)
-    stage(dir, "gone.bin", <<0, 254, 2>>)
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["config", "diff.renames", "false"])
-    File.mkdir_p!(Path.dirname(Path.join(dir, new)))
-    git(dir, ["mv", old, new])
-    git(dir, ["rm", "gone.bin"])
-
-    assert {:ok, files} = Git.staged_file_diffs(dir)
-    assert length(files) == 2
-    deleted = Enum.find(files, &(&1.status == :deleted))
-    renamed = Enum.find(files, &(&1.status == :renamed))
-    assert_binary(deleted, :deleted)
+  test "binary deletion and exact rename retain status and unambiguous paths", %{
+    by_name: by_name
+  } do
+    assert_binary(by_name["binary/gone.blob"], :deleted)
+    renamed = by_name["binary/new b/name with spaces.bin"]
     assert_binary(renamed, :renamed)
-    assert renamed.file_name == new
-    assert renamed.old_file_name == old
+    assert renamed.old_file_name == "binary/old b/name with spaces.bin"
   end
 
-  test "mixed text and binary additions, deletions, renames and generated files", %{dir: dir} do
-    stage(dir, ".gitattributes", "generated.bin linguist-generated=true\n")
-    stage(dir, "gone.bin", "old deleted" <> <<0>>)
-    stage(dir, "old.bin", "renamed content" <> <<0>>)
-    stage(dir, "query.clj", "(old-query)\n")
-    git(dir, ["commit", "-qm", "base"])
-    git(dir, ["rm", "-q", "gone.bin"])
-    git(dir, ["mv", "old.bin", "new.bin"])
-    stage(dir, "query.clj", "(new-query)\n")
-    stage(dir, "added.md", "# Binary" <> <<0>>)
-    stage(dir, "generated.bin", "generated binary content" <> <<0>>)
+  test "mixed text and binary additions, deletions, renames and generated files", %{
+    by_name: by_name,
+    staged_stderr: stderr
+  } do
+    assert by_name |> Map.keys() |> Enum.filter(&String.starts_with?(&1, "mixed/")) |> Enum.sort() ==
+             ~w(mixed/added.md mixed/generated.blob mixed/gone.blob mixed/new.blob mixed/query.clj)
 
-    stderr =
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert {:ok, files} = Git.staged_file_diffs(dir)
-        by_name = Map.new(files, &{&1.file_name, &1})
-
-        assert Enum.sort(Map.keys(by_name)) ==
-                 ~w(added.md generated.bin gone.bin new.bin query.clj)
-
-        assert_binary(by_name["gone.bin"], :deleted)
-        assert_binary(by_name["new.bin"], :renamed)
-        assert by_name["new.bin"].old_file_name == "old.bin"
-        assert_binary(by_name["added.md"], :added)
-        assert_binary(by_name["generated.bin"], :added)
-        assert by_name["generated.bin"].is_generated
-        refute by_name["new.bin"].is_generated
-        refute by_name["query.clj"].is_binary
-        assert Enum.join(by_name["query.clj"].hunks) =~ "+(new-query)"
-      end)
-
+    assert_binary(by_name["mixed/gone.blob"], :deleted)
+    assert_binary(by_name["mixed/new.blob"], :renamed)
+    assert by_name["mixed/new.blob"].old_file_name == "mixed/old.blob"
+    assert_binary(by_name["mixed/added.md"], :added)
+    assert_binary(by_name["mixed/generated.blob"], :added)
+    assert by_name["mixed/generated.blob"].is_generated
+    refute by_name["mixed/new.blob"].is_generated
+    refute by_name["mixed/query.clj"].is_binary
+    assert Enum.join(by_name["mixed/query.clj"].hunks) =~ "+(new-mixed-query)"
     refute stderr =~ "couldn't parse staged-diff block"
   end
 
-  test "numstat failure keeps every file listed with the reason", %{dir: dir} do
-    stage(dir, "BUILD.bazel", <<0, 255>>)
-    intercept_git(dir, "--numstat", "echo numstat-failed >&2; exit 1")
+  test "numstat failure keeps every file listed with the reason", %{staged: staged} do
+    stub_git("--numstat", {"numstat-failed", 1})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [file]} = Git.staged_file_diffs(dir)
-      assert file.file_name == "BUILD.bazel"
+      file = staged_by_name(staged)["patch/logo.bin"]
       assert Enum.join(file.read_errors) =~ "couldn't identify binary files"
       assert Enum.join(file.read_errors) =~ "exited 1"
     end)
   end
 
-  test "numstat output truncated mid-entry degrades to a listed read error", %{dir: dir} do
-    stage(dir, "a.txt", "one\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "a.txt", "two\n")
-
+  test "numstat output truncated mid-entry degrades to a listed read error", %{staged: staged} do
     # A rename entry cut off before the trailing NUL makes the parser run
     # off the end of the entry list instead of seeing the empty tail.
-    intercept_git(dir, "--numstat", """
-    printf '1\\t2\\t\\0old.bin\\0new.bin'; exit 0
-    """)
+    stub_git("--numstat", {"1\t2\t\0old.bin\0new.bin", 0})
 
     stderr =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert {:ok, [file]} = Git.staged_file_diffs(dir)
-        assert file.file_name == "a.txt"
+        file = staged_by_name(staged)["bazel/query.clj"]
         assert Enum.join(file.read_errors) =~ "couldn't parse binary file statistics"
       end)
 
     assert stderr =~ "couldn't parse binary file statistics"
   end
 
-  test "a stability re-check that fails reports the git error instead of crashing", %{dir: dir} do
-    stage(dir, "a.txt", "one\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "a.txt", "two\n")
-
+  test "a stability re-check that fails reports the git error instead of crashing", %{
+    unborn: unborn
+  } do
     # Both index probes run `ls-files --stage`; fail only the second.
-    counter = Path.join(dir, "stage-probe-count")
+    probes = :counters.new(1, [])
 
-    intercept_git(dir, "--stage", """
-    n=$(cat '#{counter}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > '#{counter}'
-    [ "$n" -ge 2 ] && { echo stage-probe-failed >&2; exit 1; }
-    """)
+    stub_git("--stage", fn _argv ->
+      :counters.add(probes, 1, 1)
+      if :counters.get(probes, 1) >= 2, do: {"stage-probe-failed", 1}, else: :real
+    end)
 
-    assert {:error, reason} = Git.staged_file_diffs(dir)
+    assert {:error, reason} = staged_in(unborn, "text")
     assert reason =~ "ls-files"
   end
 
-  test "patch parse failure survives whitespace filtering as visible read errors", %{dir: dir} do
-    stage(dir, "file.txt", "old\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "file.txt", "new\n")
-    intercept_git(dir, "-U3", "printf 'diff --git malformed\\n@@ -1 +1 @@\\n-x\\n+y\\n'; exit 0")
+  test "patch parse failure survives whitespace filtering as visible read errors", %{
+    unborn: unborn
+  } do
+    stub_git("-U3", {"diff --git malformed\n@@ -1 +1 @@\n-x\n+y\n", 0})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [file]} = Git.staged_file_diffs(dir)
-      assert file.file_name == "file.txt"
+      assert {:ok, [file]} = staged_in(unborn, "text")
+      assert file.file_name == "a.txt"
       assert file.hunks == []
       assert Enum.join(file.read_errors) =~ "couldn't parse staged-diff block"
     end)
@@ -529,74 +557,85 @@ defmodule Meerkat.GitBinaryTest do
     end)
   end
 
-  test "binary blobs are not read for the notice", %{dir: dir} do
-    stage(dir, "asset.bin", <<0, 255>>)
-    intercept_git(dir, "show", "echo unexpected-blob-read >&2; exit 1")
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
+  test "binary blobs are not read for the notice", %{unborn: unborn} do
+    stub_git("show", {"unexpected-blob-read", 1})
+    {result, _stderr} = ExUnit.CaptureIO.with_io(:stderr, fn -> staged_in(unborn, "plain") end)
+    assert {:ok, [file, _text]} = result
     assert_binary(file, :added)
   end
 
   test "a range review marks binary files, renames included, without reading their blobs", %{
-    dir: dir
+    staged: range
   } do
-    stage(dir, "logo.png", <<0, 255, 1>>)
-    stage(dir, "moved.bin", <<0, 253, 3>>)
-    stage(dir, "text.txt", "old\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "logo.png", <<0, 254, 2>>)
-    git(dir, ["mv", "moved.bin", "renamed.bin"])
-    stage(dir, "new.bin", <<0, 252>>)
-    stage(dir, "text.txt", "new\n")
-    git(dir, ["commit", "-qm", "head"])
-    intercept_git(dir, "show", "echo unexpected-blob-read >&2; exit 1")
+    stub_git("show", {"unexpected-blob-read", 1})
 
-    assert {:ok, [logo, new, renamed, text]} =
-             Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+    {result, _stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Git.range_file_diffs(range, "base", "tip", :two_dot)
+      end)
 
-    assert_binary(logo, :modified)
-    assert_binary(new, :added)
-    assert_binary(renamed, :renamed)
-    assert renamed.old_file_name == "moved.bin"
-    # The text file's reads hit the intercept, so a binary read would too.
-    refute text.is_binary
-    assert text.read_errors != []
+    assert {:ok, files} = result
+    by_name = Map.new(files, &{&1.file_name, &1})
+    assert_binary(by_name["bin/logo.png"], :modified)
+    assert_binary(by_name["bin/new.bin"], :added)
+    assert_binary(by_name["bin/renamed.bin"], :renamed)
+    assert by_name["bin/renamed.bin"].old_file_name == "bin/moved.bin"
+    # The text file's reads hit the stub, so a binary read would too.
+    refute by_name["bin/text.txt"].is_binary
+    assert by_name["bin/text.txt"].read_errors != []
   end
 
-  test "a range review keeps every file listed with the reason when numstat fails", %{dir: dir} do
-    stage(dir, "text.txt", "old\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "text.txt", "new\n")
-    git(dir, ["commit", "-qm", "head"])
-    intercept_git(dir, "--numstat", "exit 1")
+  test "a range review keeps every file listed with the reason when numstat fails", %{
+    staged: range
+  } do
+    stub_git("--numstat", {"", 1})
 
     ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      assert {:ok, [file]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+      assert {:ok, files} = Git.range_file_diffs(range, "base", "tip", :two_dot)
+      file = Enum.find(files, &(&1.file_name == "bin/text.txt"))
       refute file.is_binary
       assert file.hunks != []
       assert Enum.join(file.read_errors) =~ "couldn't identify binary files"
     end)
   end
 
-  test "successful numstat warnings do not corrupt structured output", %{dir: dir} do
-    stage(dir, "asset.bin", <<0, 255>>)
-    intercept_git(dir, "--numstat", "echo rename-warning >&2")
-    assert {:ok, [file]} = Git.staged_file_diffs(dir)
+  # Git's stderr on a successful numstat reaches no parser only because
+  # meerkat keeps it out of the answer, so this needs a real process.
+  test "successful numstat warnings do not corrupt structured output", %{unborn: unborn} do
+    bin_dir = Meerkat.TestHelpers.tmp_path("meerkat-binary-bin")
+    on_exit(fn -> File.rm_rf!(bin_dir) end)
+    intercept_git(bin_dir, "--numstat", "echo rename-warning >&2")
+    assert {:ok, [file, _text]} = staged_in(unborn, "plain")
     assert_binary(file, :added)
   end
 
-  test "index changes during loading require a reload", %{dir: dir} do
-    stage(dir, "file.txt", "old\n")
-    git(dir, ["commit", "-qm", "base"])
-    stage(dir, "file.txt", "new\n")
+  test "index changes during loading require a reload", %{unborn: unborn} do
+    probes = :counters.new(1, [])
 
-    intercept_git(
-      dir,
-      "--numstat",
-      "printf 'changed again\\n' > file.txt; \"$real_git\" add file.txt"
-    )
+    # The second probe finds another file staged.
+    stub_git("--stage", fn _argv ->
+      :counters.add(probes, 1, 1)
 
-    assert {:error, reason} = Git.staged_file_diffs(dir)
+      if :counters.get(probes, 1) >= 2,
+        do: {"100644 #{String.duplicate("0", 40)} 0\tb.txt\0", 0},
+        else: :real
+    end)
+
+    assert {:error, reason} = staged_in(unborn, "text")
     assert reason =~ "staged files changed while loading"
+  end
+
+  defp staged_by_name(staged) do
+    assert {:ok, files} = Git.staged_file_diffs(staged)
+    Map.new(files, &{&1.file_name, &1})
+  end
+
+  defp collect_ran(acc) do
+    receive do
+      {:ran, argv} -> collect_ran([argv | acc])
+    after
+      0 -> acc
+    end
   end
 
   defp assert_binary(file, status) do
