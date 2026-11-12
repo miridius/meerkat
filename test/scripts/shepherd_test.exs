@@ -1056,6 +1056,28 @@ defmodule Meerkat.ShepherdTest do
       assert out == "next pass\n"
     end
 
+    # An unreadable port file fails the read the way one removed after the
+    # check does.
+    test "a caller whose port file cannot be read after its check buries the run quietly" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(Path.join(runs, "key.r"))
+      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      File.chmod!(Path.join([runs, "key.r", "port"]), 0o000)
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_RUN=r; _MA_OWNED=0
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+      refute File.exists?(Path.join(runs, "key.r"))
+    end
+
     # An unreadable pid file fails the read the way one removed after the
     # check does, so the caller takes the backend for dead without a bash
     # error.
@@ -1201,7 +1223,7 @@ defmodule Meerkat.ShepherdTest do
       {out, 0} =
         attach_shell(
           ~S"""
-          _MA_LINK="$2/key"; _MA_DIR="$2/key.old"
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.old"; _MA_PID_WAIT_DIR=""
           _ma_server_alive; SECONDS=60; _ma_find_server
           if _ma_server_alive; then echo "waits for $_MA_DIR"; else echo "buries $_MA_DIR"; fi
           """,
@@ -1222,7 +1244,7 @@ defmodule Meerkat.ShepherdTest do
       {out, 0} =
         attach_shell(
           ~S"""
-          _MA_DIR="$2"
+          _MA_DIR="$2"; _MA_PID_WAIT_DIR=""
           _ma_server_alive; echo $$ >"$2/pid"; _ma_server_alive
           rm "$2/pid"; SECONDS=60
           if _ma_server_alive; then echo waits; else echo buries; fi
@@ -1848,10 +1870,11 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Runs `script` in bash with bin/meerkat-attach sourced, so it can call the
-  # launcher's functions, and `arg` as "$2". Returns System.cmd's result.
+  # launcher's functions, and `arg` as "$2", under `set -u` as in both
+  # launchers. Returns System.cmd's result.
   defp attach_shell(script, arg) do
     System.cmd("bash", [
-      "-c",
+      "-uc",
       ~S(source "$1"; ) <> script,
       "attach",
       Path.expand("bin/meerkat-attach"),
