@@ -46,6 +46,28 @@ defmodule Meerkat.CLIMainTest do
     assert Application.get_all_env(:meerkat) == env_before
   end
 
+  # Git names staged files from the root, and reads the paths it is given
+  # from where it runs, so a review run from a subdirectory once looked up
+  # none of its files' blobs and kept no approval.
+  test "a rerun from a subdirectory auto-approves the files approved there",
+       %{repo: repo, commit_msg: commit_msg} do
+    stage(repo, "src/a.txt", "a\n")
+    oid = git(repo, ["rev-parse", ":0:src/a.txt"]) |> String.trim()
+    branch = git(repo, ["branch", "--show-current"]) |> String.trim()
+    put_env("MEERKAT_PWD", Path.join(repo, "src"))
+
+    {:ok, _} =
+      ApprovalCache.modify(
+        ApprovalCache.path_for(repo),
+        &ApprovalCache.approve(&1, branch, "src/a.txt", oid)
+      )
+
+    {code, stderr} = run_main(["--commit-msg", commit_msg, "--no-open"])
+
+    assert {code, stderr} ==
+             {0, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
+  end
+
   test "unanswered questions refuse every review target before resolving it or opening a page",
        %{repo: repo, commit_msg: commit_msg} do
     question = %{location: "src/x.rs:2 (old)", question: "Why remove this?"}

@@ -26,6 +26,23 @@
 # exited, `exit`. The attach stream's
 # frames are documented in `MeerkatWeb.AttachController`.
 
+# Prints the root of the work tree holding $MEERKAT_PWD, or outside one
+# $MEERKAT_PWD itself: what the run dir and the preferred port are keyed
+# on, as `Meerkat.CLI` keys the review, so a rerun of the same review from
+# any directory of the tree finds both. The variables that would relocate
+# the repo are dropped, as the CLI drops them.
+meerkat_review_root() {
+  local cdup top
+  if cdup=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE \
+    git -C "$MEERKAT_PWD" rev-parse --show-cdup 2>/dev/null) &&
+    [[ -n "$cdup" ]] && top=$(cd "$MEERKAT_PWD/$cdup" && pwd); then
+    printf '%s' "$top"
+  else
+    printf '%s' "$MEERKAT_PWD"
+  fi
+}
+
 meerkat_attach() {
   local self="$1"
   shift
@@ -33,7 +50,7 @@ meerkat_attach() {
 
   local key runs
   # Keyed like the port, so a rerun of the same review finds its run dir.
-  key=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 16)
+  key=$(printf '%s' "$(meerkat_review_root):$*" | shasum -a 256 | head -c 16)
   # Not $TMPDIR: macOS deletes its files once they are three days old,
   # and a review can wait longer than that.
   runs="${MEERKAT_RUNS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/meerkat/runs}"

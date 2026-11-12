@@ -74,7 +74,8 @@ worktree's gitdir (`.git` for an ordinary main worktree). A ref name
 can't contain a space, so the key never clashes with a branch.
 
 Approvals live in `<git-common-dir>/meerkat-precommit/approved.json`,
-shared by all worktrees. Each review that opens the page drops the
+shared by all worktrees, whichever directory of the worktree meerkat
+runs from. Each review that opens the page drops the
 approvals of branches that no longer exist locally and of worktrees
 whose folder is gone; a locked worktree keeps its approvals. PR, range and
 single-ref reviews read no approvals, and neither ticking a file nor
@@ -276,8 +277,9 @@ meerkat exits 2 and the commit is rejected.
 A decision clicked while no invocation is attached is held. The
 next invocation of the same review attaches to the same server and
 gets that decision byte for byte, with its exit code. Cancel is held
-like any other decision. The same review means the same staged
-content and the same commit message. When either has changed, the
+like any other decision. The same review means the same work tree,
+run from any of its directories, the same staged content and the
+same commit message. When the content or message has changed, the
 old server exits and the invocation starts a new one. The
 [`GIT_INDEX_FILE` entry in cli.md](cli.md#env-vars) says which index
 an invocation's staged content is read from.

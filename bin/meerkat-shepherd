@@ -78,7 +78,7 @@ if [[ "$explicit_port" == "false" ]]; then
   if [[ -n "${MEERKAT_PORT:-}" ]]; then
     export MEERKAT_PREFERRED_PORT="$MEERKAT_PORT"
   else
-    hex8=$(printf '%s' "${MEERKAT_PWD}:$*" | shasum -a 256 | head -c 8)
+    hex8=$(printf '%s' "$(meerkat_review_root):$*" | shasum -a 256 | head -c 8)
     export MEERKAT_PREFERRED_PORT=$(( 16#${hex8} % 20000 + 40000 ))
   fi
 fi

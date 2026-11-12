@@ -72,14 +72,8 @@ defmodule Meerkat.CljHover do
 
   @impl true
   def init(%{repo_path: repo_path, files: files}) do
-    root =
-      case Git.toplevel(repo_path) do
-        {:ok, root} -> root
-        {:error, _} -> repo_path
-      end
-
     state = %{
-      root: root,
+      root: Git.root(repo_path),
       files: files,
       sides: nil,
       classpath: nil,

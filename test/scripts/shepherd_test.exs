@@ -966,6 +966,30 @@ defmodule Meerkat.ShepherdTest do
       assert File.ls!(Path.join(dir, "runs")) == []
     end
 
+    test "is found by a caller in a subdirectory of the work tree, whose BEAM prefers the review's port" do
+      dir = Meerkat.TestHelpers.make_git_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      sub = Path.join(dir, "src")
+      File.mkdir_p!(sub)
+      fake_release(dir, ~s(echo "$MEERKAT_PREFERRED_PORT" > "$PORT_SEEN"\nexit 76\n))
+      old = Path.join([dir, "runs", run_key(dir)])
+      File.mkdir_p!(old)
+      File.write!(Path.join(old, "exit"), "5\n")
+
+      env = [
+        {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+        {"MEERKAT_PWD", sub},
+        {"MEERKAT_PORT", nil},
+        {"PORT_SEEN", Path.join(dir, "port-seen")},
+        {"INPUT_FILE", "/dev/null"}
+      ]
+
+      assert run_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], env, dir) == 0
+      assert File.ls!(Path.join(dir, "runs")) == []
+      {hex8, _} = dir |> run_key() |> binary_part(0, 8) |> Integer.parse(16)
+      assert File.read!(Path.join(dir, "port-seen")) == "#{rem(hex8, 20_000) + 40_000}\n"
+    end
+
     test "is left in place when a caller drops a run the key no longer names" do
       dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
       on_exit(fn -> File.rm_rf!(dir) end)
