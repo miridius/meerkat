@@ -1055,6 +1055,33 @@ defmodule Meerkat.ShepherdTest do
       assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
     end
 
+    test "a backend stopped by SIGTERM kills its BEAM and records 143" do
+      dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      runs = Path.join(dir, "runs")
+
+      # A BEAM that outlives await_gone's wait unless the backend kills it.
+      fake_release(dir, ~S"""
+      echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+      for _ in {1..600}; do sleep 1; done
+      """)
+
+      port =
+        open_launcher(@shepherd, ["--commit-msg", "/tmp/msg", "--no-open"], dir, [
+          {"MEERKAT_CURRENT_LINK", Path.join(dir, "current")},
+          {"INPUT_FILE", "/dev/null"}
+        ])
+
+      backend = await_backend_pid(runs)
+      beam = await_beam_pid(runs)
+      on_exit(fn -> System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true) end)
+
+      System.cmd("kill", ["-TERM", backend])
+
+      assert await_exit(port, dir) == 143
+      assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
+    end
+
     # As when the caller was suspended after _ma_server_alive found the pid
     # file, and meanwhile the backend finished and a rerun removed the run:
     # the backend did decide, so the next pass says the run was removed.

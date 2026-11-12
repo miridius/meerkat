@@ -17,9 +17,9 @@
 # clean decision (76, passed on as 0, or 1) or a second crash reaches git
 # through the caller, so the hook proceeds (0) or aborts.
 #
-# Shares the preferred-port / signal-forwarding / open-marker
-# approach with the dev shepherd `bin/meerkat-beam`; a follow-up could
-# factor the common bits into a sourced lib.
+# Shares the preferred-port / open-marker approach with the dev
+# shepherd `bin/meerkat-beam`; a follow-up could factor the common bits
+# into a sourced lib, as `meerkat-attach` already shares the signal trap.
 
 set -uo pipefail
 
@@ -98,7 +98,7 @@ export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # from the serve dir.
 trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
 
-# Forward TERM/INT/HUP to the running BEAM.
+# On TERM/INT/HUP, SIGKILL the running BEAM and exit 143.
 beam_pid=""
 trap meerkat_on_signal TERM INT HUP
 

@@ -195,7 +195,7 @@ echo "meerkat: built version $VERSION_ID at $FINAL_DIR"
 
 # Smoke-test the new release BEFORE flipping `current` at it: an
 # empty-staged-no-commit-msg invocation hits the auto-approve fast path
-# (cli.ex auto_approve_decision/2 staged-empty branch), exits 0 without
+# (cli.ex auto_approve_decision/2 staged-empty branch), approves without
 # binding a port, and proves the release boots end-to-end. Gating the
 # flip on it means a build that fails its smoke test leaves `current` on
 # the last good version and the next hook run rebuilds, instead of

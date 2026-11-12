@@ -5,8 +5,8 @@ defmodule Meerkat.SignalHandler do
   Installed early in `Meerkat.CLI.main/1`, this module replaces OTP's
   `erl_signal_handler` in `erl_signal_server`. OTP's default SIGTERM handling
   stops the system gracefully: before the endpoint starts, that exits 0,
-  which the launchers turn into REJECT (143) with no reason; after, Bandit waits up to 15 seconds for the caller's attach
-  stream and the browser's LiveView socket to close. During that wait the
+  which the launchers turn into REJECT (143); after, Bandit waits up to
+  15 seconds for the caller's attach stream and the browser's LiveView socket to close. During that wait the
   review cannot deliver a decision; the CLI then exits 2, which the prod
   launcher retries once by respawning the BEAM.
 

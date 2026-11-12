@@ -151,8 +151,8 @@ export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # from the serve dir.
 trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
 
-# Forward TERM/INT/HUP to the running BEAM (e2e runner teardown,
-# Ctrl-C wrappers).
+# On TERM/INT/HUP (e2e runner teardown, Ctrl-C wrappers), SIGKILL the
+# running BEAM and exit 143.
 beam_pid=""
 trap meerkat_on_signal TERM INT HUP
 
