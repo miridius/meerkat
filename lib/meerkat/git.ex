@@ -755,7 +755,7 @@ defmodule Meerkat.Git do
         # muex:ignore equivalent: `-cx` only traces to stderr; other mutants here break every read
         sh_args = ["-c", script]
 
-        case System.cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
+        case cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
           {output, 0} -> output |> parse_batch(objects, []) |> Map.new()
           _ -> %{}
         end
@@ -1189,8 +1189,17 @@ defmodule Meerkat.Git do
     end
   end
 
+  # Every process this module starts goes through here. A test stands in
+  # for git by putting a function under `:meerkat_git_stub` in its own
+  # process dictionary: it gets the argv, program first, and returns
+  # `System.cmd/3`'s `{output, status}`, or `:real` to run the program.
+  defp cmd(program, args, opts) do
+    stub = Process.get(:meerkat_git_stub, fn _argv -> :real end)
+    with :real <- stub.([program | args]), do: System.cmd(program, args, opts)
+  end
+
   defp run_git(repo_path, args, merge_stderr \\ true) do
-    case System.cmd("git", args,
+    case cmd("git", args,
            cd: repo_path,
            stderr_to_stdout: merge_stderr,
            env: git_env()
@@ -1209,7 +1218,7 @@ defmodule Meerkat.Git do
   # Only read-only lookups run here, so the failing command is safe to
   # run a second time, merged, for the reason git wrote to stderr.
   defp run_git_unmerged(repo_path, args) do
-    case System.cmd("git", args, cd: repo_path, env: git_env()) do
+    case cmd("git", args, cd: repo_path, env: git_env()) do
       {output, 0} -> {:ok, output}
       {_output, _code} -> run_git(repo_path, args)
     end
@@ -1223,7 +1232,7 @@ defmodule Meerkat.Git do
   defp run_git_ceilinged(repo_path, args) do
     ceiling = Path.dirname(Path.expand(repo_path))
 
-    case System.cmd("git", args,
+    case cmd("git", args,
            cd: repo_path,
            stderr_to_stdout: true,
            env: [{"GIT_CEILING_DIRECTORIES", ceiling} | @git_discovery_env_overrides]
@@ -1261,7 +1270,7 @@ defmodule Meerkat.Git do
     env = [{"GIT_INDEX_FILE", nil} | @git_discovery_env_overrides]
     args = ["rev-parse", "--path-format=absolute", "--git-path", "index"]
 
-    case System.cmd("git", args, cd: repo_path, env: env, stderr_to_stdout: false) do
+    case cmd("git", args, cd: repo_path, env: env, stderr_to_stdout: false) do
       {output, 0} -> String.trim(output)
       _ -> nil
     end
