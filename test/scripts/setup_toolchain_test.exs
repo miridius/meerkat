@@ -3,7 +3,8 @@ defmodule Meerkat.SetupToolchainTest do
   # writes. elixir, mix and curl are replaced by stubs on PATH: elixir
   # names an archives dir and rebar3 path in the scratch dir, mix logs
   # each run, and curl downloads the `rebar3-download` file and saves its
-  # arguments.
+  # arguments. scripts/setup-toolchain.test.ts tests the logic; these
+  # test the seams.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/setup-toolchain.ts")
@@ -141,13 +142,6 @@ defmodule Meerkat.SetupToolchainTest do
       assert log(ctx) == ["mise install erlang elixir bun", "pinned mix local.hex 2.5.3 --force"]
     end
 
-    test "runs the install when mise cannot list what is missing", ctx do
-      File.touch!(Path.join(ctx.base, "mise-ls-fails"))
-
-      assert {_, 0} = setup_toolchain(ctx)
-      assert log(ctx) == ["mise install erlang elixir bun"]
-    end
-
     test "a failed install stops before Hex", ctx do
       File.touch!(Path.join(ctx.base, "mise-ls-fails"))
       File.touch!(Path.join(ctx.base, "mise-install-fails"))
@@ -157,13 +151,6 @@ defmodule Meerkat.SetupToolchainTest do
       assert status != 0
       assert out =~ "mise install failed"
       assert log(ctx) == ["mise install erlang elixir bun"]
-    end
-
-    test "with nothing missing installs nothing, and Hex goes into the pinned Elixir", ctx do
-      File.rm_rf!(Path.join(ctx.archives, "hex-2.5.3"))
-
-      assert {_, 0} = setup_toolchain(ctx)
-      assert log(ctx) == ["pinned mix local.hex 2.5.3 --force"]
     end
   end
 

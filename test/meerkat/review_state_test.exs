@@ -10,7 +10,7 @@ defmodule Meerkat.ReviewStateTest do
   # is process-global.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, make_tmp_repo: 1, stage: 3]
+  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, read_tree: 3]
 
   alias Meerkat.ReviewState
 
@@ -136,10 +136,44 @@ defmodule Meerkat.ReviewStateTest do
     end
   end
 
+  # Built once for the `from_target/2` tests with real git. `repo`'s main
+  # adds feature.rs over a base commit, and its index also stages a.rs.
+  # `pr` is its own origin, which publishes a PR as GitHub does: the base
+  # branch, and `refs/pull/123/head` adding feature.rs over it.
+  setup_all do
+    template =
+      Meerkat.TestHelpers.fixture_template("meerkat-review-state", fn dir ->
+        base = %{"base.txt" => "base\n"}
+        feature = Map.put(base, "feature.rs", "fn feature() {}\n")
+        repo = init_repo(Path.join(dir, "repo"))
+
+        import_commits(repo, [
+          {"refs/heads/main", base, "Base"},
+          {"refs/heads/main", feature, "Add feature module"},
+          {"refs/meerkat-test/index", Map.put(feature, "a.rs", "fn a() {}\n")}
+        ])
+
+        git(repo, ["reset", "-q", "--hard"])
+        read_tree(repo, "refs/meerkat-test/index", nil)
+        pr = init_repo(Path.join(dir, "pr"))
+
+        import_commits(pr, [
+          {"refs/heads/main", base, "Initial base"},
+          {"refs/pull/123/head", base, "Initial base"},
+          {"refs/pull/123/head", feature, "Add feature"}
+        ])
+
+        git(pr, ["reset", "-q", "--hard"])
+        git(pr, ["remote", "add", "origin", pr])
+      end)
+
+    {:ok, repo: Path.join(template, "repo"), pr_repo: Path.join(template, "pr")}
+  end
+
   describe "from_target/2 — real git, `gh` stubbed on PATH" do
     setup do
-      base = make_tmp_repo("meerkat-review-state")
-      File.rm_rf!(Path.join(base, ".git"))
+      base = Meerkat.TestHelpers.tmp_path("meerkat-review-state")
+      File.mkdir_p!(base)
       old_path = System.fetch_env!("PATH")
 
       on_exit(fn ->
@@ -150,13 +184,10 @@ defmodule Meerkat.ReviewStateTest do
       {:ok, base: base}
     end
 
-    test "'#' comment lines in the commit-msg file are stripped, the message kept", %{base: base} do
-      repo = Path.join(base, "repo")
-      File.mkdir_p!(repo)
-      init_repo(repo)
-      git(repo, ["commit", "--allow-empty", "-qm", "initial"])
-      stage(repo, "a.rs", "fn a() {}\n")
-
+    test "'#' comment lines in the commit-msg file are stripped, the message kept", %{
+      base: base,
+      repo: repo
+    } do
       commit_msg = Path.join(base, "COMMIT_MSG")
 
       File.write!(commit_msg, """
@@ -181,14 +212,7 @@ defmodule Meerkat.ReviewStateTest do
     end
 
     test "a single ref reviews that commit and its message; a two-dot range, only its files",
-         %{base: base} do
-      repo = Path.join(base, "repo")
-      File.mkdir_p!(repo)
-      init_repo(repo)
-      stage(repo, "base.txt", "base\n")
-      git(repo, ["commit", "-qm", "Base"])
-      stage(repo, "feature.rs", "fn feature() {}\n")
-      git(repo, ["commit", "-qm", "Add feature module"])
+         %{base: base, repo: repo} do
       stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
 
       assert {:ok, state} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
@@ -201,25 +225,10 @@ defmodule Meerkat.ReviewStateTest do
       assert state.commit_message == ""
     end
 
-    test "--pr reviews the PR head against its base, with the PR's metadata", %{base: base} do
-      # Mirrors how GitHub publishes a PR: a remote holding the base
-      # branch and `refs/pull/<N>/head`, cloned locally.
-      remote = Path.join(base, "remote.git")
-      staging = Path.join(base, "staging")
-      clone = Path.join(base, "clone")
-      Enum.each([remote, staging, clone], &File.mkdir_p!/1)
-
-      git(remote, ["init", "-q", "--bare", "-b", "main"])
-      init_repo(staging)
-      stage(staging, "base.txt", "shared base content\n")
-      git(staging, ["commit", "-qm", "Initial base"])
-      git(staging, ["remote", "add", "origin", remote])
-      git(staging, ["push", "-q", "origin", "main"])
-      stage(staging, "feature.rs", "fn feature() {}\n")
-      git(staging, ["commit", "-qm", "Add feature"])
-      git(staging, ["push", "-q", "origin", "HEAD:refs/pull/123/head"])
-      git(clone, ["clone", "-q", remote, "."])
-
+    test "--pr reviews the PR head against its base, with the PR's metadata", %{
+      base: base,
+      pr_repo: clone
+    } do
       pr = %{
         number: 123,
         baseRefName: "main",
@@ -251,9 +260,9 @@ defmodule Meerkat.ReviewStateTest do
     end
 
     defp init_repo(dir) do
+      File.mkdir_p!(dir)
       git(dir, ["init", "-q", "-b", "main"])
-      git(dir, ["config", "user.email", "t@t.t"])
-      git(dir, ["config", "user.name", "t"])
+      dir
     end
 
     defp stub_gh(dir, body) do

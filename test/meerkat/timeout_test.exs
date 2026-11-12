@@ -26,8 +26,7 @@ defmodule Meerkat.TimeoutTest do
   }
 
   setup do
-    repo = make_tmp_repo("meerkat-timeout")
-    on_exit(fn -> File.rm_rf(repo) end)
+    repo = make_state_repo("meerkat-timeout")
     %{repo: repo}
   end
 
@@ -74,7 +73,7 @@ defmodule Meerkat.TimeoutTest do
   end
 
   defp run_dir(repo, run_id) do
-    Path.join([repo, ".git", "meerkat-precommit", "deadlines", run_id])
+    Path.join([Meerkat.Git.meerkat_dir(repo), "deadlines", run_id])
   end
 
   defp anchor_path(repo, review_id, run_id \\ "unkeyed") do

@@ -4,7 +4,8 @@ defmodule Meerkat.AdvisoryFixesTest do
   # audit --json` and `mix hex.audit` print what each test wrote, `pnpm -r
   # update` refuses each version listed in `young` until
   # pnpm-workspace.yaml excludes it, and the frozen install refuses each
-  # version listed in `locked-young` the same way.
+  # version listed in `locked-young` the same way. scripts/advisory-fixes.test.ts
+  # tests the logic; these test the seams: pnpm, mix and the files on disk.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/advisory-fixes.ts")
@@ -94,55 +95,6 @@ defmodule Meerkat.AdvisoryFixesTest do
     %{base: base, work: work, path: stubs <> ":" <> System.fetch_env!("PATH")}
   end
 
-  test "with no advisory nothing is updated", ctx do
-    assert {_, 0} = fixes(ctx)
-    assert log(ctx) == ["pnpm audit --json", "mix hex.audit"]
-  end
-
-  test "a direct JS dependency is updated to latest with the floor lifted for it", ctx do
-    audit(ctx, ["vite"])
-
-    assert {out, 0} = fixes(ctx)
-    assert out =~ "vite has an advisory; updated it with the 24h floor lifted."
-    assert "pnpm -r update --ignore-scripts --latest vite" in log(ctx)
-    assert seen(ctx) =~ ~s(minimumReleaseAgeExclude:\n  - "vite"\n)
-    # The lockfile holds no young version, so nothing stays excluded.
-    assert workspace(ctx) == @workspace
-  end
-
-  test "a transitive JS dependency is updated within its ranges", ctx do
-    audit(ctx, ["esbuild", "esbuild"])
-
-    assert {_, 0} = fixes(ctx)
-    # Under the floor first, then with it lifted.
-    assert Enum.filter(log(ctx), &(&1 =~ "update")) ==
-             List.duplicate("pnpm -r update --ignore-scripts esbuild", 2)
-  end
-
-  test "a JS fix 24h old is taken without lifting the floor", ctx do
-    audit(ctx, ["vite"])
-    File.touch!(Path.join(ctx.base, "floor-fixes"))
-
-    assert {out, 0} = fixes(ctx)
-    assert out =~ "vite has an advisory; updated it to a fix 24h old."
-
-    assert Enum.filter(log(ctx), &(&1 =~ "update")) == [
-             "pnpm -r update --ignore-scripts --latest vite"
-           ]
-
-    refute seen(ctx) =~ "minimumReleaseAgeExclude"
-    assert workspace(ctx) == @workspace
-  end
-
-  test "a Hex fix 24h old is taken without lifting the cooldown", ctx do
-    hex_audit(ctx, "Advisories:\n  plug 1.18.0 - GHSA-aaaa: Header injection\n")
-    File.touch!(Path.join(ctx.base, "floor-fixes"))
-
-    assert {out, 0} = fixes(ctx)
-    assert out =~ "plug had advisories; updated to fixes 24h old."
-    assert Enum.filter(log(ctx), &(&1 =~ "deps.update")) == ["mix deps.update plug"]
-  end
-
   test "commits an exact exclusion for each young version the fix locks", ctx do
     audit(ctx, ["vite"])
     File.write!(Path.join(ctx.base, "young"), "@esbuild/darwin-arm64@0.30.1\nrollup@5.0.1\n")
@@ -165,19 +117,6 @@ defmodule Meerkat.AdvisoryFixesTest do
     assert out =~ "excluded @esbuild/darwin-arm64@0.30.1, rollup@5.0.1, vite@8.3.2 until 24h old"
   end
 
-  test "keeps the exclusions already committed", ctx do
-    audit(ctx, ["vite"])
-    File.write!(Path.join(ctx.base, "locked-young"), "vite@8.3.2\nsvelte@5.9.0\n")
-
-    File.write!(
-      Path.join(ctx.work, "pnpm-workspace.yaml"),
-      @workspace <> ~s(\nminimumReleaseAgeExclude:\n  - "svelte@5.9.0"\n)
-    )
-
-    assert {_, 0} = fixes(ctx)
-    assert workspace(ctx) =~ ~s(minimumReleaseAgeExclude:\n  - "svelte@5.9.0"\n  - "vite@8.3.2"\n)
-  end
-
   test "an update failing for another reason refuses, restoring the workspace", ctx do
     audit(ctx, ["vite"])
     File.touch!(Path.join(ctx.base, "fail-update"))
@@ -188,31 +127,6 @@ defmodule Meerkat.AdvisoryFixesTest do
              "pre-commit: pnpm -r update --ignore-scripts --latest vite failed:\nERR_PNPM_BROKEN"
 
     assert workspace(ctx) == @workspace
-  end
-
-  test "a failure after the floor is lifted refuses, restoring the workspace", ctx do
-    audit(ctx, ["vite"])
-    File.write!(Path.join(ctx.base, "young"), "rollup@5.0.1\n")
-    File.touch!(Path.join(ctx.base, "fail-install"))
-
-    assert {out, 1} = fixes(ctx)
-    assert out =~ "ERR_PNPM_BROKEN_INSTALL"
-    assert seen(ctx) =~ "minimumReleaseAgeExclude"
-    assert workspace(ctx) == @workspace
-  end
-
-  test "an unreadable pnpm audit refuses", ctx do
-    File.write!(Path.join(ctx.base, "audit.json"), "ERR_PNPM_AUDIT_BAD_RESPONSE")
-
-    assert {out, 1} = fixes(ctx)
-    assert out =~ "pnpm audit produced no JSON report"
-  end
-
-  test "an advisory naming no package refuses", ctx do
-    File.write!(Path.join(ctx.base, "audit.json"), ~s({"advisories": {"1": {}}}))
-
-    assert {out, 1} = fixes(ctx)
-    assert out =~ "pnpm audit named no package for an advisory."
   end
 
   test "Hex packages with advisories are updated with the cooldown off", ctx do
@@ -228,48 +142,6 @@ defmodule Meerkat.AdvisoryFixesTest do
     assert {out, 0} = fixes(ctx)
     assert out =~ "plug, bandit had advisories; updated with the 24h floor lifted."
     assert "mix deps.update plug bandit HEX_COOLDOWN=0d" in log(ctx)
-  end
-
-  test "the Hex cooldown is lifted only for packages a fix 24h old leaves", ctx do
-    hex_audit(ctx, """
-    Advisories:
-      plug 1.18.0 - GHSA-aaaa: Header injection
-      bandit 1.8.0 - GHSA-bbbb: Request smuggling
-    """)
-
-    File.write!(
-      Path.join(ctx.base, "hex-after-floor"),
-      "Advisories:\n  bandit 1.8.0 - GHSA-bbbb: Request smuggling\n"
-    )
-
-    assert {out, 0} = fixes(ctx)
-
-    assert Enum.filter(log(ctx), &(&1 =~ "deps.update")) ==
-             ["mix deps.update plug bandit", "mix deps.update bandit HEX_COOLDOWN=0d"]
-
-    assert out =~ "plug had advisories; updated to fixes 24h old."
-    assert out =~ "bandit had advisories; updated with the 24h floor lifted."
-  end
-
-  test "only retired Hex packages update nothing", ctx do
-    hex_audit(ctx, "Retired packages:\n  jason 1.4.0 - Deprecated\n")
-
-    assert {_, 0} = fixes(ctx)
-    refute Enum.any?(log(ctx), &(&1 =~ "deps.update"))
-  end
-
-  test "an unfetched Hex record refuses", ctx do
-    File.write!(Path.join(ctx.base, "hex-audit-err"), "Failed to fetch record for plug\n")
-
-    assert {out, 1} = fixes(ctx)
-    assert out =~ "Hex could not fetch every package's record:\nFailed to fetch record for plug"
-  end
-
-  test "a failing hex.audit with no report refuses", ctx do
-    hex_audit(ctx, "** (Mix) boom\n")
-
-    assert {out, 1} = fixes(ctx)
-    assert out =~ "mix hex.audit failed (exit 1):"
   end
 
   defp audit(ctx, names) do

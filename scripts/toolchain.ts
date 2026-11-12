@@ -23,8 +23,11 @@
 // matches is read again, and is unreadable once GITHUB_READS reads in all
 // have listed none. HTTP goes through curl, and a request is tried again
 // after a timeout, a 408, 429, 500, 502, 503 or 504 answer, or an HTTP/2
-// stream error; tests stub curl on PATH. GitHub requests carry GITHUB_TOKEN, or
-// else gh's token, when there is one.
+// stream error. GitHub requests carry GITHUB_TOKEN, or else gh's token,
+// when there is one.
+//
+// main does its I/O through an Io: scripts/toolchain.test.ts drives it
+// with a stand-in, and the ExUnit test stubs curl and pnpm on PATH.
 
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -38,11 +41,23 @@ const WORKFLOWS = [
 	".github/workflows/audit.yml",
 	".github/actions/toolchain/action.yml",
 ];
-const now = Date.now();
 
 export type Release = { version: string; date: Date };
 
-class Unreadable extends Error {}
+// The world main reads and changes.
+export type Io = {
+	// URL's body or, with head, its response headers; throws Unreadable.
+	fetch: (url: string, opts?: { head?: boolean }) => Promise<Uint8Array>;
+	read: (path: string) => string;
+	write: (path: string, body: string) => void;
+	// Re-locks pnpm after its pin moves.
+	relockPnpm: () => void;
+	now: number;
+	log: (line: string) => void;
+	error: (line: string) => void;
+};
+
+export class Unreadable extends Error {}
 
 // ---------------------------------------------------------------- versions
 
@@ -133,7 +148,7 @@ export function target(
 	releases: Release[],
 	vulnerable: Vulnerable[],
 	current: string,
-	at = now,
+	at = Date.now(),
 ): Target {
 	const sorted = [...releases].sort((a, b) => compare(b.version, a.version));
 	const old = (r: Release) => at - r.date.getTime() >= DAY_MS;
@@ -266,12 +281,12 @@ async function curl(
 	}
 }
 
-async function text(url: string): Promise<string> {
-	return new TextDecoder().decode(await curl(url));
+async function text(io: Io, url: string): Promise<string> {
+	return new TextDecoder().decode(await io.fetch(url));
 }
 
-async function json(url: string): Promise<unknown> {
-	const body = await text(url);
+async function json(io: Io, url: string): Promise<unknown> {
+	const body = await text(io, url);
 	try {
 		return JSON.parse(body);
 	} catch {
@@ -285,9 +300,9 @@ function date(value: unknown, what: string): Date {
 	return d;
 }
 
-export async function sha256(...urls: string[]): Promise<string> {
+async function sha256(io: Io, urls: string[]): Promise<string> {
 	const hash = createHash("sha256");
-	for (const url of urls) hash.update(await curl(url));
+	for (const url of urls) hash.update(await io.fetch(url));
 	return hash.digest("hex");
 }
 
@@ -299,9 +314,10 @@ const GITHUB_READS = 5;
 
 // githubReleases REPO TAG: REPO's published, non-pre-release GitHub
 // releases whose tag matches TAG, versioned by TAG's first group.
-async function githubReleases(repo: string, tag: RegExp): Promise<Release[]> {
+async function githubReleases(io: Io, repo: string, tag: RegExp): Promise<Release[]> {
 	for (let read = 1; read <= GITHUB_READS; read++) {
 		const list = await json(
+			io,
 			`https://api.github.com/repos/${repo}/releases?per_page=100`,
 		);
 		if (!Array.isArray(list)) throw new Unreadable(`${repo} releases: not a list`);
@@ -318,8 +334,9 @@ async function githubReleases(repo: string, tag: RegExp): Promise<Release[]> {
 
 // repoAdvisories REPO NAME: the vulnerable ranges of REPO's published
 // security advisories for the package NAME.
-async function repoAdvisories(repo: string, name: string): Promise<Vulnerable[]> {
+async function repoAdvisories(io: Io, repo: string, name: string): Promise<Vulnerable[]> {
 	const list = await json(
+		io,
 		`https://api.github.com/repos/${repo}/security-advisories?state=published&per_page=100`,
 	);
 	if (!Array.isArray(list)) throw new Unreadable(`${repo} advisories: not a list`);
@@ -328,8 +345,9 @@ async function repoAdvisories(repo: string, name: string): Promise<Vulnerable[]>
 
 // globalAdvisories ECOSYSTEM NAME: the vulnerable ranges of GitHub's
 // reviewed advisories for NAME.
-async function globalAdvisories(ecosystem: string, name: string): Promise<Vulnerable[]> {
+async function globalAdvisories(io: Io, ecosystem: string, name: string): Promise<Vulnerable[]> {
 	const list = await json(
+		io,
 		`https://api.github.com/advisories?ecosystem=${ecosystem}&affects=${encodeURIComponent(name)}&per_page=100`,
 	);
 	if (!Array.isArray(list)) throw new Unreadable(`${name} advisories: not a list`);
@@ -373,8 +391,8 @@ function ranges(advisories: unknown[], name: string): Vulnerable[] {
 
 // builds URL PATTERN: the matches of PATTERN against the name opening each
 // line of a list of builds (CSV or space-separated).
-async function builds(url: string, pattern: RegExp): Promise<RegExpMatchArray[]> {
-	return (await text(url)).split("\n").flatMap((line) => {
+async function builds(io: Io, url: string, pattern: RegExp): Promise<RegExpMatchArray[]> {
+	return (await text(io, url)).split("\n").flatMap((line) => {
 		const m = line.split(/[ ,]/)[0]?.match(pattern);
 		return m ? [m] : [];
 	});
@@ -384,48 +402,53 @@ async function builds(url: string, pattern: RegExp): Promise<RegExpMatchArray[]>
 // by the build lists, whose dates a rebuild of an old release resets.
 
 // Elixir releases Hex builds, with the OTP major of each build. Fetched
-// once per run, as both the OTP and the Elixir pin read them.
-let elixirPromise: Promise<(Release & { otp: number })[]> | undefined;
-function elixirReleases(): Promise<(Release & { otp: number })[]> {
-	elixirPromise ??= (async () => {
-		const [released, built] = await Promise.all([
-			githubReleases("elixir-lang/elixir", /^v(\d+\.\d+\.\d+)$/),
-			builds("https://builds.hex.pm/builds/elixir/builds.txt", /^v(\d+\.\d+\.\d+)-otp-(\d+)$/),
-		]);
-		return built.flatMap(([, version, otp]) => {
-			const r = released.find((x) => x.version === version);
-			return r ? [{ ...r, otp: Number(otp) }] : [];
-		});
-	})();
-	return elixirPromise;
+// once per Io, as both the OTP and the Elixir pin read them.
+const elixirFetched = new WeakMap<Io, Promise<(Release & { otp: number })[]>>();
+function elixirReleases(io: Io): Promise<(Release & { otp: number })[]> {
+	let releases = elixirFetched.get(io);
+	if (!releases) {
+		releases = (async () => {
+			const [released, built] = await Promise.all([
+				githubReleases(io, "elixir-lang/elixir", /^v(\d+\.\d+\.\d+)$/),
+				builds(io, "https://builds.hex.pm/builds/elixir/builds.txt", /^v(\d+\.\d+\.\d+)-otp-(\d+)$/),
+			]);
+			return built.flatMap(([, version, otp]) => {
+				const r = released.find((x) => x.version === version);
+				return r ? [{ ...r, otp: Number(otp) }] : [];
+			});
+		})();
+		elixirFetched.set(io, releases);
+	}
+	return releases;
 }
 
 // OTP releases built for the runners CI uses, macOS arm64 (ci.yml) and
 // Ubuntu 24.04 (audit.yml), on a major Elixir has a release 24h old built
 // for, so the Elixir pin can follow.
-async function otpReleases(): Promise<Release[]> {
+async function otpReleases(io: Io): Promise<Release[]> {
 	const stable = /^OTP-(\d+(?:\.\d+)*)$/;
 	const [released, mac, ubuntu, elixir] = await Promise.all([
-		githubReleases("erlang/otp", stable),
+		githubReleases(io, "erlang/otp", stable),
 		builds(
+			io,
 			"https://raw.githubusercontent.com/erlef/otp_builds/refs/heads/main/builds/aarch64-apple-darwin.csv",
 			stable,
 		),
-		builds("https://builds.hex.pm/builds/otp/ubuntu-24.04/builds.txt", stable),
-		elixirReleases(),
+		builds(io, "https://builds.hex.pm/builds/otp/ubuntu-24.04/builds.txt", stable),
+		elixirReleases(io),
 	]);
 	return released.filter(
 		(r) =>
 			mac.some((m) => m[1] === r.version) &&
 			ubuntu.some((u) => u[1] === r.version) &&
-			elixir.some((e) => e.otp === major(r.version) && now - e.date.getTime() >= DAY_MS),
+			elixir.some((e) => e.otp === major(r.version) && io.now - e.date.getTime() >= DAY_MS),
 	);
 }
 
 // npmReleases NAME: NAME's releases up to its "latest" dist-tag; newer
 // ones are tagged for testing, such as pnpm's "next-12".
-async function npmReleases(name: string): Promise<Release[]> {
-	const doc = (await json(`https://registry.npmjs.org/${name}`)) as {
+async function npmReleases(io: Io, name: string): Promise<Release[]> {
+	const doc = (await json(io, `https://registry.npmjs.org/${name}`)) as {
 		time?: Record<string, string>;
 		"dist-tags"?: { latest?: string };
 	};
@@ -451,14 +474,14 @@ export function gnuBashFiles(version: string): string[] {
 	return files;
 }
 
-async function lastModified(url: string): Promise<Date> {
-	const headers = new TextDecoder().decode(await curl(url, { head: true }));
+async function lastModified(io: Io, url: string): Promise<Date> {
+	const headers = new TextDecoder().decode(await io.fetch(url, { head: true }));
 	const m = [...headers.matchAll(/^last-modified:\s*(.+?)\s*$/gim)].at(-1);
 	return date(m?.[1], `${url} Last-Modified`);
 }
 
-async function gnuBashReleases(): Promise<Release[]> {
-	const listing = await text(`${GNU}/`);
+async function gnuBashReleases(io: Io): Promise<Release[]> {
+	const listing = await text(io, `${GNU}/`);
 	const bases = [...listing.matchAll(/href="bash-(\d+\.\d+)\.tar\.gz"/g)]
 		.map((m) => m[1])
 		.sort(compare)
@@ -473,16 +496,16 @@ async function gnuBashReleases(): Promise<Release[]> {
 		const [major, minor] = base.split(".");
 		const patches = listing.includes(`href="bash-${base}-patches/"`)
 			? [
-					...(await text(`${GNU}/bash-${base}-patches/`)).matchAll(
+					...(await text(io, `${GNU}/bash-${base}-patches/`)).matchAll(
 						new RegExp(`href="bash${major}${minor}-(\\d{3})"`, "g"),
 					),
 				].map((m) => Number(m[1]))
 			: [];
 		for (let i = Math.max(0, ...patches); i >= 0; i--) {
 			const version = `${base}.${i}`;
-			const date = await lastModified(gnuBashFiles(version).at(-1) as string);
+			const date = await lastModified(io, gnuBashFiles(version).at(-1) as string);
 			releases.push({ version, date });
-			if (now - date.getTime() >= DAY_MS) return releases;
+			if (io.now - date.getTime() >= DAY_MS) return releases;
 		}
 	}
 	return releases;
@@ -495,8 +518,8 @@ export function graphvizFiles(version: string): string[] {
 	return [`${GRAPHVIZ}/packages/generic/graphviz-releases/${version}/graphviz-${version}.tar.xz`];
 }
 
-async function graphvizReleases(): Promise<Release[]> {
-	const list = await json(`${GRAPHVIZ}/releases?per_page=100`);
+async function graphvizReleases(io: Io): Promise<Release[]> {
+	const list = await json(io, `${GRAPHVIZ}/releases?per_page=100`);
 	if (!Array.isArray(list)) throw new Unreadable("graphviz releases: not a list");
 	return list.flatMap((r) => {
 		const m = String(r.tag_name).match(/^(\d+\.\d+\.\d+)$/);
@@ -508,9 +531,9 @@ async function graphvizReleases(): Promise<Release[]> {
 
 // ------------------------------------------------------------------- pins
 
-function readFile(path: string): string {
+function readFile(io: Io, path: string): string {
 	try {
-		return readFileSync(path, "utf8");
+		return io.read(path);
 	} catch {
 		throw new Unreadable(`${path}: cannot read`);
 	}
@@ -532,19 +555,19 @@ const TOOLCHAIN_ENV: PinFile = {
 	format: (key, value) => `${key}=${value}`,
 };
 
-function getPin(file: PinFile, key: string): string {
-	const m = readFile(file.path).match(file.line(key));
+function getPin(io: Io, file: PinFile, key: string): string {
+	const m = readFile(io, file.path).match(file.line(key));
 	if (!m) throw new Unreadable(`${file.path}: no ${key}`);
 	return m[1];
 }
 
-function setPins(file: PinFile, values: Record<string, string>) {
-	let body = readFile(file.path);
+function setPins(io: Io, file: PinFile, values: Record<string, string>) {
+	let body = readFile(io, file.path);
 	for (const [key, value] of Object.entries(values)) {
 		if (!file.line(key).test(body)) throw new Unreadable(`${file.path}: no ${key}`);
 		body = body.replace(file.line(key), file.format(key, value));
 	}
-	writeFileSync(file.path, body);
+	io.write(file.path, body);
 }
 
 type Pin = {
@@ -561,6 +584,7 @@ type Pin = {
 // filePin: the pin KEY in FILE. With ASSET, the release's download URLs,
 // the file also holds their combined SHA-256 under SHA_KEY.
 function filePin(
+	io: Io,
 	file: PinFile,
 	key: string,
 	name: string,
@@ -570,130 +594,133 @@ function filePin(
 ): Pin {
 	return {
 		name,
-		current: getPin(file, key),
+		current: getPin(io, file, key),
 		releases,
 		advisories,
 		bump: async (version) =>
-			setPins(file, {
+			setPins(io, file, {
 				[key]: version,
-				...(asset ? { [asset.shaKey]: await sha256(...asset.urls(version)) } : {}),
+				...(asset ? { [asset.shaKey]: await sha256(io, asset.urls(version)) } : {}),
 			}),
 	};
 }
 
 const none = async () => [] as Vulnerable[];
 
-function filePins(): Pin[] {
-	const otp = getPin(TOOL_VERSIONS, "erlang");
+function filePins(io: Io): Pin[] {
+	const otp = getPin(io, TOOL_VERSIONS, "erlang");
 	const download = (repo: string, path: (v: string) => string) => (v: string) => [
 		`https://github.com/${repo}/releases/download/${path(v)}`,
 	];
 	return [
-		filePin(TOOL_VERSIONS, "erlang", "Erlang/OTP", otpReleases, () =>
-			repoAdvisories("erlang/otp", "OTP"),
+		filePin(
+			io,
+			TOOL_VERSIONS,
+			"erlang",
+			"Erlang/OTP",
+			() => otpReleases(io),
+			() => repoAdvisories(io, "erlang/otp", "OTP"),
 		),
 		// Hex builds Elixir for each OTP major.
 		filePin(
+			io,
 			TOOL_VERSIONS,
 			"elixir",
 			"Elixir",
-			async () => (await elixirReleases()).filter((e) => e.otp === major(otp)),
-			() => repoAdvisories("elixir-lang/elixir", "elixir"),
+			async () => (await elixirReleases(io)).filter((e) => e.otp === major(otp)),
+			() => repoAdvisories(io, "elixir-lang/elixir", "elixir"),
 		),
 		filePin(
+			io,
 			TOOL_VERSIONS,
 			"bun",
 			"bun",
-			() => githubReleases("oven-sh/bun", /^bun-v(\d+\.\d+\.\d+)$/),
-			() => repoAdvisories("oven-sh/bun", "bun"),
+			() => githubReleases(io, "oven-sh/bun", /^bun-v(\d+\.\d+\.\d+)$/),
+			() => repoAdvisories(io, "oven-sh/bun", "bun"),
 		),
 		filePin(
+			io,
 			TOOLCHAIN_ENV,
 			"HEX_VERSION",
 			"Hex",
-			() => githubReleases("hexpm/hex", /^v(\d+\.\d+\.\d+)$/),
-			() => repoAdvisories("hexpm/hex", "hex"),
+			() => githubReleases(io, "hexpm/hex", /^v(\d+\.\d+\.\d+)$/),
+			() => repoAdvisories(io, "hexpm/hex", "hex"),
 		),
 		filePin(
+			io,
 			TOOLCHAIN_ENV,
 			"REBAR3_VERSION",
 			"rebar3",
-			() => githubReleases("erlang/rebar3", /^(\d+\.\d+\.\d+)$/),
-			() => repoAdvisories("erlang/rebar3", "rebar3"),
+			() => githubReleases(io, "erlang/rebar3", /^(\d+\.\d+\.\d+)$/),
+			() => repoAdvisories(io, "erlang/rebar3", "rebar3"),
 			{ shaKey: "REBAR3_SHA256", urls: download("erlang/rebar3", (v) => `${v}/rebar3`) },
 		),
 		filePin(
+			io,
 			TOOLCHAIN_ENV,
 			"CLJ_KONDO_VERSION",
 			"clj-kondo",
-			() => githubReleases("clj-kondo/clj-kondo", /^v(\d{4}\.\d{2}\.\d{2})$/),
-			() => repoAdvisories("clj-kondo/clj-kondo", "clj-kondo"),
+			() => githubReleases(io, "clj-kondo/clj-kondo", /^v(\d{4}\.\d{2}\.\d{2})$/),
+			() => repoAdvisories(io, "clj-kondo/clj-kondo", "clj-kondo"),
 			{
 				shaKey: "CLJ_KONDO_SHA256",
 				urls: download("clj-kondo/clj-kondo", (v) => `v${v}/clj-kondo-${v}-macos-aarch64.zip`),
 			},
 		),
 		filePin(
+			io,
 			TOOLCHAIN_ENV,
 			"PLANTUML_VERSION",
 			"PlantUML",
-			() => githubReleases("plantuml/plantuml", /^v(\d+\.\d+\.\d+)$/),
-			() => repoAdvisories("plantuml/plantuml", "plantuml"),
+			() => githubReleases(io, "plantuml/plantuml", /^v(\d+\.\d+\.\d+)$/),
+			() => repoAdvisories(io, "plantuml/plantuml", "plantuml"),
 			{
 				shaKey: "PLANTUML_SHA256",
 				urls: download("plantuml/plantuml", (v) => `v${v}/native-plantuml-macos-arm64-${v}.zip`),
 			},
 		),
 		// GNU publishes no advisory feed for bash.
-		filePin(TOOLCHAIN_ENV, "GNU_BASH_VERSION", "GNU bash", gnuBashReleases, none, {
+		filePin(io, TOOLCHAIN_ENV, "GNU_BASH_VERSION", "GNU bash", () => gnuBashReleases(io), none, {
 			shaKey: "GNU_BASH_SHA256",
 			urls: gnuBashFiles,
 		}),
 		// GitHub's advisory database lists nothing for Graphviz.
-		filePin(TOOLCHAIN_ENV, "GRAPHVIZ_VERSION", "Graphviz", graphvizReleases, none, {
+		filePin(io, TOOLCHAIN_ENV, "GRAPHVIZ_VERSION", "Graphviz", () => graphvizReleases(io), none, {
 			shaKey: "GRAPHVIZ_SHA256",
 			urls: graphvizFiles,
 		}),
 	];
 }
 
-function pnpmPin(): Pin {
-	const pkg = readFile("package.json");
+function pnpmPin(io: Io): Pin {
+	const pkg = readFile(io, "package.json");
 	const current = pkg.match(/"packageManager":\s*"pnpm@([^"]+)"/)?.[1];
 	if (!current) throw new Unreadable("package.json: no pnpm packageManager");
 	return {
 		name: "pnpm",
 		current,
-		releases: () => npmReleases("pnpm"),
-		advisories: () => globalAdvisories("npm", "pnpm"),
-		// pnpm-lock.yaml locks pnpm itself too, so it is re-resolved, with
-		// an exact minimumReleaseAgeExclude entry for each part of a pnpm
-		// under 24h old (scripts/age-excludes.ts).
+		releases: () => npmReleases(io, "pnpm"),
+		advisories: () => globalAdvisories(io, "npm", "pnpm"),
 		bump: async (version) => {
-			writeFileSync(
+			io.write(
 				"package.json",
-				readFile("package.json").replace(
+				readFile(io, "package.json").replace(
 					/("packageManager":\s*"pnpm@)[^"]+"/,
 					`$1${version}"`,
 				),
 			);
-			const workspace = readFile(WORKSPACE);
-			untilAccepted(
-				["pnpm", "install", "--lockfile-only", "--ignore-scripts"],
-				workspace,
-				readExcludes(workspace),
-			);
+			io.relockPnpm();
 		},
 	};
 }
 
 // actionPins: one pin per action repo the WORKFLOWS files use, as
 // `uses: owner/repo[/path]@<40-hex sha> # <tag>`.
-function actionPins(): Pin[] {
+function actionPins(io: Io): Pin[] {
 	const uses = new Map<string, { sha: string; tag: string }>();
 	const bad: string[] = [];
 	for (const file of WORKFLOWS) {
-		for (const line of readFile(file).split("\n")) {
+		for (const line of readFile(io, file).split("\n")) {
 			const m = line.match(/^\s*(?:-\s+)?uses:\s*(\S+)(.*)$/);
 			if (!m || m[1].startsWith("./")) continue;
 			const pin = m[1].match(/^([\w.-]+\/[\w.-]+)(?:\/[^@]*)?@([0-9a-f]{40})$/);
@@ -715,19 +742,19 @@ function actionPins(): Pin[] {
 	return [...uses].map(([repo, { sha, tag }]) => ({
 		name: repo,
 		current: tag,
-		releases: () => githubReleases(repo, /^(v?\d+(?:\.\d+)*)$/),
-		advisories: () => globalAdvisories("actions", repo),
+		releases: () => githubReleases(io, repo, /^(v?\d+(?:\.\d+)*)$/),
+		advisories: () => globalAdvisories(io, "actions", repo),
 		verify: async () => {
-			const real = await tagSha(repo, tag);
+			const real = await tagSha(io, repo, tag);
 			return real === sha ? [] : [`${sha} is not ${tag}'s commit ${real}`];
 		},
 		bump: async (version) => {
-			const next = await tagSha(repo, version);
+			const next = await tagSha(io, repo, version);
 			for (const file of WORKFLOWS) {
 				const escaped = repo.replace(/[.]/g, "\\.");
-				writeFileSync(
+				io.write(
 					file,
-					readFile(file).replace(
+					readFile(io, file).replace(
 						new RegExp(`(uses:\\s*${escaped}(?:/[^@\\s]*)?@)[0-9a-f]{40}(\\s+#\\s+)\\S+`, "g"),
 						`$1${next}$2${version}`,
 					),
@@ -737,8 +764,8 @@ function actionPins(): Pin[] {
 	}));
 }
 
-async function tagSha(repo: string, tag: string): Promise<string> {
-	const commit = (await json(`https://api.github.com/repos/${repo}/commits/${tag}`)) as {
+async function tagSha(io: Io, repo: string, tag: string): Promise<string> {
+	const commit = (await json(io, `https://api.github.com/repos/${repo}/commits/${tag}`)) as {
 		sha?: string;
 	};
 	if (!commit.sha) throw new Unreadable(`${repo} ${tag}: no commit`);
@@ -749,39 +776,39 @@ async function tagSha(repo: string, tag: string): Promise<string> {
 
 type Verdict = { pin: Pin; target: NonNullable<Target>; problems: string[] };
 
-async function judge(pin: Pin): Promise<Verdict> {
+async function judge(io: Io, pin: Pin): Promise<Verdict> {
 	const [releases, advisories, problems] = await Promise.all([
 		pin.releases(),
 		pin.advisories(),
 		pin.verify?.() ?? Promise.resolve([]),
 	]);
-	const t = target(releases, advisories, pin.current);
+	const t = target(releases, advisories, pin.current, io.now);
 	if (!t) throw new Unreadable(`${pin.name}: no release is 24h old`);
 	return { pin, target: t, problems };
 }
 
-async function main(mode: string): Promise<number> {
+export async function main(mode: string, io: Io): Promise<number> {
 	if (mode !== "check" && mode !== "bump") {
-		console.error("usage: bun scripts/toolchain.ts check|bump");
+		io.error("usage: bun scripts/toolchain.ts check|bump");
 		return 2;
 	}
 	const prefix = mode === "check" ? "" : "pre-commit: ";
 	let verdicts: Verdict[];
 	try {
 		// The Elixir pin follows the OTP major, so OTP moves first.
-		let pins = [...filePins(), pnpmPin(), ...actionPins()];
+		let pins = [...filePins(io), pnpmPin(io), ...actionPins(io)];
 		if (mode === "bump") {
 			const otp = pins.find((p) => p.name === "Erlang/OTP") as Pin;
-			const want = (await judge(otp)).target.version;
+			const want = (await judge(io, otp)).target.version;
 			if (otp.current !== want) {
 				await otp.bump(want);
-				console.log(`${prefix}toolchain: ${otp.name} ${otp.current} -> ${want}`);
+				io.log(`${prefix}toolchain: ${otp.name} ${otp.current} -> ${want}`);
 			}
-			pins = [...filePins(), pnpmPin(), ...actionPins()];
+			pins = [...filePins(io), pnpmPin(io), ...actionPins(io)];
 		}
-		verdicts = await Promise.all(pins.map(judge));
+		verdicts = await Promise.all(pins.map((pin) => judge(io, pin)));
 	} catch (e) {
-		console.error(
+		io.error(
 			`${prefix}scripts/toolchain.ts: ${e instanceof Error ? e.message : e} — cannot check the toolchain.`,
 		);
 		return 2;
@@ -798,27 +825,44 @@ async function main(mode: string): Promise<number> {
 						? " (an advisory covers the newest release 24h old; no release fixes it yet)"
 						: "";
 		if (pin.current === want && problems.length === 0) {
-			if (mode === "check") console.log(`current: ${pin.name} ${want}${why}`);
+			if (mode === "check") io.log(`current: ${pin.name} ${want}${why}`);
 			continue;
 		}
 		off++;
 		if (mode === "check") {
-			for (const p of problems) console.log(`BLOCKED: ${pin.name} ${pin.current}: ${p}`);
+			for (const p of problems) io.log(`BLOCKED: ${pin.name} ${pin.current}: ${p}`);
 			if (pin.current !== want)
-				console.log(`BLOCKED: ${pin.name} is pinned to ${pin.current}; the target is ${want}${why}`);
+				io.log(`BLOCKED: ${pin.name} is pinned to ${pin.current}; the target is ${want}${why}`);
 			continue;
 		}
 		try {
 			await pin.bump(want);
 		} catch (e) {
-			console.error(
+			io.error(
 				`${prefix}scripts/toolchain.ts: could not move ${pin.name} to ${want}: ${e instanceof Error ? e.message : e}`,
 			);
 			return 2;
 		}
-		console.log(`${prefix}toolchain: ${pin.name} ${pin.current} -> ${want}${why}`);
+		io.log(`${prefix}toolchain: ${pin.name} ${pin.current} -> ${want}${why}`);
 	}
 	return mode === "check" && off > 0 ? 1 : 0;
 }
 
-if (import.meta.main) process.exit(await main(process.argv[2] ?? ""));
+// The world as it is: HTTP through curl, files in the working directory.
+const world = (): Io => ({
+	fetch: curl,
+	read: (path) => readFileSync(path, "utf8"),
+	write: writeFileSync,
+	// pnpm-lock.yaml locks pnpm itself too, so it is re-resolved, with an
+	// exact minimumReleaseAgeExclude entry for each part of a pnpm under
+	// 24h old (scripts/age-excludes.ts).
+	relockPnpm: () => {
+		const workspace = readFileSync(WORKSPACE, "utf8");
+		untilAccepted(["pnpm", "install", "--lockfile-only", "--ignore-scripts"], workspace, readExcludes(workspace));
+	},
+	now: Date.now(),
+	log: console.log,
+	error: console.error,
+});
+
+if (import.meta.main) process.exit(await main(process.argv[2] ?? "", world()));

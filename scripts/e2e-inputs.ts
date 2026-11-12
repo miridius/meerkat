@@ -11,8 +11,8 @@
 // The test is an allowlist of paths nothing in the e2e run reads or
 // executes, leaving out this file, which decides when the run is skipped;
 // every other path, a new one included, counts as an e2e input.
-// scripts/check.sh skips the e2e steps of a commit that changes no e2e
-// input, and scripts/checked-trees.sh --e2e keys its record on the e2e
+// scripts/check.ts skips the e2e steps of a commit that changes no e2e
+// input, and scripts/checked-trees.ts --e2e keys its record on the e2e
 // inputs alone. A path git quotes, for its unusual characters, matches
 // nothing below and so counts as an input.
 
@@ -21,10 +21,10 @@ const notInputs: RegExp[] = [
 	// ExUnit tests; the e2e suite lives under tests/, but its fixture reads
 	// test/support/test.gitconfig.
 	/^test\/(?!support\/test\.gitconfig$)/,
-	// No script here runs in the e2e suite, but check.sh runs the e2e steps
+	// No script here runs in the e2e suite, but check.ts runs the e2e steps
 	// and sets their build environment, and this file decides when they may
 	// be skipped.
-	/^scripts\/(?!(check\.sh|e2e-inputs\.ts)$)/,
+	/^scripts\/(?!(check\.ts|e2e-inputs\.ts)$)/,
 	// The toolchain.env pins pick the Hex and rebar3 that build the e2e run's
 	// dependencies.
 	/^\.github\/(?!toolchain\.env$)/,
@@ -37,14 +37,14 @@ const notInputs: RegExp[] = [
 	/^LICENSE$/,
 ];
 
-const isInput = (line: string) => {
+export const isInput = (line: string) => {
 	const path = line.slice(line.indexOf("\t") + 1);
 	return !notInputs.some((re) => re.test(path));
 };
 
-const inputs = (await Bun.stdin.text())
-	.split("\n")
-	.filter((line) => line !== "" && isInput(line));
+if (import.meta.main) {
+	const inputs = (await Bun.stdin.text()).split("\n").filter((line) => line !== "" && isInput(line));
 
-if (process.argv[2] === "--none") process.exit(inputs.length === 0 ? 0 : 1);
-for (const line of inputs) console.log(line);
+	if (process.argv[2] === "--none") process.exit(inputs.length === 0 ? 0 : 1);
+	for (const line of inputs) console.log(line);
+}

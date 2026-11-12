@@ -8,18 +8,53 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
   alias Meerkat.{ApprovalCache, Decision, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3]
+
+  import Meerkat.TestHelpers,
+    only: [blob_oid: 1, git: 2, import_commit: 3, import_commits: 2, read_tree: 3]
 
   @plain_file plain_file()
   @md_file md_file()
 
+  # A repo whose index stages src_widget.rs and f.ex, and whose work tree
+  # also holds the unstaged unstaged.ex. Its tests only read it, and keep
+  # their state in a `state_repo/0`.
+  setup_all do
+    repo =
+      Meerkat.TestHelpers.fixture_template("meerkat-lv-staged", fn dir ->
+        git(dir, ["init", "-q"])
+        files = %{"src_widget.rs" => "content\n", "f.ex" => "content\n"}
+        import_commit(dir, "refs/meerkat-test/index", files)
+        read_tree(dir, "refs/meerkat-test/index", nil)
+        File.write!(Path.join(dir, "unstaged.ex"), "content\n")
+      end)
+
+    {:ok, staged_repo: repo}
+  end
+
+  # A repo of its own whose HEAD commits `head` on main, and whose
+  # index stages each of `rounds` in turn: call the function returned
+  # with a round's index to stage it.
+  defp rounds_repo(head, rounds) do
+    repo = tmp_git_repo()
+    git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"])
+
+    import_commits(repo, [
+      {"refs/heads/main", head}
+      | for({files, i} <- Enum.with_index(rounds), do: {"refs/meerkat-test/round#{i}", files})
+    ])
+
+    git(repo, ["reset", "-q"])
+    {repo, &read_tree(repo, "refs/meerkat-test/round#{&1}", nil)}
+  end
+
   ## --- Approvals ---
 
-  test "toggle_approved in bound mode delegates and persists the cache", %{conn: conn} do
-    repo = tmp_git_repo()
-    File.write!(Path.join(repo, "src_widget.rs"), "content\n")
-    git(repo, ["add", "src_widget.rs"])
-    oid = git(repo, ["rev-parse", ":src_widget.rs"])
+  test "toggle_approved in bound mode delegates and persists the cache", %{
+    conn: conn,
+    staged_repo: repo
+  } do
+    state_repo()
+    oid = blob_oid("content\n")
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "src_widget.rs", effective_oid: oid}],
@@ -43,12 +78,13 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "an approved staged deletion stays approved in the next review round", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "gone.rs", "fn gone() {}\n")
-    stage(repo, "keep.rs", "fn keep() -> i32 { 1 }\n")
-    commit(repo, "seed")
-    git(repo, ["rm", "-q", "gone.rs"])
-    stage(repo, "keep.rs", "fn keep() -> i32 { 2 }\n")
+    {repo, stage_round} =
+      rounds_repo(%{"gone.rs" => "fn gone() {}\n", "keep.rs" => "fn keep() -> i32 { 1 }\n"}, [
+        %{"keep.rs" => "fn keep() -> i32 { 2 }\n"},
+        %{"keep.rs" => "fn keep() -> i32 { 3 }\n"}
+      ])
+
+    stage_round.(0)
 
     {:ok, round1} = ReviewState.from_target({:staged, nil}, repo)
     assert round1.approved_file_names == MapSet.new()
@@ -60,7 +96,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     # The deletion is untouched while keep.rs is reworked; round 2
     # re-hydrates approvals from the content-addressed cache.
-    stage(repo, "keep.rs", "fn keep() -> i32 { 3 }\n")
+    stage_round.(1)
     {:ok, round2} = ReviewState.from_target({:staged, nil}, repo)
     assert round2.approved_file_names == MapSet.new(["gone.rs"])
 
@@ -72,11 +108,14 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   test "on a detached HEAD, an approved file stays approved in the next review round", %{
     conn: conn
   } do
-    repo = tmp_git_repo()
-    commit(repo, "seed")
+    {repo, stage_round} =
+      rounds_repo(%{}, [
+        %{"a.txt" => "alpha\n", "b.txt" => "bravo\n"},
+        %{"a.txt" => "alpha\n", "b.txt" => "bravo v2\n"}
+      ])
+
     git(repo, ["checkout", "-q", "--detach"])
-    stage(repo, "a.txt", "alpha\n")
-    stage(repo, "b.txt", "bravo\n")
+    stage_round.(0)
 
     {:ok, round1} = ReviewState.from_target({:staged, nil}, repo)
     assert round1.head_branch == nil
@@ -86,7 +125,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     |> element(".approved-toggle input[phx-value-file_name='a.txt']")
     |> render_click()
 
-    stage(repo, "b.txt", "bravo v2\n")
+    stage_round.(1)
     {:ok, round2} = ReviewState.from_target({:staged, nil}, repo)
     assert round2.approved_file_names == MapSet.new(["a.txt"])
     assert Map.keys(ApprovalCache.load_for(repo)) == ["detached HEAD (.git)"]
@@ -154,10 +193,11 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     refute html =~ "didn&#39;t persist"
   end
 
-  test "approving an oid whose live value changed flashes the stale warning", %{conn: conn} do
-    repo = tmp_git_repo()
-    File.write!(Path.join(repo, "f.ex"), "content\n")
-    git(repo, ["add", "f.ex"])
+  test "approving an oid whose live value changed flashes the stale warning", %{
+    conn: conn,
+    staged_repo: repo
+  } do
+    state_repo()
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: "deadbeef"}],
@@ -172,11 +212,12 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert html =~ "changed since you opened the review"
   end
 
-  test "approving with the live oid matches proceeds without a flash", %{conn: conn} do
-    repo = tmp_git_repo()
-    File.write!(Path.join(repo, "f.ex"), "content\n")
-    git(repo, ["add", "f.ex"])
-    oid = git(repo, ["rev-parse", ":f.ex"])
+  test "approving with the live oid matches proceeds without a flash", %{
+    conn: conn,
+    staged_repo: repo
+  } do
+    state_repo()
+    oid = blob_oid("content\n")
 
     state = %ReviewState{
       files: [%{@plain_file | file_name: "f.ex", effective_oid: oid}],
@@ -656,14 +697,15 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
   # --- Third-pass kills (final survivors) ---
 
-  test "approving a file that is no longer staged flashes the stale warning", %{conn: conn} do
-    repo = tmp_git_repo()
+  test "approving a file that is no longer staged flashes the stale warning", %{
+    conn: conn,
+    staged_repo: repo
+  } do
+    state_repo()
     # The file exists but was never staged — the staged-blob lookup
     # reports :not_staged.
-    File.write!(Path.join(repo, "f.ex"), "content\n")
-
     state = %ReviewState{
-      files: [%{@plain_file | file_name: "f.ex", effective_oid: "deadbeef"}],
+      files: [%{@plain_file | file_name: "unstaged.ex", effective_oid: "deadbeef"}],
       head_branch: "main"
     }
 
@@ -671,7 +713,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     Application.put_env(:meerkat, :repo_path, repo)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
-    html = render_hook(view, "file.toggle_approved", %{"file_name" => "f.ex"})
+    html = render_hook(view, "file.toggle_approved", %{"file_name" => "unstaged.ex"})
     assert html =~ "no longer staged"
   end
 
@@ -774,7 +816,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "approving a PR / range review leaves the approval cache alone", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], head_branch: "feature"}
     {view, _rid} = mount_bound(conn, state, repo)
 
@@ -785,7 +827,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
   end
 
   test "approving on a detached HEAD writes under the worktree's key", %{conn: conn} do
-    repo = tmp_git_repo()
+    repo = state_repo()
     key = "detached HEAD (.git)"
     state = %ReviewState{files: [%{@plain_file | effective_oid: "oid1"}], approval_key: key}
     {view, _rid} = mount_bound(conn, state, repo)

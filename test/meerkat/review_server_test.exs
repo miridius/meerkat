@@ -8,7 +8,7 @@ defmodule Meerkat.ReviewServerTest do
   alias Meerkat.{Comment, Persistence, ReviewServer, ReviewState}
 
   setup do
-    repo = make_tmp_repo()
+    repo = state_repo()
     id = "rs_#{System.unique_integer([:positive])}"
 
     # Defensive: terminate any leftover GenServer registered under
@@ -26,8 +26,6 @@ defmodule Meerkat.ReviewServerTest do
         [{pid, _}] -> DynamicSupervisor.terminate_child(Meerkat.ReviewServerSup, pid)
         _ -> :ok
       end
-
-      File.rm_rf!(repo)
     end)
 
     {:ok, repo: repo, review_id: id}
@@ -654,5 +652,5 @@ defmodule Meerkat.ReviewServerTest do
     end
   end
 
-  defp make_tmp_repo, do: Meerkat.TestHelpers.make_tmp_repo("meerkat-review-server")
+  defp state_repo, do: Meerkat.TestHelpers.make_state_repo("meerkat-review-server")
 end
