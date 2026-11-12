@@ -23,6 +23,7 @@ defmodule Meerkat.PreCommitHookTest do
     "mix-test.sh",
     "bun test",
     "bun test tests/e2e/lib",
+    "bun test scripts",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"
@@ -934,7 +935,7 @@ defmodule Meerkat.PreCommitHookTest do
     stage(ctx.work, "test/scripts/tool_test.exs", "test\n")
     stage(ctx.work, "scripts/tool.sh", "tool\n")
     stage(ctx.work, ".github/workflows/ci.yml", "ci\n")
-    stage(ctx.work, ".lefthook/pre-push/pre-push.sh", "hook\n")
+    stage(ctx.work, ".lefthook/pre-push/pre-push.ts", "hook\n")
     stage(ctx.work, ".claude/settings.json", "{}\n")
   end
 

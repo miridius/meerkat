@@ -150,6 +150,8 @@ jobs:
 
       - run: bun test tests/e2e/lib
 
+      - run: bun test scripts
+
       # The browser is cached per Playwright version.
       - name: Read the Playwright version
         run: |

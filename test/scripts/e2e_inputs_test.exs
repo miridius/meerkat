@@ -14,7 +14,7 @@ defmodule Meerkat.E2eInputsTest do
     scripts/check.sh.bak
     scripts/checked-trees.sh
     .github/workflows/ci.yml
-    .lefthook/pre-push/pre-push.sh
+    .lefthook/pre-push/pre-push.ts
     lefthook.yml
     .claude/settings.json
     .worktreeinclude

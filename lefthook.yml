@@ -34,11 +34,11 @@ post-rewrite:
     rebase-bump:
       run: bun scripts/rebase-bump.ts {1}
 
-# A script, not a command: see .lefthook/pre-push/pre-push.sh.
+# A script, not a command: see .lefthook/pre-push/pre-push.ts.
 pre-push:
   scripts:
-    "pre-push.sh":
-      runner: bash
+    "pre-push.ts":
+      runner: bun
       use_stdin: true
 
 # Auto-install meerkat when local `main` advances through a merge or a
