@@ -71,6 +71,11 @@ Open the review URL in the browser.
 
 Never use the user's real repositories.
 Never modify meerkat.
+In an isolated worktree, keep any command that names git, even inside
+a word like github, free of `$(...)`, loops, `$?` and variables other
+than `$HOME` and `$TMPDIR`; run git and other tools directly, not
+through bash, zsh or another interpreter's script text; split anything
+complex into separate plain commands.
 Kill every meerkat process you start, and no other.
 When done, once every script and meerkat command you ran has exited,
 run `bun -e 'await (await import("./tests/e2e/lib/reap.ts")).default()'`

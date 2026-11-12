@@ -95,7 +95,8 @@ meerkat's own steps for a bug report or feature request:
 2. **Build, test, verify.** Implement in small slices. Each slice
    ends with `mix test` green AND a manual verification: review a
    real diff through `bin/meerkat-beam` from this checkout and use
-   the changed behaviour. Once `bun run test` passes, and before
+   the changed behaviour, then kill every meerkat you started, and
+   no other. Once `bun run test` passes, and before
    the PR is opened, the `meerkat-qa` agent exercises the changed
    behaviour the way a user meets it. Turn each QA-found bug into a
    test that fails before the fix: the smallest test that catches
