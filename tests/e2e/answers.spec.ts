@@ -52,9 +52,10 @@ test.describe("meerkat --answers", () => {
 			expect(refused.stderr).toContain("Second question?");
 			expect(refused.stderr).not.toContain("Paused for human review");
 
+			// The en dash is outside Latin-1, which a UTF-8 locale's stdin once refused.
 			const submit = (questions: string[]) => spawnSync(MEERKAT_BIN, ["--answers"], {
 				cwd: fixture.dir, encoding: "utf8", timeout: budget(60_000), env: sanitisedGitEnv(),
-				input: JSON.stringify({ answers: questions.map(question => ({ location: "global", question, answer: `Because **${question}**` })) }),
+				input: JSON.stringify({ answers: questions.map(question => ({ location: "global", question, answer: `Because – **${question}**` })) }),
 			});
 			expect(submit(["First question?"]).status).toBe(0);
 			refused = commit();

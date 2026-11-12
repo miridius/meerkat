@@ -365,10 +365,15 @@ defmodule Meerkat.CLI do
 
   # `IO.binread` takes the bytes as sent. `IO.read` decodes them
   # against the locale, so under `LANG=C` an answer holding any
-  # non-ASCII character is stored mojibaked.
-  defp read_stdin(device \\ :stdio) do
-    case IO.binread(device, :eof) do
-      data when is_binary(data) -> {:ok, data}
+  # non-ASCII character is stored mojibaked. Under a UTF-8 locale the
+  # BEAM opens stdin in unicode mode, where `IO.binread` refuses any
+  # character outside Latin-1, so the device is switched to latin1
+  # first.
+  defp read_stdin(device \\ :standard_io) do
+    with :ok <- :io.setopts(device, encoding: :latin1),
+         data when is_binary(data) <- IO.binread(device, :eof) do
+      {:ok, data}
+    else
       :eof -> {:ok, ""}
       {:error, reason} -> {:error, "couldn't read stdin: #{inspect(reason)}"}
     end
