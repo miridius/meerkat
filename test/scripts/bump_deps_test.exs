@@ -271,6 +271,7 @@ defmodule Meerkat.BumpDepsHookTest do
              )
 
     assert committed(ctx, ".tool-versions") == "base\nbun 9.9.9\n"
+    assert committed(ctx, ".github/actions/toolchain/action.yml") == "base\nbumped\n"
     assert committed(ctx, "pnpm-workspace.yaml") == "base\npruned\n"
   end
 

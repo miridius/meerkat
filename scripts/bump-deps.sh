@@ -22,9 +22,10 @@
 #   floor lifted for it.
 # - Toolchain: scripts/toolchain.ts moves the pins in
 #   .tool-versions, .github/toolchain.env, package.json's packageManager and the
-#   workflows' actions onto their targets. Then scripts/setup-toolchain.ts
-#   installs any pinned Hex or rebar3 still missing, and with mise any
-#   pinned Erlang, Elixir or Bun, so the checks do not run without them.
+#   actions that the workflows and .github/actions/toolchain use onto their
+#   targets. Then scripts/setup-toolchain.ts installs any pinned Hex or
+#   rebar3 still missing, and with mise any pinned Erlang, Elixir or Bun,
+#   so the checks do not run without them.
 #
 # A package whose latest release is the one its scripts/dep-exemptions.json
 # entry names is left where it is; for JS, that is either the latest
@@ -55,7 +56,7 @@ load_exemptions
 
 files=(mix.exs mix.lock package.json pnpm-lock.yaml assets/package.json
   pnpm-workspace.yaml .tool-versions .github/toolchain.env .github/workflows/ci.yml
-  .github/workflows/audit.yml)
+  .github/workflows/audit.yml .github/actions/toolchain/action.yml)
 before=()
 for file in "${files[@]}"; do
   before+=("$(git hash-object -- "$file" 2>/dev/null || true)")

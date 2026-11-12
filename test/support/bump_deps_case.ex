@@ -135,7 +135,7 @@ defmodule Meerkat.BumpDepsCase do
 
     for file <-
           ~w(mix.lock package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json code.txt
-             .tool-versions .github/toolchain.env) do
+             .tool-versions .github/toolchain.env .github/actions/toolchain/action.yml) do
       File.mkdir_p!(Path.dirname(Path.join(work, file)))
       File.write!(Path.join(work, file), "base\n")
     end
@@ -213,6 +213,7 @@ defmodule Meerkat.BumpDepsCase do
         if [[ -e '#{base}/fail-'"${1#scripts/}" ]]; then echo "$1 failed"; exit 1; fi
         if [[ "$1" == scripts/toolchain.ts && -e '#{base}/toolchain-behind' ]]; then
           echo "bun 9.9.9" >> .tool-versions
+          echo "bumped" >> .github/actions/toolchain/action.yml
         fi ;;
     esac
     """)

@@ -20,21 +20,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Load toolchain pins
-        run: grep -v '^#' .github/toolchain.env >> "$GITHUB_ENV"
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .tool-versions
-
-      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
-        with:
-          version-file: .tool-versions
-          version-type: strict
-          install-hex: false
-          install-rebar: false
-
-      - run: bun scripts/setup-toolchain.ts
+      - uses: ./.github/actions/toolchain
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 

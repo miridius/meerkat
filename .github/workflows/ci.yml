@@ -22,22 +22,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Load toolchain pins
-        run: grep -v '^#' .github/toolchain.env >> "$GITHUB_ENV"
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: .tool-versions
-
-      - id: beam
-        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
-        with:
-          version-file: .tool-versions
-          version-type: strict
-          install-hex: false
-          install-rebar: false
-
-      - run: bun scripts/setup-toolchain.ts
+      # Each pinned tool but pnpm is cached per pin, so once a pin is cached
+      # on main no run needs its download host. Bun aside, a cache is saved
+      # as soon as its tool installs and passes any check it has, even if
+      # the run later fails.
+      - uses: ./.github/actions/toolchain
 
       # meerkat's own build is left out: checkout leaves lib/ newer than a
       # restored build, and bin/meerkat-beam then recompiles on every launch.
@@ -47,18 +36,18 @@ jobs:
             deps
             _build
             !_build/*/lib/meerkat
-          key: mix-${{ runner.os }}-${{ runner.arch }}-otp${{ steps.beam.outputs.otp-version }}-elixir${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock') }}
+          key: mix-${{ runner.os }}-${{ runner.arch }}-otp${{ env.ERLANG_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-${{ runner.os }}-${{ runner.arch }}-otp${{ steps.beam.outputs.otp-version }}-elixir${{ steps.beam.outputs.elixir-version }}-
+            mix-${{ runner.os }}-${{ runner.arch }}-otp${{ env.ERLANG_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           cache: true
 
       # bin/meerkat-attach opens a named fd (`exec {fd}<`), which the
-      # image's bash 3.2 lacks. The build is cached per pin.
+      # image's bash 3.2 lacks.
       - id: gnu-bash
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/gnu-bash
           key: gnu-bash-${{ runner.os }}-${{ runner.arch }}-${{ env.GNU_BASH_VERSION }}-${{ env.GNU_BASH_SHA256 }}
@@ -71,10 +60,16 @@ jobs:
           echo "$HOME/.local/gnu-bash/bin" >> "$GITHUB_PATH"
           "$HOME/.local/gnu-bash/bin/bash" -c '[[ "$BASH_VERSION" == "${GNU_BASH_VERSION%.*}".* ]]'
 
+      - if: steps.gnu-bash.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/gnu-bash
+          key: ${{ steps.gnu-bash.outputs.cache-primary-key }}
+
       # PlantUML lays diagrams out with Graphviz's dot, which the image
-      # lacks. The build is cached per pin.
+      # lacks.
       - id: graphviz
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/graphviz
           key: graphviz-${{ runner.os }}-${{ runner.arch }}-${{ env.GRAPHVIZ_VERSION }}-${{ env.GRAPHVIZ_SHA256 }}
@@ -87,23 +82,56 @@ jobs:
           echo "$HOME/.local/graphviz/bin" >> "$GITHUB_PATH"
           "$HOME/.local/graphviz/bin/dot" -V 2>&1 | grep -F "graphviz version $GRAPHVIZ_VERSION "
 
-      # The PlantUML unit and e2e tests render with the real plantuml.
+      - if: steps.graphviz.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/graphviz
+          key: ${{ steps.graphviz.outputs.cache-primary-key }}
+
+      # The PlantUML unit and e2e tests render with the real plantuml. The
+      # zip is cached as downloaded, and checked on every run.
+      - id: plantuml
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci/plantuml.zip
+          key: plantuml-${{ runner.os }}-${{ runner.arch }}-${{ env.PLANTUML_VERSION }}-${{ env.PLANTUML_SHA256 }}
+
+      - if: steps.plantuml.outputs.cache-hit != 'true'
+        run: curl -fsSL --retry 5 --retry-all-errors --create-dirs -o ~/.cache/ci/plantuml.zip "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/native-plantuml-macos-arm64-$PLANTUML_VERSION.zip"
+
       - name: Install PlantUML
         run: |
-          curl -fsSLo plantuml.zip "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/native-plantuml-macos-arm64-$PLANTUML_VERSION.zip"
-          echo "$PLANTUML_SHA256  plantuml.zip" | shasum -a 256 -c
-          unzip -q plantuml.zip -d "$RUNNER_TEMP/plantuml"
-          rm plantuml.zip
+          echo "$PLANTUML_SHA256  $HOME/.cache/ci/plantuml.zip" | shasum -a 256 -c
+          unzip -q ~/.cache/ci/plantuml.zip -d "$RUNNER_TEMP/plantuml"
           echo "$RUNNER_TEMP/plantuml" >> "$GITHUB_PATH"
 
+      - if: steps.plantuml.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci/plantuml.zip
+          key: ${{ steps.plantuml.outputs.cache-primary-key }}
+
       # Clojure hover's unit and e2e tests analyse with the real clj-kondo.
+      - id: clj-kondo
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci/clj-kondo.zip
+          key: clj-kondo-${{ runner.os }}-${{ runner.arch }}-${{ env.CLJ_KONDO_VERSION }}-${{ env.CLJ_KONDO_SHA256 }}
+
+      - if: steps.clj-kondo.outputs.cache-hit != 'true'
+        run: curl -fsSL --retry 5 --retry-all-errors --create-dirs -o ~/.cache/ci/clj-kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$CLJ_KONDO_VERSION/clj-kondo-$CLJ_KONDO_VERSION-macos-aarch64.zip"
+
       - name: Install clj-kondo
         run: |
-          curl -fsSLo kondo.zip "https://github.com/clj-kondo/clj-kondo/releases/download/v$CLJ_KONDO_VERSION/clj-kondo-$CLJ_KONDO_VERSION-macos-aarch64.zip"
-          echo "$CLJ_KONDO_SHA256  kondo.zip" | shasum -a 256 -c
-          unzip -q kondo.zip -d "$RUNNER_TEMP/clj-kondo"
-          rm kondo.zip
+          echo "$CLJ_KONDO_SHA256  $HOME/.cache/ci/clj-kondo.zip" | shasum -a 256 -c
+          unzip -q ~/.cache/ci/clj-kondo.zip -d "$RUNNER_TEMP/clj-kondo"
           echo "$RUNNER_TEMP/clj-kondo" >> "$GITHUB_PATH"
+
+      - if: steps.clj-kondo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci/clj-kondo.zip
+          key: ${{ steps.clj-kondo.outputs.cache-primary-key }}
 
       - run: mix deps.get
       - run: bun scripts/hex-audit.ts
@@ -122,7 +150,27 @@ jobs:
 
       - run: bun test tests/e2e/lib
 
-      - run: bunx playwright install --only-shell chromium
+      # The browser is cached per Playwright version.
+      - name: Read the Playwright version
+        run: |
+          version=$(bunx playwright --version)
+          echo "PLAYWRIGHT_VERSION=${version#Version }" >> "$GITHUB_ENV"
+
+      - id: playwright
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
+
+      - if: steps.playwright.outputs.cache-hit != 'true'
+        run: bunx playwright install --only-shell chromium
+
+      - if: steps.playwright.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: ${{ steps.playwright.outputs.cache-primary-key }}
+
       - run: bun run test:e2e
 
       - if: failure()

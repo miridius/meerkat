@@ -46,6 +46,13 @@ defmodule Meerkat.ToolchainTest do
         - uses: actions/checkout@#{@checkout_sha} # v7.0.1
   """
 
+  @action """
+  runs:
+    using: composite
+    steps:
+      - uses: actions/checkout@#{@checkout_sha} # v7.0.1
+  """
+
   setup do
     base = Meerkat.TestHelpers.tmp_path("meerkat-toolchain")
     on_exit(fn -> File.rm_rf!(base) end)
@@ -61,6 +68,8 @@ defmodule Meerkat.ToolchainTest do
     File.write!(Path.join(base, ".tool-versions"), @tool_versions)
     File.write!(Path.join(base, ".github/workflows/ci.yml"), @ci)
     File.write!(Path.join(base, ".github/workflows/audit.yml"), @audit)
+    File.mkdir_p!(Path.join(base, ".github/actions/toolchain"))
+    File.write!(Path.join(base, ".github/actions/toolchain/action.yml"), @action)
 
     File.write!(
       Path.join(base, "package.json"),
@@ -564,7 +573,8 @@ defmodule Meerkat.ToolchainTest do
   end
 
   describe "a workflow action" do
-    test "moves to its newest release's commit in every workflow", ctx do
+    test "moves to its newest release's commit in every workflow and the toolchain action",
+         ctx do
       github(ctx, "actions/checkout", [{"v7.0.1", @old}, {"v6.9.0", @old}, {"v7.1.0", @old}])
       commit(ctx, "actions/checkout", "v7.1.0", @checkout_next)
 
@@ -573,8 +583,8 @@ defmodule Meerkat.ToolchainTest do
 
       assert {_, 0} = toolchain(ctx, "bump")
 
-      for file <- ~w(ci.yml audit.yml) do
-        assert File.read!(Path.join(ctx.base, ".github/workflows/" <> file)) =~
+      for file <- ~w(workflows/ci.yml workflows/audit.yml actions/toolchain/action.yml) do
+        assert File.read!(Path.join(ctx.base, ".github/" <> file)) =~
                  "uses: actions/checkout@#{@checkout_next} # v7.1.0\n"
       end
     end

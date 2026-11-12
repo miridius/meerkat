@@ -55,7 +55,7 @@ if (!existsSync(installed) || sha256(installed) !== rebarSha) {
 	const dir = mkdtempSync(join(tmpdir(), "rebar3-"));
 	try {
 		const file = join(dir, "rebar3");
-		await $`curl -fsSLo ${file} https://github.com/erlang/rebar3/releases/download/${rebar}/rebar3`;
+		await $`curl -fsSL --retry 5 --retry-all-errors -o ${file} https://github.com/erlang/rebar3/releases/download/${rebar}/rebar3`;
 		const sha = sha256(file);
 		if (sha !== rebarSha) {
 			console.error(`scripts/setup-toolchain.ts: rebar3 ${rebar} hashes to ${sha}, not ${rebarSha}.`);
