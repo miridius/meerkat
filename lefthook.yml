@@ -18,7 +18,7 @@ pre-commit:
       run: bash scripts/no-main-commits.sh
     bump-deps:
       priority: 2
-      run: bash scripts/bump-deps.sh
+      run: bun scripts/bump-deps.ts
     check:
       priority: 3
       run: bash scripts/check.sh

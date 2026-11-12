@@ -10,12 +10,6 @@
     },
     "test/scripts/shepherd_test.exs": {
       "reason": "Took 58-88 s: it drives the real launcher against a fake BEAM, and two tests of its missing-pid wait take about 10 s each. Its waits are load-tolerant, not shorter; shorten those tests, then drop this entry."
-    },
-    "test/scripts/outdated_test.exs": {
-      "reason": "Took 50-57 s, so heavier load is likely to take it over 60 s: 46 tests each run outdated.sh, several times in some. Speed it up, then drop this entry."
-    },
-    "test/scripts/bump_deps_test.exs": {
-      "reason": "Took 50 s in a full suite run with its fixture built once per module, so a gate sharing the machine with another is likely to take it over 60 s: 28 tests each commit through the real lefthook and bump-deps.sh, most also through check.sh. Speed it up, then drop this entry."
     }
   }
 }

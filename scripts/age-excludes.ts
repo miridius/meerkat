@@ -6,9 +6,9 @@
 // stale.
 //
 //   bun scripts/age-excludes.ts prune   drops each stale entry
-//                                       (scripts/bump-deps.sh)
+//                                       (scripts/bump-deps.ts)
 //   bun scripts/age-excludes.ts check   lists each stale entry and exits 1
-//                                       if any (scripts/outdated.sh)
+//                                       if any (scripts/outdated.ts)
 //
 // Both exit 2, saying why, when an entry is not an exact name@version or
 // its publish time cannot be read.

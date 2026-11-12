@@ -23,6 +23,7 @@ defmodule Meerkat.PreCommitHookTest do
     "mix-test.sh",
     "bun test",
     "bun test tests/e2e/lib",
+    "bun test scripts",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"
@@ -87,8 +88,8 @@ defmodule Meerkat.PreCommitHookTest do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
-    # test/scripts/bump_deps_test.exs covers the dependency bump.
-    File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
+    # test/scripts/bump_deps_test.exs covers the dependency bump, which the
+    # bun stub below skips.
     # test/scripts/mix_test_test.exs covers the runner itself. Replace this
     # with `exec mix-test.sh` so the PATH stub logs check.sh's test step as
     # `mix-test.sh` and catches a regression to plain `mix test`.
@@ -124,9 +125,11 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
-    # The real bun judges which paths are e2e inputs.
+    # The real bun judges which paths are e2e inputs. The dependency bump
+    # is skipped unlogged.
     case "$(basename "$0") ${1:-}" in
     "bun "*e2e-inputs.ts) exec '#{System.find_executable("bun")}' "$@" ;;
+    "bun scripts/bump-deps.ts") exit 0 ;;
     esac
     # With STUB_PROBE_SLOTS set, log each tool that runs while it, or a
     # process between it and the gate, holds a gate slot too: that process

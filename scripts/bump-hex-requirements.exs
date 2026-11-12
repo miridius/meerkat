@@ -1,5 +1,5 @@
 # Rewrites mix.exs requirements so each named Hex package can reach
-# the given release. scripts/bump-deps.sh passes `name version` pairs
+# the given release. scripts/bump-deps.ts passes `name version` pairs
 # from `mix hex.outdated`'s "Update not possible" rows. A `~>`
 # requirement keeps its precision: with latest 0.15.2, "~> 0.14.0"
 # becomes "~> 0.15.2"; with latest 2.1.0, "~> 1.2" becomes "~> 2.1".

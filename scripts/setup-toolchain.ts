@@ -5,7 +5,7 @@
 // pins when mise lists one as missing, and the Elixir is the pinned one,
 // whether or not mise is activated; a shim would otherwise install a new
 // Elixir without its Hex. CI, the worktree setup hook, scripts/install.sh
-// and scripts/bump-deps.sh run it; it does nothing when all are in place.
+// and scripts/bump-deps.ts run it; it does nothing when all are in place.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";

@@ -10,20 +10,32 @@
 // commit goes through the pre-commit hook too, which checks it. Git ignores
 // this hook's exit status, so a failure leaves the rebase done and says so.
 
-const run = (cmd: string[]) => Bun.spawnSync(cmd, { stdio: ["ignore", "inherit", "inherit"] }).exitCode;
+import { main, showStderr, type Sys } from "./deps-common.ts";
 
-function fail(what: string): never {
-	console.error(`post-rewrite: ${what}, so the rebase was left without a dependency bump commit.`);
-	const left = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.toString();
-	if (left) console.error("  The bump's changes are left in the worktree; `git status` lists them.");
-	console.error("  The pre-push gate refuses the push while dependencies are outdated.");
-	process.exit(1);
-}
-
-if (process.argv[2] === "rebase") {
-	if (run(["bash", "scripts/bump-deps.sh"]) !== 0) fail("scripts/bump-deps.sh failed");
-	if (run(["git", "diff", "--cached", "--quiet"]) !== 0) {
-		if (run(["git", "commit", "-q", "-m", "Bump dependencies"]) !== 0) fail("the bump could not be committed");
-		console.log("post-rewrite: committed the dependency bump on top of the rebase.");
+// rebaseBump COMMAND SYS: the hook's exit status, printing what it did.
+export async function rebaseBump(command: string | undefined, sys: Sys): Promise<number> {
+	const run = async (...cmd: string[]) => (await sys.run(cmd, { inherit: true })).code;
+	// unbumped WHY: prints that the rebase has no bump commit, and why, and
+	// returns the hook's status.
+	async function unbumped(why: string): Promise<number> {
+		sys.err(`${sys.prefix} ${why}, so the rebase was left without a dependency bump commit.`);
+		const status = await sys.run(["git", "status", "--porcelain", "--untracked-files=no"]);
+		if (status.code !== 0) {
+			sys.err("  git status failed, so the bump's changes may be left in the worktree:");
+			showStderr(sys, status);
+		} else if (status.stdout) sys.err("  The bump's changes are left in the worktree; `git status` lists them.");
+		sys.err("  The pre-push gate refuses the push while dependencies are outdated.");
+		return 1;
 	}
+
+	if (command !== "rebase") return 0;
+	if ((await run("bun", "scripts/bump-deps.ts")) !== 0) return unbumped("scripts/bump-deps.ts failed");
+	if ((await run("git", "diff", "--cached", "--quiet")) !== 0) {
+		if ((await run("git", "commit", "-q", "-m", "Bump dependencies")) !== 0)
+			return unbumped("the bump could not be committed");
+		sys.out(`${sys.prefix} committed the dependency bump on top of the rebase.`);
+	}
+	return 0;
 }
+
+if (import.meta.main) await main("post-rewrite:", (sys) => rebaseBump(process.argv[2], sys));

@@ -1,729 +1,136 @@
 defmodule Meerkat.OutdatedGateTest do
-  # Runs the repo's real scripts/outdated.sh against an exemption table
-  # each test writes. Only mix, pnpm, curl and gh are replaced, by stubs on
-  # PATH that report the outdated packages a test sets up.
+  # The seam between scripts/outdated.ts and the tools it runs: the real
+  # script, run by bun, against stubs for mix, pnpm, curl, gh and bun on
+  # PATH. scripts/outdated.test.ts covers the gate's logic.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
+  @bun System.find_executable("bun")
 
-  @hex_header "Dependency  Only  Current  Latest  Status\n"
-
-  @hex_lock """
-  %{
-    "mdex": {:hex, :mdex, "0.14.1", "abc", [:mix], [], "hexpm", "def"},
-  }
-  """
-
-  @old "2020-01-01T00:00:00.000000Z"
-
-  @git_lock """
+  @lock """
   %{
     "mdex": {:hex, :mdex, "0.14.1", "abc", [:mix], [], "hexpm", "def"},
     "muex": {:git, "https://github.com/someone/muex.git", "a628d48", [ref: "a628d48"]},
-    "plug_x": {:git, "https://github.com/someone/plug_x.git", "b1c2d3e", [ref: "b1c2d3e"]},
   }
   """
 
-  setup do
-    base = Meerkat.TestHelpers.make_tmp_repo("meerkat-outdated")
+  @hex_report """
+  Dependency  Only  Current  Latest  Status
+  jason  1.4.3  1.4.5  Update possible
+  plug  1.20.3  2.1.1  Update not possible
+  """
+
+  test "the gate reads each tool's report and blocks the push on what is behind" do
+    base = Meerkat.TestHelpers.tmp_path("meerkat-outdated")
     on_exit(fn -> File.rm_rf!(base) end)
-
     stubs = Path.join(base, "stubs")
-    hex_out = Path.join(base, "hex.out")
-    pnpm_out = Path.join(base, "pnpm.json")
-    registry_out = Path.join(base, "pnpm-registry.json")
-    hex_api = Path.join(base, "hex-api")
-    github_api = Path.join(base, "github-api")
-    refuse = Path.join(base, "refuse")
-    scratch_log = Path.join(base, "scratch.log")
-    synced = Path.join(base, "deps-synced")
-    fail_get = Path.join(base, "fail-deps-get")
-    js_synced = Path.join(base, "node-modules-synced")
-    fail_install = Path.join(base, "fail-pnpm-install")
-    git_env = Path.join(base, "git-env")
-
+    log = Path.join(base, "log")
     File.mkdir_p!(Path.join(base, "scripts"))
-    File.mkdir_p!(refuse)
+    File.mkdir_p!(Path.join(base, "assets"))
+    File.mkdir_p!(stubs)
 
-    for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
-      File.mkdir_p!(Path.dirname(Path.join(base, file)))
-      File.write!(Path.join(base, file), "base\n")
-    end
-
-    File.write!(Path.join(base, "mix.lock"), @hex_lock)
-
-    for script <- ~w(outdated.sh deps-common.sh hex-cooldown.ts) do
+    for script <- ~w(outdated.ts deps-common.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([base, "scripts", script]))
     end
 
-    File.write!(hex_out, @hex_header <> "mdex  0.14.1  0.14.1  Up-to-date\n")
-    File.write!(pnpm_out, "{}")
+    for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json),
+        do: File.write!(Path.join(base, file), "base\n")
 
-    File.mkdir_p!(stubs)
-    File.mkdir_p!(hex_api)
-    File.write!(Path.join(hex_api, "plug.json"), releases([{"2.1.1", @old}, {"2.1.0", @old}]))
+    File.write!(Path.join(base, "mix.lock"), @lock)
 
-    # Like real deps/ and node_modules/ after a rebase changes the
-    # lockfiles, hex.outdated aborts until deps.get has fetched the locked
-    # versions, and pnpm outdated reports a release node_modules/ holds
-    # until pnpm install has installed the locked ones. Each sync records
-    # the GIT_INDEX_FILE it sees.
+    File.write!(
+      Path.join(base, "scripts/dep-exemptions.json"),
+      ~s({"jason": {"version": "1.4.5", "reason": "x"}})
+    )
+
+    young = DateTime.utc_now() |> DateTime.add(-12, :hour) |> DateTime.to_iso8601()
+    old = "2020-01-01T00:00:00.000000Z"
+
+    hex_record = fn version, at ->
+      Jason.encode!(%{
+        "releases" => [%{"version" => version, "inserted_at" => at}],
+        "meta" => %{"links" => %{"GitHub" => "https://github.com/upstream/muex"}}
+      })
+    end
+
+    File.write!(Path.join(base, "plug.json"), hex_record.("2.1.1", young))
+    File.write!(Path.join(base, "muex.json"), hex_record.("0.11.2", old))
+
+    # Each stub logs its command line with the cwd, GIT_INDEX_FILE and, for
+    # curl, its stdin.
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
     cmd="$(basename "$0") $*"
-    if [[ "$cmd" == "pnpm -r outdated "* && ! -e '#{js_synced}' ]]; then
-      echo '{"vite": {"current": "8.2.0", "latest": "8.3.1"}}'; exit 1
-    fi
+    stdin=""
+    if [[ "$cmd" == "curl "*" -K - "* ]]; then stdin=$(cat); fi
+    echo "$cmd | ${PWD##*/} | ${GIT_INDEX_FILE-unset} | $stdin" >> '#{log}'
     case "$cmd" in
-      "mix deps.get --check-locked")
-        echo "deps.get ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
-        if [[ -e '#{fail_get}' ]]; then echo "** (Mix) lock would change"; exit 1; fi
-        touch '#{synced}' ;;
-      "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline")
-        echo "pnpm install ${GIT_INDEX_FILE-unset}" >> '#{git_env}'
-        if [[ -e '#{fail_install}' ]]; then echo "ERR_PNPM_OUTDATED_LOCKFILE"; exit 1; fi
-        # assets/package.json takes packages from deps/.
-        if [[ ! -e '#{synced}' ]]; then echo "ENOENT: scandir 'deps/phoenix'"; exit 1; fi
-        touch '#{js_synced}' ;;
-      "mix hex.outdated")
-        if [[ ! -e '#{synced}' ]]; then
-          echo "  lock mismatch: the dependency is out of date. To fetch locked version run \\"mix deps.get\\""
-          echo "** (Mix) Can't continue due to errors on dependencies"
-          exit 1
-        fi
-        cat '#{hex_out}'; exit 1 ;;
-      "pnpm -r outdated --format json") cat '#{pnpm_out}'; exit 1 ;;
+      "mix hex.outdated") printf '%s' '#{@hex_report}'; exit 1 ;;
       "pnpm -r outdated --format json --config.minimum-release-age=0")
-        if [[ -e '#{registry_out}' ]]; then cat '#{registry_out}'; else cat '#{pnpm_out}'; fi
-        exit 1 ;;
-      "pnpm -r update --latest --lockfile-only --ignore-scripts "*)
-        # Only a scratch copy of the workspace, without the repo's scripts/.
-        [[ ! -e scripts && -f package.json && -f pnpm-workspace.yaml && -f pnpm-lock.yaml &&
-           -f assets/package.json && -L deps ]] || { echo "not a scratch workspace copy"; exit 1; }
-        echo "updated $6" | tee -a package.json >> pnpm-lock.yaml
-        echo "$PWD" >> '#{scratch_log}'
-        if [[ -d patches ]]; then cat patches/* >> '#{base}/scratch-patches'; fi
-        if [[ -e '#{refuse}'/"$6" ]]; then cat '#{refuse}'/"$6"; exit 1; fi ;;
-      "curl "*/api/packages/*) url="${@: -1}"; cat '#{hex_api}'/"${url##*/}.json" ;;
-      "curl "*api.github.com/*)
-        cat >>'#{base}/curl-config'
-        url="${@: -1}"; f='#{github_api}'/"${url#https://api.github.com/}"
-        if [[ -e "$f" ]]; then cat "$f"; printf '\\n%s' "$(cat "$f.code" 2>/dev/null || echo 200)"
-        else printf '\\n404'; fi ;;
-      "gh auth token") cat '#{base}/gh-token' 2>/dev/null ;;
-      "bun scripts/hex-cooldown.ts "*) exec '#{System.find_executable("bun")}' "$@" ;;
-      "bun scripts/toolchain.ts check")
-        echo "toolchain checked"; exit "$(cat '#{base}/toolchain-code' 2>/dev/null || echo 0)" ;;
-      "bun scripts/age-excludes.ts check")
-        echo "excludes checked"; exit "$(cat '#{base}/excludes-code' 2>/dev/null || echo 0)" ;;
+        echo ' WARN  deprecated subdependency' >&2
+        echo '{"vite": {"current": "8.2.0", "latest": "8.3.2"}}'; exit 1 ;;
+      "pnpm -r outdated --format json") echo '{"vite": {"current": "8.2.0", "latest": "8.3.1"}}'; exit 1 ;;
+      "pnpm -r update --latest --lockfile-only --ignore-scripts vite")
+        [[ -f pnpm-workspace.yaml && -f assets/package.json && -L deps ]] || exit 3 ;;
+      "curl -sSf --max-time 10 https://hex.pm/api/packages/"*)
+        cat '#{base}'/"${cmd##*/}.json" ;;
+      "curl -sSL "*"/compare/v0.11.2...someone:muex:a628d48")
+        printf '{"status": "behind"}\\n200' ;;
+      "gh auth token") echo gh-t0k ;;
+      "bun scripts/toolchain.ts check") echo "toolchain checked" ;;
     esac
     """)
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
     for tool <- ~w(mix pnpm curl gh bun), do: File.ln_s!("stub", Path.join(stubs, tool))
 
-    {:ok,
-     base: base,
-     stubs: stubs,
-     hex_out: hex_out,
-     pnpm_out: pnpm_out,
-     registry_out: registry_out,
-     hex_api: hex_api,
-     github_api: github_api,
-     refuse: refuse,
-     scratch_log: scratch_log,
-     fail_get: fail_get,
-     fail_install: fail_install,
-     git_env: git_env}
-  end
+    assert {out, 1} =
+             System.cmd(@bun, [Path.join(base, "scripts/outdated.ts")],
+               cd: @root,
+               env: [
+                 {"PATH", stubs <> ":" <> System.fetch_env!("PATH")},
+                 {"GITHUB_TOKEN", nil},
+                 {"GIT_INDEX_FILE", "/nonexistent/index"}
+               ],
+               stderr_to_stdout: true
+             )
 
-  test "a package behind latest without an exemption blocks the push", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.pnpm_out, ~s({"vite": {"current": "8.2.0", "latest": "8.3.1"}}))
-
-    File.write!(ctx.hex_out, """
-    #{@hex_header}jason  dev,test  1.4.3  1.4.5  Update possible
-    plug  1.20.3  2.1.0  Update not possible
-    bandit  1.12.4  1.12.5  Update possible (cooldown)
-    """)
-
-    assert {out, 1} = run(ctx)
+    refute out =~ "WARN  deprecated subdependency"
     assert out =~ "BLOCKED: vite is outdated (latest: 8.3.1)"
-    assert out =~ "BLOCKED: jason is outdated (latest: 1.4.5)"
-    assert out =~ "BLOCKED: plug is outdated (latest: 2.1.0)"
-    refute out =~ "bandit is outdated"
-  end
-
-  test "current dependencies pass the gate", ctx do
-    exempt(ctx, %{})
-
-    assert {out, 0} = run(ctx)
-    assert out =~ "=== toolchain ===\ntoolchain checked"
-    assert out =~ "all dependencies current."
-  end
-
-  test "a CI toolchain pin off its target blocks the push", ctx do
-    exempt(ctx, %{})
-    File.write!(Path.join(ctx.base, "toolchain-code"), "1")
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "dependencies are behind latest"
-  end
-
-  test "a CI toolchain it cannot check blocks the push at once", ctx do
-    exempt(ctx, %{"jason" => entry("1.4.5")})
-    File.write!(Path.join(ctx.base, "toolchain-code"), "2")
-
-    assert {out, 1} = run(ctx)
     refute out =~ "stale exemption"
-  end
-
-  test "a stale minimumReleaseAgeExclude entry blocks the push", ctx do
-    exempt(ctx, %{})
-    File.write!(Path.join(ctx.base, "excludes-code"), "1")
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "excludes checked"
-    assert out =~ "dependencies are behind latest"
-  end
-
-  test "minimumReleaseAgeExclude entries it cannot check block the push at once", ctx do
-    exempt(ctx, %{"jason" => entry("1.4.5")})
-    File.write!(Path.join(ctx.base, "excludes-code"), "2")
-
-    assert {out, 1} = run(ctx)
-    refute out =~ "stale exemption"
-  end
-
-  test "an unreadable report blocks the push", ctx do
-    exempt(ctx, %{})
-
-    for file <- [ctx.registry_out, ctx.pnpm_out], report <- ["", "[]", ~s("oops"), "null"] do
-      File.write!(ctx.registry_out, "{}")
-      File.write!(ctx.pnpm_out, "{}")
-      File.write!(file, report)
-      assert {out, 1} = run(ctx)
-      assert out =~ "cannot check JS deps"
-      assert out =~ "--config.minimum-release-age=0 produced" == (file == ctx.registry_out)
-    end
-
-    File.write!(ctx.pnpm_out, "{}")
-
-    for report <- [
-          "** (Mix) boom\n",
-          @hex_header <> "** (Mix) Could not fetch registry\n",
-          @hex_header <> "plug  1.20.3  2.1.1  Update retired (cooldown)\n",
-          @hex_header <> "plug  1.20.3  2.1.1  Update not possible (cooldown)\n"
-        ] do
-      File.write!(ctx.hex_out, report)
-      assert {out, 1} = run(ctx)
-      assert out =~ "cannot check Hex deps"
-    end
-  end
-
-  test "deps/ out of sync with mix.lock is fetched before the Hex report", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.hex_out, @hex_header <> "jason  1.4.3  1.4.5  Update possible\n")
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "BLOCKED: jason is outdated (latest: 1.4.5)"
-    refute out =~ "lock mismatch"
-  end
-
-  test "a fetch that would change mix.lock blocks the push", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.fail_get, "")
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "** (Mix) lock would change"
-    assert out =~ "mix deps.get --check-locked failed — cannot check Hex deps"
-  end
-
-  test "node_modules/ out of sync with pnpm-lock.yaml is installed before the JS report",
-       ctx do
-    exempt(ctx, %{})
-
-    assert {out, 0} = run(ctx)
-    refute out =~ "vite"
-  end
-
-  test "an install that would change pnpm-lock.yaml blocks the push", ctx do
-    exempt(ctx, %{})
-    File.write!(ctx.fail_install, "")
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "ERR_PNPM_OUTDATED_LOCKFILE"
-    assert out =~ "pnpm install --frozen-lockfile failed — cannot check JS deps"
-  end
-
-  # Git exports GIT_INDEX_FILE to hooks; a git dependency fetched with it
-  # set would write to this checkout's index.
-  test "the syncs run once each, Hex first, without the index Git exports to hooks", ctx do
-    exempt(ctx, %{})
-
-    assert {_, 0} = run(ctx, %{"GIT_INDEX_FILE" => "/nonexistent/index"})
-    assert File.read!(ctx.git_env) == "deps.get unset\npnpm install unset\n"
-  end
-
-  test "an exemption covering the latest release passes the gate", ctx do
-    exempt(ctx, %{"shiki" => entry("4.4.3"), "plug" => entry("2.1.0")})
-    behind(ctx)
-
-    assert {out, 0} = run(ctx)
-    assert out =~ "exempt: shiki@4.4.3 (upstream needs shiki 3)"
-    assert out =~ "exempt: plug@2.1.0"
-  end
-
-  test "an exemption for an older release fails once a newer one is out", ctx do
-    exempt(ctx, %{"shiki" => entry("4.4.2"), "plug" => entry("2.1.0")})
-    behind(ctx)
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "stale exemption: shiki covers 4.4.2, but latest is 4.4.3"
-    assert out =~ "BLOCKED: shiki is outdated (latest: 4.4.3)"
-  end
-
-  # pnpm outdated reports the newest release past minimumReleaseAge as
-  # latest, so a release under 24h shows only once the floor is off.
-  describe "a JS release under 24h that pnpm outdated does not report" do
-    setup ctx do
-      File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.2"}}))
-      File.write!(ctx.registry_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
-    end
-
-    test "leaves the release pnpm reports required", ctx do
-      exempt(ctx, %{})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "BLOCKED: shiki is outdated (latest: 4.4.2)"
-    end
-
-    test "makes an exemption for the release pnpm reports stale", ctx do
-      exempt(ctx, %{"shiki" => entry("4.4.2")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: shiki covers 4.4.2, but latest is 4.4.3"
-    end
-
-    test "is covered by an exemption naming it", ctx do
-      exempt(ctx, %{"shiki" => entry("4.4.3")})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "exempt: shiki@4.4.3"
-    end
-  end
-
-  # pnpm outdated leaves out a package installed at the newest release
-  # past minimumReleaseAge, though a younger release makes it behind.
-  describe "a JS release under 24h when pnpm outdated leaves the package out" do
-    setup ctx do
-      File.write!(ctx.registry_out, ~s({"shiki": {"current": "4.4.2", "latest": "4.4.3"}}))
-    end
-
-    test "passes the gate without an exemption", ctx do
-      exempt(ctx, %{})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "all dependencies current."
-    end
-
-    test "is covered by an exemption naming it", ctx do
-      exempt(ctx, %{"shiki" => entry("4.4.3")})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "exempt: shiki@4.4.3"
-    end
-
-    test "makes an exemption for an older release stale", ctx do
-      exempt(ctx, %{"shiki" => entry("4.4.1")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: shiki covers 4.4.1, but latest is 4.4.3"
-      refute out =~ "BLOCKED"
-      refute out =~ "not behind latest"
-    end
-  end
-
-  describe "a JS release pnpm outdated reports but pnpm refuses to install" do
-    setup ctx do
-      exempt(ctx, %{})
-      File.write!(ctx.pnpm_out, ~s({"lefthook": {"current": "2.1.16", "latest": "2.1.17"}}))
-
-      File.write!(
-        Path.join(ctx.refuse, "lefthook"),
-        " ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17 (released 24 hours ago) of lefthook-windows-x64 does not meet the minimumReleaseAge constraint\n"
-      )
-    end
-
-    test "passes the gate when a package version it requires is under 24h", ctx do
-      assert {out, 0} = run(ctx)
-      assert out =~ "ERR_PNPM_NO_MATURE_MATCHING_VERSION  Version 2.1.17"
-      assert out =~ "too young: lefthook@2.1.17 requires a package version under the 24h floor"
-    end
-
-    test "checks it on a scratch copy it removes, leaving the tree alone", ctx do
-      assert {_, 0} = run(ctx)
-      assert [scratch] = ctx.scratch_log |> File.read!() |> String.split("\n", trim: true)
-      refute File.exists?(scratch)
-
-      for file <- ~w(package.json pnpm-workspace.yaml pnpm-lock.yaml assets/package.json) do
-        assert File.read!(Path.join(ctx.base, file)) == "base\n"
-      end
-    end
-
-    test "gives the scratch copy the patches pnpm-workspace.yaml names", ctx do
-      File.mkdir_p!(Path.join(ctx.base, "patches"))
-      File.write!(Path.join([ctx.base, "patches", "pkg.patch"]), "the patch\n")
-
-      assert {_, 0} = run(ctx)
-      assert File.read!(Path.join(ctx.base, "scratch-patches")) == "the patch\n"
-    end
-
-    test "blocks the push when it cannot copy the workspace", ctx do
-      File.rm!(Path.join(ctx.base, "pnpm-workspace.yaml"))
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "could not copy the workspace to a scratch dir — cannot check lefthook"
-    end
-
-    test "blocks the push when pnpm fails for another reason", ctx do
-      File.write!(Path.join(ctx.refuse, "lefthook"), " ERR_PNPM_META_FETCH_FAIL  GET failed\n")
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "ERR_PNPM_META_FETCH_FAIL"
-      assert out =~ "pnpm could not resolve lefthook's latest release (exit 1)"
-    end
-  end
-
-  test "each exempted JS package passes, and an unexempted one blocks", ctx do
-    exempt(ctx, %{"shiki" => entry("4.4.3"), "vite" => entry("8.3.2")})
-
-    report = ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"},
-                 "vite": {"current": "8.2.0", "latest": "8.3.2"},
-                 "lefthook": {"current": "2.1.0", "latest": "2.1.16"}})
-
-    File.write!(ctx.pnpm_out, report)
-    File.write!(ctx.registry_out, report)
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "exempt: shiki@4.4.3"
-    assert out =~ "exempt: vite@8.3.2"
-    refute out =~ "BLOCKED: shiki"
-    refute out =~ "BLOCKED: vite"
-    assert out =~ "BLOCKED: lefthook is outdated (latest: 2.1.16)"
-  end
-
-  describe "a Hex release in cooldown" do
-    setup ctx do
-      File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.1  Update possible (cooldown)\n")
-    end
-
-    test "passes the gate without an exemption", ctx do
-      exempt(ctx, %{})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "too young: plug@2.1.1 is under the 24h Hex cooldown"
-    end
-
-    test "makes an exemption for an older release stale", ctx do
-      exempt(ctx, %{"plug" => entry("2.1.0")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: plug covers 2.1.0, but latest is 2.1.1"
-      refute out =~ "not behind latest"
-    end
-
-    test "is covered by an exemption naming it", ctx do
-      exempt(ctx, %{"plug" => entry("2.1.1")})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "exempt: plug@2.1.1"
-    end
-  end
-
-  # Hex marks the cooldown only on a release the requirements admit.
-  describe "a Hex release the requirements exclude" do
-    setup ctx do
-      exempt(ctx, %{})
-      File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.1  Update not possible\n")
-    end
-
-    test "passes the gate while hex.pm published it under 24h ago", ctx do
-      hex_release(ctx, "plug", releases([{"2.1.1", young()}, {"2.1.0", @old}]))
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "too young: plug@2.1.1 is under the 24h Hex cooldown"
-    end
-
-    test "blocks the push once it is 24h old", ctx do
-      assert {out, 1} = run(ctx)
-      assert out =~ "BLOCKED: plug is outdated (latest: 2.1.1)"
-    end
-
-    test "fails closed when hex.pm's record of it is unreadable", ctx do
-      for {report, why} <- [
-            {"", "hex.pm sent no JSON"},
-            {"not json", "hex.pm sent no JSON"},
-            {"{}", "hex.pm's record lists no publish time for 2.1.1"},
-            {releases([{"2.1.0", @old}]), "hex.pm's record lists no publish time for 2.1.1"}
-          ] do
-        hex_release(ctx, "plug", report)
-        assert {out, 1} = run(ctx)
-
-        assert out =~
-                 "could not read when hex.pm published plug 2.1.1 — cannot check Hex deps: #{why}"
-      end
-    end
-  end
-
-  test "an exemption for a package that is not behind fails the gate", ctx do
-    exempt(ctx, %{"shiki" => entry("4.4.3"), "jason" => entry("1.4.5")})
-    File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
-
-    assert {out, 1} = run(ctx)
-    assert out =~ "stale exemption: jason is not behind latest; remove its entry"
-  end
-
-  test "an exemption without a version or reason fails the gate", ctx do
-    for bad <- ["held back", entry(""), %{"version" => "4.4.3", "reason" => ""}] do
-      exempt(ctx, %{"shiki" => bad})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ ~s(each entry needs a "version" and a "reason")
-    end
-  end
-
-  describe "a Hex package taken from git" do
-    setup ctx do
-      File.write!(Path.join(ctx.base, "mix.lock"), @git_lock)
-      hex_release(ctx, "muex", git_release("0.11.2", "upstream/muex.git"))
-      hex_release(ctx, "plug_x", git_release("1.0.0", "upstream/plug_x"))
-      compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", "ahead")
-      compare(ctx, "upstream/plug_x", "v1.0.0...someone:plug_x:b1c2d3e", "identical")
-    end
-
-    test "counts as the latest Hex release its pinned commit contains", ctx do
-      exempt(ctx, %{})
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "current: muex is pinned to a628d48, which contains upstream/muex v0.11.2"
-      assert out =~ "current: plug_x is pinned to b1c2d3e, which contains upstream/plug_x v1.0.0"
-    end
-
-    test "makes an exemption for a pin containing the latest Hex release stale", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2")})
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "stale exemption: muex is not behind latest; remove its entry"
-    end
-
-    test "fails when the pinned commit does not contain the latest Hex release", ctx do
-      # An exemption naming the release does not cover a pin without it.
-      exempt(ctx, %{"muex" => entry("0.11.2")})
-      # The v-tag verdict stands; the gate does not go on to try this one.
-      compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
-
-      for status <- ["diverged", "behind"] do
-        compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", status)
-        assert {out, 1} = run(ctx)
-
-        assert out =~
-                 "BLOCKED: muex is pinned to a628d48, which does not contain upstream/muex v0.11.2"
-
-        refute out =~ "plug_x is pinned to b1c2d3e, which does not"
-        refute out =~ "exempt: muex"
-        refute out =~ "stale exemption"
-      end
-    end
-
-    test "counts as the newest stable Hex release at least 24h old", ctx do
-      exempt(ctx, %{})
-
-      hex_release(
-        ctx,
-        "muex",
-        git_release(
-          [{"0.12.0", young()}, {"0.12.0-rc.0", @old}, {"0.11.2", @old}],
-          "upstream/muex.git"
-        )
-      )
-
-      assert {out, 0} = run(ctx)
-      assert out =~ "current: muex is pinned to a628d48, which contains upstream/muex v0.11.2"
-    end
-
-    test "finds a release tag without a v prefix", ctx do
-      exempt(ctx, %{})
-
-      File.rm!(
-        Path.join(ctx.github_api, "repos/upstream/plug_x/compare/v1.0.0...someone:plug_x:b1c2d3e")
-      )
-
-      compare(ctx, "upstream/plug_x", "1.0.0...someone:plug_x:b1c2d3e", "ahead")
-
-      assert {_out, 0} = run(ctx)
-    end
-
-    test "fails closed when GitHub finds neither release tag", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2")})
-
-      File.rm!(
-        Path.join(ctx.github_api, "repos/upstream/muex/compare/v0.11.2...someone:muex:a628d48")
-      )
-
-      assert {out, 1} = run(ctx)
-
-      assert out =~
-               "BLOCKED: muex — GitHub finds neither tag v0.11.2 nor 0.11.2 in upstream/muex, or not pin a628d48"
-
-      refute out =~ "stale exemption"
-    end
-
-    test "fails closed when GitHub's comparison is unreadable", ctx do
-      exempt(ctx, %{})
-
-      for report <- ["", "{}", "not json"] do
-        compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", nil, report)
-        assert {out, 1} = run(ctx)
-
-        assert out =~
-                 "BLOCKED: muex — could not read GitHub's comparison of its pin with upstream/muex v0.11.2"
-      end
-    end
-
-    test "fails closed on any other HTTP answer, naming a likely rate limit", ctx do
-      exempt(ctx, %{})
-      # A later tag spelling would pass, but an error answer is not a missing tag.
-      compare(ctx, "upstream/muex", "0.11.2...someone:muex:a628d48", "ahead")
-
-      for code <- [403, 429, 500] do
-        compare(ctx, "upstream/muex", "v0.11.2...someone:muex:a628d48", nil, "{}", code)
-        assert {out, 1} = run(ctx)
-
-        assert out =~
-                 "BLOCKED: muex — GitHub answered HTTP #{code} comparing its pin with upstream/muex v0.11.2"
-
-        assert out =~ "may be rate-limiting" == (code != 500)
-      end
-    end
-
-    test "sends GITHUB_TOKEN, or else gh's token, to GitHub", ctx do
-      exempt(ctx, %{})
-      config = Path.join(ctx.base, "curl-config")
-      File.write!(Path.join(ctx.base, "gh-token"), "gh-t0k")
-
-      assert {_out, 0} = run(ctx)
-      assert File.read!(config) =~ ~s(header = "Authorization: Bearer gh-t0k")
-
-      File.rm!(config)
-      assert {_out, 0} = run(ctx, %{"GITHUB_TOKEN" => "env-t0k"})
-      assert File.read!(config) =~ ~s(header = "Authorization: Bearer env-t0k")
-      refute File.read!(config) =~ "gh-t0k"
-    end
-
-    test "fails closed when Hex links no GitHub repo", ctx do
-      exempt(ctx, %{})
-      hex_release(ctx, "muex", releases([{"0.11.2", @old}]))
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "BLOCKED: muex — Hex links no GitHub repo to find release 0.11.2 in"
-    end
-
-    test "fails closed when mix.lock pins it outside https://github.com", ctx do
-      exempt(ctx, %{})
-
-      File.write!(
-        Path.join(ctx.base, "mix.lock"),
-        String.replace(@git_lock, "https://github.com/", "https://gitlab.com/")
-      )
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "BLOCKED: muex — mix.lock pins it to no https://github.com commit"
-    end
-
-    test "fails closed when Hex reports no release", ctx do
-      exempt(ctx, %{"muex" => entry("0.11.2")})
-
-      for report <- ["", "{}", "not json", releases([{"0.11.2", young()}, {"0.11.1-rc.0", @old}])] do
-        hex_release(ctx, "muex", report)
-        assert {out, 1} = run(ctx)
-        assert out =~ "BLOCKED: muex — no stable Hex release at least 24h old found"
-        refute out =~ "stale exemption"
-      end
-    end
-
-    test "fails closed when mix.lock is unreadable", ctx do
-      exempt(ctx, %{})
-      File.rm!(Path.join(ctx.base, "mix.lock"))
-
-      assert {out, 1} = run(ctx)
-      assert out =~ "could not read mix.lock"
-    end
-  end
-
-  defp entry(version), do: %{"version" => version, "reason" => "upstream needs shiki 3"}
-
-  defp exempt(ctx, table),
-    do: File.write!(Path.join(ctx.base, "scripts/dep-exemptions.json"), Jason.encode!(table))
-
-  defp hex_release(ctx, name, report),
-    do: File.write!(Path.join(ctx.hex_api, name <> ".json"), report)
-
-  # hex.pm's package record, listing RELEASES, {version, inserted_at}
-  # pairs, newest version first as hex.pm does.
-  defp releases(releases, fields \\ %{}),
-    do:
-      fields
-      |> Map.put(
-        "releases",
-        Enum.map(releases, fn {v, at} -> %{"version" => v, "inserted_at" => at} end)
-      )
-      |> Jason.encode!()
-
-  # Twelve hours ago, without the microseconds hex.pm sends for some.
-  defp young,
-    do:
-      DateTime.utc_now()
-      |> DateTime.add(-12, :hour)
-      |> DateTime.truncate(:second)
-      |> DateTime.to_iso8601()
-
-  # The Funding link sorts first, so the gate must prefer the GitHub key.
-  defp git_release(version, repo) when is_binary(version),
-    do: git_release([{version, @old}], repo)
-
-  defp git_release(releases, repo),
-    do:
-      releases(releases, %{
-        "meta" => %{
-          "links" => %{
-            "Funding" => "https://github.com/sponsors/upstream",
-            "GitHub" => "https://github.com/" <> repo
-          }
-        }
-      })
-
-  # Writes GitHub's compare report for BASE...HEAD in REPO, and its HTTP
-  # code, as the curl stub serves them; a range without one serves 404.
-  defp compare(ctx, repo, range, status, report \\ nil, code \\ 200) do
-    path = Path.join([ctx.github_api, "repos", repo, "compare", range])
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, report || Jason.encode!(%{"status" => status}))
-    File.write!(path <> ".code", to_string(code))
-  end
-
-  defp behind(ctx) do
-    File.write!(ctx.pnpm_out, ~s({"shiki": {"current": "3.23.0", "latest": "4.4.3"}}))
-    File.write!(ctx.hex_out, @hex_header <> "plug  1.20.3  2.1.0  Update not possible\n")
-  end
-
-  # ENV adds to or overrides PATH and an unset GITHUB_TOKEN.
-  defp run(ctx, env \\ %{}) do
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    System.cmd("bash", [Path.join(ctx.base, "scripts/outdated.sh")],
-      env: Enum.to_list(Map.merge(%{"PATH" => path, "GITHUB_TOKEN" => nil}, env)),
-      stderr_to_stdout: true
-    )
+    assert out =~ "exempt: jason@1.4.5 (x)"
+    assert out =~ "too young: plug@2.1.1 is under the 24h Hex cooldown"
+
+    assert out =~
+             "BLOCKED: muex is pinned to a628d48, which does not contain upstream/muex v0.11.2"
+
+    assert out =~ "=== toolchain ===\ntoolchain checked\n"
+    assert out =~ "scripts/outdated.ts: dependencies are behind latest"
+
+    ran = log |> File.read!() |> String.split("\n", trim: true)
+    base_name = Path.basename(base)
+
+    # It ran from the repo root its own path names, syncing without the
+    # index Git exports to hooks, and checked vite on a scratch copy.
+    assert Enum.take(ran, 4) == [
+             "curl -sf --max-time 5 https://registry.npmjs.org | #{base_name} | /nonexistent/index | ",
+             "curl -sf --max-time 5 https://hex.pm | #{base_name} | /nonexistent/index | ",
+             "mix deps.get --check-locked | #{base_name} | unset | ",
+             "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline | #{base_name} | unset | "
+           ]
+
+    assert [scratch] = for(line <- ran, line =~ "--lockfile-only", do: line)
+    assert [_, dir, _, _] = String.split(scratch, " | ")
+    assert dir =~ "meerkat-pnpm-"
+    refute File.exists?(Path.join(System.tmp_dir!(), dir))
+
+    # gh's token went to curl on stdin, kept out of the process list.
+    assert Enum.any?(
+             ran,
+             &(&1 =~ ~s(/compare/v0.11.2...someone:muex:a628d48 | ) and
+                 &1 =~ ~s(header = "Authorization: Bearer gh-t0k"))
+           )
+
+    assert "bun scripts/age-excludes.ts check | #{base_name} | /nonexistent/index | " in ran
   end
 end
