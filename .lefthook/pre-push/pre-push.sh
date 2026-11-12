@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # This is the pre-push hook. It runs scripts/no-private-refs.sh,
-# scripts/outdated.sh and scripts/verified-push.sh. They run from here because
+# scripts/outdated.ts and scripts/verified-push.sh. They run from here because
 # Git's list of pushed refs, which lefthook forwards through `use_stdin`,
 # decides whether any runs. no-private-refs.sh needs the pushed refs and tips
 # from it, and the URL pushed to, which Git passes as the second argument;
@@ -20,7 +20,7 @@ scan_args=(--remote "${2:-}")
 refs=0
 # Git provides one line per ref: local ref and SHA, then remote ref and SHA.
 # A zero local SHA means deletion. `git push origin --delete <branch>` runs this
-# hook too, but pushes no commits; outdated.sh can otherwise block deleting a
+# hook too, but pushes no commits; outdated.ts can otherwise block deleting a
 # merged branch when a dependency is behind its latest release or a registry is
 # unreachable. Skip checks when every ref being pushed is a deletion.
 while read -r _local_ref local_sha remote_ref _remote_sha; do
@@ -41,7 +41,7 @@ fi
 # its findings.
 status=0
 bash scripts/no-private-refs.sh "${scan_args[@]}" || status=1
-bash scripts/outdated.sh || status=1
+bun scripts/outdated.ts || status=1
 
 # verified-push.sh can run scripts/check.sh once per unchecked tip, which
 # takes minutes each, so it runs only when the push would otherwise go through.

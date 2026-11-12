@@ -80,6 +80,7 @@ run_checks() {
   step bash scripts/mix-test.sh
   (cd assets && step bun test)
   step bun test tests/e2e/lib
+  step bun test scripts
   if [[ "$e2e" == 1 ]]; then
     (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
     step bunx playwright install --only-shell chromium

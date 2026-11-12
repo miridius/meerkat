@@ -3,7 +3,7 @@
 // is updated with the floor in force and, when that update needs a
 // release under 24h old or the audit still finds it, again with the floor
 // lifted for it, so whatever release that update resolves is taken
-// however young it is. scripts/bump-deps.sh runs this after its own
+// however young it is. scripts/bump-deps.ts runs this after its own
 // updates; check.sh's audits then confirm the fix.
 //
 // - JS: each package `pnpm audit` names is updated (`--latest` when a

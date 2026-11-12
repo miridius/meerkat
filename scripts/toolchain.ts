@@ -13,9 +13,9 @@
 // a note.
 //
 //   bun scripts/toolchain.ts check   lists each pin that is off target and
-//                                    exits 1 if any is (scripts/outdated.sh)
+//                                    exits 1 if any is (scripts/outdated.ts)
 //   bun scripts/toolchain.ts bump    moves every pin onto its target
-//                                    (scripts/bump-deps.sh)
+//                                    (scripts/bump-deps.ts)
 //
 // Both fail closed: a release list or advisory feed that cannot be read
 // exits 2. GitHub sometimes answers a release list with a page that holds

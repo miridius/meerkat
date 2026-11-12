@@ -1,6 +1,6 @@
 defmodule Meerkat.PrePushHookTest do
   # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
-  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh and
+  # and scripts/no-private-refs.sh to a local bare remote. Only outdated.ts and
   # verified-push.sh are replaced, by stubs that record each run and exit with a
   # chosen status; test/scripts/verified_push_test.exs covers verified-push.sh.
   use Meerkat.Case, async: false
@@ -55,10 +55,10 @@ defmodule Meerkat.PrePushHookTest do
       File.cp!(Path.join(@root, file), Path.join(work, file))
     end
 
-    File.write!(Path.join([work, "scripts", "outdated.sh"]), """
-    #!/usr/bin/env bash
-    touch '#{marker}'
-    exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
+    File.write!(Path.join([work, "scripts", "outdated.ts"]), """
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    writeFileSync('#{marker}', "");
+    process.exit(existsSync('#{outdated_status}') ? Number(readFileSync('#{outdated_status}', "utf8")) : 0);
     """)
 
     File.write!(Path.join([work, "scripts", "verified-push.sh"]), """
@@ -126,7 +126,7 @@ defmodule Meerkat.PrePushHookTest do
     assert {out, code} = push(ctx.work, ["origin", "leaky"])
     assert code != 0
     assert out =~ "local absolute path"
-    assert File.exists?(ctx.marker), "outdated.sh still runs when the other check fails"
+    assert File.exists?(ctx.marker), "outdated.ts still runs when the other check fails"
   end
 
   test "a private reference only in a commit message blocks the push and names the commit",
