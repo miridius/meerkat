@@ -195,7 +195,7 @@ echo "meerkat: built version $VERSION_ID at $FINAL_DIR"
 
 # Smoke-test the new release BEFORE flipping `current` at it: an
 # empty-staged-no-commit-msg invocation hits the auto-approve fast path
-# (cli.ex auto_approve_decision/2 staged-empty branch), exits 0 without
+# (cli.ex auto_approve_decision/2 staged-empty branch), approves without
 # binding a port, and proves the release boots end-to-end. Gating the
 # flip on it means a build that fails its smoke test leaves `current` on
 # the last good version and the next hook run rebuilds, instead of
@@ -212,14 +212,16 @@ trap 'rm -rf "$SMOKE_DIR"' EXIT
   # caller's local branch. Strip every `GIT_*` env var before
   # touching the throwaway repo.
   unset $(env | awk -F= '/^GIT_/ {print $1}')
+  # shellcheck source=bin/meerkat-attach
+  source bin/meerkat-attach
   cd "$SMOKE_DIR"
   git init -q -b main
   git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   echo "msg" > MSG
-  # Invoke the new version's launcher exactly as the wrapper does, but
+  # Invoke the new version's release exactly as the shepherd does, but
   # against $FINAL_DIR directly, since `current` isn't pointed at it yet.
-  MEERKAT_PWD="$SMOKE_DIR" "$FINAL_DIR/bin/meerkat" \
-    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" --commit-msg MSG --no-open
+  MEERKAT_PWD="$SMOKE_DIR" meerkat_run_once "$FINAL_DIR/bin/meerkat" \
+    eval "$MEERKAT_CLI_HALT" --commit-msg MSG --no-open
 )
 
 # Flip `current` at the smoke-tested version. `mv -h` so the rename

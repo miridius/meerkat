@@ -86,7 +86,7 @@ defmodule Meerkat.CLI do
     # Without a UTF-8 locale the BEAM opens stderr as latin1.
     :ok = :io.setopts(:standard_error, encoding: :unicode)
     # Before any slow step: OTP's own SIGTERM handling calls
-    # `init:stop/0`, which exits 0, meaning approved.
+    # `init:stop/0`, which exits 0 without saying why.
     :ok = Meerkat.SignalHandler.install()
     opts = parse_args(argv)
 

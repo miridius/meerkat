@@ -36,8 +36,9 @@ see [pending-answers.md](pending-answers.md).
   locale, validate them, store them as the pending-answers file (see
   [pending-answers.md](pending-answers.md)) and exit: `0` stored, `1`
   rejected with the reason on stderr. Rejected alongside a ref/range,
-  `--pr` or `--commit-msg`. The launcher runs this invocation once in
-  the foreground, outside its restart loop, so stdin reaches the BEAM.
+  `--pr` or `--commit-msg`. The launcher runs this invocation once,
+  outside its restart loop, with its own stdin, so the answers reach
+  the BEAM.
 - `--no-open` — don't shell out to `open`/`xdg-open`/`cmd start` to
   open the browser. Use when meerkat is being driven by an
   automated test or remote dev session.
@@ -205,11 +206,17 @@ another.
   answers file. Nothing was stored, and the input itself was fine.
 - `75` — restart sentinel for a [new version](installation.md#restart-onto-a-new-version).
   Internal to the launchers' shepherd loops — never reaches the git hook.
+- `76` — what the BEAM halts with when `Meerkat.CLI.main/1` returns
+  `0`. Internal to both launchers, which turn it into `0`.
 - `143` — a SIGTERM reached the review BEAM after
   `Meerkat.CLI.main/1` started. It defaults to REJECT (commit
   aborted): the BEAM prints a message to stderr, flushes the log
   file, and halts at once. Both launchers pass it straight through,
-  without a restart or retry. A launcher that receives SIGTERM,
+  without a restart or retry. A SIGTERM that reaches the BEAM while
+  it still boots, before `Meerkat.CLI.main/1` starts, never approves,
+  since only `main/1` returning 0 does; see
+  [decision-flow.md](decision-flow.md#default-deny-on-crash) for what
+  it does instead. A launcher that receives SIGTERM,
   SIGINT or SIGHUP also exits 143, without a message, after
   SIGKILLing its BEAM. The invocation waiting on the review is
   separate: one stopped by SIGTERM, SIGINT or SIGHUP before it has
