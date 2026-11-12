@@ -3,7 +3,7 @@ defmodule Meerkat.BumpDepsCase do
   Shared fixture and helpers for the tests that commit or rebase through the
   repo's real lefthook.yml and the scripts `build_fixture/1` copies. Only mix,
   pnpm, bun, bunx and curl are replaced, by stubs on PATH (the bun stub hands
-  hex-cooldown.ts, rebase-bump.ts and e2e-inputs.ts to the real bun), plus the fixture's own
+  hex-cooldown.ts, rebase-bump.ts and the gate scripts to the real bun), plus the fixture's own
   mix-test.sh, mutate.sh and dep-exemptions.json: the stubs log each run,
   report the outdated packages a test sets up, and record an update by
   appending a line to the lockfile or manifest it would change. The tests are
@@ -113,7 +113,7 @@ defmodule Meerkat.BumpDepsCase do
     File.cp!(Path.join(root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh checked-trees.sh e2e-inputs.ts no-main-commits.sh bump-deps.sh
+          ~w(check.ts checked-trees.ts e2e-inputs.ts gate-run.sh no-main-commits.ts bump-deps.sh
              bump-hex-requirements.exs deps-common.sh gate-lock.sh hex-cooldown.ts rebase-bump.ts) do
       File.cp!(Path.join([root, "scripts", script]), Path.join([work, "scripts", script]))
     end
@@ -125,7 +125,7 @@ defmodule Meerkat.BumpDepsCase do
     )
 
     # These tests cover the dependency bump, not the runner; keep the fixture's
-    # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
+    # runner as `exec mix test` so check.ts's test step is logged as `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
     # test/scripts/pre_commit_test.exs covers the mutation gate.
     File.write!(Path.join([work, "scripts", "mutate.sh"]), "exit 0\n")
@@ -158,9 +158,10 @@ defmodule Meerkat.BumpDepsCase do
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
     cmd="$(basename "$0") $*"
-    # The real bun judges which paths are e2e inputs.
+    # The real bun runs the gates' own scripts.
     case "$cmd" in
-      "bun "*e2e-inputs.ts*) exec '#{System.find_executable("bun")}' "$@" ;;
+      "bun scripts/check.ts"* | "bun scripts/checked-trees.ts"* | "bun scripts/no-main-commits.ts"*)
+        exec '#{System.find_executable("bun")}' "$@" ;;
     esac
     echo "$cmd" >> '#{log}'
     case "$cmd" in

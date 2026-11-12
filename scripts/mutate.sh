@@ -29,7 +29,7 @@
 # tests time out.
 #
 # A pass of either gated mode records the contents it judged with
-# scripts/checked-trees.sh --mutated when they are known to be gated
+# scripts/checked-trees.ts --mutated when they are known to be gated
 # throughout: see record_if_gated.
 #
 # Pass extra muex flags through after `--`:
@@ -104,11 +104,11 @@ has_added_lines() {
 # muex tests the files on disk.
 tree=
 record=false
-holds() { bash scripts/checked-trees.sh holds "$tree"; }
+holds() { bun scripts/checked-trees.ts holds "$tree"; }
 
 record_if_gated() {
   if [[ "$record" == true ]] && holds; then
-    bash scripts/checked-trees.sh --mutated mark "$tree"
+    bun scripts/checked-trees.ts --mutated mark "$tree"
   fi
 }
 
@@ -163,7 +163,7 @@ case "$mode" in
     # gated throughout only when HEAD's were, or HEAD is in origin/main. A root
     # commit stages every line.
     if holds && { ! git rev-parse --verify --quiet HEAD >/dev/null ||
-      bash scripts/checked-trees.sh --mutated has HEAD ||
+      bun scripts/checked-trees.ts --mutated has HEAD ||
       git merge-base --is-ancestor HEAD origin/main 2>/dev/null; }; then
       record=true
     fi
@@ -346,7 +346,7 @@ run_mutate() {
   echo "scripts/mutate.sh: no mutant of the $label lib/ lines survived."
 }
 
-# Like scripts/check.sh, the gate holds a slot from scripts/gate-lock.sh
+# Like scripts/check.ts, the gate holds a slot from scripts/gate-lock.sh
 # and runs in a subshell that closes the slot's fd 9 first and ends at
 # Ctrl-C, after which this shell's own trap stops this script.
 if [[ "$gate" == true ]]; then

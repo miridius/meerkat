@@ -1,6 +1,6 @@
 defmodule Meerkat.VerifiedPushTest do
-  # Runs the repo's real scripts/verified-push.sh and scripts/checked-trees.sh
-  # in a fixture repo. check.sh and mutate.sh are replaced by stubs that log
+  # Runs the repo's real scripts/verified-push.sh and scripts/checked-trees.ts
+  # in a fixture repo. check.ts and mutate.sh are replaced by stubs that log
   # each run and, unless told to fail, record HEAD the way the real ones do.
   use Meerkat.Case, async: false
 
@@ -33,13 +33,13 @@ defmodule Meerkat.VerifiedPushTest do
     git(work, ["config", "user.name", "t"])
     File.mkdir_p!(Path.join(work, "scripts"))
 
-    for script <- ~w(verified-push.sh checked-trees.sh) do
+    for script <- ~w(verified-push.sh checked-trees.ts e2e-inputs.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
-    File.write!(Path.join([work, "scripts", "check.sh"]), """
+    File.write!(Path.join([work, "scripts", "check-stub.sh"]), """
     #!/usr/bin/env bash
-    echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
+    echo "check.ts $* in $(git rev-parse HEAD)" >> '#{log}'
     pwd -P >> '#{dirs}'
     # Blocks only the first check, so a test can see whether a later tip is
     # still checked after an interrupt. Like the BEAM, it handles SIGINT
@@ -54,14 +54,22 @@ defmodule Meerkat.VerifiedPushTest do
       wait "$sleeper" || exit
     fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
-    [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
+    [ -n "${STUB_NO_MARK:-}" ] || bun scripts/checked-trees.ts mark HEAD
+    """)
+
+    # verified-push.sh runs `bun scripts/check.ts`, which hands over to the stub.
+    File.write!(Path.join([work, "scripts", "check.ts"]), """
+    const r = Bun.spawnSync(["bash", "scripts/check-stub.sh", ...process.argv.slice(2)], {
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    process.exit(r.exitCode ?? 1);
     """)
 
     File.write!(Path.join([work, "scripts", "mutate.sh"]), """
     #!/usr/bin/env bash
     echo "mutate.sh $* vs ${BASE_BRANCH:-} in $(git rev-parse HEAD)" >> '#{log}'
     [ -z "${STUB_MUTATE_FAIL:-}" ] || exit 1
-    [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh --mutated mark HEAD
+    [ -n "${STUB_NO_MARK:-}" ] || bun scripts/checked-trees.ts --mutated mark HEAD
     """)
 
     File.write!(Path.join(work, "code.txt"), "base\n")
@@ -144,7 +152,7 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {_, code} = verified_push(ctx, ["HEAD"], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert checks_run(ctx) == ["check.sh --head in #{git(ctx.work, ["rev-parse", "HEAD"])}"]
+    assert checks_run(ctx) == ["check.ts --head in #{git(ctx.work, ["rev-parse", "HEAD"])}"]
   end
 
   test "an unchecked HEAD beside an untracked file is refused unchecked", ctx do
@@ -242,7 +250,7 @@ defmodule Meerkat.VerifiedPushTest do
       assert out =~ "caller carried on: #{128 + number}\n"
     end
 
-    assert checks_run(ctx) == ["check.sh --head in #{lower}"]
+    assert checks_run(ctx) == ["check.ts --head in #{lower}"]
     assert_cleaned_up(ctx)
   end
 
@@ -304,7 +312,7 @@ defmodule Meerkat.VerifiedPushTest do
     assert {out, code} = verified_push(ctx, [checked, other], [{"STUB_FAIL", "1"}])
     assert code != 0
     assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed"
-    assert checks_run(ctx) == ["check.sh --head in #{other}"]
+    assert checks_run(ctx) == ["check.ts --head in #{other}"]
   end
 
   test "an unchecked tip fails after a tag of something other than a commit", ctx do
@@ -344,7 +352,7 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {_, code} = verified_push(ctx, ["v1"], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert checks_run(ctx) == ["check.sh --head in #{tagged}"]
+    assert checks_run(ctx) == ["check.ts --head in #{tagged}"]
   end
 
   defp commit(work, name, content, message) do
@@ -387,25 +395,25 @@ defmodule Meerkat.VerifiedPushTest do
     refute File.exists?(Path.dirname(tree))
   end
 
-  # Records rev as having passed both gates, or only check.sh.
+  # Records rev as having passed both gates, or only check.ts.
   defp mark(work, rev) do
     mark_checked(work, rev)
-    {_, 0} = run(work, ["scripts/checked-trees.sh", "--mutated", "mark", rev])
+    {_, 0} = run(work, ["-c", ~s(bun scripts/checked-trees.ts --mutated mark "$1"), "mark", rev])
   end
 
   defp mark_checked(work, rev),
-    do: {_, 0} = run(work, ["scripts/checked-trees.sh", "mark", rev])
+    do: {_, 0} = run(work, ["-c", ~s(bun scripts/checked-trees.ts mark "$1"), "mark", rev])
 
   # Exits 0 when rev is recorded as having passed both gates.
   defp checked(work, rev) do
     both =
-      ~s(bash scripts/checked-trees.sh has "$1" && bash scripts/checked-trees.sh --mutated has "$1")
+      ~s(bun scripts/checked-trees.ts has "$1" && bun scripts/checked-trees.ts --mutated has "$1")
 
     run(work, ["-c", both, "checked", rev])
   end
 
   # What verified-push.sh logs for a commit that passes neither gate yet.
-  defp both_gates(sha), do: ["check.sh --head in #{sha}", mutation(sha)]
+  defp both_gates(sha), do: ["check.ts --head in #{sha}", mutation(sha)]
 
   defp mutation(sha), do: "mutate.sh changed vs origin/main in #{sha}"
 

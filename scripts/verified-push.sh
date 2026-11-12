@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pre-push check: every commit pushed as a ref's new tip must have contents
-# that passed scripts/check.sh and the mutation gate of scripts/mutate.sh, as
-# scripts/checked-trees.sh records them. A rebase or cherry-pick makes a
+# that passed scripts/check.ts and the mutation gate of scripts/mutate.sh, as
+# scripts/checked-trees.ts records them. A rebase or cherry-pick makes a
 # commit without running the pre-commit hook, and git runs no hook that can
 # refuse a finished rebase, so without this its contents would reach CI
 # unchecked and its lib lines, conflict resolutions included, unmutated.
@@ -23,18 +23,18 @@ cd "$(git rev-parse --show-toplevel)"
 
 # Whether commit $1's contents passed both gates.
 gated() {
-  bash scripts/checked-trees.sh has "$1" && bash scripts/checked-trees.sh --mutated has "$1"
+  bun scripts/checked-trees.ts has "$1" && bun scripts/checked-trees.ts --mutated has "$1"
 }
 
 # run_gates <commit>: runs, on the checkout of that commit, each gate its
-# contents have not passed: `check.sh --head`, then `mutate.sh changed`
+# contents have not passed: `check.ts --head`, then `mutate.sh changed`
 # against origin/main, which mutates every lib line the commit changed since
-# main. If check.sh fails, mutate.sh is not run.
+# main. If check.ts fails, mutate.sh is not run.
 run_gates() {
-  if ! bash scripts/checked-trees.sh has "$1"; then
-    bash scripts/check.sh --head || return 1
+  if ! bun scripts/checked-trees.ts has "$1"; then
+    bun scripts/check.ts --head || return 1
   fi
-  if ! bash scripts/checked-trees.sh --mutated has "$1"; then
+  if ! bun scripts/checked-trees.ts --mutated has "$1"; then
     BASE_BRANCH=origin/main bash scripts/mutate.sh changed || return 1
   fi
 }
@@ -107,7 +107,7 @@ for commit in "${commits[@]}"; do
       echo "pre-push: $short passed the commit gate but was not recorded." >&2
       status=1
     fi
-  elif ! bash scripts/checked-trees.sh holds "$commit"; then
+  elif ! bun scripts/checked-trees.ts holds "$commit"; then
     echo "pre-push: HEAD ($short) has not passed the commit gate, and the worktree has" >&2
     echo "uncommitted or untracked files, so it cannot be checked as committed." >&2
     echo "Commit or remove them, then push again." >&2

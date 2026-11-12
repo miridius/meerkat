@@ -15,13 +15,13 @@ pre-commit:
   commands:
     no-main-commits:
       priority: 1
-      run: bash scripts/no-main-commits.sh
+      run: bun scripts/no-main-commits.ts
     bump-deps:
       priority: 2
       run: bash scripts/bump-deps.sh
     check:
       priority: 3
-      run: bash scripts/check.sh
+      run: bun scripts/check.ts
     mutate:
       priority: 4
       run: bash scripts/mutate.sh staged

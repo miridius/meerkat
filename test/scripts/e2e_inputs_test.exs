@@ -1,6 +1,6 @@
 defmodule Meerkat.E2eInputsTest do
   # Runs the repo's real scripts/e2e-inputs.ts, which decides which paths
-  # check.sh may skip the e2e steps for.
+  # check.ts may skip the e2e steps for.
   use ExUnit.Case, async: true
 
   @root File.cwd!()
@@ -11,8 +11,8 @@ defmodule Meerkat.E2eInputsTest do
     test/scripts/pre_commit_test.exs
     test/support/test_helpers.ex
     scripts/mix-test.sh
-    scripts/check.sh.bak
-    scripts/checked-trees.sh
+    scripts/check.ts.bak
+    scripts/checked-trees.ts
     .github/workflows/ci.yml
     .lefthook/pre-push/pre-push.sh
     lefthook.yml
@@ -24,7 +24,7 @@ defmodule Meerkat.E2eInputsTest do
   )
 
   @inputs ~w(
-    scripts/check.sh
+    scripts/check.ts
     scripts/e2e-inputs.ts
     lib/meerkat/git.ex
     config/dev.exs

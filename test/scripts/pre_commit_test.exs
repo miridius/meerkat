@@ -1,16 +1,19 @@
 defmodule Meerkat.PreCommitHookTest do
-  # Commits through the repo's real lefthook.yml, scripts/no-main-commits.sh,
-  # scripts/check.sh and scripts/mutate.sh. Only the tools those scripts run
+  # Commits through the repo's real lefthook.yml, scripts/no-main-commits.ts,
+  # scripts/check.ts and scripts/mutate.sh. Only the tools those scripts run
   # (mix, pnpm, bun, bunx) are replaced, by stubs on PATH that log each run
   # and can fail it. The `mix muex` stub writes the report STUB_REPORT names,
-  # or none when it is `none`, and exits with STUB_MUEX_EXIT.
+  # or none when it is `none`, and exits with STUB_MUEX_EXIT. The logic of
+  # check.ts, checked-trees.ts and no-main-commits.ts is unit-tested beside
+  # them, in scripts/*.test.ts; the check.ts tests here cover only its seams
+  # with git, lefthook, the gate slots and signals.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0, hold_gate_slot: 1]
 
   @root File.cwd!()
 
-  # Every gate check.sh runs, in order, as the stubs log it.
+  # Every gate check.ts runs, in order, as the stubs log it.
   @gates [
     "mix deps.get",
     "bun scripts/hex-audit.ts",
@@ -23,13 +26,7 @@ defmodule Meerkat.PreCommitHookTest do
     "mix-test.sh",
     "bun test",
     "bun test tests/e2e/lib",
-    "bun run build",
-    "bunx playwright install --only-shell chromium",
-    "bun run test:e2e"
-  ]
-
-  # The steps check.sh skips for a commit that changes no e2e input.
-  @e2e_steps [
+    "bun test scripts",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"
@@ -82,15 +79,15 @@ defmodule Meerkat.PreCommitHookTest do
     File.cp!(Path.join(@root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(check.sh checked-trees.sh e2e-inputs.ts gate-lock.sh no-main-commits.sh mutate.sh
-             mutate-paths.ts) do
+          ~w(check.ts checked-trees.ts e2e-inputs.ts gate-lock.sh gate-run.sh no-main-commits.ts
+             mutate.sh mutate-paths.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
     # test/scripts/bump_deps_test.exs covers the dependency bump.
     File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
     # test/scripts/mix_test_test.exs covers the runner itself. Replace this
-    # with `exec mix-test.sh` so the PATH stub logs check.sh's test step as
+    # with `exec mix-test.sh` so the PATH stub logs check.ts's test step as
     # `mix-test.sh` and catches a regression to plain `mix test`.
     File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix-test.sh\n")
 
@@ -124,9 +121,10 @@ defmodule Meerkat.PreCommitHookTest do
 
     File.write!(Path.join(stubs, "stub"), """
     #!/usr/bin/env bash
-    # The real bun judges which paths are e2e inputs.
+    # The real bun runs the gates' own scripts.
     case "$(basename "$0") ${1:-}" in
-    "bun "*e2e-inputs.ts) exec '#{System.find_executable("bun")}' "$@" ;;
+    "bun scripts/check.ts" | "bun scripts/checked-trees.ts" | "bun scripts/no-main-commits.ts")
+      exec '#{System.find_executable("bun")}' "$@" ;;
     esac
     # With STUB_PROBE_SLOTS set, log each tool that runs while it, or a
     # process between it and the gate, holds a gate slot too: that process
@@ -166,9 +164,6 @@ defmodule Meerkat.PreCommitHookTest do
     if [ "$cmd" = "mix compile --warnings-as-errors" ]; then
       env | grep '^GIT_' | sed 's/^/env=/' > '#{seen}'
     fi
-    if [ "$cmd" = "${STUB_EDIT:-}" ]; then
-      echo "edited mid-run" >> code.txt
-    fi
     # Like the BEAM after Ctrl-C: its process group gets the interrupt, and
     # this step handles it and exits 0.
     if [ "$cmd" = "${STUB_INTERRUPT:-}" ]; then
@@ -182,12 +177,15 @@ defmodule Meerkat.PreCommitHookTest do
     for tool <- ~w(mix pnpm bun bunx mix-test.sh), do: File.ln_s!("stub", Path.join(stubs, tool))
   end
 
-  test "a commit runs every gate in the checkout", ctx do
+  test "a commit runs every gate in the checkout and records its contents", ctx do
     stage(ctx.work, "code.txt", "staged\n")
+    refute checked?(ctx, ":")
 
     assert {out, 0} = commit(ctx, ["-m", "change code"])
     assert out =~ "all checks passed"
     assert gates_run(ctx) == @gates
+    assert checked?(ctx, "HEAD")
+    assert e2e_checked?(ctx, "HEAD")
 
     top = git(ctx.work, ["rev-parse", "--show-toplevel"])
     assets = Path.join(top, "assets")
@@ -212,14 +210,6 @@ defmodule Meerkat.PreCommitHookTest do
 
     assert {_, 0} = commit(ctx, ["-am", "change code"])
     assert gates_run(ctx) == @gates
-    assert checked?(ctx, "HEAD")
-  end
-
-  test "a commit whose checks pass records its contents as checked", ctx do
-    stage(ctx.work, "code.txt", "staged\n")
-    refute checked?(ctx, ":")
-
-    assert {_, 0} = commit(ctx, ["-m", "change code"])
     assert checked?(ctx, "HEAD")
   end
 
@@ -248,55 +238,23 @@ defmodule Meerkat.PreCommitHookTest do
     assert File.read!(Path.join(ctx.work, "code.txt")) == "unstaged\n"
   end
 
-  test "a commit whose checks fail is not recorded", ctx do
+  test "a failing check blocks the commit, which is not recorded", ctx do
+    head = git(ctx.work, ["rev-parse", "HEAD"])
     stage(ctx.work, "code.txt", "staged\n")
 
     assert {_, code} = commit(ctx, ["-m", "change code"], [{"STUB_FAIL", "bun run test:e2e"}])
     assert code != 0
+    assert git(ctx.work, ["rev-parse", "HEAD"]) == head
+    assert gates_run(ctx) == @gates
     refute checked?(ctx, ":")
     refute e2e_checked?(ctx, ":")
   end
 
-  test "a commit whose worktree changes while the checks run is not recorded", ctx do
-    stage(ctx.work, "code.txt", "staged\n")
-
-    assert {_, 0} = commit(ctx, ["-m", "change code"], [{"STUB_EDIT", "mix credo --strict"}])
-    refute checked?(ctx, "HEAD")
-    refute e2e_checked?(ctx, "HEAD")
-  end
-
-  describe "check.sh --head" do
+  describe "check.ts --head" do
     setup ctx do
       stage(ctx.work, "code.txt", "merged\n")
       no_hooks(ctx.work, ["commit", "-qm", "a merge skips the pre-commit hook"])
       :ok
-    end
-
-    test "runs every gate on HEAD and records it", ctx do
-      assert {out, 0} = check_head(ctx)
-      assert out =~ "=== pre-push: all checks passed ==="
-      assert gates_run(ctx) == @gates
-      assert checked?(ctx, "HEAD")
-    end
-
-    test "beside an untracked file runs every gate but records nothing", ctx do
-      File.write!(Path.join(ctx.work, "new.txt"), "untracked\n")
-
-      assert {_, 0} = check_head(ctx)
-      assert gates_run(ctx) == @gates
-      refute checked?(ctx, "HEAD")
-    end
-
-    test "records nothing when the worktree changes while the checks run", ctx do
-      assert {_, 0} = check_head(ctx, [{"STUB_EDIT", "mix credo --strict"}])
-      refute checked?(ctx, "HEAD")
-      refute e2e_checked?(ctx, "HEAD")
-    end
-
-    test "records nothing when its checks fail", ctx do
-      assert {_, code} = check_head(ctx, [{"STUB_FAIL", "bun run test:e2e"}])
-      assert code != 0
-      refute checked?(ctx, "HEAD")
     end
 
     test "stops at an interrupt the interrupted step handled, records nothing, and stops its caller",
@@ -304,7 +262,7 @@ defmodule Meerkat.PreCommitHookTest do
       # In its own process group, so the stub's interrupt reaches only this job.
       driver = """
       set -m
-      { bash scripts/check.sh --head; echo "caller carried on after $1"; } &
+      { bun scripts/check.ts --head; echo "caller carried on after $1"; } &
       wait $!
       """
 
@@ -312,116 +270,17 @@ defmodule Meerkat.PreCommitHookTest do
       env = [{"PATH", path}, {"STUB_INTERRUPT", "mix credo --strict"} | hook_env()]
 
       assert {out, code} =
-               System.cmd("bash", ["-c", driver, "driver", "check.sh"],
+               System.cmd("bash", ["-c", driver, "driver", "check.ts"],
                  cd: ctx.work,
                  env: env,
                  stderr_to_stdout: true
                )
 
       assert code != 0
-      refute out =~ "caller carried on after check.sh"
+      refute out =~ "caller carried on after check.ts"
       assert List.last(gates_run(ctx)) == "mix credo --strict"
       refute checked?(ctx, "HEAD")
     end
-  end
-
-  for gate <- @gates do
-    test "a failing `#{gate}` blocks the commit", ctx do
-      head = git(ctx.work, ["rev-parse", "HEAD"])
-      stage(ctx.work, "code.txt", "staged\n")
-
-      assert {_, code} = commit(ctx, ["-m", "change code"], [{"STUB_FAIL", unquote(gate)}])
-      assert code != 0
-      assert git(ctx.work, ["rev-parse", "HEAD"]) == head
-      assert List.last(gates_run(ctx)) == unquote(gate)
-    end
-  end
-
-  test "a commit changing only Markdown files skips the checks", ctx do
-    stage(ctx.work, "README.md", "hello\n")
-    stage(ctx.work, "docs/guide.md", "guide\n")
-
-    assert {out, 0} = commit(ctx, ["-m", "docs"])
-    assert out =~ "skipping checks"
-    assert gates_run(ctx) == []
-  end
-
-  test "renaming code to a Markdown file runs the checks", ctx do
-    git(ctx.work, ["mv", "code.txt", "code.md"])
-
-    assert {_, 0} = commit(ctx, ["-m", "rename"])
-    assert gates_run(ctx) == @gates
-  end
-
-  describe "a commit changing no e2e input" do
-    test "skips the build and e2e steps", ctx do
-      stage_tooling(ctx)
-
-      assert {out, 0} = commit(ctx, ["-m", "tooling"])
-      assert out =~ "no e2e input changed; skipping the build and e2e steps"
-      assert gates_run(ctx) == @gates -- @e2e_steps
-    end
-
-    test "on a parent that passed every step is recorded as checked", ctx do
-      stage(ctx.work, "code.txt", "staged\n")
-      assert {_, 0} = commit(ctx, ["-m", "change code"])
-      stage_tooling(ctx)
-
-      assert {_, 0} = commit(ctx, ["-m", "tooling"])
-      assert gates_run(ctx) == @gates ++ (@gates -- @e2e_steps)
-      assert checked?(ctx, "HEAD")
-    end
-
-    # Its contents' e2e inputs never passed the e2e steps, so the pre-push
-    # check must still run them.
-    test "on a parent never checked is not recorded as checked", ctx do
-      stage_tooling(ctx)
-
-      assert {out, 0} = commit(ctx, ["-m", "tooling"])
-      assert out =~ "the pre-push check will run every check on a pushed tip that holds them"
-      refute checked?(ctx, "HEAD")
-      refute e2e_checked?(ctx, "HEAD")
-    end
-
-    test "check.sh --head on it runs every step", ctx do
-      stage_tooling(ctx)
-      no_hooks(ctx.work, ["commit", "-qm", "a rebase skips the pre-commit hook"])
-
-      assert {_, 0} = check_head(ctx)
-      assert gates_run(ctx) == @gates
-      assert checked?(ctx, "HEAD")
-    end
-  end
-
-  # Which paths are e2e inputs is unit-tested in e2e_inputs_test.exs.
-  test "a commit changing an e2e input runs the e2e steps and records them", ctx do
-    stage(ctx.work, "new/thing.txt", "new\n")
-
-    assert {_, 0} = commit(ctx, ["-m", "change"])
-    assert gates_run(ctx) == @gates
-    assert e2e_checked?(ctx, "HEAD")
-    assert checked?(ctx, "HEAD")
-  end
-
-  test "the e2e record matches contents with the same e2e inputs, and only those", ctx do
-    mark(ctx, "--e2e", "HEAD")
-
-    stage_tooling(ctx)
-    no_hooks(ctx.work, ["commit", "-qm", "tooling"])
-    assert e2e_checked?(ctx, "HEAD")
-
-    stage(ctx.work, "code.txt", "other\n")
-    no_hooks(ctx.work, ["commit", "-qm", "code"])
-    refute e2e_checked?(ctx, "HEAD")
-  end
-
-  # --no-renames lists the old path too, which is an e2e input.
-  test "moving an e2e input under test/ runs the e2e steps", ctx do
-    File.mkdir_p!(Path.join(ctx.work, "test"))
-    git(ctx.work, ["mv", "code.txt", "test/code.txt"])
-
-    assert {_, 0} = commit(ctx, ["-m", "move"])
-    assert gates_run(ctx) == @gates
   end
 
   test "no step of either gate runs where a process other than the gate holds its slot",
@@ -721,12 +580,6 @@ defmodule Meerkat.PreCommitHookTest do
       assert_receive {^port, {:exit_status, 0}}
       assert gates_run(ctx) == @mutation
     end
-
-    test "a commit changing only Markdown files does not wait", ctx do
-      stage(ctx.work, "README.md", "hello\n")
-
-      assert {_, 0} = commit(ctx, ["-m", "docs"])
-    end
   end
 
   describe "the mutation record" do
@@ -880,14 +733,6 @@ defmodule Meerkat.PreCommitHookTest do
     assert mutated?(ctx, "HEAD")
   end
 
-  test "a commit on a detached HEAD runs the checks", ctx do
-    no_hooks(ctx.work, ["switch", "-q", "--detach"])
-    stage(ctx.work, "code.txt", "staged\n")
-
-    assert {_, 0} = commit(ctx, ["-m", "detached"])
-    assert gates_run(ctx) == @gates
-  end
-
   defp commit(ctx, args, env \\ []) do
     path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
 
@@ -929,25 +774,6 @@ defmodule Meerkat.PreCommitHookTest do
     end
   end
 
-  # Stages files only under paths no e2e step uses.
-  defp stage_tooling(ctx) do
-    stage(ctx.work, "test/scripts/tool_test.exs", "test\n")
-    stage(ctx.work, "scripts/tool.sh", "tool\n")
-    stage(ctx.work, ".github/workflows/ci.yml", "ci\n")
-    stage(ctx.work, ".lefthook/pre-push/pre-push.sh", "hook\n")
-    stage(ctx.work, ".claude/settings.json", "{}\n")
-  end
-
-  defp check_head(ctx, env \\ []) do
-    path = ctx.stubs <> ":" <> System.fetch_env!("PATH")
-
-    System.cmd("bash", ["scripts/check.sh", "--head"],
-      cd: ctx.work,
-      env: [{"PATH", path} | hook_env()] ++ env,
-      stderr_to_stdout: true
-    )
-  end
-
   defp checked?(ctx, rev), do: recorded?(ctx, [], rev)
   defp mutated?(ctx, rev), do: recorded?(ctx, ["--mutated"], rev)
   defp e2e_checked?(ctx, rev), do: recorded?(ctx, ["--e2e"], rev)
@@ -957,7 +783,7 @@ defmodule Meerkat.PreCommitHookTest do
     tree = if rev == ":", do: git(ctx.work, ["write-tree"]), else: rev
 
     {_, code} =
-      System.cmd("bash", ["scripts/checked-trees.sh" | store] ++ ["has", tree],
+      System.cmd("bun", ["scripts/checked-trees.ts" | store] ++ ["has", tree],
         cd: ctx.work,
         env: hook_env()
       )
@@ -967,7 +793,7 @@ defmodule Meerkat.PreCommitHookTest do
 
   defp mark(ctx, store, rev) do
     {_, 0} =
-      System.cmd("bash", ["scripts/checked-trees.sh", store, "mark", rev],
+      System.cmd("bun", ["scripts/checked-trees.ts", store, "mark", rev],
         cd: ctx.work,
         env: hook_env()
       )

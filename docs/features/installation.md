@@ -24,7 +24,7 @@ scripts/install.sh
 - Writes `~/.local/bin/meerkat` to exec that shepherd, which runs
   the release: no Mix. It replaces any other launcher there.
 
-The post-merge git hook (`scripts/no-main-commits.sh` enables
+The post-merge git hook (`scripts/no-main-commits.ts` enables
 lefthook, which runs `scripts/install.sh` on merge to `main`)
 auto-installs prod whenever a feature branch lands. So a
 `bundled-fixes → main` merge gives every consumer the prod

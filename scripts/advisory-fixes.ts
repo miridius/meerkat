@@ -4,7 +4,7 @@
 // release under 24h old or the audit still finds it, again with the floor
 // lifted for it, so whatever release that update resolves is taken
 // however young it is. scripts/bump-deps.sh runs this after its own
-// updates; check.sh's audits then confirm the fix.
+// updates; check.ts's audits then confirm the fix.
 //
 // - JS: each package `pnpm audit` names is updated (`--latest` when a
 //   workspace manifest depends on it directly). The floor is lifted with

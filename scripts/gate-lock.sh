@@ -1,7 +1,8 @@
-# Sourced by scripts/check.sh and scripts/mutate.sh, so at most two gates in
-# all worktrees of a repo run their heavy checks at once, and by
-# scripts/run-test-file.sh, so all test runs in those worktrees together run
-# at most half the online cores' worth of test files at once.
+# Sourced by scripts/gate-run.sh, for scripts/check.ts, and by
+# scripts/mutate.sh, so at most two gates in all worktrees of a repo run
+# their heavy checks at once, and by scripts/run-test-file.sh, so all test
+# runs in those worktrees together run at most half the online cores' worth
+# of test files at once.
 #
 # gate_lock: returns once this shell holds one of the gate's two slots, an
 # flock(2) taken with macOS lockf(1) on a file in meerkat-gate-lock in the
@@ -14,9 +15,8 @@
 # in meerkat-gate-lock/files, waiting silently, and taking a free slot
 # without a ticket while no ticket waits.
 #
-# Bash rather than TypeScript only until check.sh, mutate.sh and
-# run-test-file.sh move to TypeScript: the lock must be held by the process
-# that sourced this file.
+# Bash rather than TypeScript, as is each script that sources it: the lock
+# must be held by the process that sourced this file.
 #
 # Gates wait their turn first come, first served. Each takes a ticket in
 # meerkat-gate-lock/waiting, named for the microsecond it started waiting
