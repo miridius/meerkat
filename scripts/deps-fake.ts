@@ -2,7 +2,7 @@
 // and scripts/rebase-bump.ts. Each command gets the reply the last matching `on`
 // gave, or exit 0 with no output; the file map stands in for the tree.
 
-import type { Ran, RunOptions, Sys } from "./deps-common.ts";
+import { chomp, type Ran, type RunOptions, type Sys } from "./deps-common.ts";
 
 export type Call = { cmd: string } & RunOptions;
 type Reply = Partial<Ran> | ((call: Call) => Partial<Ran>);
@@ -85,7 +85,7 @@ export class Fake {
 			const reply = found ? (typeof found[1] === "function" ? found[1](call) : found[1]) : {};
 			const ran = { code: 0, stdout: "", stderr: "", ...reply };
 			if (options.inherit) {
-				for (const text of [ran.stdout, ran.stderr]) if (text) this.lines.push(text.replace(/\n$/, ""));
+				for (const text of [ran.stdout, ran.stderr]) if (text) this.lines.push(chomp(text));
 				return { ...ran, stdout: "", stderr: "" };
 			}
 			return ran;

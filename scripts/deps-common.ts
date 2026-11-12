@@ -2,8 +2,9 @@
 // (the dependency bump), run from the repo root, so both read the
 // exemptions and the two outdated reports the same way.
 //
-// Every process, file and clock these scripts and scripts/rebase-bump.ts
-// use goes through a `Sys`, so their tests drive them on literal reports.
+// Past their entry points, every process, file and clock these scripts and
+// scripts/rebase-bump.ts use goes through a `Sys`, so their tests drive
+// them on literal reports.
 // A function here that fails prints why, prefixed with `sys.prefix`, and
 // throws `Failed`; the script then exits with its code, 1 unless it gives
 // another.
@@ -90,14 +91,15 @@ export function realSys(prefix: string): Sys {
 		write: (path, text) => writeFileSync(path, text),
 		which: (tool) => Bun.which(tool) !== null,
 		now: () => Date.now(),
-		scratchWorkspace: () => scratchWorkspace("."),
+		scratchWorkspace: () => scratchWorkspace(".", (text) => console.error(text)),
 		remove: (path) => rmSync(path, { recursive: true, force: true }),
 	};
 }
 
-// scratchWorkspace ROOT: a new temporary dir holding ROOT's pnpm workspace
-// manifests, lockfile and patches/, with deps/ linked to ROOT's, or null.
-export function scratchWorkspace(root: string): string | null {
+// scratchWorkspace ROOT ERR: a new temporary dir holding ROOT's pnpm
+// workspace manifests, lockfile and patches/, with deps/ linked to ROOT's,
+// or null, passing ERR the reason.
+export function scratchWorkspace(root: string, err: (text: string) => void): string | null {
 	let tmp: string | undefined;
 	try {
 		tmp = mkdtempSync(join(tmpdir(), "meerkat-pnpm-"));
@@ -112,7 +114,7 @@ export function scratchWorkspace(root: string): string | null {
 		symlinkSync(resolve(root, "deps"), join(tmp, "deps"));
 		return tmp;
 	} catch (e) {
-		console.error(e instanceof Error ? e.message : e);
+		err(e instanceof Error ? e.message : String(e));
 		if (tmp) rmSync(tmp, { recursive: true, force: true });
 		return null;
 	}

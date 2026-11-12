@@ -71,7 +71,7 @@ test("a commit while dependencies are behind carries their bump", async () => {
 	expect(fake.files["mix.lock"]).toBe("base\nupdated bandit jason plug\n");
 	expect(staged(fake)).toEqual(DEP_FILES);
 	expect(fake.ran).toContain(`git diff --stat -- ${DEP_FILES.join(" ")}`);
-	expect(fake.text).toEndWith("pre-commit: staged the dependency bump into this commit.");
+	expect(fake.text).toEndWith("test: staged the dependency bump into this commit.");
 });
 
 test("an exemption for an older release does not hold back a newer one", async () => {
@@ -192,27 +192,41 @@ test("a failed update refuses the commit and restores mix.exs", async () => {
 	const fake = tree().hexReport(HEX_BEHIND).on(/^mix deps\.update /, { code: 1 });
 
 	expect(await run(fake)).toBe(1);
-	expect(fake.text).toContain("pre-commit: mix deps.update bandit jason plug failed, so the commit was refused.");
+	expect(fake.text).toContain("test: mix deps.update bandit jason plug failed, so the commit was refused.");
 	expect(fake.files["mix.exs"]).toBe("base\n");
 	expect(staged(fake)).toBeUndefined();
 });
 
-test("a mix.exs it cannot save refuses the commit before any update", async () => {
-	const fake = tree().hexReport(HEX_BEHIND).on("git hash-object -w -- mix.exs", { code: 128 });
+test("an update within mix.exs's requirements saves no copy of it", async () => {
+	const fake = tree()
+		.hexReport(`${HEX_HEADER}jason  1.4.3  1.4.5  Update possible\n`)
+		.on(/^mix deps\.update /, { code: 1 });
 
 	expect(await run(fake)).toBe(1);
-	expect(fake.text).toContain("test: could not save mix.exs before bumping its requirements.");
+	expect(fake.ran.filter((c) => c.startsWith("git hash-object -w") || c.startsWith("git cat-file"))).toEqual([]);
+	expect(fake.files["mix.exs"]).toBe("base\n");
+});
+
+test("a mix.exs it cannot save refuses the commit before any update, saying why", async () => {
+	const fake = tree()
+		.hexReport(HEX_BEHIND)
+		.on("git hash-object -w -- mix.exs", { stderr: "fatal: unable to write object\n", code: 128 });
+
+	expect(await run(fake)).toBe(1);
+	expect(fake.text).toContain("fatal: unable to write object\ntest: could not save mix.exs before bumping its requirements.");
 	expect(fake.ran.some((c) => c.startsWith("elixir ") || c.startsWith("mix deps.update"))).toBe(false);
 });
 
-test("a mix.exs it cannot restore is left as the bump wrote it, saying where its copy is", async () => {
+test("a mix.exs it cannot restore is left as the bump wrote it, saying how to restore it", async () => {
 	const fake = tree()
 		.hexReport(HEX_BEHIND)
 		.on(/^mix deps\.update /, { code: 1 })
-		.on("git cat-file blob blob:mix.exs", { code: 128 });
+		.on("git cat-file blob blob:mix.exs", { stderr: "fatal: Not a valid object name\n", code: 128 });
 
 	expect(await run(fake)).toBe(1);
-	expect(fake.text).toContain("test: could not restore mix.exs; its saved copy is blob blob:mix.exs.");
+	expect(fake.text).toContain(
+		"fatal: Not a valid object name\ntest: could not restore mix.exs; `git cat-file blob blob:mix.exs > mix.exs` restores it.",
+	);
 	expect(fake.files["mix.exs"]).toBe("base\nrequirements bandit 1.12.5 plug 2.1.0\n");
 });
 
@@ -332,7 +346,7 @@ test("a path commit defers the bump", async () => {
 	fake.env.GIT_INDEX_FILE = "/repo/.git/next-index-123.lock";
 
 	expect(await run(fake)).toBe(0);
-	expect(fake.text).toBe("pre-commit: path commit; dependency bump deferred to the next full commit.");
+	expect(fake.text).toBe("test: path commit; dependency bump deferred to the next full commit.");
 	expect(fake.calls).toEqual([]);
 });
 

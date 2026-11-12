@@ -36,6 +36,7 @@
 
 import { basename } from "node:path";
 import {
+	chomp,
 	exemption,
 	Failed,
 	fail,
@@ -87,7 +88,7 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 	// would be missing from the real index afterwards, which would then
 	// hold its revert.
 	if (isPathCommit(sys.env.GIT_INDEX_FILE)) {
-		sys.out("pre-commit: path commit; dependency bump deferred to the next full commit.");
+		sys.out(`${sys.prefix} path commit; dependency bump deferred to the next full commit.`);
 		return 0;
 	}
 
@@ -107,16 +108,32 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 		if (status === "not") requirementBumps.push(name, latest);
 	}
 
-	const saved = await sys.run(["git", "hash-object", "-w", "--", "mix.exs"]);
-	const mixExs = saved.stdout.trim();
-	if (saved.code !== 0 || !mixExs) fail(sys, "could not save mix.exs before bumping its requirements.");
-	if (requirementBumps.length) await step(sys, ["elixir", "scripts/bump-hex-requirements.exs", ...requirementBumps]);
+	// gitOrFail CMD WHY: CMD's stdout, failing with WHY and git's reason
+	// when it fails.
+	const gitOrFail = async (cmd: string[], why: string) => {
+		const ran = await sys.run(cmd);
+		if (ran.code === 0 && ran.stdout) return ran.stdout;
+		if (ran.stderr) sys.err(chomp(ran.stderr));
+		return fail(sys, why);
+	};
+	let mixExs: string | undefined;
+	if (requirementBumps.length) {
+		mixExs = (
+			await gitOrFail(["git", "hash-object", "-w", "--", "mix.exs"], "could not save mix.exs before bumping its requirements.")
+		).trim();
+		await step(sys, ["elixir", "scripts/bump-hex-requirements.exs", ...requirementBumps]);
+	}
 	if (hexNames.length && (await sys.run(["mix", "deps.update", ...hexNames], { inherit: true })).code !== 0) {
 		// A rewritten requirement left behind would be committed alone.
-		const blob = await sys.run(["git", "cat-file", "blob", mixExs]);
-		if (blob.code !== 0) fail(sys, `could not restore mix.exs; its saved copy is blob ${mixExs}.`);
-		sys.write("mix.exs", blob.stdout);
-		sys.out(`pre-commit: mix deps.update ${hexNames.join(" ")} failed, so the commit was refused.`);
+		if (mixExs)
+			sys.write(
+				"mix.exs",
+				await gitOrFail(
+					["git", "cat-file", "blob", mixExs],
+					`could not restore mix.exs; \`git cat-file blob ${mixExs} > mix.exs\` restores it.`,
+				),
+			);
+		sys.out(`${sys.prefix} mix deps.update ${hexNames.join(" ")} failed, so the commit was refused.`);
 		sys.out("  If Hex lists versions filtered by cooldown above, a release needs a");
 		sys.out("  dependency version still under the 24h Hex cooldown. Wait until it is");
 		sys.out("  eligible, or exempt it in scripts/dep-exemptions.json.");
@@ -130,7 +147,7 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 		// package where it is, rather than bumping it to an older release.
 		if (exemption(exemptions, name) && isExempt(name, await npmLatest(sys, name))) continue;
 		if ((await pnpmInstallable(sys, name)) === "young") {
-			sys.out(`pre-commit: ${name}@${latest} requires a package version under the 24h floor; not bumped yet.`);
+			sys.out(`${sys.prefix} ${name}@${latest} requires a package version under the 24h floor; not bumped yet.`);
 			continue;
 		}
 		jsNames.push(name);
@@ -147,7 +164,7 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 	if (bumped.length) {
 		await step(sys, ["git", "diff", "--stat", "--", ...bumped]);
 		await step(sys, ["git", "add", "--", ...bumped]);
-		sys.out("pre-commit: staged the dependency bump into this commit.");
+		sys.out(`${sys.prefix} staged the dependency bump into this commit.`);
 	}
 	return 0;
 }

@@ -11,14 +11,17 @@ async function hook(command: string, codes: Record<string, number> = {}, status 
 	for (const [cmd, code] of Object.entries(codes)) fake.on(cmd, { code });
 	fake.on("git status --porcelain --untracked-files=no", { stdout: status });
 	const code = await rebaseBump(command, fake.sys);
-	return { code, ran: fake.ran, text: fake.text };
+	const streamed = fake.calls.filter((c) => c.inherit).map((c) => c.cmd);
+	return { code, ran: fake.ran, streamed, text: fake.text };
 }
 
 const STAGED = { "git diff --cached --quiet": 1 };
 
 test("a rebase that leaves dependencies behind commits their bump on top", async () => {
-	const { code, ran, text } = await hook("rebase", STAGED);
+	const { code, ran, streamed, text } = await hook("rebase", STAGED);
 	expect(code).toBe(0);
+	// The bump and the commit show their own output.
+	expect(streamed).toEqual(ran);
 	expect(ran).toEqual([
 		"bun scripts/bump-deps.ts",
 		"git diff --cached --quiet",
@@ -36,7 +39,7 @@ test("a rebase while everything is current adds no commit", async () => {
 
 // An amend went through pre-commit.
 test("an amend gets no bump", async () => {
-	expect(await hook("amend")).toEqual({ code: 0, ran: [], text: "" });
+	expect(await hook("amend")).toEqual({ code: 0, ran: [], streamed: [], text: "" });
 });
 
 test("a rebase whose bump fails is left done, saying so", async () => {
@@ -47,6 +50,15 @@ test("a rebase whose bump fails is left done, saying so", async () => {
 		"post-rewrite: scripts/bump-deps.ts failed, so the rebase was left without a dependency bump commit.\n" +
 			"  The pre-push gate refuses the push while dependencies are outdated.",
 	);
+});
+
+test("a git status that fails says why", async () => {
+	const fake = new Fake();
+	fake.sys.prefix = "post-rewrite:";
+	fake.on("bun scripts/bump-deps.ts", { code: 1 });
+	fake.on("git status --porcelain --untracked-files=no", { stderr: "fatal: index file corrupt\n", code: 128 });
+	expect(await rebaseBump("rebase", fake.sys)).toBe(1);
+	expect(fake.text).toContain("fatal: index file corrupt\n  The pre-push gate refuses");
 });
 
 test("a rebase whose bump commit is refused leaves the bump in the worktree, saying so", async () => {

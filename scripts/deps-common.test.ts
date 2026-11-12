@@ -80,7 +80,8 @@ test("scratchWorkspace copies the workspace and its patches, linking deps/", () 
 			writeFileSync(join(root, file), file);
 		writeFileSync(join(root, "patches/pkg.patch"), "the patch\n");
 
-		const copy = scratchWorkspace(root);
+		const errors: string[] = [];
+		const copy = scratchWorkspace(root, (text) => errors.push(text));
 		expect(copy).not.toBeNull();
 		try {
 			for (const file of ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", "assets/package.json"]) {
@@ -96,10 +97,14 @@ test("scratchWorkspace copies the workspace and its patches, linking deps/", () 
 			rmSync(copy as string, { recursive: true });
 		}
 
-		// Without pnpm-workspace.yaml it makes none, and leaves nothing behind.
+		expect(errors).toEqual([]);
+
+		// Without pnpm-workspace.yaml it makes none, saying why, and leaves
+		// nothing behind.
 		rmSync(join(root, "pnpm-workspace.yaml"));
 		const before = new Set(readdirSync(tmpdir()));
-		expect(scratchWorkspace(root)).toBeNull();
+		expect(scratchWorkspace(root, (text) => errors.push(text))).toBeNull();
+		expect(errors).toEqual([expect.stringContaining("ENOENT")]);
 		const left = readdirSync(tmpdir()).filter((name) => !before.has(name) && name.startsWith("meerkat-pnpm-"));
 		expect(left).toEqual([]);
 		expect(existsSync(root)).toBe(true);

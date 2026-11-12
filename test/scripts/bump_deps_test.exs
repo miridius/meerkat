@@ -124,7 +124,7 @@ defmodule Meerkat.BumpDepsHookTest do
     File.write!(Path.join(ctx.base, "hex.out"), @hex_behind)
 
     assert {out, 0} = hooked(ctx, ["rebase", "main"])
-    assert out =~ "committed the dependency bump on top of the rebase"
+    assert out =~ "post-rewrite: committed the dependency bump on top of the rebase"
 
     assert ctx.work |> git(["log", "--format=%s"]) |> String.split("\n") ==
              ["Bump dependencies", "feature work", "main moves", "base"]
