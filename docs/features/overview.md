@@ -148,9 +148,9 @@ When the UI does open, the reviewer sees, top-to-bottom:
    Each hunk shows the lines `git diff` gives it, and its header,
    shown when lines are hidden above it, gives git's line ranges.
    In Split view, buttons that reveal hidden context lines around
-   and between hunks appear only in the right-hand (new-side)
-   gutter, with each hunk header (`@@ -17,7 +17,7 @@`) beside them
-   on the right; Unified view keeps them in its single gutter.
+   and between hunks appear in both sides' gutters, with each hunk
+   header (`@@ -17,7 +17,7 @@`) shown once, on the right; Unified
+   view keeps them in its single gutter.
    Moved code is tinted. A moved block is at least 2 identical
    consecutive lines of 3 or more characters, removed in one place and
    added in another, with any shorter or blank lines among or after
