@@ -36,10 +36,8 @@
 
 import { basename } from "node:path";
 import {
-	chomp,
 	exemption,
 	Failed,
-	fail,
 	hexOutdated,
 	loadExemptions,
 	main,
@@ -47,6 +45,7 @@ import {
 	pnpmInstallable,
 	pnpmOutdated,
 	requireTools,
+	stdoutOrFail,
 	type Sys,
 	syncLockedDeps,
 } from "./deps-common.ts";
@@ -108,31 +107,18 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 		if (status === "not") requirementBumps.push(name, latest);
 	}
 
-	// gitOrFail CMD WHY: CMD's stdout, failing with WHY and git's reason
-	// when it fails.
-	const gitOrFail = async (cmd: string[], why: string) => {
-		const ran = await sys.run(cmd);
-		if (ran.code === 0 && ran.stdout) return ran.stdout;
-		if (ran.stderr) sys.err(chomp(ran.stderr));
-		return fail(sys, why);
-	};
-	let mixExs: string | undefined;
+	let mixExs = "";
 	if (requirementBumps.length) {
-		mixExs = (
-			await gitOrFail(["git", "hash-object", "-w", "--", "mix.exs"], "could not save mix.exs before bumping its requirements.")
-		).trim();
+		const why = "could not save mix.exs before bumping its requirements.";
+		mixExs = (await stdoutOrFail(sys, ["git", "hash-object", "-w", "--", "mix.exs"], why)).trim();
 		await step(sys, ["elixir", "scripts/bump-hex-requirements.exs", ...requirementBumps]);
 	}
 	if (hexNames.length && (await sys.run(["mix", "deps.update", ...hexNames], { inherit: true })).code !== 0) {
 		// A rewritten requirement left behind would be committed alone.
-		if (mixExs)
-			sys.write(
-				"mix.exs",
-				await gitOrFail(
-					["git", "cat-file", "blob", mixExs],
-					`could not restore mix.exs; \`git cat-file blob ${mixExs} > mix.exs\` restores it.`,
-				),
-			);
+		if (requirementBumps.length) {
+			const why = `could not restore mix.exs; its saved copy is blob ${mixExs}.`;
+			sys.write("mix.exs", await stdoutOrFail(sys, ["git", "cat-file", "blob", mixExs], why));
+		}
 		sys.out(`${sys.prefix} mix deps.update ${hexNames.join(" ")} failed, so the commit was refused.`);
 		sys.out("  If Hex lists versions filtered by cooldown above, a release needs a");
 		sys.out("  dependency version still under the 24h Hex cooldown. Wait until it is");

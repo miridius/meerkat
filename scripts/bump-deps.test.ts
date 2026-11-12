@@ -217,7 +217,7 @@ test("a mix.exs it cannot save refuses the commit before any update, saying why"
 	expect(fake.ran.some((c) => c.startsWith("elixir ") || c.startsWith("mix deps.update"))).toBe(false);
 });
 
-test("a mix.exs it cannot restore is left as the bump wrote it, saying how to restore it", async () => {
+test("a mix.exs it cannot restore is left as the bump wrote it, naming its saved copy", async () => {
 	const fake = tree()
 		.hexReport(HEX_BEHIND)
 		.on(/^mix deps\.update /, { code: 1 })
@@ -225,7 +225,7 @@ test("a mix.exs it cannot restore is left as the bump wrote it, saying how to re
 
 	expect(await run(fake)).toBe(1);
 	expect(fake.text).toContain(
-		"fatal: Not a valid object name\ntest: could not restore mix.exs; `git cat-file blob blob:mix.exs > mix.exs` restores it.",
+		"fatal: Not a valid object name\ntest: could not restore mix.exs; its saved copy is blob blob:mix.exs.",
 	);
 	expect(fake.files["mix.exs"]).toBe("base\nrequirements bandit 1.12.5 plug 2.1.0\n");
 });

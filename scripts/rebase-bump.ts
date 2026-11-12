@@ -10,7 +10,7 @@
 // commit goes through the pre-commit hook too, which checks it. Git ignores
 // this hook's exit status, so a failure leaves the rebase done and says so.
 
-import { chomp, main, type Sys } from "./deps-common.ts";
+import { main, showStderr, type Sys } from "./deps-common.ts";
 
 // rebaseBump COMMAND SYS: the hook's exit status, printing what it did.
 export async function rebaseBump(command: string | undefined, sys: Sys): Promise<number> {
@@ -20,8 +20,10 @@ export async function rebaseBump(command: string | undefined, sys: Sys): Promise
 	async function unbumped(why: string): Promise<number> {
 		sys.err(`${sys.prefix} ${why}, so the rebase was left without a dependency bump commit.`);
 		const status = await sys.run(["git", "status", "--porcelain", "--untracked-files=no"]);
-		if (status.stderr) sys.err(chomp(status.stderr));
-		if (status.stdout) sys.err("  The bump's changes are left in the worktree; `git status` lists them.");
+		if (status.code !== 0) {
+			sys.err("  git status failed, so the bump's changes may be left in the worktree:");
+			showStderr(sys, status);
+		} else if (status.stdout) sys.err("  The bump's changes are left in the worktree; `git status` lists them.");
 		sys.err("  The pre-push gate refuses the push while dependencies are outdated.");
 		return 1;
 	}

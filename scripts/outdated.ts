@@ -21,7 +21,6 @@
 
 import { join } from "node:path";
 import {
-	chomp,
 	DAY_MS,
 	type Exemptions,
 	exemption,
@@ -33,6 +32,7 @@ import {
 	pnpmInstallable,
 	pnpmOutdated,
 	requireTools,
+	showStderr,
 	type Sys,
 	syncLockedDeps,
 } from "./deps-common.ts";
@@ -116,7 +116,7 @@ async function pinContains(sys: Sys, lock: string, name: string, version: string
 		const ran = await sys.run(["curl", "-sSL", "--max-time", "10", "-K", "-", "-w", "\n%{http_code}", url], {
 			stdin: auth,
 		});
-		if (ran.stderr) sys.err(chomp(ran.stderr));
+		showStderr(sys, ran);
 		if (ran.code !== 0) {
 			sys.out(`BLOCKED: ${name} — could not reach GitHub to compare its pin with ${upstream} ${tag}; failing closed`);
 			return false;
@@ -237,7 +237,7 @@ export async function outdated(sys: Sys): Promise<number> {
 	if (lock === null) fail(sys, "could not read mix.lock — cannot check git deps.");
 	for (const name of gitDepNames(lock)) {
 		const ran = await hexPackage(sys, name);
-		if (ran.stderr) sys.err(chomp(ran.stderr));
+		showStderr(sys, ran);
 		let record: HexRecord | null = null;
 		try {
 			record = ran.code === 0 ? JSON.parse(ran.stdout) : null;

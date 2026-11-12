@@ -56,8 +56,23 @@ export function fail(sys: Sys, message: string, to: "out" | "err" = "out"): neve
 	throw new Failed(message);
 }
 
+// showStderr RAN: prints RAN's stderr, if any, to stderr.
+export function showStderr(sys: Sys, ran: Ran) {
+	if (ran.stderr) sys.err(chomp(ran.stderr));
+}
+
+// stdoutOrFail CMD WHY: CMD's stdout, or, when CMD fails, fails with its
+// stderr and WHY, both on stderr.
+export async function stdoutOrFail(sys: Sys, cmd: string[], why: string): Promise<string> {
+	const ran = await sys.run(cmd);
+	if (ran.code === 0) return ran.stdout;
+	showStderr(sys, ran);
+	return fail(sys, why, "err");
+}
+
 // The real Sys, with relative paths read from the current directory.
 export function realSys(prefix: string): Sys {
+	const err = (text: string) => console.error(text);
 	return {
 		prefix,
 		env: process.env,
@@ -80,7 +95,7 @@ export function realSys(prefix: string): Sys {
 			return { code, stdout, stderr };
 		},
 		out: (text) => console.log(text),
-		err: (text) => console.error(text),
+		err,
 		read(path) {
 			try {
 				return readFileSync(path, "utf8");
@@ -91,7 +106,7 @@ export function realSys(prefix: string): Sys {
 		write: (path, text) => writeFileSync(path, text),
 		which: (tool) => Bun.which(tool) !== null,
 		now: () => Date.now(),
-		scratchWorkspace: () => scratchWorkspace(".", (text) => console.error(text)),
+		scratchWorkspace: () => scratchWorkspace(".", err),
 		remove: (path) => rmSync(path, { recursive: true, force: true }),
 	};
 }
@@ -275,7 +290,7 @@ export async function npmLatest(sys: Sys, name: string): Promise<string> {
 	const ran = await sys.run(["pnpm", "view", name, "dist-tags.latest"]);
 	const latest = chomp(ran.stdout);
 	if (ran.code === 0 && /^\S+$/.test(latest)) return latest;
-	if (ran.stderr) sys.err(chomp(ran.stderr));
+	showStderr(sys, ran);
 	return fail(sys, `could not read ${name}'s latest release from the registry — cannot check its exemption.`, "err");
 }
 

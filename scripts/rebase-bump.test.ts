@@ -1,15 +1,17 @@
 import { expect, test } from "bun:test";
+import type { Ran } from "./deps-common.ts";
 import { Fake } from "./deps-fake.ts";
 import { rebaseBump } from "./rebase-bump.ts";
 
 // hook COMMAND CODES STATUS: runs the hook for COMMAND, each command exiting
-// with CODES' entry for it, or 0, and git status printing STATUS, and
-// returns its status, the commands it ran and what it printed.
-async function hook(command: string, codes: Record<string, number> = {}, status = "") {
+// with CODES' entry for it, or 0, and git status replying STATUS, and
+// returns its status, the commands it ran, those whose output it streamed,
+// and what it printed.
+async function hook(command: string, codes: Record<string, number> = {}, status: Partial<Ran> = {}) {
 	const fake = new Fake();
 	fake.sys.prefix = "post-rewrite:";
 	for (const [cmd, code] of Object.entries(codes)) fake.on(cmd, { code });
-	fake.on("git status --porcelain --untracked-files=no", { stdout: status });
+	fake.on("git status --porcelain --untracked-files=no", status);
 	const code = await rebaseBump(command, fake.sys);
 	const streamed = fake.calls.filter((c) => c.inherit).map((c) => c.cmd);
 	return { code, ran: fake.ran, streamed, text: fake.text };
@@ -52,17 +54,27 @@ test("a rebase whose bump fails is left done, saying so", async () => {
 	);
 });
 
-test("a git status that fails says why", async () => {
-	const fake = new Fake();
-	fake.sys.prefix = "post-rewrite:";
-	fake.on("bun scripts/bump-deps.ts", { code: 1 });
-	fake.on("git status --porcelain --untracked-files=no", { stderr: "fatal: index file corrupt\n", code: 128 });
-	expect(await rebaseBump("rebase", fake.sys)).toBe(1);
-	expect(fake.text).toContain("fatal: index file corrupt\n  The pre-push gate refuses");
+test("a git status that fails says the bump's changes may be left, and why", async () => {
+	const { code, text } = await hook(
+		"rebase",
+		{ "bun scripts/bump-deps.ts": 1 },
+		{ stderr: "fatal: index file corrupt\n", code: 128 },
+	);
+	expect(code).toBe(1);
+	expect(text).toBe(
+		"post-rewrite: scripts/bump-deps.ts failed, so the rebase was left without a dependency bump commit.\n" +
+			"  git status failed, so the bump's changes may be left in the worktree:\n" +
+			"fatal: index file corrupt\n" +
+			"  The pre-push gate refuses the push while dependencies are outdated.",
+	);
 });
 
 test("a rebase whose bump commit is refused leaves the bump in the worktree, saying so", async () => {
-	const { code, text } = await hook("rebase", { ...STAGED, "git commit -q -m Bump dependencies": 1 }, "M  mix.lock\n");
+	const { code, text } = await hook(
+		"rebase",
+		{ ...STAGED, "git commit -q -m Bump dependencies": 1 },
+		{ stdout: "M  mix.lock\n" },
+	);
 	expect(code).toBe(1);
 	expect(text).toBe(
 		"post-rewrite: the bump could not be committed, so the rebase was left without a dependency bump commit.\n" +
