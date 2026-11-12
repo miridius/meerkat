@@ -971,7 +971,7 @@ defmodule Meerkat.ShepherdTest do
       on_exit(fn -> File.rm_rf!(dir) end)
       sub = Path.join(dir, "src")
       File.mkdir_p!(sub)
-      fake_release(dir, ~s(echo "$MEERKAT_PREFERRED_PORT" > "$PORT_SEEN"\nexit 0\n))
+      fake_release(dir, ~s(echo "$MEERKAT_PREFERRED_PORT" > "$PORT_SEEN"\nexit 76\n))
       old = Path.join([dir, "runs", run_key(dir)])
       File.mkdir_p!(old)
       File.write!(Path.join(old, "exit"), "5\n")
