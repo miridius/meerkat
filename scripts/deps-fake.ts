@@ -1,5 +1,5 @@
-// A stand-in Sys for the tests of scripts/outdated.ts and
-// scripts/bump-deps.ts. Each command gets the reply the last matching `on`
+// A stand-in Sys for the tests of scripts/outdated.ts, scripts/bump-deps.ts
+// and scripts/rebase-bump.ts. Each command gets the reply the last matching `on`
 // gave, or exit 0 with no output; the file map stands in for the tree.
 
 import type { Ran, RunOptions, Sys } from "./deps-common.ts";
@@ -27,7 +27,7 @@ export class Fake {
 	readonly lines: string[] = [];
 	readonly calls: Call[] = [];
 	readonly removed: string[] = [];
-	env: Record<string, string | undefined> = {};
+	readonly env: Record<string, string | undefined> = {};
 	tools = new Set(["mix", "elixir", "pnpm", "curl"]);
 	scratch: string | null = "/scratch";
 	private replies: [string | RegExp, Reply][] = [];

@@ -83,8 +83,12 @@ test("scratchWorkspace copies the workspace and its patches, linking deps/", () 
 		const copy = scratchWorkspace(root);
 		expect(copy).not.toBeNull();
 		try {
-			for (const file of ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", "assets/package.json"])
+			for (const file of ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", "assets/package.json"]) {
 				expect(readFileSync(join(copy as string, file), "utf8")).toBe(file);
+				// A write in the copy leaves the tree's file alone.
+				writeFileSync(join(copy as string, file), "changed");
+				expect(readFileSync(join(root, file), "utf8")).toBe(file);
+			}
 			expect(readFileSync(join(copy as string, "patches/pkg.patch"), "utf8")).toBe("the patch\n");
 			expect(lstatSync(join(copy as string, "deps")).isSymbolicLink()).toBe(true);
 			expect(readlinkSync(join(copy as string, "deps"))).toBe(join(root, "deps"));

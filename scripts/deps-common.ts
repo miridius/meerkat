@@ -2,10 +2,11 @@
 // (the dependency bump), run from the repo root, so both read the
 // exemptions and the two outdated reports the same way.
 //
-// Every process, file and clock either script uses goes through a `Sys`,
-// so their tests drive them on literal reports. A function that fails
-// prints why, prefixed with `sys.prefix`, and throws `Failed`; the script
-// then exits with its code, 1 unless it gives another.
+// Every process, file and clock these scripts and scripts/rebase-bump.ts
+// use goes through a `Sys`, so their tests drive them on literal reports.
+// A function here that fails prints why, prefixed with `sys.prefix`, and
+// throws `Failed`; the script then exits with its code, 1 unless it gives
+// another.
 
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,8 +48,10 @@ export class Failed extends Error {
 
 export const DAY_MS = 86_400_000;
 
-export function fail(sys: Sys, message: string): never {
-	sys.out(`${sys.prefix} ${message}`);
+// fail MESSAGE TO: prints MESSAGE, prefixed, to stdout or, with TO "err",
+// stderr, and throws it.
+export function fail(sys: Sys, message: string, to: "out" | "err" = "out"): never {
+	sys[to](`${sys.prefix} ${message}`);
 	throw new Failed(message);
 }
 
@@ -108,14 +111,16 @@ export function scratchWorkspace(root: string): string | null {
 		// assets/package.json takes the Phoenix packages from ../deps.
 		symlinkSync(resolve(root, "deps"), join(tmp, "deps"));
 		return tmp;
-	} catch {
+	} catch (e) {
+		console.error(e instanceof Error ? e.message : e);
 		if (tmp) rmSync(tmp, { recursive: true, force: true });
 		return null;
 	}
 }
 
-// Bash's $(...) drops trailing newlines; output is printed the same way.
-const chomp = (text: string) => text.replace(/\n+$/, "");
+// chomp TEXT: TEXT without trailing newlines, so printed output ends
+// without blank lines.
+export const chomp = (text: string) => text.replace(/\n+$/, "");
 
 // requireTools TOOL...: fails when any TOOL is not on PATH.
 export function requireTools(sys: Sys, ...tools: string[]) {
@@ -176,6 +181,11 @@ export function parseExemptions(text: string | null): Exemptions | null {
 	for (const entry of Object.values(table))
 		if (!isObject(entry) || !filled(entry.version) || !filled(entry.reason)) return null;
 	return table as Exemptions;
+}
+
+// exemption EXEMPTIONS NAME: NAME's entry, or undefined.
+export function exemption(exemptions: Exemptions, name: string) {
+	return Object.hasOwn(exemptions, name) ? exemptions[name] : undefined;
 }
 
 export function loadExemptions(sys: Sys): Exemptions {
@@ -264,9 +274,7 @@ export async function npmLatest(sys: Sys, name: string): Promise<string> {
 	const latest = chomp(ran.stdout);
 	if (ran.code === 0 && /^\S+$/.test(latest)) return latest;
 	if (ran.stderr) sys.err(chomp(ran.stderr));
-	const message = `could not read ${name}'s latest release from the registry — cannot check its exemption.`;
-	sys.err(`${sys.prefix} ${message}`);
-	throw new Failed(message);
+	return fail(sys, `could not read ${name}'s latest release from the registry — cannot check its exemption.`, "err");
 }
 
 export type HexStatus = "possible" | "not" | "cooldown";
@@ -335,11 +343,8 @@ export async function markCooldown(sys: Sys, rows: HexRow[]): Promise<HexRow[]> 
 		}
 		const ran = await hexPackage(sys, row.name);
 		const at = ran.code === 0 ? publishedAt(ran.stdout, row.latest) : chomp(ran.stderr) || `curl exited ${ran.code}`;
-		if (typeof at === "string") {
-			const message = `could not read when hex.pm published ${row.name} ${row.latest} — cannot check Hex deps: ${at}`;
-			sys.err(`${sys.prefix} ${message}`);
-			throw new Failed(message);
-		}
+		if (typeof at === "string")
+			fail(sys, `could not read when hex.pm published ${row.name} ${row.latest} — cannot check Hex deps: ${at}`, "err");
 		marked.push({ ...row, status: sys.now() - at.getTime() < DAY_MS ? "cooldown" : "not" });
 	}
 	return marked;

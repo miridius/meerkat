@@ -1,29 +1,23 @@
 import { expect, test } from "bun:test";
+import { Fake } from "./deps-fake.ts";
 import { rebaseBump } from "./rebase-bump.ts";
 
-// hook COMMAND CODES: runs the hook for COMMAND, each command exiting with
-// CODES' entry for it, or 0, and returns its status, the commands it ran
-// and what it printed.
-function hook(command: string, codes: Record<string, number> = {}, status = "") {
-	const ran: string[] = [];
-	const lines: string[] = [];
-	const code = rebaseBump(
-		command,
-		(cmd) => {
-			const line = cmd.join(" ");
-			ran.push(line);
-			return { code: codes[line] ?? 0, stdout: line.startsWith("git status") ? status : "" };
-		},
-		(text) => lines.push(text),
-		(text) => lines.push(text),
-	);
-	return { code, ran, text: lines.join("\n") };
+// hook COMMAND CODES STATUS: runs the hook for COMMAND, each command exiting
+// with CODES' entry for it, or 0, and git status printing STATUS, and
+// returns its status, the commands it ran and what it printed.
+async function hook(command: string, codes: Record<string, number> = {}, status = "") {
+	const fake = new Fake();
+	fake.sys.prefix = "post-rewrite:";
+	for (const [cmd, code] of Object.entries(codes)) fake.on(cmd, { code });
+	fake.on("git status --porcelain --untracked-files=no", { stdout: status });
+	const code = await rebaseBump(command, fake.sys);
+	return { code, ran: fake.ran, text: fake.text };
 }
 
 const STAGED = { "git diff --cached --quiet": 1 };
 
-test("a rebase that leaves dependencies behind commits their bump on top", () => {
-	const { code, ran, text } = hook("rebase", STAGED);
+test("a rebase that leaves dependencies behind commits their bump on top", async () => {
+	const { code, ran, text } = await hook("rebase", STAGED);
 	expect(code).toBe(0);
 	expect(ran).toEqual([
 		"bun scripts/bump-deps.ts",
@@ -33,20 +27,20 @@ test("a rebase that leaves dependencies behind commits their bump on top", () =>
 	expect(text).toBe("post-rewrite: committed the dependency bump on top of the rebase.");
 });
 
-test("a rebase while everything is current adds no commit", () => {
-	const { code, ran, text } = hook("rebase");
+test("a rebase while everything is current adds no commit", async () => {
+	const { code, ran, text } = await hook("rebase");
 	expect(code).toBe(0);
 	expect(ran).toEqual(["bun scripts/bump-deps.ts", "git diff --cached --quiet"]);
 	expect(text).toBe("");
 });
 
 // An amend went through pre-commit.
-test("an amend gets no bump", () => {
-	expect(hook("amend")).toEqual({ code: 0, ran: [], text: "" });
+test("an amend gets no bump", async () => {
+	expect(await hook("amend")).toEqual({ code: 0, ran: [], text: "" });
 });
 
-test("a rebase whose bump fails is left done, saying so", () => {
-	const { code, ran, text } = hook("rebase", { "bun scripts/bump-deps.ts": 1 });
+test("a rebase whose bump fails is left done, saying so", async () => {
+	const { code, ran, text } = await hook("rebase", { "bun scripts/bump-deps.ts": 1 });
 	expect(code).toBe(1);
 	expect(ran).toEqual(["bun scripts/bump-deps.ts", "git status --porcelain --untracked-files=no"]);
 	expect(text).toBe(
@@ -55,8 +49,8 @@ test("a rebase whose bump fails is left done, saying so", () => {
 	);
 });
 
-test("a rebase whose bump commit is refused leaves the bump in the worktree, saying so", () => {
-	const { code, text } = hook("rebase", { ...STAGED, "git commit -q -m Bump dependencies": 1 }, "M  mix.lock\n");
+test("a rebase whose bump commit is refused leaves the bump in the worktree, saying so", async () => {
+	const { code, text } = await hook("rebase", { ...STAGED, "git commit -q -m Bump dependencies": 1 }, "M  mix.lock\n");
 	expect(code).toBe(1);
 	expect(text).toBe(
 		"post-rewrite: the bump could not be committed, so the rebase was left without a dependency bump commit.\n" +

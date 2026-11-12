@@ -190,7 +190,7 @@ To learn which those are, it first runs every test file it is given
 under `:cover`, however few lines are mutated.
 `mutate.sh` gives it every `test/**/*_test.exs` file outside
 `test/scripts`.
-The `test/scripts` files drive shell scripts in subprocesses, so in
+The `test/scripts` files drive repo scripts in subprocesses, so in
 their own BEAM they execute only the app-start lines every test file
 executes; leaving them out roughly halves the mutation gate.
 Put a test that calls `lib/` code directly, not through a subprocess,

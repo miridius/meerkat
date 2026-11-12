@@ -21,8 +21,10 @@
 
 import { join } from "node:path";
 import {
+	chomp,
 	DAY_MS,
 	type Exemptions,
+	exemption,
 	fail,
 	hexOutdated,
 	hexPackage,
@@ -42,9 +44,9 @@ export function gitDepNames(lock: string): string[] {
 	return [...lock.matchAll(/^ {2}"([a-z0-9_]+)": \{:git,/gm)].map((m) => m[1]);
 }
 
-// lockPin LOCK NAME: the GitHub owner, repo and commit mix.lock's text
-// LOCK pins NAME to, or null when it pins NAME to no https://github.com
-// commit.
+// lockPin LOCK NAME: the GitHub repo, as owner:repo (the compare API's
+// head form), and commit mix.lock's text LOCK pins NAME to, or null when it
+// pins NAME to no https://github.com commit.
 export function lockPin(lock: string, name: string): { repo: string; sha: string } | null {
 	for (const line of lock.split("\n")) {
 		if (!line.startsWith(`  "${name}": {:git, `)) continue;
@@ -85,8 +87,8 @@ export function hexUpstream(record: HexRecord): string | null {
 	return null;
 }
 
-// pinContains NAME VERSION RECORD: whether the GitHub commit mix.lock pins
-// NAME to contains VERSION's tag (vVERSION or VERSION) in the GitHub repo
+// pinContains LOCK NAME VERSION RECORD: whether the GitHub commit mix.lock's
+// text LOCK pins NAME to contains VERSION's tag (vVERSION or VERSION) in the GitHub repo
 // hex.pm's RECORD links, per GitHub's compare API. An exemption naming a
 // release the pin lacks would claim fixes the project does not have.
 // Requests carry GITHUB_TOKEN, or else gh's token, when there is one:
@@ -114,7 +116,7 @@ async function pinContains(sys: Sys, lock: string, name: string, version: string
 		const ran = await sys.run(["curl", "-sSL", "--max-time", "10", "-K", "-", "-w", "\n%{http_code}", url], {
 			stdin: auth,
 		});
-		if (ran.stderr) sys.err(ran.stderr.replace(/\n$/, ""));
+		if (ran.stderr) sys.err(chomp(ran.stderr));
 		if (ran.code !== 0) {
 			sys.out(`BLOCKED: ${name} — could not reach GitHub to compare its pin with ${upstream} ${tag}; failing closed`);
 			return false;
@@ -168,7 +170,7 @@ export async function outdated(sys: Sys): Promise<number> {
 	// is too young to require; the caller then checks the package as if
 	// unexempted.
 	const exempt = (name: string, latest: string) => {
-		const entry = Object.hasOwn(exemptions, name) ? exemptions[name] : undefined;
+		const entry = exemption(exemptions, name);
 		if (!entry) return false;
 		matched.add(name);
 		if (entry.version !== latest) {
@@ -235,7 +237,7 @@ export async function outdated(sys: Sys): Promise<number> {
 	if (lock === null) fail(sys, "could not read mix.lock — cannot check git deps.");
 	for (const name of gitDepNames(lock)) {
 		const ran = await hexPackage(sys, name);
-		if (ran.stderr) sys.err(ran.stderr.replace(/\n$/, ""));
+		if (ran.stderr) sys.err(chomp(ran.stderr));
 		let record: HexRecord | null = null;
 		try {
 			record = ran.code === 0 ? JSON.parse(ran.stdout) : null;

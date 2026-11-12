@@ -36,7 +36,9 @@
 
 import { basename } from "node:path";
 import {
+	exemption,
 	Failed,
+	fail,
 	hexOutdated,
 	loadExemptions,
 	main,
@@ -66,7 +68,7 @@ const FILES = [
 // index of a path commit (`git commit <path>`) rather than the real one,
 // which `git commit -a` exports as index.lock.
 export function isPathCommit(index: string | undefined): boolean {
-	return !["index", "index.lock"].includes(basename(index ?? "index"));
+	return !["index", "index.lock"].includes(basename(index || "index"));
 }
 
 async function hashes(sys: Sys): Promise<string[]> {
@@ -92,8 +94,7 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 	requireTools(sys, "mix", "elixir", "pnpm", "curl");
 	const exemptions = loadExemptions(sys);
 	// An entry covers one release; a newer release is bumped to.
-	const isExempt = (name: string, version: string) =>
-		Object.hasOwn(exemptions, name) && exemptions[name].version === version;
+	const isExempt = (name: string, version: string) => exemption(exemptions, name)?.version === version;
 
 	const before = await hashes(sys);
 
@@ -106,11 +107,15 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 		if (status === "not") requirementBumps.push(name, latest);
 	}
 
-	const mixExs = (await sys.run(["git", "hash-object", "-w", "--", "mix.exs"])).stdout.trim();
+	const saved = await sys.run(["git", "hash-object", "-w", "--", "mix.exs"]);
+	const mixExs = saved.stdout.trim();
+	if (saved.code !== 0 || !mixExs) fail(sys, "could not save mix.exs before bumping its requirements.");
 	if (requirementBumps.length) await step(sys, ["elixir", "scripts/bump-hex-requirements.exs", ...requirementBumps]);
 	if (hexNames.length && (await sys.run(["mix", "deps.update", ...hexNames], { inherit: true })).code !== 0) {
 		// A rewritten requirement left behind would be committed alone.
-		sys.write("mix.exs", (await sys.run(["git", "cat-file", "blob", mixExs])).stdout);
+		const blob = await sys.run(["git", "cat-file", "blob", mixExs]);
+		if (blob.code !== 0) fail(sys, `could not restore mix.exs; its saved copy is blob ${mixExs}.`);
+		sys.write("mix.exs", blob.stdout);
 		sys.out(`pre-commit: mix deps.update ${hexNames.join(" ")} failed, so the commit was refused.`);
 		sys.out("  If Hex lists versions filtered by cooldown above, a release needs a");
 		sys.out("  dependency version still under the 24h Hex cooldown. Wait until it is");
@@ -123,7 +128,7 @@ export async function bumpDeps(sys: Sys): Promise<number> {
 		if (isExempt(name, latest)) continue;
 		// An entry naming a release younger than the 24h floor holds the
 		// package where it is, rather than bumping it to an older release.
-		if (Object.hasOwn(exemptions, name) && isExempt(name, await npmLatest(sys, name))) continue;
+		if (exemption(exemptions, name) && isExempt(name, await npmLatest(sys, name))) continue;
 		if ((await pnpmInstallable(sys, name)) === "young") {
 			sys.out(`pre-commit: ${name}@${latest} requires a package version under the 24h floor; not bumped yet.`);
 			continue;

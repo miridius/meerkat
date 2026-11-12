@@ -31,8 +31,8 @@ function gitRelease(list: [string, string][], repo: string) {
 	});
 }
 
-// compare FAKE REPO RANGE STATUS: GitHub's compare report for RANGE in
-// REPO, with its HTTP code appended as curl's -w writes it.
+// compare FAKE REPO RANGE BODY CODE: GitHub's compare report BODY for RANGE
+// in REPO, with HTTP code CODE appended as curl's -w writes it.
 function compare(fake: Fake, repo: string, range: string, body: string | null, code = 200) {
 	return fake.on(new RegExp(`^curl -sSL [\\s\\S]* https://api\\.github\\.com/repos/${repo}/compare/${range.replace(/[.]/g, "\\.")}$`), {
 		stdout: `${body ?? ""}\n${code}`,

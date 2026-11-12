@@ -10,32 +10,27 @@
 // commit goes through the pre-commit hook too, which checks it. Git ignores
 // this hook's exit status, so a failure leaves the rebase done and says so.
 
-// Runs a command, streaming its output, or capturing it with `capture`.
-export type Run = (cmd: string[], capture?: boolean) => { code: number; stdout: string };
+import { main, type Sys } from "./deps-common.ts";
 
-const realRun: Run = (cmd, capture = false) => {
-	const r = Bun.spawnSync(cmd, { stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"] });
-	return { code: r.exitCode, stdout: capture ? r.stdout.toString() : "" };
-};
-
-// rebaseBump COMMAND RUN: the hook's exit status, printing what it did.
-export function rebaseBump(command: string | undefined, run: Run, log = console.log, err = console.error): number {
-	function fail(what: string): number {
-		err(`post-rewrite: ${what}, so the rebase was left without a dependency bump commit.`);
-		if (run(["git", "status", "--porcelain", "--untracked-files=no"], true).stdout)
-			err("  The bump's changes are left in the worktree; `git status` lists them.");
-		err("  The pre-push gate refuses the push while dependencies are outdated.");
+// rebaseBump COMMAND SYS: the hook's exit status, printing what it did.
+export async function rebaseBump(command: string | undefined, sys: Sys): Promise<number> {
+	const run = async (...cmd: string[]) => (await sys.run(cmd, { inherit: true })).code;
+	async function fail(what: string): Promise<number> {
+		sys.err(`${sys.prefix} ${what}, so the rebase was left without a dependency bump commit.`);
+		if ((await sys.run(["git", "status", "--porcelain", "--untracked-files=no"])).stdout)
+			sys.err("  The bump's changes are left in the worktree; `git status` lists them.");
+		sys.err("  The pre-push gate refuses the push while dependencies are outdated.");
 		return 1;
 	}
 
 	if (command !== "rebase") return 0;
-	if (run(["bun", "scripts/bump-deps.ts"]).code !== 0) return fail("scripts/bump-deps.ts failed");
-	if (run(["git", "diff", "--cached", "--quiet"]).code !== 0) {
-		if (run(["git", "commit", "-q", "-m", "Bump dependencies"]).code !== 0)
+	if ((await run("bun", "scripts/bump-deps.ts")) !== 0) return fail("scripts/bump-deps.ts failed");
+	if ((await run("git", "diff", "--cached", "--quiet")) !== 0) {
+		if ((await run("git", "commit", "-q", "-m", "Bump dependencies")) !== 0)
 			return fail("the bump could not be committed");
-		log("post-rewrite: committed the dependency bump on top of the rebase.");
+		sys.out(`${sys.prefix} committed the dependency bump on top of the rebase.`);
 	}
 	return 0;
 }
 
-if (import.meta.main) process.exit(rebaseBump(process.argv[2], realRun));
+if (import.meta.main) await main("post-rewrite:", (sys) => rebaseBump(process.argv[2], sys));

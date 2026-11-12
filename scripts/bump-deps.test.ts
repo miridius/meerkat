@@ -82,7 +82,7 @@ test("an exemption for an older release does not hold back a newer one", async (
 
 	expect(await run(fake)).toBe(0);
 	expect(updates(fake)).toEqual(["pnpm -r update --latest --ignore-scripts vite shiki"]);
-	// shiki's entry does not name pnpm's latest, so only then the registry's.
+	// shiki's entry does not name pnpm's latest, so the registry's latest is read too.
 	expect(fake.ran).toContain("pnpm view shiki dist-tags.latest");
 });
 
@@ -195,6 +195,25 @@ test("a failed update refuses the commit and restores mix.exs", async () => {
 	expect(fake.text).toContain("pre-commit: mix deps.update bandit jason plug failed, so the commit was refused.");
 	expect(fake.files["mix.exs"]).toBe("base\n");
 	expect(staged(fake)).toBeUndefined();
+});
+
+test("a mix.exs it cannot save refuses the commit before any update", async () => {
+	const fake = tree().hexReport(HEX_BEHIND).on("git hash-object -w -- mix.exs", { code: 128 });
+
+	expect(await run(fake)).toBe(1);
+	expect(fake.text).toContain("test: could not save mix.exs before bumping its requirements.");
+	expect(fake.ran.some((c) => c.startsWith("elixir ") || c.startsWith("mix deps.update"))).toBe(false);
+});
+
+test("a mix.exs it cannot restore is left as the bump wrote it, saying where its copy is", async () => {
+	const fake = tree()
+		.hexReport(HEX_BEHIND)
+		.on(/^mix deps\.update /, { code: 1 })
+		.on("git cat-file blob blob:mix.exs", { code: 128 });
+
+	expect(await run(fake)).toBe(1);
+	expect(fake.text).toContain("test: could not restore mix.exs; its saved copy is blob blob:mix.exs.");
+	expect(fake.files["mix.exs"]).toBe("base\nrequirements bandit 1.12.5 plug 2.1.0\n");
 });
 
 // pnpm outdated reports the newest release past minimumReleaseAge as
@@ -319,6 +338,7 @@ test("a path commit defers the bump", async () => {
 
 test("isPathCommit tells a path commit's index from the real one", () => {
 	expect(isPathCommit(undefined)).toBe(false);
+	expect(isPathCommit("")).toBe(false);
 	expect(isPathCommit("/repo/.git/index")).toBe(false);
 	// `git commit -a` exports the locked real index.
 	expect(isPathCommit("/repo/.git/index.lock")).toBe(false);
