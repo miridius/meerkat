@@ -36,6 +36,15 @@ export const git: Git = (args, opts = {}) => {
 	return { status: r.exitCode ?? 1, out: r.stdout.toString() };
 };
 
+// `env` without the variables `git rev-parse --local-env-vars` lists as
+// `locals`. Git exports GIT_INDEX_FILE and friends to hooks; left set, they
+// would point a command run for another checkout, or a test's fixture repo,
+// at this checkout.
+export function withoutGitLocals(env: Env, locals: string): Env {
+	const drop = new Set(locals.split("\n").filter((v) => v !== ""));
+	return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k)));
+}
+
 export type Store = "checked" | "mutated" | "e2e";
 
 const DIRS: Record<Store, string> = { checked: "meerkat-checked", mutated: "meerkat-mutated", e2e: "meerkat-e2e" };

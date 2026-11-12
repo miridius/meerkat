@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Git, holds, key, keyed, main, type Marks, records } from "./checked-trees";
+import { type Git, holds, key, keyed, main, type Marks, records, withoutGitLocals } from "./checked-trees";
 import { fakeGit } from "./fake-git";
 
 const LISTING = [
@@ -146,5 +146,12 @@ describe("main", () => {
 		for (const args of [[], ["has"], ["has", "a", "b"], ["--other", "has", "a"], ["drop", "a"]]) {
 			expect(main(args, g, r)).toBe(2);
 		}
+	});
+});
+
+describe("withoutGitLocals", () => {
+	test("drops each variable git names as local to the repository", () => {
+		const env = { PATH: "/bin", GIT_DIR: "/r/.git", GIT_INDEX_FILE: "/r/.git/index.lock", GIT_WORK_TREE: "/r", GIT_PREFIX: "", GIT_EDITOR: "vi" };
+		expect(withoutGitLocals(env, "GIT_DIR\nGIT_INDEX_FILE\nGIT_WORK_TREE\nGIT_PREFIX\n")).toEqual({ PATH: "/bin", GIT_EDITOR: "vi" });
 	});
 });

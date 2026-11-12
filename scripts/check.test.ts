@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { check, gated, plan, type Step, steps, toRecord, withoutGitLocals } from "./check";
+import { check, gated, plan, type Step, steps, toRecord } from "./check";
 import type { Records, Store } from "./checked-trees";
 import { fakeGit } from "./fake-git";
 
@@ -64,13 +64,6 @@ describe("steps", () => {
 
 	test("leaves out the build and e2e steps when told to", () => {
 		expect(steps(ROOT, false).map((x) => x.cmd.join(" "))).toEqual(NO_E2E);
-	});
-});
-
-describe("withoutGitLocals", () => {
-	test("drops each variable git names as local to the repository", () => {
-		const env = { PATH: "/bin", GIT_DIR: "/r/.git", GIT_INDEX_FILE: "/r/.git/index.lock", GIT_WORK_TREE: "/r", GIT_PREFIX: "", GIT_EDITOR: "vi" };
-		expect(withoutGitLocals(env, "GIT_DIR\nGIT_INDEX_FILE\nGIT_WORK_TREE\nGIT_PREFIX\n")).toEqual({ PATH: "/bin", GIT_EDITOR: "vi" });
 	});
 });
 

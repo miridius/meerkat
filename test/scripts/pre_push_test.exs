@@ -1,8 +1,8 @@
 defmodule Meerkat.PrePushHookTest do
   # Pushes through the repo's real lefthook.yml, .lefthook/pre-push/pre-push.sh
   # and scripts/no-private-refs.sh to a local bare remote. Only outdated.sh and
-  # verified-push.sh are replaced, by stubs that record each run and exit with a
-  # chosen status; test/scripts/verified_push_test.exs covers verified-push.sh.
+  # verified-push.ts are replaced, by stubs that record each run and exit with a
+  # chosen status; test/scripts/verified_push_test.exs covers verified-push.ts.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0]
@@ -61,10 +61,10 @@ defmodule Meerkat.PrePushHookTest do
     exit "$(cat '#{outdated_status}' 2>/dev/null || echo 0)"
     """)
 
-    File.write!(Path.join([work, "scripts", "verified-push.sh"]), """
-    #!/usr/bin/env bash
-    echo "$*" > '#{verified_args}'
-    exit "$(cat '#{verified_status}' 2>/dev/null || echo 0)"
+    File.write!(Path.join([work, "scripts", "verified-push.ts"]), """
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    writeFileSync(#{inspect(verified_args)}, process.argv.slice(2).join(" "));
+    process.exit(existsSync(#{inspect(verified_status)}) ? Number(readFileSync(#{inspect(verified_status)}, "utf8")) : 0);
     """)
 
     Meerkat.TestHelpers.install_lefthook(work)
@@ -73,7 +73,7 @@ defmodule Meerkat.PrePushHookTest do
     no_hooks(work, ["push", "-q", "origin", "main"])
   end
 
-  test "a push hands each new tip to verified-push.sh", ctx do
+  test "a push hands each new tip to verified-push.ts", ctx do
     commit(ctx.work, "a.txt", "a\n", "add a")
     first = git(ctx.work, ["rev-parse", "HEAD"])
     commit(ctx.work, "b.txt", "b\n", "add b")
@@ -86,7 +86,7 @@ defmodule Meerkat.PrePushHookTest do
     assert Enum.sort(tips) == Enum.sort([first, second])
   end
 
-  test "a failing verified-push.sh blocks the push", ctx do
+  test "a failing verified-push.ts blocks the push", ctx do
     File.write!(ctx.verified_status, "1")
     commit(ctx.work, "a.txt", "a\n", "add a")
 
@@ -94,7 +94,7 @@ defmodule Meerkat.PrePushHookTest do
     assert code != 0
   end
 
-  test "verified-push.sh is not run when another check already blocks the push", ctx do
+  test "verified-push.ts is not run when another check already blocks the push", ctx do
     File.write!(ctx.outdated_status, "1")
     commit(ctx.work, "a.txt", "a\n", "add a")
 

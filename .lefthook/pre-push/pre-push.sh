@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # This is the pre-push hook. It runs scripts/no-private-refs.sh,
-# scripts/outdated.sh and scripts/verified-push.sh. They run from here because
+# scripts/outdated.sh and scripts/verified-push.ts. They run from here because
 # Git's list of pushed refs, which lefthook forwards through `use_stdin`,
 # decides whether any runs. no-private-refs.sh needs the pushed refs and tips
 # from it, and the URL pushed to, which Git passes as the second argument;
-# verified-push.sh needs the tips.
+# verified-push.ts needs the tips.
 #
 # lefthook runs it as a script rather than a command: lefthook skips a
 # pre-push command whenever `git diff HEAD @{push}` lists no files, which
@@ -43,9 +43,9 @@ status=0
 bash scripts/no-private-refs.sh "${scan_args[@]}" || status=1
 bash scripts/outdated.sh || status=1
 
-# verified-push.sh can run scripts/check.sh once per unchecked tip, which
+# verified-push.ts can run scripts/check.ts once per unchecked tip, which
 # takes minutes each, so it runs only when the push would otherwise go through.
 if [ "$status" = 0 ]; then
-  bash scripts/verified-push.sh "${pushed[@]}" || status=1
+  bun scripts/verified-push.ts "${pushed[@]}" || status=1
 fi
 exit "$status"

@@ -3,7 +3,7 @@
 // `pnpm install --frozen-lockfile` fails a commit whose pnpm-lock.yaml does
 // not match its package.json files.
 //
-// `check.ts --head`, run by scripts/verified-push.sh, checks HEAD instead of
+// `check.ts --head`, run by scripts/verified-push.ts, checks HEAD instead of
 // the commit being made.
 //
 // In pre-commit mode, a commit that changes only Markdown files, or nothing,
@@ -23,7 +23,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import { type Env, type Git, git, holds, type Records, records } from "./checked-trees";
+import { type Env, type Git, git, holds, type Records, records, withoutGitLocals } from "./checked-trees";
 import { isInput } from "./e2e-inputs";
 
 export type Plan = { skip: string } | { label: string; e2e: boolean };
@@ -66,13 +66,6 @@ export function steps(root: string, e2e: boolean): Step[] {
 				]
 			: []),
 	];
-}
-
-// Git exports GIT_INDEX_FILE and friends to hooks; left set, they would
-// point every test's fixture repo at this checkout's index.
-export function withoutGitLocals(env: Env, locals: string): Env {
-	const drop = new Set(locals.split("\n").filter((v) => v !== ""));
-	return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k)));
 }
 
 export type Run = (step: Step, env: Env) => number;

@@ -37,8 +37,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { withoutGitLocals } from "./check";
-import { type Env, type Git, git, holds, type Records, records } from "./checked-trees";
+import { type Env, type Git, git, holds, type Records, records, withoutGitLocals } from "./checked-trees";
 
 const NAME = "scripts/mutate.ts";
 
