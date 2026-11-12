@@ -1,38 +1,54 @@
 defmodule Meerkat.GitOidsTest do
-  # Real-git fixture (not async — each test owns a tmp repo and shells
-  # out to `git`). Exercises the effective-OID lookups end-to-end: the
-  # `git ls-files -s` / `git ls-tree HEAD` parsing, the deleted-vs-present
-  # routing, and the `core.quotePath=false` raw-path matching that lets a
-  # non-ASCII filename's approval survive.
+  # Exercises the effective-OID lookups end-to-end against one real repo,
+  # built once: the `git ls-files -s` / `git ls-tree HEAD` parsing, the
+  # deleted-vs-present routing, and the `core.quotePath=false` raw-path
+  # matching that lets a non-ASCII filename's approval survive.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2]
+  import Meerkat.TestHelpers,
+    only: [blob_oid: 1, git: 2, import_commits: 2, read_tree: 3, stub_git: 2]
 
   alias Meerkat.Git
 
-  setup do
-    dir = Meerkat.TestHelpers.tmp_path("meerkat-oids")
-    File.mkdir_p!(dir)
-    git(dir, ["init", "-q"])
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    on_exit(fn -> File.rm_rf!(dir) end)
-    {:ok, dir: dir}
-  end
+  @head %{
+    "gone.rs" => "fn gone() {}\n",
+    "kept.rs" => "fn kept() {}\n",
+    "mod.rs" => "fn mod() -> i32 { 1 }\n",
+    "a.rs" => "a\n",
+    "b.rs" => "b\n",
+    "wëird.rs" => "fn w() {}\n"
+  }
 
-  defp seed(dir, name, content) do
-    File.write!(Path.join(dir, name), content)
-    git(dir, ["add", name])
+  # The index deletes gone.rs, a.rs, b.rs and wëird.rs, edits mod.rs and
+  # adds two files.
+  @index %{
+    "kept.rs" => "fn kept() {}\n",
+    "mod.rs" => "fn mod() -> i32 { 2 }\n",
+    "staged.rs" => "fn s() {}\n",
+    ":x.rs" => "fn colon() {}\n"
+  }
+
+  setup_all do
+    repo =
+      Meerkat.TestHelpers.fixture_template("meerkat-oids", fn dir ->
+        git(dir, ["init", "-q", "--initial-branch=main"])
+
+        import_commits(dir, [
+          {"refs/heads/main", @head},
+          {"refs/meerkat-test/index", @index}
+        ])
+
+        read_tree(dir, "refs/meerkat-test/index", nil)
+      end)
+
+    {:ok, dir: repo}
   end
 
   defp entry(name, status), do: %{file_name: name, status: status, old_file_name: nil}
 
   describe "fetch_staged_blob_oid/2" do
     test "a staged path yields its index blob OID", %{dir: dir} do
-      seed(dir, "staged.rs", "fn s() {}\n")
-
-      assert Git.fetch_staged_blob_oid(dir, "staged.rs") ==
-               {:ok, git(dir, ["rev-parse", ":staged.rs"])}
+      assert Git.fetch_staged_blob_oid(dir, "staged.rs") == {:ok, blob_oid(@index["staged.rs"])}
     end
 
     test "a path not in the index is :not_staged", %{dir: dir} do
@@ -40,51 +56,42 @@ defmodule Meerkat.GitOidsTest do
     end
 
     test "a staged path git would read as pathspec magic yields its blob OID", %{dir: dir} do
-      File.write!(Path.join(dir, ":x.rs"), "fn colon() {}\n")
-      git(dir, ["add", "."])
-
-      assert Git.fetch_staged_blob_oid(dir, ":x.rs") == {:ok, git(dir, ["rev-parse", "::x.rs"])}
+      assert Git.fetch_staged_blob_oid(dir, ":x.rs") == {:ok, blob_oid(@index[":x.rs"])}
     end
   end
 
   describe "head_blob_oids_many/2" do
     test "maps each path to its HEAD pre-image blob OID", %{dir: dir} do
-      seed(dir, "gone.rs", "fn gone() {}\n")
-      seed(dir, "kept.rs", "fn kept() {}\n")
-      git(dir, ["commit", "-qm", "seed"])
-
       expected = %{
-        "gone.rs" => git(dir, ["rev-parse", "HEAD:gone.rs"]),
-        "kept.rs" => git(dir, ["rev-parse", "HEAD:kept.rs"])
+        "gone.rs" => blob_oid(@head["gone.rs"]),
+        "kept.rs" => blob_oid(@head["kept.rs"])
       }
 
       assert Git.head_blob_oids_many(dir, ["gone.rs", "kept.rs"]) == {:ok, expected}
     end
 
     test "a path not in HEAD is simply absent from the map", %{dir: dir} do
-      seed(dir, "present.rs", "fn x() {}\n")
-      git(dir, ["commit", "-qm", "seed"])
-
-      assert {:ok, map} = Git.head_blob_oids_many(dir, ["present.rs", "never-existed.rs"])
-      assert Map.keys(map) == ["present.rs"]
+      assert {:ok, map} = Git.head_blob_oids_many(dir, ["kept.rs", "never-existed.rs"])
+      assert Map.keys(map) == ["kept.rs"]
     end
 
     test "non-ASCII path matches the raw `--name-status -z` key (quotePath=false)", %{dir: dir} do
       # Without `core.quotePath=false`, ls-tree C-quotes this to
       # `"w\303\253ird.rs"`, which never matches the raw `wëird.rs`
       # that `staged_files` keys off — the deletion approval is lost.
-      seed(dir, "wëird.rs", "fn w() {}\n")
-      git(dir, ["commit", "-qm", "seed"])
-
-      assert {:ok, %{"wëird.rs" => oid}} = Git.head_blob_oids_many(dir, ["wëird.rs"])
-      assert oid == git(dir, ["rev-parse", "HEAD:wëird.rs"])
+      assert Git.head_blob_oids_many(dir, ["wëird.rs"]) ==
+               {:ok, %{"wëird.rs" => blob_oid(@head["wëird.rs"])}}
     end
 
     test "empty path list short-circuits without shelling out", %{dir: dir} do
+      stub_git("ls-tree", fn argv -> flunk("ran #{inspect(argv)}") end)
       assert Git.head_blob_oids_many(dir, []) == {:ok, %{}}
     end
 
     test "a repo with no commits yet is an error, since there is no HEAD tree", %{dir: dir} do
+      # git's answer in a repo with no commit.
+      stub_git("ls-tree", {"fatal: Not a valid object name HEAD\n", 128})
+
       {result, _stderr} =
         ExUnit.CaptureIO.with_io(:stderr, fn -> Git.head_blob_oids_many(dir, ["a.rs"]) end)
 
@@ -98,49 +105,23 @@ defmodule Meerkat.GitOidsTest do
 
   describe "effective_oids_many/2" do
     test "deletions key off HEAD pre-image, present files off the index", %{dir: dir} do
-      seed(dir, "gone.rs", "fn gone() {}\n")
-      seed(dir, "mod.rs", "fn mod() -> i32 { 1 }\n")
-      git(dir, ["commit", "-qm", "seed"])
-
-      git(dir, ["rm", "-q", "gone.rs"])
-      File.write!(Path.join(dir, "mod.rs"), "fn mod() -> i32 { 2 }\n")
-      git(dir, ["add", "mod.rs"])
-
       entries = [entry("gone.rs", :deleted), entry("mod.rs", :modified)]
 
-      assert {:ok, map} = Git.effective_oids_many(dir, entries)
-      # Deletion → HEAD blob (pre-image), present → index blob (post-edit).
-      assert map["gone.rs"] == git(dir, ["rev-parse", "HEAD:gone.rs"])
-      assert map["mod.rs"] == git(dir, ["rev-parse", ":mod.rs"])
-      # The post-edit index OID differs from HEAD, so this pins the present
-      # file to the index, ruling out an accidental HEAD match.
-      assert map["mod.rs"] != git(dir, ["rev-parse", "HEAD:mod.rs"])
+      # Deletion → HEAD blob (pre-image), present → index blob (post-edit),
+      # which differs from HEAD's.
+      assert Git.effective_oids_many(dir, entries) ==
+               {:ok,
+                %{"gone.rs" => blob_oid(@head["gone.rs"]), "mod.rs" => blob_oid(@index["mod.rs"])}}
     end
 
     test "an all-deletions list uses HEAD pre-image OIDs", %{dir: dir} do
-      seed(dir, "a.rs", "a\n")
-      seed(dir, "b.rs", "b\n")
-      git(dir, ["commit", "-qm", "seed"])
-      git(dir, ["rm", "-q", "a.rs", "b.rs"])
-
-      assert {:ok, map} =
-               Git.effective_oids_many(dir, [entry("a.rs", :deleted), entry("b.rs", :deleted)])
-
-      assert map == %{
-               "a.rs" => git(dir, ["rev-parse", "HEAD:a.rs"]),
-               "b.rs" => git(dir, ["rev-parse", "HEAD:b.rs"])
-             }
+      assert Git.effective_oids_many(dir, [entry("a.rs", :deleted), entry("b.rs", :deleted)]) ==
+               {:ok, %{"a.rs" => blob_oid("a\n"), "b.rs" => blob_oid("b\n")}}
     end
 
     test "non-ASCII deletion round-trips its pre-image OID", %{dir: dir} do
-      seed(dir, "wëird.rs", "fn w() {}\n")
-      git(dir, ["commit", "-qm", "seed"])
-      git(dir, ["rm", "-q", "wëird.rs"])
-
-      assert {:ok, %{"wëird.rs" => oid}} =
-               Git.effective_oids_many(dir, [entry("wëird.rs", :deleted)])
-
-      assert oid == git(dir, ["rev-parse", "HEAD:wëird.rs"])
+      assert Git.effective_oids_many(dir, [entry("wëird.rs", :deleted)]) ==
+               {:ok, %{"wëird.rs" => blob_oid(@head["wëird.rs"])}}
     end
   end
 
@@ -148,27 +129,19 @@ defmodule Meerkat.GitOidsTest do
     # The env strip otherwise only matters under a git hook, where GIT_DIR
     # is exported; this poisons GIT_DIR explicitly so the guard fails under
     # an ordinary `mix test` if the strip regresses.
-    test "strips an inherited GIT_DIR so fixtures build in dir, not the ambient gitdir",
+    test "strips an inherited GIT_DIR so git reads dir's repo, not the ambient gitdir",
          %{dir: dir} do
-      poison =
-        Meerkat.TestHelpers.tmp_path("meerkat-oids-poison")
-
-      File.mkdir_p!(poison)
-      System.cmd("git", ["init", "-q", poison])
       prev = System.get_env("GIT_DIR")
-      System.put_env("GIT_DIR", Path.join(poison, ".git"))
+      System.put_env("GIT_DIR", Meerkat.TestHelpers.tmp_path("meerkat-oids-no-gitdir"))
 
       on_exit(fn ->
         if prev, do: System.put_env("GIT_DIR", prev), else: System.delete_env("GIT_DIR")
-        File.rm_rf!(poison)
       end)
 
-      seed(dir, "x.rs", "fn x() {}\n")
-      git(dir, ["commit", "-qm", "seed"])
+      assert git(dir, ["rev-parse", "HEAD:kept.rs"]) == blob_oid(@head["kept.rs"])
 
-      # The blob is in dir's HEAD only if the commit landed in dir's repo
-      # rather than the poison gitdir GIT_DIR points at.
-      assert {:ok, %{"x.rs" => _}} = Git.head_blob_oids_many(dir, ["x.rs"])
+      assert Git.head_blob_oids_many(dir, ["kept.rs"]) ==
+               {:ok, %{"kept.rs" => blob_oid(@head["kept.rs"])}}
     end
   end
 end

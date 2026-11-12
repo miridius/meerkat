@@ -55,13 +55,17 @@ defmodule Meerkat.ApprovalCacheTest do
     end
   end
 
-  describe "path_for/1" do
-    setup do
-      repo = Meerkat.TestHelpers.make_git_repo("meerkat-approval-path")
-      on_exit(fn -> File.rm_rf!(repo) end)
-      {:ok, repo: repo}
-    end
+  # A repo the path_for/1 tests only read.
+  setup_all do
+    repo =
+      Meerkat.TestHelpers.fixture_template("meerkat-approval-path", fn dir ->
+        Meerkat.TestHelpers.git(dir, ["init", "-q"])
+      end)
 
+    {:ok, repo: repo}
+  end
+
+  describe "path_for/1" do
     test "is approved.json in the shared gitdir", %{repo: repo} do
       path = ApprovalCache.path_for(repo)
       assert path == Path.join([repo, ".git", "meerkat-precommit", "approved.json"])
@@ -81,7 +85,7 @@ defmodule Meerkat.ApprovalCacheTest do
       Application.put_env(:meerkat, :approval_cache_path, cached)
       on_exit(fn -> Application.delete_env(:meerkat, :approval_cache_path) end)
       assert ApprovalCache.path_for(repo) == cached
-      File.rm_rf!(Path.join(repo, ".git"))
+      Meerkat.TestHelpers.stub_git(fn argv -> flunk("ran #{inspect(argv)}") end)
       assert ApprovalCache.path_for(repo) == cached
     end
 
@@ -125,53 +129,21 @@ defmodule Meerkat.ApprovalCacheTest do
     end
   end
 
-  describe "key_for/2 and prune_for/1 (real git fixture)" do
+  describe "key_for/2 and prune_for/1 with real git" do
     import Meerkat.TestHelpers, only: [commit: 2, git: 2, make_git_repo: 1]
 
-    setup do
+    test "a detached HEAD keys by its worktree's gitdir name, and prune_for keeps live " <>
+           "branches and worktrees and drops the rest" do
       dir = make_git_repo("meerkat-approval-keys")
       linked = dir <> "-linked"
       on_exit(fn -> Enum.each([dir, linked], &File.rm_rf!/1) end)
       git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"])
       commit(dir, "seed")
-
-      {:ok, dir: dir, linked: linked}
-    end
-
-    test "a branch is its own key", %{dir: dir} do
-      assert ApprovalCache.key_for(dir, "feature/x") == "feature/x"
-    end
-
-    test "a detached HEAD keys by its worktree's gitdir name", %{dir: dir, linked: linked} do
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
+      git(dir, ["worktree", "add", "-q", "-b", "side", linked])
 
       assert ApprovalCache.key_for(dir, nil) == "detached HEAD (.git)"
-      assert ApprovalCache.key_for(linked, nil) == "detached HEAD (#{Path.basename(linked)})"
-    end
-
-    test "a detached HEAD outside a repo has no key", %{linked: not_a_repo} do
-      File.mkdir_p!(not_a_repo)
-      assert ApprovalCache.key_for(not_a_repo, nil) == nil
-    end
-
-    test "the cache lives in the git common dir", %{dir: dir} do
-      assert ApprovalCache.path_for(dir) ==
-               Path.join([dir, ".git", "meerkat-precommit", "approved.json"])
-    end
-
-    test "prune_for with no linked worktree keeps the main worktree's key", %{dir: dir} do
-      seed_keys(dir, ["main", "gone", "detached HEAD (.git)", "detached HEAD (gone)"])
-
-      prune!(dir)
-      assert keys(dir) == ["detached HEAD (.git)", "main"]
-    end
-
-    test "prune_for keeps live branches and worktrees and drops the rest", %{
-      dir: dir,
-      linked: linked
-    } do
-      git(dir, ["worktree", "add", "-q", "-b", "side", linked])
       linked_key = "detached HEAD (#{Path.basename(linked)})"
+      assert ApprovalCache.key_for(linked, nil) == linked_key
       live = ["detached HEAD (.git)", linked_key, "main", "side"]
       seed_keys(dir, live ++ ["gone", "detached HEAD (gone)"])
 
@@ -187,54 +159,104 @@ defmodule Meerkat.ApprovalCacheTest do
       assert keys(dir) == ["detached HEAD (.git)", "main", "side"]
     end
 
-    test "prune_for drops a linked worktree deleted without git", %{dir: dir, linked: linked} do
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
-      linked_key = "detached HEAD (#{Path.basename(linked)})"
+    test "outside a repo, a detached HEAD has no key and prune_for does nothing" do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-nogit")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      assert ApprovalCache.key_for(dir, nil) == nil
+      assert ApprovalCache.prune_for(dir) == %{}
+    end
+  end
+
+  describe "key_for/2 and prune_for/1" do
+    # A common dir laid out as git lays one out. The stand-in for git
+    # answers `--git-dir` and `--git-common-dir` with it and lists `main`
+    # as the only branch; any other git call fails the test.
+    setup do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-approval-keys")
+      common = Path.join(dir, "repo/.git")
+      File.mkdir_p!(common)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      Meerkat.TestHelpers.stub_git(fn argv ->
+        cond do
+          "--git-common-dir" in argv -> {common <> "\n", 0}
+          "--git-dir" in argv -> {common <> "\n", 0}
+          "for-each-ref" in argv -> {"main\n", 0}
+        end
+      end)
+
+      {:ok, dir: dir, common: common}
+    end
+
+    # A linked worktree `name`, whose gitdir file names `target`: its
+    # `.git` file at `dir/<name>`, which `opts[:live]` creates.
+    defp linked(%{dir: dir, common: common}, name, opts \\ []) do
+      gitdir = Path.join([common, "worktrees", name])
+      File.mkdir_p!(gitdir)
+      worktree = Path.join(dir, name)
+      target = Path.join(worktree, ".git")
+
+      if opts[:live] do
+        File.mkdir_p!(worktree)
+        File.write!(target, "gitdir: #{gitdir}\n")
+      end
+
+      if opts[:locked], do: File.write!(Path.join(gitdir, "locked"), "")
+      if opts[:relative], do: write_gitdir(gitdir, Path.relative_to(target, gitdir, force: true))
+      if !opts[:relative] and !opts[:no_gitdir], do: write_gitdir(gitdir, target)
+      "detached HEAD (#{name})"
+    end
+
+    defp write_gitdir(gitdir, target),
+      do: File.write!(Path.join(gitdir, "gitdir"), target <> "\n")
+
+    test "a branch is its own key", %{dir: dir} do
+      assert ApprovalCache.key_for(dir, "feature/x") == "feature/x"
+    end
+
+    test "a detached HEAD keys by its gitdir's name", %{dir: dir} do
+      assert ApprovalCache.key_for(dir, nil) == "detached HEAD (.git)"
+    end
+
+    test "prune_for with no linked worktree keeps the main worktree's key", %{dir: dir} do
+      seed_keys(dir, ["main", "gone", "detached HEAD (.git)", "detached HEAD (gone)"])
+
+      prune!(dir)
+      assert keys(dir) == ["detached HEAD (.git)", "main"]
+    end
+
+    test "prune_for drops a linked worktree deleted without git", %{dir: dir} = ctx do
+      linked_key = linked(ctx, "linked")
       seed_keys(dir, ["main", linked_key])
-      File.rm_rf!(linked)
 
       prune!(dir)
       assert keys(dir) == ["main"]
     end
 
-    test "prune_for keeps a locked worktree whose folder is gone", %{dir: dir, linked: linked} do
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
-      git(dir, ["worktree", "lock", linked])
-      linked_key = "detached HEAD (#{Path.basename(linked)})"
+    test "prune_for keeps a locked worktree whose folder is gone", %{dir: dir} = ctx do
+      linked_key = linked(ctx, "linked", locked: true)
       seed_keys(dir, [linked_key])
-      File.rm_rf!(linked)
 
       prune!(dir)
       assert keys(dir) == [linked_key]
     end
 
-    test "prune_for reads a relative gitdir file, and drops a worktree without one", %{
-      dir: dir,
-      linked: linked
-    } do
-      other = linked <> "2"
-      on_exit(fn -> File.rm_rf!(other) end)
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
-      git(dir, ["worktree", "add", "-q", "--detach", other])
-      gitdir = Path.join([dir, ".git", "worktrees", Path.basename(linked)])
-      relative = Path.relative_to(Path.join(linked, ".git"), gitdir, force: true)
-      File.write!(Path.join(gitdir, "gitdir"), relative <> "\n")
-      File.rm!(Path.join([dir, ".git", "worktrees", Path.basename(other), "gitdir"]))
-      linked_key = "detached HEAD (#{Path.basename(linked)})"
-      seed_keys(dir, ["main", linked_key, "detached HEAD (#{Path.basename(other)})"])
+    test "prune_for reads a relative gitdir file, and drops a worktree without one",
+         %{dir: dir} = ctx do
+      linked_key = linked(ctx, "linked", live: true, relative: true)
+      other_key = linked(ctx, "other", live: true, no_gitdir: true)
+      seed_keys(dir, ["main", linked_key, other_key])
 
       prune!(dir)
       assert keys(dir) == [linked_key, "main"]
     end
 
-    test "prune_for keeps a worktree whose gitdir file can't be read", %{
-      dir: dir,
-      linked: linked
-    } do
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
-      linked_key = "detached HEAD (#{Path.basename(linked)})"
+    test "prune_for keeps a worktree whose gitdir file can't be read", %{dir: dir} = ctx do
+      linked_key = linked(ctx, "linked")
       seed_keys(dir, [linked_key])
-      file = Path.join([dir, ".git", "worktrees", Path.basename(linked), "gitdir"])
+      file = Path.join([ctx.common, "worktrees", "linked", "gitdir"])
       File.chmod!(file, 0o000)
       on_exit(fn -> File.chmod(file, 0o644) end)
 
@@ -242,40 +264,32 @@ defmodule Meerkat.ApprovalCacheTest do
       assert keys(dir) == [linked_key]
     end
 
-    test "prune_for prunes nothing when the worktree list can't be read", %{
-      dir: dir,
-      linked: linked
-    } do
-      git(dir, ["worktree", "add", "-q", "--detach", linked])
+    test "prune_for prunes nothing when the worktree list can't be read", %{dir: dir} = ctx do
+      linked(ctx, "linked", live: true)
       seed_keys(dir, ["gone"])
-      worktrees = Path.join([dir, ".git", "worktrees"])
+      worktrees = Path.join(ctx.common, "worktrees")
       File.chmod!(worktrees, 0o000)
       on_exit(fn -> File.chmod(worktrees, 0o755) end)
 
       prune!(dir)
       assert keys(dir) == ["gone"]
     end
+  end
 
-    test "prune_for outside a repo does nothing", %{linked: not_a_repo} do
-      File.mkdir_p!(not_a_repo)
-      assert ApprovalCache.prune_for(not_a_repo) == %{}
+  # The cache prune_for returns is the one it left on disk.
+  defp prune!(dir) do
+    pruned = ApprovalCache.prune_for(dir)
+    assert pruned == ApprovalCache.load_for(dir)
+  end
+
+  defp keys(dir), do: dir |> ApprovalCache.load_for() |> Map.keys() |> Enum.sort()
+
+  defp seed_keys(dir, keys) do
+    approve_all = fn cache ->
+      Enum.reduce(keys, cache, &ApprovalCache.approve(&2, &1, "f", "1"))
     end
 
-    # The cache prune_for returns is the one it left on disk.
-    defp prune!(dir) do
-      pruned = ApprovalCache.prune_for(dir)
-      assert pruned == ApprovalCache.load_for(dir)
-    end
-
-    defp keys(dir), do: dir |> ApprovalCache.load_for() |> Map.keys() |> Enum.sort()
-
-    defp seed_keys(dir, keys) do
-      approve_all = fn cache ->
-        Enum.reduce(keys, cache, &ApprovalCache.approve(&2, &1, "f", "1"))
-      end
-
-      {:ok, _} = ApprovalCache.modify(ApprovalCache.path_for(dir), approve_all)
-    end
+    {:ok, _} = ApprovalCache.modify(ApprovalCache.path_for(dir), approve_all)
   end
 
   describe "save / load round-trip" do

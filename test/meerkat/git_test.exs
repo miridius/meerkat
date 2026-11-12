@@ -321,41 +321,112 @@ defmodule Meerkat.GitTest do
     end
   end
 
-  # The empty repo `git_repo/1` copies, built once.
+  # One repo, on `feature/x`, built once from literal files; tests only
+  # read it, and a failure git would report comes from `stub_git`. HEAD
+  # holds every staged scenario's base, and each scenario's index file
+  # holds HEAD with that scenario's files staged in place of its base, so
+  # a staged review through it shows only that scenario. Each range
+  # scenario is a pair of commits.
+  @staged %{
+    "one-of-each" => {
+      %{
+        "deleted.rs" => "gone\n",
+        "old_name.rs" => "alpha\nbeta\ngamma\ndelta\n",
+        "modified.rs" => "one\ntwo\nthree\n"
+      },
+      %{
+        "added.lock" => "fresh\n",
+        "new_name.rs" => "alpha\nbeta\ngamma\nDELTA\n",
+        "modified.rs" => "one\nTWO\nthree\n"
+      }
+    },
+    "line-counts" => {
+      %{"f.sql" => "-- note\nb\nc\nd\ne\nf\ng\nh\ni\nj\nlast"},
+      %{"f.sql" => "++ note\nx\nb\nc  \nd\ne\nf\ng\nh\ni\nj\nlast!"}
+    },
+    "failed-diff" => {%{"mod.rs" => "one\n"}, %{"mod.rs" => "two\n", "added.rs" => "new\n"}},
+    "stage-names" => {
+      %{"0:foo.txt" => "old zero\n", "1:bar.txt" => "old one\n", "foo.txt" => "unchanged foo\n"},
+      %{"0:foo.txt" => "new zero\n", "1:bar.txt" => "new one\n", "foo.txt" => "unchanged foo\n"}
+    },
+    "magic" => {
+      %{":(bogus)gone.rs" => "gone\n"},
+      %{":(bogus)x.rs" => "bogus\n", "plain.rs" => "plain\n"}
+    }
+  }
+
   setup_all do
     template =
       fixture_template("meerkat-git-template", fn dir ->
-        git(dir, ["init", "-q"])
-        git(dir, ["config", "user.email", "t@t.t"])
-        git(dir, ["config", "user.name", "t"])
+        repo = Path.join(dir, "repo")
+        File.mkdir_p!(repo)
+        git(repo, ["init", "-q", "--initial-branch=feature/x"])
+        git(repo, ["config", "diff.suppressBlankEmpty", "true"])
+        git(repo, ["remote", "add", "origin", repo])
+        File.write!(Path.join(repo, ".gitattributes"), "*.lock linguist-generated\n")
+        File.mkdir_p!(Path.join(repo, "attrs"))
+        File.write!(Path.join(repo, "attrs/.gitattributes"), "*.rs linguist-generated\n")
+        File.mkdir_p!(Path.join(repo, "warn"))
+
+        File.write!(
+          Path.join(repo, "warn/.gitattributes"),
+          "!*.lock linguist-generated\n*.rs linguist-generated\n"
+        )
+
+        File.mkdir_p!(Path.join(dir, "no-repo/.git"))
+
+        bases = @staged |> Map.values() |> Enum.map(&elem(&1, 0)) |> Enum.reduce(&Map.merge/2)
+
+        staged =
+          for {name, {base, staged}} <- @staged do
+            {"refs/heads/staged/#{name}", bases |> Map.drop(Map.keys(base)) |> Map.merge(staged)}
+          end
+
+        moved = "moved line one\nmoved line two\nmoved line three\n"
+        release = %{"base.rs" => "base\n"}
+
+        import_commits(
+          repo,
+          [{"refs/heads/feature/x", bases} | staged] ++
+            [
+              {"refs/heads/blank-base", %{"a.txt" => "top\n\n" <> moved <> "bottom\n"}},
+              {"refs/heads/blank-tip", %{"a.txt" => "top\n\nbottom\n", "b.txt" => moved}},
+              {"refs/heads/magic-base",
+               %{
+                 "x.rs" => "unchanged\n",
+                 ":(bogus)old.rs" => "alpha\nbeta\ngamma\ndelta\n",
+                 ":(bogus)x.rs" => "bogus one\n",
+                 ":x.rs" => "colon one\n"
+               }},
+              {"refs/heads/magic-tip",
+               %{
+                 "x.rs" => "unchanged\n",
+                 ":(bogus)new.rs" => "alpha\nbeta\ngamma\nDELTA\n",
+                 ":(bogus)x.rs" => "bogus two\n",
+                 ":x.rs" => "colon two\n"
+               }},
+              {"refs/heads/mod-base", %{"mod.rs" => "one\n"}},
+              {"refs/heads/mod-tip", %{"mod.rs" => "two\n"}},
+              {"refs/heads/release", release},
+              # Over `release`, as the parentless commits of one tree are one commit.
+              {"refs/pull/7/head", release},
+              {"refs/pull/7/head", Map.put(release, "feature.rs", "feature\n")}
+            ]
+        )
+
+        for name <- Map.keys(@staged) do
+          read_tree(repo, "staged/#{name}", Path.join(repo, ".git/index-#{name}"))
+        end
       end)
 
-    {:ok, git_template: template}
+    {:ok, repo: Path.join(template, "repo"), no_repo: Path.join(template, "no-repo")}
   end
 
-  defp git_repo(%{git_template: template}) do
-    {:ok, dir: copy_fixture(template, "meerkat-git")}
-  end
-
-  defp delete_loose_object!(dir, oid) do
-    <<fanout::binary-size(2), rest::binary>> = oid
-    File.rm!(Path.join([dir, ".git", "objects", fanout, rest]))
-  end
-
-  defp seed_one_of_each_change(dir) do
-    File.write!(Path.join(dir, ".gitattributes"), "*.lock linguist-generated\n")
-    File.write!(Path.join(dir, "deleted.rs"), "gone\n")
-    File.write!(Path.join(dir, "old_name.rs"), "alpha\nbeta\ngamma\ndelta\n")
-    File.write!(Path.join(dir, "modified.rs"), "one\ntwo\nthree\n")
-    git(dir, ["add", "."])
-    git(dir, ["commit", "-qm", "seed"])
-
-    File.write!(Path.join(dir, "added.lock"), "fresh\n")
-    git(dir, ["rm", "-q", "deleted.rs"])
-    git(dir, ["mv", "old_name.rs", "new_name.rs"])
-    File.write!(Path.join(dir, "new_name.rs"), "alpha\nbeta\ngamma\nDELTA\n")
-    File.write!(Path.join(dir, "modified.rs"), "one\nTWO\nthree\n")
-    git(dir, ["add", "."])
+  # `Git.staged_file_diffs/1` through the index file of the scenario `name`.
+  defp staged_file_diffs(repo, name) do
+    Git.with_index(repo, Path.join(repo, ".git/index-#{name}"), fn ->
+      Git.staged_file_diffs(repo)
+    end)
   end
 
   defp one_of_each_diffs(effective_oids) do
@@ -422,60 +493,45 @@ defmodule Meerkat.GitTest do
   end
 
   describe "current_branch/1" do
-    setup :git_repo
-
-    test "names the branch HEAD is on", %{dir: dir} do
-      git(dir, ["switch", "-q", "-c", "feature/x"])
-
-      assert Git.current_branch(dir) == "feature/x"
+    test "names the branch HEAD is on", %{repo: repo} do
+      assert Git.current_branch(repo) == "feature/x"
     end
   end
 
   describe "staged_file_diffs/1" do
-    setup :git_repo
-
     test "an added, a deleted, a renamed-and-edited and a modified file each carry their " <>
            "contents, hunks and staged blob OID",
-         %{dir: dir} do
-      seed_one_of_each_change(dir)
-
+         %{repo: repo} do
       effective_oids = %{
-        "added.lock" => git(dir, ["rev-parse", ":added.lock"]),
-        "deleted.rs" => git(dir, ["rev-parse", "HEAD:deleted.rs"]),
-        "modified.rs" => git(dir, ["rev-parse", ":modified.rs"]),
-        "new_name.rs" => git(dir, ["rev-parse", ":new_name.rs"])
+        "added.lock" => blob_oid("fresh\n"),
+        "deleted.rs" => blob_oid("gone\n"),
+        "modified.rs" => blob_oid("one\nTWO\nthree\n"),
+        "new_name.rs" => blob_oid("alpha\nbeta\ngamma\nDELTA\n")
       }
 
-      assert Git.staged_file_diffs(dir) == {:ok, one_of_each_diffs(effective_oids)}
+      assert staged_file_diffs(repo, "one-of-each") == {:ok, one_of_each_diffs(effective_oids)}
     end
 
     test "line counts cover every shown hunk, but not hunk headers, no-newline markers or " <>
            "whitespace-only edits",
-         %{dir: dir} do
-      File.write!(Path.join(dir, "f.sql"), "-- note\nb\nc\nd\ne\nf\ng\nh\ni\nj\nlast")
-      git(dir, ["add", "."])
-      git(dir, ["commit", "-qm", "seed"])
-      File.write!(Path.join(dir, "f.sql"), "++ note\nx\nb\nc  \nd\ne\nf\ng\nh\ni\nj\nlast!")
-      git(dir, ["add", "."])
-
+         %{repo: repo} do
       assert {:ok, [%{hunks: [_, _ | _], additions: 3, deletions: 2}]} =
-               Git.staged_file_diffs(dir)
+               staged_file_diffs(repo, "line-counts")
     end
 
+    # The answers git gives when the added file's staged blob is missing.
     test "a modified file stays listed, with the error, when the batched staged diff fails",
-         %{dir: dir} do
-      File.write!(Path.join(dir, "mod.rs"), "one\n")
-      git(dir, ["add", "mod.rs"])
-      git(dir, ["commit", "-qm", "seed"])
-      File.write!(Path.join(dir, "mod.rs"), "two\n")
-      File.write!(Path.join(dir, "added.rs"), "new\n")
-      git(dir, ["add", "mod.rs", "added.rs"])
-      File.write!(Path.join(dir, "added.rs"), "edited after staging\n")
-      added_oid = git(dir, ["rev-parse", ":added.rs"])
-      delete_loose_object!(dir, added_oid)
+         %{repo: repo} do
+      added_oid = blob_oid("new\n")
+      unreadable = {"fatal: unable to read #{added_oid}\n", 128}
+
+      stub_git(fn
+        [_git, "show", ":0:added.rs"] -> {"fatal: bad object :0:added.rs\n", 128}
+        argv -> if "-U3" in argv or "--numstat" in argv, do: unreadable, else: :real
+      end)
 
       {result, _stderr} =
-        ExUnit.CaptureIO.with_io(:stderr, fn -> Git.staged_file_diffs(dir) end)
+        ExUnit.CaptureIO.with_io(:stderr, fn -> staged_file_diffs(repo, "failed-diff") end)
 
       diff_error =
         "couldn't compute batched staged diff (git -c core.quotePath=false " <>
@@ -519,7 +575,7 @@ defmodule Meerkat.GitTest do
                     new_content: "two\n",
                     hunks: [],
                     read_errors: [diff_error, binary_error],
-                    effective_oid: git(dir, ["rev-parse", ":mod.rs"]),
+                    effective_oid: blob_oid("two\n"),
                     moved_lines: [],
                     additions: 0,
                     deletions: 0,
@@ -529,17 +585,8 @@ defmodule Meerkat.GitTest do
     end
 
     test "file names that start like an index stage number read their own old and new content",
-         %{dir: dir} do
-      File.write!(Path.join(dir, "0:foo.txt"), "old zero\n")
-      File.write!(Path.join(dir, "1:bar.txt"), "old one\n")
-      File.write!(Path.join(dir, "foo.txt"), "unchanged foo\n")
-      git(dir, ["add", "."])
-      git(dir, ["commit", "-qm", "seed"])
-      File.write!(Path.join(dir, "0:foo.txt"), "new zero\n")
-      File.write!(Path.join(dir, "1:bar.txt"), "new one\n")
-      git(dir, ["add", "."])
-
-      assert Git.staged_file_diffs(dir) ==
+         %{repo: repo} do
+      assert staged_file_diffs(repo, "stage-names") ==
                {:ok,
                 [
                   %{
@@ -551,7 +598,7 @@ defmodule Meerkat.GitTest do
                     new_content: "new zero\n",
                     hunks: ["@@ -1,1 +1,1 @@\n-old zero\n+new zero\n"],
                     read_errors: [],
-                    effective_oid: git(dir, ["rev-parse", ":0:0:foo.txt"]),
+                    effective_oid: blob_oid("new zero\n"),
                     moved_lines: [],
                     additions: 1,
                     deletions: 1,
@@ -566,7 +613,7 @@ defmodule Meerkat.GitTest do
                     new_content: "new one\n",
                     hunks: ["@@ -1,1 +1,1 @@\n-old one\n+new one\n"],
                     read_errors: [],
-                    effective_oid: git(dir, ["rev-parse", ":0:1:bar.txt"]),
+                    effective_oid: blob_oid("new one\n"),
                     moved_lines: [],
                     additions: 1,
                     deletions: 1,
@@ -577,16 +624,8 @@ defmodule Meerkat.GitTest do
 
     test "file names git would read as pathspec magic carry their own staged blob OID and " <>
            "no read errors",
-         %{dir: dir} do
-      File.write!(Path.join(dir, ":(bogus)gone.rs"), "gone\n")
-      git(dir, ["add", "."])
-      git(dir, ["commit", "-qm", "seed"])
-      File.rm!(Path.join(dir, ":(bogus)gone.rs"))
-      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus\n")
-      File.write!(Path.join(dir, "plain.rs"), "plain\n")
-      git(dir, ["add", "-A"])
-
-      assert Git.staged_file_diffs(dir) ==
+         %{repo: repo} do
+      assert staged_file_diffs(repo, "magic") ==
                {:ok,
                 [
                   %{
@@ -598,7 +637,7 @@ defmodule Meerkat.GitTest do
                     new_content: "",
                     hunks: ["@@ -1,1 +0,0 @@\n-gone\n"],
                     read_errors: [],
-                    effective_oid: git(dir, ["rev-parse", "HEAD::(bogus)gone.rs"]),
+                    effective_oid: blob_oid("gone\n"),
                     moved_lines: [],
                     additions: 0,
                     deletions: 1,
@@ -613,7 +652,7 @@ defmodule Meerkat.GitTest do
                     new_content: "bogus\n",
                     hunks: ["@@ -0,0 +1,1 @@\n+bogus\n"],
                     read_errors: [],
-                    effective_oid: git(dir, ["rev-parse", "::(bogus)x.rs"]),
+                    effective_oid: blob_oid("bogus\n"),
                     moved_lines: [],
                     additions: 1,
                     deletions: 0,
@@ -628,7 +667,7 @@ defmodule Meerkat.GitTest do
                     new_content: "plain\n",
                     hunks: ["@@ -0,0 +1,1 @@\n+plain\n"],
                     read_errors: [],
-                    effective_oid: git(dir, ["rev-parse", ":plain.rs"]),
+                    effective_oid: blob_oid("plain\n"),
                     moved_lines: [],
                     additions: 1,
                     deletions: 0,
@@ -639,31 +678,16 @@ defmodule Meerkat.GitTest do
   end
 
   describe "range_file_diffs/4" do
-    setup :git_repo
-
     test "an added, a deleted, a renamed-and-edited and a modified file each carry their " <>
            "contents and hunks, with no staged blob OID",
-         %{dir: dir} do
-      seed_one_of_each_change(dir)
-      git(dir, ["commit", "-qm", "one of each"])
-
-      assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
+         %{repo: repo} do
+      assert Git.range_file_diffs(repo, "feature/x", "staged/one-of-each", :two_dot) ==
                {:ok, one_of_each_diffs(%{})}
     end
 
     test "under diff.suppressBlankEmpty an empty blank context line still numbers moved lines",
-         %{dir: dir} do
-      git(dir, ["config", "diff.suppressBlankEmpty", "true"])
-      moved = "moved line one\nmoved line two\nmoved line three\n"
-      File.write!(Path.join(dir, "a.txt"), "top\n\n" <> moved <> "bottom\n")
-      git(dir, ["add", "."])
-      git(dir, ["commit", "-qm", "base"])
-      File.write!(Path.join(dir, "a.txt"), "top\n\nbottom\n")
-      File.write!(Path.join(dir, "b.txt"), moved)
-      git(dir, ["add", "-A"])
-      git(dir, ["commit", "-qm", "head"])
-
-      {:ok, [a, _b]} = Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+         %{repo: repo} do
+      {:ok, [a, _b]} = Git.range_file_diffs(repo, "blank-base", "blank-tip", :two_dot)
 
       assert a.hunks == [
                "@@ -1,6 +1,3 @@\n top\n\n-moved line one\n-moved line two\n-moved line three\n bottom\n"
@@ -673,21 +697,8 @@ defmodule Meerkat.GitTest do
     end
 
     test "file names git would read as pathspec magic carry their own hunks and no read errors",
-         %{dir: dir} do
-      File.write!(Path.join(dir, ":(bogus)old.rs"), "alpha\nbeta\ngamma\ndelta\n")
-      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus one\n")
-      File.write!(Path.join(dir, ":x.rs"), "colon one\n")
-      File.write!(Path.join(dir, "x.rs"), "unchanged\n")
-      git(dir, ["add", "."])
-      git(dir, ["commit", "-qm", "base"])
-      File.rm!(Path.join(dir, ":(bogus)old.rs"))
-      File.write!(Path.join(dir, ":(bogus)new.rs"), "alpha\nbeta\ngamma\nDELTA\n")
-      File.write!(Path.join(dir, ":(bogus)x.rs"), "bogus two\n")
-      File.write!(Path.join(dir, ":x.rs"), "colon two\n")
-      git(dir, ["add", "-A"])
-      git(dir, ["commit", "-qm", "head"])
-
-      assert Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot) ==
+         %{repo: repo} do
+      assert Git.range_file_diffs(repo, "magic-base", "magic-tip", :two_dot) ==
                {:ok,
                 [
                   %{
@@ -738,20 +749,20 @@ defmodule Meerkat.GitTest do
                 ]}
     end
 
+    # The answers git gives when the tip commit's blob is missing.
     test "a head blob git cannot read leaves the file's content empty and lists every error",
-         %{dir: dir} do
-      File.write!(Path.join(dir, "mod.rs"), "one\n")
-      git(dir, ["add", "mod.rs"])
-      git(dir, ["commit", "-qm", "base"])
-      File.write!(Path.join(dir, "mod.rs"), "two\n")
-      git(dir, ["commit", "-qam", "head"])
-      File.write!(Path.join(dir, "mod.rs"), "edited after committing\n")
-      head_oid = git(dir, ["rev-parse", "HEAD:mod.rs"])
-      delete_loose_object!(dir, head_oid)
+         %{repo: repo} do
+      head_oid = blob_oid("two\n")
+      unreadable = {"fatal: unable to read #{head_oid}\n", 128}
+
+      stub_git(fn
+        [_git, "show", "mod-tip:mod.rs"] -> {"fatal: bad object mod-tip:mod.rs\n", 128}
+        argv -> if "-U3" in argv or "--numstat" in argv, do: unreadable, else: :real
+      end)
 
       {result, _stderr} =
         ExUnit.CaptureIO.with_io(:stderr, fn ->
-          Git.range_file_diffs(dir, "HEAD~1", "HEAD", :two_dot)
+          Git.range_file_diffs(repo, "mod-base", "mod-tip", :two_dot)
         end)
 
       assert result ==
@@ -765,12 +776,12 @@ defmodule Meerkat.GitTest do
                     new_content: "",
                     hunks: [],
                     read_errors: [
-                      "couldn't read mod.rs at HEAD: git show HEAD:mod.rs exited 128: " <>
-                        "fatal: bad object HEAD:mod.rs",
-                      "couldn't compute diff (args: --literal-pathspecs diff -U3 HEAD~1..HEAD " <>
-                        "-- mod.rs): git --literal-pathspecs diff -U3 HEAD~1..HEAD -- mod.rs " <>
-                        "exited 128: fatal: unable to read #{head_oid}",
-                      "couldn't identify binary files: git diff --numstat -z HEAD~1..HEAD " <>
+                      "couldn't read mod.rs at mod-tip: git show mod-tip:mod.rs exited 128: " <>
+                        "fatal: bad object mod-tip:mod.rs",
+                      "couldn't compute diff (args: --literal-pathspecs diff -U3 " <>
+                        "mod-base..mod-tip -- mod.rs): git --literal-pathspecs diff -U3 " <>
+                        "mod-base..mod-tip -- mod.rs exited 128: fatal: unable to read #{head_oid}",
+                      "couldn't identify binary files: git diff --numstat -z mod-base..mod-tip " <>
                         "exited 128: fatal: unable to read #{head_oid}"
                     ],
                     effective_oid: nil,
@@ -785,63 +796,42 @@ defmodule Meerkat.GitTest do
   end
 
   describe "fetch_pr/3" do
-    setup :git_repo
-
+    # The repo is its own origin. Writes only `refs/meerkat-pr/7/*`, which
+    # no other test reads.
     test "fetches the PR head and the base branch from origin into meerkat-pr refs",
-         %{dir: origin} do
-      File.write!(Path.join(origin, "base.rs"), "base\n")
-      git(origin, ["add", "base.rs"])
-      git(origin, ["commit", "-qm", "base"])
-      base_sha = git(origin, ["rev-parse", "HEAD"])
-      File.write!(Path.join(origin, "feature.rs"), "feature\n")
-      git(origin, ["add", "feature.rs"])
-      git(origin, ["commit", "-qm", "feature"])
-      head_sha = git(origin, ["rev-parse", "HEAD"])
-      git(origin, ["update-ref", "refs/pull/7/head", head_sha])
-      git(origin, ["update-ref", "refs/heads/release", base_sha])
-
-      local = make_git_repo("meerkat-git-local")
-      on_exit(fn -> File.rm_rf!(local) end)
-      git(local, ["remote", "add", "origin", origin])
-
-      assert Git.fetch_pr(local, 7, "release") ==
+         %{repo: repo} do
+      assert Git.fetch_pr(repo, 7, "release") ==
                {:ok, {"refs/meerkat-pr/7/head", "refs/meerkat-pr/7/base"}}
 
-      assert git(local, ["rev-parse", "refs/meerkat-pr/7/head", "refs/meerkat-pr/7/base"]) ==
-               "#{head_sha}\n#{base_sha}"
+      assert git(repo, ["rev-parse", "refs/meerkat-pr/7/head", "refs/meerkat-pr/7/base"]) ==
+               git(repo, ["rev-parse", "refs/pull/7/head", "release"])
     end
 
-    test "with no origin remote, returns git's error", %{dir: dir} do
+    test "with no origin remote, returns git's error", %{repo: repo} do
+      stub_git("fetch", {"fatal: 'origin' does not appear to be a git repository\n", 128})
+
       assert {:error,
               "git fetch --force origin +refs/pull/7/head:refs/meerkat-pr/7/head " <>
                 "+refs/heads/release:refs/meerkat-pr/7/base exited 128: fatal: 'origin' does " <>
-                "not appear to be a git repository\n" <> _} = Git.fetch_pr(dir, 7, "release")
+                "not appear to be a git repository"} = Git.fetch_pr(repo, 7, "release")
     end
   end
 
   describe "linguist_generated_many/2" do
-    setup :git_repo
-
-    test "answers for a non-ASCII path and a path containing `: `", %{dir: dir} do
-      File.write!(Path.join(dir, ".gitattributes"), "*.rs linguist-generated\n")
-
-      assert Git.linguist_generated_many(dir, ["wëird.rs", "a: b.rs", "plain.txt"]) == %{
-               "wëird.rs" => {:generated, true},
-               "a: b.rs" => {:generated, true},
-               "plain.txt" => {:generated, false}
-             }
+    test "answers for a non-ASCII path and a path containing `: `", %{repo: repo} do
+      assert Git.linguist_generated_many(repo, ["attrs/wëird.rs", "attrs/a: b.rs", "plain.txt"]) ==
+               %{
+                 "attrs/wëird.rs" => {:generated, true},
+                 "attrs/a: b.rs" => {:generated, true},
+                 "plain.txt" => {:generated, false}
+               }
     end
 
     test "a warning git prints about .gitattributes leaves every path's answer intact",
-         %{dir: dir} do
-      File.write!(
-        Path.join(dir, ".gitattributes"),
-        "!*.lock linguist-generated\n*.rs linguist-generated\n"
-      )
-
-      assert Git.linguist_generated_many(dir, ["a.rs", "b.txt"]) == %{
-               "a.rs" => {:generated, true},
-               "b.txt" => {:generated, false}
+         %{repo: repo} do
+      assert Git.linguist_generated_many(repo, ["warn/a.rs", "warn/b.txt"]) == %{
+               "warn/a.rs" => {:generated, true},
+               "warn/b.txt" => {:generated, false}
              }
     end
   end
@@ -867,10 +857,8 @@ defmodule Meerkat.GitTest do
   end
 
   describe "batched lookups with no paths" do
-    setup :git_repo
-
-    test "answer without shelling out to git", %{dir: dir} do
-      File.rm_rf!(Path.join(dir, ".git"))
+    test "answer without shelling out to git", %{no_repo: dir} do
+      stub_git(fn argv -> flunk("ran #{inspect(argv)}") end)
 
       assert Git.linguist_generated_many(dir, []) == %{}
       assert Git.staged_blob_oids_many(dir, []) == {:ok, %{}}
@@ -878,38 +866,26 @@ defmodule Meerkat.GitTest do
   end
 
   describe "linguist_generated?/2" do
-    setup :git_repo
-
-    test "true for a path marked generated, false for one that is not", %{dir: dir} do
-      File.write!(Path.join(dir, ".gitattributes"), "*.rs linguist-generated\n")
-
-      assert Git.linguist_generated?(dir, "a.rs") == true
-      assert Git.linguist_generated?(dir, "b.txt") == false
+    test "true for a path marked generated, false for one that is not", %{repo: repo} do
+      assert Git.linguist_generated?(repo, "attrs/a.rs") == true
+      assert Git.linguist_generated?(repo, "attrs/b.txt") == false
     end
   end
 
   describe "git_dir/1" do
-    setup :git_repo
-
-    test "is the repo's .git directory", %{dir: dir} do
-      assert Git.git_dir(dir) == {:ok, Path.join(dir, ".git")}
+    test "is the repo's .git directory", %{repo: repo} do
+      assert Git.git_dir(repo) == {:ok, Path.join(repo, ".git")}
     end
   end
 
   describe "git_common_dir/1" do
-    setup :git_repo
-
-    test "is the repo's .git directory", %{dir: dir} do
-      assert Git.git_common_dir(dir) == {:ok, Path.join(dir, ".git")}
+    test "is the repo's .git directory", %{repo: repo} do
+      assert Git.git_common_dir(repo) == {:ok, Path.join(repo, ".git")}
     end
   end
 
   describe "outside any repo" do
-    setup do
-      dir = make_tmp_repo("meerkat-git-no-repo")
-      on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, dir: dir}
-    end
+    setup %{no_repo: dir}, do: {:ok, dir: dir}
 
     test "staged_files/1 returns git's error", %{dir: dir} do
       assert {:error,
@@ -973,8 +949,19 @@ defmodule Meerkat.GitMeerkatDirTest do
 
   alias Meerkat.Git
 
+  # One repo and one dir that is none, built once; tests only read them.
+  setup_all do
+    template =
+      fixture_template("meerkat-git-meerkat-dir", fn dir ->
+        git(dir, ["init", "-q", "repo"])
+        File.mkdir_p!(Path.join(dir, "repo/services/api"))
+        File.mkdir_p!(Path.join(dir, "no-repo/.git"))
+      end)
+
+    {:ok, dir: Path.join(template, "repo"), not_a_repo: Path.join(template, "no-repo")}
+  end
+
   setup do
-    dir = make_git_repo("meerkat-git-meerkat-dir")
     previous = Application.fetch_env(:meerkat, :meerkat_dir)
 
     on_exit(fn ->
@@ -982,11 +969,7 @@ defmodule Meerkat.GitMeerkatDirTest do
         {:ok, value} -> Application.put_env(:meerkat, :meerkat_dir, value)
         :error -> Application.delete_env(:meerkat, :meerkat_dir)
       end
-
-      File.rm_rf!(dir)
     end)
-
-    {:ok, dir: dir}
   end
 
   test "with no cached value, meerkat_dir/1 is meerkat-precommit under the gitdir",
@@ -1002,17 +985,12 @@ defmodule Meerkat.GitMeerkatDirTest do
 
   test "with no cached value, meerkat_dir/1 from a subdirectory is the repo's own", %{dir: dir} do
     Application.delete_env(:meerkat, :meerkat_dir)
-    sub = Path.join([dir, "services", "api"])
-    File.mkdir_p!(sub)
-
-    assert Git.meerkat_dir(sub) == Git.meerkat_dir(dir)
+    assert Git.meerkat_dir(Path.join([dir, "services", "api"])) == Git.meerkat_dir(dir)
   end
 
-  test "with no cached value and no repo, meerkat_dir/1 is meerkat-precommit under <dir>/.git" do
+  test "with no cached value and no repo, meerkat_dir/1 is meerkat-precommit under <dir>/.git",
+       %{not_a_repo: not_a_repo} do
     Application.delete_env(:meerkat, :meerkat_dir)
-    not_a_repo = make_tmp_repo("meerkat-git-meerkat-dir-no-repo")
-    on_exit(fn -> File.rm_rf!(not_a_repo) end)
-
     assert Git.meerkat_dir(not_a_repo) == Path.join([not_a_repo, ".git", "meerkat-precommit"])
   end
 

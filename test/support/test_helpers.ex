@@ -157,6 +157,35 @@ defmodule Meerkat.TestHelpers do
     on_exit(fn -> System.put_env("PATH", old_path) end)
   end
 
+  @doc """
+  Stands in for the processes `Meerkat.Git` starts from this test
+  process, git and the `sh` that feeds `git cat-file`: `fun` gets each
+  argv, program first, and returns `System.cmd/3`'s `{output, status}`,
+  or `:real` to run it. Starts no process and writes no file, so a test
+  can inject a failure into a shared fixture repo.
+  """
+  @spec stub_git((argv :: [String.t()] -> {String.t(), non_neg_integer()} | :real)) :: :ok
+  def stub_git(fun) do
+    Process.put(:meerkat_git_stub, fun)
+    :ok
+  end
+
+  @doc """
+  `stub_git/1` for the argvs holding `arg`: they get `answer`, an
+  `{output, status}` or a function of the argv returning one or `:real`.
+  Every other argv runs.
+  """
+  @spec stub_git(String.t(), tuple() | (argv :: [String.t()] -> tuple() | :real)) :: :ok
+  def stub_git(arg, answer) do
+    stub_git(fn argv ->
+      cond do
+        arg not in argv -> :real
+        is_function(answer) -> answer.(argv)
+        true -> answer
+      end
+    end)
+  end
+
   defp put_env({key, nil}), do: System.delete_env(key)
   defp put_env({key, value}), do: System.put_env(key, value)
 
@@ -314,6 +343,123 @@ defmodule Meerkat.TestHelpers do
 
     if code != 0, do: ExUnit.Assertions.flunk("git #{Enum.join(args, " ")} failed: #{out}")
     String.trim(out)
+  end
+
+  @doc """
+  Commits each `{ref, files}` in `commits`, in order, through one `git
+  fast-import` in the git repo `dir`, and returns the commits. Each
+  commit's tree holds exactly `files`, which maps each path to its
+  content, or to `{:gitlink, oid}` for a submodule. Its parent is
+  `ref`'s tip, if it has one by then. Its committer and time are fixed,
+  so two parentless commits of one tree are the same commit. The objects
+  land in one pack, where `git add` and `git commit` would write a file
+  for each: `test.gitconfig`'s `transfer.unpackLimit` keeps fast-import
+  from unpacking them.
+  """
+  @spec import_commits(String.t(), [
+          {String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}}
+        ]) :: [String.t()]
+  def import_commits(dir, commits) do
+    {stream, {_, marks, _}} =
+      Enum.map_reduce(commits, {1, [], %{}}, fn {ref, files}, {mark, marks, tips} ->
+        {blobs, entries, mark} = import_files(files, mark)
+        parent = Map.get_lazy(tips, ref, fn -> existing_commit(dir, ref) end)
+
+        commit = [
+          blobs,
+          "commit #{ref}\nmark :#{mark}\ncommitter t <t@t.t> 0 +0000\ndata 0\n",
+          if(parent, do: "from #{parent}\n", else: []),
+          "deleteall\n",
+          entries,
+          "\n"
+        ]
+
+        {commit, {mark + 1, [mark | marks], Map.put(tips, ref, ":#{mark}")}}
+      end)
+
+    get_marks = marks |> Enum.reverse() |> Enum.map(&"get-mark :#{&1}\n")
+
+    # `System.cmd/3` can't write to stdin, and an argument can't hold a
+    # NUL, so `sh` feeds the stream from a file.
+    stream_file = tmp_path("meerkat-fast-import")
+    File.write!(stream_file, [stream, get_marks])
+
+    {out, code} =
+      try do
+        System.cmd(
+          "sh",
+          ["-c", ~s(exec git fast-import --quiet --cat-blob-fd=1 < "$0"), stream_file],
+          cd: dir,
+          stderr_to_stdout: true,
+          env: @git_discovery_overrides
+        )
+      after
+        File.rm(stream_file)
+      end
+
+    if code != 0, do: ExUnit.Assertions.flunk("git fast-import failed: #{out}")
+    String.split(out)
+  end
+
+  @doc "`import_commits/2` for one commit."
+  @spec import_commit(String.t(), String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}) ::
+          String.t()
+  def import_commit(dir, ref, files), do: hd(import_commits(dir, [{ref, files}]))
+
+  defp import_files(files, mark) do
+    Enum.reduce(files, {[], [], mark}, fn
+      {path, {:gitlink, oid}}, {blobs, entries, mark} ->
+        {blobs, [entries, "M 160000 ", oid, " ", quote_path(path), "\n"], mark}
+
+      {path, content}, {blobs, entries, mark} ->
+        blob = ["blob\nmark :#{mark}\ndata #{IO.iodata_length(content)}\n", content, "\n"]
+        {[blobs, blob], [entries, "M 100644 :#{mark} ", quote_path(path), "\n"], mark + 1}
+    end)
+  end
+
+  defp existing_commit(dir, ref) do
+    case System.cmd("git", ["rev-parse", "--verify", "-q", ref <> "^{commit}"],
+           cd: dir,
+           env: @git_discovery_overrides
+         ) do
+      {oid, 0} -> String.trim(oid)
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Reads the tree of `ref` into the index of the git repo `dir`, leaving
+  the work tree alone: a staged review reads the index, and only
+  `.gitattributes` from the work tree. With `index`, an absolute path,
+  writes that index file instead, for `Meerkat.Git.with_index/3`.
+  """
+  @spec read_tree(String.t(), String.t(), String.t() | nil) :: :ok
+  def read_tree(dir, ref, index) do
+    env = List.keystore(@git_discovery_overrides, "GIT_INDEX_FILE", 0, {"GIT_INDEX_FILE", index})
+
+    case System.cmd("git", ["read-tree", ref], cd: dir, stderr_to_stdout: true, env: env) do
+      {_, 0} -> :ok
+      {out, _} -> ExUnit.Assertions.flunk("git read-tree #{ref} failed: #{out}")
+    end
+  end
+
+  @doc "The object id git gives a blob holding `content`."
+  @spec blob_oid(iodata()) :: String.t()
+  def blob_oid(content) do
+    :sha
+    |> :crypto.hash(["blob #{IO.iodata_length(content)}", 0, content])
+    |> Base.encode16(case: :lower)
+  end
+
+  # fast-import's C-style quoted form, for a path it would otherwise
+  # misread: one holding a newline, carriage return, quote or backslash,
+  # or starting with a space. Elixir's escapes match C's for those
+  # characters, not for `#{`, other control bytes or bytes that aren't
+  # UTF-8.
+  defp quote_path(path) do
+    if String.contains?(path, ["\n", "\r", "\"", "\\"]) or String.starts_with?(path, " "),
+      do: inspect(path, binaries: :as_strings),
+      else: path
   end
 
   @doc """
