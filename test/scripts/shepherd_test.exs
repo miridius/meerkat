@@ -17,17 +17,12 @@ defmodule Meerkat.ShepherdTest do
 
   # Builds, once for the module, the files tests only read: a release
   # whose BEAM runs the script a test gives as $FAKE_BEAM, the stub
-  # commands, and dev checkouts. Each test keeps only what its run writes.
+  # commands, and dev checkouts. Each test's own dir holds what it sets up
+  # and what its run writes.
   setup_all do
-    shared = Meerkat.TestHelpers.tmp_path("meerkat-shep-shared")
-
-    on_exit(fn ->
-      :persistent_term.erase({__MODULE__, :shared})
-      File.rm_rf!(shared)
-    end)
-
+    on_exit(fn -> :persistent_term.erase({__MODULE__, :shared}) end)
+    shared = Meerkat.TestHelpers.fixture_template("meerkat-shep-shared", &build_shared/1)
     :persistent_term.put({__MODULE__, :shared}, shared)
-    build_shared(shared)
     :ok
   end
 
@@ -1295,10 +1290,16 @@ defmodule Meerkat.ShepherdTest do
   """
 
   defp build_shared(shared) do
-    # The release every prod test runs. Its BEAM is the script in
+    # The release prod tests run. Its BEAM is the script in
     # $FAKE_BEAM, run by this bash so that its args, `$$` and `exec` are
-    # the BEAM's own.
-    executable(Path.join(shared, "rel/bin/meerkat"), ~s(#!/usr/bin/env bash\neval "$FAKE_BEAM"\n))
+    # the BEAM's own. Once a test's dir is gone, its BEAM crashes, so a
+    # shepherd that outlived its test aborts rather than respawning it.
+    executable(Path.join(shared, "rel/bin/meerkat"), ~S"""
+    #!/usr/bin/env bash
+    if [[ -n "${MEERKAT_SERVE_DIR:-}" && ! -d "$MEERKAT_SERVE_DIR" ]]; then exit 2; fi
+    eval "$FAKE_BEAM"
+    """)
+
     File.ln_s!(Path.join(shared, "rel"), Path.join(shared, "current"))
 
     # These BEAMs announce scripted ports but never serve HTTP. The caller
@@ -1468,7 +1469,8 @@ defmodule Meerkat.ShepherdTest do
   # Runs `launcher` with the stubs in the shared `between/<stubs>` dir
   # shadowing the commands it runs between BEAMs: each records what
   # `record_port_file/1` does, then runs its real command, or exits 0
-  # without one; the dev stubs' `mix run` is the BEAM. Returns what was
+  # without one; the dev stubs' `mix run` is the BEAM, and for prod `env`
+  # names the release. Returns what was
   # recorded, in order and without repeats.
   defp port_file_between_runs(
          launcher,
@@ -1524,6 +1526,7 @@ defmodule Meerkat.ShepherdTest do
 
     # A compile that succeeds stamps a build, so a checkout whose build
     # it would stamp is the test's own; the shared ones are only read.
+    # The plain one has no `_build/dev`, so its stamp is never written.
     root =
       cond do
         built == nil -> shared("roots/plain")
@@ -1692,8 +1695,8 @@ defmodule Meerkat.ShepherdTest do
   end
 
   # Starts a launcher as `run_launcher/4` does and returns its port;
-  # `opts[:cd]` sets its working directory, and `opts[:curl]` replaces the
-  # refusing curl below with a script of its own.
+  # `opts[:cd]` sets its working directory, and `opts[:curl]` is a script
+  # the shared refusing curl runs instead.
   defp open_launcher(launcher, args, dir, env, opts \\ []) do
     base = [
       {"MEERKAT_PORT", "44444"},
@@ -1797,8 +1800,8 @@ defmodule Meerkat.ShepherdTest do
     System.cmd("kill", ["-9", caller])
 
     # A shepherd may not have written its pid file yet. Missed, it outlives
-    # the test; once its stub directory is deleted, it runs the real `mix`
-    # and starts a BEAM that never exits. Not every run dir gets a pid, so
+    # the test; once the shared stubs are deleted at the module's end, a
+    # dev one runs the real `mix` and starts a BEAM that never exits. Not every run dir gets a pid, so
     # each wait gets 10 s, not @timeout_ms: after a wait that timed out,
     # @timeout_ms of the 180 s test timeout is already spent.
     detached =
