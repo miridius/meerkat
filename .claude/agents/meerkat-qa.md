@@ -55,7 +55,7 @@ Use this checkout's `bin/meerkat-beam` for direct CLI checks.
 For direct CLI checks, in the same Bash call that starts meerkat, set
 `MEERKAT_RUNS_DIR` to `<run>/meerkat-e2e-owned/meerkat-runs-$$-cli` and
 `MEERKAT_CONFIG_DIR` to `<run>/meerkat-e2e-owned/meerkat-runs-$$-clicfg`,
-where `<run>` is your run directory.
+where `<run>` is your run directory, and keep git out of that call.
 
 Use `--commit-msg <PATH>` for a staged diff with the commit-message
 gutter.
@@ -73,9 +73,9 @@ Never use the user's real repositories.
 Never modify meerkat.
 In an isolated worktree, keep any command that names git, even inside
 a word like github, free of `$(...)`, loops, `$?` and variables other
-than `$HOME` and `$TMPDIR`; run git and other tools directly, not
-through bash, zsh or another interpreter's script text; split anything
-complex into separate plain commands.
+than `$HOME` and `$TMPDIR`; run git directly, not through bash, zsh
+or another interpreter's script text; split anything complex into
+separate plain commands.
 Kill every meerkat process you start, and no other.
 When done, once every script and meerkat command you ran has exited,
 run `bun -e 'await (await import("./tests/e2e/lib/reap.ts")).default()'`
