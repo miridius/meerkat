@@ -1,7 +1,7 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { makeFixture, OWNED_TMP_PARENT } from "./fixture.js";
 import { elapsedSeconds, meerkatBin, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat, startMeerkats, stopPendingBoots } from "./runner.js";
@@ -36,8 +36,8 @@ function alive(pid: number): boolean {
 
 describe("launcher under test", () => {
 	test("is this checkout's bin/meerkat-beam when MEERKAT_BIN is unset", () => {
-		const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: import.meta.dir, encoding: "utf8" }).trim();
-		expect(realpathSync(meerkatBin({}))).toBe(realpathSync(join(root, "bin", "meerkat-beam")));
+		expect(isAbsolute(meerkatBin({}))).toBe(true);
+		expect(realpathSync(meerkatBin({}))).toBe(realpathSync(join(import.meta.dir, "../../../bin/meerkat-beam")));
 	});
 
 	test("is MEERKAT_BIN when set", () => {

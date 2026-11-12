@@ -287,6 +287,8 @@ export function manifestRoot(lines: string[]): string {
 	return root;
 }
 
+export const REPO_ROOT = join(__dirname, "../../..");
+
 // For every git a test starts, meerkat's included. It reads only the
 // ExUnit tests' global config, which turns off the detached auto
 // maintenance that would write into a fixture while its cleanup removes it.
@@ -297,7 +299,7 @@ export function sanitisedGitEnv(): NodeJS.ProcessEnv {
 		GIT_AUTHOR_EMAIL: "test@example.com",
 		GIT_COMMITTER_NAME: "test",
 		GIT_COMMITTER_EMAIL: "test@example.com",
-		GIT_CONFIG_GLOBAL: join(__dirname, "../../../test/support/test.gitconfig"),
+		GIT_CONFIG_GLOBAL: join(REPO_ROOT, "test/support/test.gitconfig"),
 		GIT_CONFIG_NOSYSTEM: "1",
 		GIT_CONFIG_COUNT: "0",
 	};
