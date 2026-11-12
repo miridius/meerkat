@@ -1,5 +1,6 @@
 import { indentRange, syntaxTree } from "@codemirror/language";
 import {
+	type ChangeSet,
 	type ChangeSpec,
 	EditorSelection,
 	type EditorState,
@@ -103,12 +104,13 @@ function clash(spans: [number, number][], other: [number, number][]): boolean {
  *  inserts at or inside text the other replaces or the other way round,
  *  and the text from its first change to its last overlaps the earlier
  *  caret's: a second caret in the same list, or in a list the first
- *  slurps. Lines the changes reach re-indent. Null when no range
- *  changes. */
+ *  slurps. Lines the changes reach re-indent. `applied` is given each
+ *  caret's changes that are kept. Null when no range changes. */
 function edit(
 	state: EditorState,
 	userEvent: string,
 	command: (pos: number) => { changes: ChangeSpec[]; cursor?: number; assoc?: -1 | 1 } | null,
+	applied?: (set: ChangeSet) => void,
 ): TransactionSpec | null {
 	let changed = false;
 	const touched: [number, number][][] = [];
@@ -121,6 +123,7 @@ function edit(
 		if (touched.some((other) => clash(spans, other))) return { range };
 		touched.push(spans);
 		changed = true;
+		applied?.(set);
 		return {
 			changes: set,
 			range: result.cursor === undefined ? range.map(set, result.assoc) : EditorSelection.cursor(result.cursor),
@@ -352,23 +355,24 @@ export function split(state: EditorState): TransactionSpec | null {
 		if (inText(state, pos)) return null;
 		const coll = enclosing(state, pos);
 		const closer = coll && closerOf(coll);
-		if (!coll || !closer || !coll.firstChild) return null;
+		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
 		let from = pos;
 		while (from > coll.firstChild.to && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--;
 		let to = pos;
 		while (to < closer.from && /[ \t]/.test(state.doc.sliceString(to, to + 1))) to++;
-		const opener = state.doc.sliceString(openStart(coll), coll.firstChild.to);
+		// Each half keeps the prefixes on the collection, such as `#_` or `'`.
+		const opener = state.doc.sliceString(element(coll).from, coll.firstChild.to);
 		return { changes: [{ from, to, insert: `${closer.name} ${opener}` }], cursor: from + 1 };
 	});
 }
 
-/** The collection `form` is, or opens with a `#` prefix. */
+/** The collection `form` is, or ends with under its prefixes, such as
+ *  `#`, `'`, `@` or `#_`. */
 function collOf(form: SyntaxNode): SyntaxNode | null {
-	if (isColl(form)) return form;
-	if (!PREFIXED.has(form.name)) return null;
-	const inner = form.lastChild;
-	return inner && isColl(inner) ? inner : null;
+	let node: SyntaxNode | null = form;
+	while (node && !isColl(node)) node = node.lastChild?.to === node.to ? node.lastChild : null;
+	return node;
 }
 
 /** Join the two forms either side of the caret into one, as Cursive's
@@ -440,12 +444,15 @@ function killEnd(state: EditorState, pos: number): number | null {
  *  balanced: the transaction, and the text it cuts. */
 export function kill(state: EditorState): { spec: TransactionSpec; text: string } | null {
 	const cut: string[] = [];
-	const spec = edit(state, "delete.cut", (pos) => {
-		const end = killEnd(state, pos);
-		if (end === null || end === pos) return null;
-		cut.push(state.doc.sliceString(pos, end));
-		return { changes: [{ from: pos, to: end }] };
-	});
+	const spec = edit(
+		state,
+		"delete.cut",
+		(pos) => {
+			const end = killEnd(state, pos);
+			return end === null || end === pos ? null : { changes: [{ from: pos, to: end }] };
+		},
+		(set) => set.iterChanges((from, to) => cut.push(state.doc.sliceString(from, to))),
+	);
 	return spec && { spec, text: cut.join("\n") };
 }
 
@@ -456,9 +463,20 @@ function text(state: EditorState, node: SyntaxNode): string {
 	return state.doc.sliceString(node.from, node.to);
 }
 
+/** The forms in `parent` that are code: its forms but the `#_` ones. */
+function live(parent: SyntaxNode): SyntaxNode[] {
+	return forms(parent).filter((f) => f.name !== "Discard");
+}
+
+/** Whether `coll` is a plain list, with no prefix in its opener such as
+ *  `#?(`, so a call. */
+function isCall(coll: SyntaxNode): boolean {
+	return coll.name === "List" && openStart(coll) === coll.from;
+}
+
 /** The threading macro `coll` is a call to, if any. */
 function threadOf(state: EditorState, coll: SyntaxNode): Thread | null {
-	const head = coll.name === "List" ? forms(coll)[0] : undefined;
+	const head = isCall(coll) ? live(coll)[0] : undefined;
 	const name = head && text(state, head);
 	return name === "->" || name === "->>" ? name : null;
 }
@@ -481,14 +499,14 @@ function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): str
 export function thread(state: EditorState, macro: Thread): TransactionSpec | null {
 	return edit(state, "edit.thread", (pos) => {
 		const coll = enclosing(state, pos);
-		if (coll?.name !== "List" || !closerOf(coll) || !whole(coll)) return null;
-		const all = forms(coll);
+		if (!coll || !isCall(coll) || !closerOf(coll) || !whole(coll)) return null;
+		const all = live(coll);
 		const pick = (args: SyntaxNode[]) => (macro === "->" ? args[1] : args[args.length - 1]);
 		const existing = threadOf(state, coll);
 		if (existing) {
 			const value = all[1];
-			if (existing !== macro || value?.name !== "List" || forms(value).length < 2) return null;
-			const arg = pick(forms(value));
+			if (existing !== macro || !value || !isCall(value) || live(value).length < 2) return null;
+			const arg = pick(live(value));
 			return {
 				changes: [{ from: value.from, to: value.to, insert: `${text(state, arg)} ${stepWithout(state, value, arg)}` }],
 				cursor: value.from,
@@ -515,8 +533,11 @@ export function unthread(state: EditorState): TransactionSpec | null {
 			const macro = threadOf(state, coll);
 			if (!macro) continue;
 			if (!whole(coll)) return null;
-			const [, value, step, ...more] = forms(coll);
-			if (!value) return null;
+			const [, value, step] = live(coll);
+			// The thread becomes the call only when it holds no other form,
+			// such as a `#_` one, that would go with it.
+			const alone = forms(coll).length === (step ? 3 : 2);
+			if (!value || (!step && !alone)) return null;
 			if (!step) return { changes: [{ from: coll.from, to: coll.to, insert: text(state, value) }], cursor: coll.from };
 			let call: string;
 			if (step.name === "List") {
@@ -530,8 +551,17 @@ export function unthread(state: EditorState): TransactionSpec | null {
 			} else if (step.name === "Symbol" || step.name === "Keyword") {
 				call = `(${text(state, step)} ${text(state, value)})`;
 			} else return null;
-			if (more.length === 0) return { changes: [{ from: coll.from, to: coll.to, insert: call }], cursor: coll.from };
-			return { changes: [{ from: value.from, to: step.to, insert: call }], cursor: value.from };
+			if (alone) return { changes: [{ from: coll.from, to: coll.to, insert: call }], cursor: coll.from };
+			// The step goes from after the form before it, keeping any `#_`
+			// form between the value and the step.
+			const before = forms(coll).findLast((f) => f.to <= step.from) as SyntaxNode;
+			return {
+				changes: [
+					{ from: value.from, to: value.to, insert: call },
+					{ from: before.to, to: step.to },
+				],
+				cursor: value.from,
+			};
 		}
 		return null;
 	});

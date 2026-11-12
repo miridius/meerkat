@@ -130,6 +130,12 @@ describe("structural commands with several carets", () => {
 		expect(apply(carets("(a)(b) c", [2, 5]), slurpForward)).toBe("(a (b)) c");
 		expect(apply(carets("a (b)(c)", [3, 6]), slurpBackward)).toBe("(a b)(c)");
 	});
+
+	test("kill cuts only the text it deletes", () => {
+		const two = carets("(a b c)", [3, 5]);
+		const result = kill(two);
+		expect(result && [apply(two, () => result.spec), result.text]).toEqual(["(a )", "b c"]);
+	});
 });
 
 describe("cut-off lists", () => {
@@ -292,8 +298,14 @@ describe("split", () => {
 		expect(run(split, "[a| b c]")).toBe("[a]| [b c]");
 	});
 
-	test("keeps a # prefix on both halves", () => {
+	test("keeps a prefix on both halves", () => {
 		expect(run(split, "#{a |b}")).toBe("#{a}| #{b}");
+		expect(run(split, "'(a |b)")).toBe("'(a)| '(b)");
+		expect(run(split, "(a #_(b |c) d)")).toBe("(a #_(b)| #_(c) d)");
+	});
+
+	test("does nothing to metadata", () => {
+		expect(run(split, "(def ^{:a 1 |:b 2} x 1)")).toBeNull();
 	});
 
 	test("splits a string, keeping its spaces", () => {
@@ -331,6 +343,13 @@ describe("joinForms", () => {
 	test("joins sets and strings", () => {
 		expect(run(joinForms, "#{a} |#{b}")).toBe("#{a| b}");
 		expect(run(joinForms, '"ab" |"cd"')).toBe('"ab|cd"');
+	});
+
+	test("joins lists with the same quote or deref", () => {
+		expect(run(joinForms, "'(a) |'(b)")).toBe("'(a| b)");
+		expect(run(joinForms, "`(a) |`(b)")).toBe("`(a| b)");
+		expect(run(joinForms, "@(a) |@(b)")).toBe("@(a| b)");
+		expect(run(joinForms, "'(a) |`(b)")).toBeNull();
 	});
 
 	test("does nothing to forms of different kinds or prefixes", () => {
@@ -413,6 +432,17 @@ describe("thread", () => {
 		expect(run(last, "(->> |(filter p xs) (map f))")).toBe("(->> |xs (filter p) (map f))");
 	});
 
+	test("skips #_ forms when picking the argument", () => {
+		expect(run(first, "(f |#_a x b)")).toBe("(-> |x (f #_a b))");
+		expect(run(last, "(f |a b #_c)")).toBe("(->> |b (f a #_c))");
+		expect(run(first, "(-> |#_y (g x 1) f)")).toBe("(-> #_y |x (g 1) f)");
+	});
+
+	test("does nothing to a list with a prefix in its opener", () => {
+		expect(run(first, "#?(:clj |1 :cljs 2)")).toBeNull();
+		expect(run(first, "#(f |% b)")).toBeNull();
+	});
+
 	test("leaves a lone symbol or keyword step bare", () => {
 		expect(run(first, "(|f (g x))")).toBe("(-> |(g x) f)");
 		expect(run(first, "(|:k (g x))")).toBe("(-> |(g x) :k)");
@@ -450,6 +480,12 @@ describe("unthread", () => {
 
 	test("replaces a thread with no step by its value", () => {
 		expect(run(unthread, "(-> |(f x))")).toBe("|(f x)");
+	});
+
+	test("keeps #_ forms among the steps", () => {
+		expect(run(unthread, "(-> |x #_(g) f)")).toBe("(-> |(f x) #_(g))");
+		expect(run(unthread, "(-> |x f #_(g) h)")).toBe("(-> |(f x) #_(g) h)");
+		expect(run(unthread, "(-> |(f x) #_(g))")).toBeNull();
 	});
 
 	test("does nothing outside a thread or with a step it cannot call", () => {

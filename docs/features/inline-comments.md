@@ -180,9 +180,9 @@ nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
 | ⌘' | Raise the form at the caret, replacing its parent |
 | ⌥S | Splice: remove the enclosing brackets with any prefix on them, such as `#`, `'`, `@`, `^:m ` or `#my.Rec` (also works where ⌥S types ß) |
 | ⇧⌘9 / ⌘[ / ⌃⇧[ | Wrap the form the caret is in or before in ( ) / [ ] / { }; else the form just before the caret, else insert an empty pair. A selection is wrapped as typing the opener wraps it. ⌃⇧[ replaces Cursive's ⇧⌘[, which is Chrome's previous tab and cannot be taken by a page |
-| ⌃⌥, / ⌃⌥⇧, | Thread first / last: `(f (g x) b)` becomes `(-> (g x) (f b))`, threading the caret's list by its first / last argument. In a `->` / `->>` list, thread its value one step further: `(-> (g x) f)` becomes `(-> x g f)`. The caret lands before the threaded value, so repeating the key threads all the way. Cursive has one Thread Form key that asks which macro; ⌃⌥⇧, is added for thread last |
-| ⌃⌥. | Unthread one step of the nearest enclosing `->` or `->>`: `(-> x g f)` becomes `(-> (g x) f)`; with one step left, the thread becomes the call |
-| ⌃⌥S | Split the list or string at the caret in two: `(a b)` becomes `(a) (b)` at a caret before `b`, `"ab"` becomes `"a" "b"`. Not inside a symbol or other form |
+| ⌃⌥, / ⌃⌥⇧, | Thread first / last: `(f (g x) b)` becomes `(-> (g x) (f b))`, threading the caret's list by its first / last argument, which is never a `#_` form; a list with a prefix in its opener, such as `#?(` or `#(`, is not threaded. In a `->` / `->>` list, thread its value one step further: `(-> (g x) f)` becomes `(-> x g f)`. The caret lands before the threaded value, so repeating the key threads all the way. Cursive has one Thread Form key that asks which macro; ⌃⌥⇧, is added for thread last |
+| ⌃⌥. | Unthread one step of the nearest enclosing `->` or `->>`: `(-> x g f)` becomes `(-> (g x) f)`; with one step left, the thread becomes the call, unless it also holds a `#_` form, which stays |
+| ⌃⌥S | Split the list or string at the caret in two: `(a b)` becomes `(a) (b)` at a caret before `b`, `"ab"` becomes `"a" "b"`. Each half keeps the list's prefixes, such as `#`, `'` or `#_`. Not inside a symbol or other form, nor in metadata |
 | ⌃⌥J | Join the two forms either side of the caret, both strings or both collections of the same kind and prefix: `(a) (b)` becomes `(a b)`, `"a" "b"` becomes `"ab"` |
 | ⌃K | Kill: cut to the clipboard from the caret to the end of the line, or to the enclosing list's closer or string's quote when that comes first, taking in a form that crosses the line's end. At the end of a line, cut the line break. In a comment, cut to the line's end |
 
@@ -226,8 +226,8 @@ changes each list once.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.
-- Lines that slurp, barf, raise, splice, a node move or a paste
-  change re-indent, as Enter indents them.
+- Lines that a structural key, a node move or a paste changes
+  re-indent, as Enter indents them.
 
 **Keys cheat sheet:** on macOS, a "Keys" link in the editor's corner
 opens the list of keys for this file's language, ⌃J join lines
