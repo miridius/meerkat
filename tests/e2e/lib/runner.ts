@@ -4,7 +4,14 @@ import { delimiter, join } from "node:path";
 import { budget } from "./budget.js";
 import { type Fixture, makeFixture, OWNED_TMP_DIR_RE, OWNED_TMP_PARENT, sanitisedGitEnv } from "./fixture.js";
 
-export const MEERKAT_BIN = process.env.MEERKAT_BIN ?? "meerkat";
+// The launcher under test: MEERKAT_BIN, else this checkout's own launcher,
+// so a bare `bunx playwright test` tests the checkout, not the installed
+// `meerkat` on PATH.
+export function meerkatBin(env: NodeJS.ProcessEnv): string {
+	return env.MEERKAT_BIN ?? join(__dirname, "../../../bin/meerkat-beam");
+}
+
+export const MEERKAT_BIN = meerkatBin(process.env);
 
 export type RunnerOpts = {
 	// Args to pass to meerkat (default: --commit-msg <fixture.commitMsgPath>).

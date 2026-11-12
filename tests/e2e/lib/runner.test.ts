@@ -1,10 +1,10 @@
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { makeFixture, OWNED_TMP_PARENT } from "./fixture.js";
-import { elapsedSeconds, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat, startMeerkats, stopPendingBoots } from "./runner.js";
+import { elapsedSeconds, meerkatBin, reapOrphanedBackends, reapOrphanedFixtures, startMeerkat, startMeerkats, stopPendingBoots } from "./runner.js";
 
 // These tests start processes, which on a loaded machine can take longer
 // than bun's 5 s default; a timed-out test also has bun kill them mid-run.
@@ -33,6 +33,17 @@ function alive(pid: number): boolean {
 		return false;
 	}
 }
+
+describe("launcher under test", () => {
+	test("is this checkout's bin/meerkat-beam when MEERKAT_BIN is unset", () => {
+		const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: import.meta.dir, encoding: "utf8" }).trim();
+		expect(realpathSync(meerkatBin({}))).toBe(realpathSync(join(root, "bin", "meerkat-beam")));
+	});
+
+	test("is MEERKAT_BIN when set", () => {
+		expect(meerkatBin({ MEERKAT_BIN: "/opt/meerkat" })).toBe("/opt/meerkat");
+	});
+});
 
 // bun runs a file's tests one at a time, which the reaper tests need: each
 // reap scans all of `OWNED_TMP_PARENT`, so one test's reap must not run while

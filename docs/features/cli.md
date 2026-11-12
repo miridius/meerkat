@@ -116,8 +116,9 @@ another.
 - `MEERKAT_BIN_DIR` — defaults to `~/.local/bin`. Where the
   launcher script is written.
 - `MEERKAT_BIN` — used by the Playwright e2e suite to point at the
-  binary under test (`bin/meerkat-beam` for in-tree dev, or
-  `~/.local/bin/meerkat` for the installed launcher).
+  binary under test (default: this checkout's `bin/meerkat-beam`,
+  however the suite is started; `~/.local/bin/meerkat` tests the
+  installed launcher).
 - `MEERKAT_REVIEW_TIMEOUT` — review deadline in whole seconds (default
   90 minutes). `0` removes the deadline and countdown; unparseable
   values are ignored.
