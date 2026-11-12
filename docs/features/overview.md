@@ -117,8 +117,8 @@ When the UI does open, the reviewer sees, top-to-bottom:
      can sit up to a tab's width off its column.
 2. **Flash error banner** (only when a handler set `flash_error`,
    e.g. a stale-OID approve or a `gh api` failure).
-3. **Pending answers** banner (only if a prior review had question
-   comments that Claude has since answered — see
+3. **Pending answers** banner (only if Claude has answered a prior
+   review's comments and the reviewer has not marked the answers read — see
    [pending-answers.md](pending-answers.md)).
 4. **Commit message** section (only in `--commit-msg` and
    single-ref modes — see [commit-message.md](commit-message.md)).
