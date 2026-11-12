@@ -20,9 +20,10 @@ defmodule Meerkat.PreCommitHookTest do
     "mix format --check-formatted",
     "mix credo --strict",
     "bunx biome lint --error-on-warnings",
-    "mix-test.sh",
+    "bun scripts/mix-test.ts",
     "bun test",
     "bun test tests/e2e/lib",
+    "bun test scripts",
     "bun run build",
     "bunx playwright install --only-shell chromium",
     "bun run test:e2e"
@@ -89,10 +90,6 @@ defmodule Meerkat.PreCommitHookTest do
 
     # test/scripts/bump_deps_test.exs covers the dependency bump.
     File.write!(Path.join([work, "scripts", "bump-deps.sh"]), "exit 0\n")
-    # test/scripts/mix_test_test.exs covers the runner itself. Replace this
-    # with `exec mix-test.sh` so the PATH stub logs check.sh's test step as
-    # `mix-test.sh` and catches a regression to plain `mix test`.
-    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix-test.sh\n")
 
     # As in the repo, the mutation gate's report under _build/ is ignored.
     File.write!(Path.join(work, ".gitignore"), "node_modules\n_build\n")
@@ -179,7 +176,7 @@ defmodule Meerkat.PreCommitHookTest do
     """)
 
     File.chmod!(Path.join(stubs, "stub"), 0o755)
-    for tool <- ~w(mix pnpm bun bunx mix-test.sh), do: File.ln_s!("stub", Path.join(stubs, tool))
+    for tool <- ~w(mix pnpm bun bunx), do: File.ln_s!("stub", Path.join(stubs, tool))
   end
 
   test "a commit runs every gate in the checkout", ctx do

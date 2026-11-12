@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Runs one test file for scripts/mix-test.sh, or again for
-# scripts/test-file-times.ts, once it holds one of <slots>
-# test-file slots from scripts/gate-lock.sh, which all test runs in all
-# worktrees of the repo share. Writes the file's wall, user and system
+# Runs one test file for scripts/mix-test.ts, first or again, once it holds
+# one of <slots> test-file slots from scripts/gate-lock.sh, which all test
+# runs in all worktrees of the repo share. Writes the file's wall, user and system
 # seconds, from when it holds its slot, to <seconds file>, and exits with mix
 # test's status. The CPU seconds count the test BEAM and the processes the
 # shell and BEAM wait for, but not the programs the BEAM starts through
@@ -14,7 +13,7 @@
 #
 # It also skips mix's build lock (MIX_OS_CONCURRENCY_LOCK=0): mix test takes
 # it even with --no-compile, so the test BEAMs queued on it as they started.
-# scripts/mix-test.sh has compiled under the lock already, so they compile
+# scripts/mix-test.ts has compiled under the lock already, so they compile
 # nothing.
 #
 # Usage: run-test-file.sh <slots> <test file> <seconds file>

@@ -4,7 +4,7 @@ defmodule Meerkat.BumpDepsCase do
   repo's real lefthook.yml and the scripts `build_fixture/1` copies. Only mix,
   pnpm, bun, bunx and curl are replaced, by stubs on PATH (the bun stub hands
   hex-cooldown.ts, rebase-bump.ts and e2e-inputs.ts to the real bun), plus the fixture's own
-  mix-test.sh, mutate.sh and dep-exemptions.json: the stubs log each run,
+  mutate.sh and dep-exemptions.json: the stubs log each run,
   report the outdated packages a test sets up, and record an update by
   appending a line to the lockfile or manifest it would change. The tests are
   split across files to keep each file's BEAM time down.
@@ -124,9 +124,6 @@ defmodule Meerkat.BumpDepsCase do
       ~s({"shiki": {"version": "4.4.3", "reason": "upstream needs shiki 3"}})
     )
 
-    # These tests cover the dependency bump, not the runner; keep the fixture's
-    # runner as `exec mix test` so check.sh's test step is logged as `mix test`.
-    File.write!(Path.join([work, "scripts", "mix-test.sh"]), "exec mix test\n")
     # test/scripts/pre_commit_test.exs covers the mutation gate.
     File.write!(Path.join([work, "scripts", "mutate.sh"]), "exit 0\n")
 

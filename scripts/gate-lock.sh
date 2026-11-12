@@ -40,7 +40,7 @@ gate_lock() {
   gate_lock_slots meerkat-gate-lock 2 "gate slots" true
 }
 
-# test_file_lock <slot count>: the slot count is scripts/mix-test.sh's
+# test_file_lock <slot count>: the slot count is scripts/mix-test.ts's
 # parallelism.
 test_file_lock() {
   gate_lock_slots meerkat-gate-lock/files "$1" "" false

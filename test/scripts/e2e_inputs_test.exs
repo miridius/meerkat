@@ -10,7 +10,7 @@ defmodule Meerkat.E2eInputsTest do
     docs/features/cli.md
     test/scripts/pre_commit_test.exs
     test/support/test_helpers.ex
-    scripts/mix-test.sh
+    scripts/mix-test.ts
     scripts/check.sh.bak
     scripts/checked-trees.sh
     .github/workflows/ci.yml

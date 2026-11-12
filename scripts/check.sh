@@ -77,9 +77,10 @@ run_checks() {
   step mix format --check-formatted
   step mix credo --strict
   step bunx biome lint --error-on-warnings
-  step bash scripts/mix-test.sh
+  step bun scripts/mix-test.ts
   (cd assets && step bun test)
   step bun test tests/e2e/lib
+  step bun test scripts
   if [[ "$e2e" == 1 ]]; then
     (cd assets && MIX_BUILD_PATH="$root/_build/dev" step bun run build)
     step bunx playwright install --only-shell chromium

@@ -242,7 +242,7 @@ run_mutate() {
   # no coverage). For lines `:cover` has no data for, it falls back to
   # muex's dependency analysis, then to every test file it is given. muex
   # runs as many test BEAMs at once as there are cores; like
-  # scripts/mix-test.sh, cap them at half (at least one) so a commit leaves
+  # scripts/mix-test.ts, cap them at half (at least one) so a commit leaves
   # the machine usable. A --concurrency after `--` overrides this.
   jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
   ((jobs >= 1)) || jobs=1
