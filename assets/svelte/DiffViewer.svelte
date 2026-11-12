@@ -208,9 +208,8 @@
 
   // Use DiffModeEnum.SplitGitLab instead of DiffModeEnum.Split: it's
   // the only @git-diff-view mode that draws hunk expand buttons in
-  // the new-side (right-hand) gutter. It also draws them in the
-  // old-side gutter, with the hunk header text beside them; the CSS
-  // below hides that old-side copy.
+  // both sides' gutters. It also draws the hunk header text on both
+  // sides; the CSS below hides the old-side copy.
   const diffViewMode = $derived(
     isOneSided
       ? DiffModeEnum.Unified
@@ -1436,28 +1435,18 @@
   :global(.diff-content col.unified-diff-table-num-col) {
     width: calc(var(--diff-aside-width--) * 2 + 13px);
   }
-  /* The library draws each hunk row's expand buttons and header text on
-     both sides. Hide the old-side (left) copies so both appear once, on
-     the new side.
+  /* The library draws each hunk row's header text on both sides. Hide
+     the old-side (left) copy so it appears once, on the new side.
      With line wrap off, split view draws each side in its own table;
      hunk rows carry data-side="old" or data-side="new". */
-  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td > *),
+  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-content > *),
   /* With line wrap on, each hunk is one row of four cells: old action,
-     old header, new action, new header. The old-side cells are the ones
-     with an action cell after them. */
-  :global(.diff-content tr.diff-line-hunk > td:has(~ td.diff-line-hunk-action) > *) {
-    /* Hiding the contents instead of removing them keeps the
-       old-side cells as spacers that hold their width. */
+     old header, new action, new header. The old header is the one with
+     an action cell after it. */
+  :global(.diff-content tr.diff-line-hunk > td.diff-line-hunk-content:has(~ td.diff-line-hunk-action) > *) {
+    /* Hiding the text instead of removing it keeps the old-side cell
+       as a spacer that holds its width. */
     visibility: hidden;
-  }
-  /* The library gives the old-side action cell an inline background of
-     var(--diff-hunk-lineNumber--), the button tile colour. With its button
-     hidden, it would look like a blank tile, so point that variable at the
-     hunk content colour on this cell to blend it into the emptied header
-     cell beside it. */
-  :global(.diff-content tr.diff-line-hunk[data-side="old"] > td.diff-line-hunk-action),
-  :global(.diff-content td.diff-line-hunk-action:has(~ td.diff-line-hunk-action)) {
-    --diff-hunk-lineNumber--: var(--diff-hunk-content--);
   }
   /*
    * Drag-select highlights line-number cells in the range, plus the whole row

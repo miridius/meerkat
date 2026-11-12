@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { afterNextFrame, expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
@@ -23,9 +23,9 @@ function twoHunkFixture() {
 	return fixture;
 }
 
-async function newGutterSpan(file: Locator): Promise<{ left: number; right: number }> {
-	const box = await file.locator("td.diff-line-new-num").first().boundingBox();
-	if (!box) throw new Error("new-side gutter cell has no box");
+async function gutterSpan(file: Locator, side: "old" | "new"): Promise<{ left: number; right: number }> {
+	const box = await file.locator(`td.diff-line-${side}-num`).first().boundingBox();
+	if (!box) throw new Error(`${side}-side gutter cell has no box`);
 	return { left: box.x, right: box.x + box.width };
 }
 
@@ -33,52 +33,42 @@ function expandButtons(file: Locator): Locator {
 	return file.locator('td.diff-line-hunk-action button[title^="Expand"]').filter({ visible: true });
 }
 
-// In split mode, the expand buttons sit in the right-hand gutter only, the
-// header shows once beside them, and Expand All shows the hidden lines.
-async function checkSplit(page: Page, file: Locator): Promise<void> {
-	// The three visible buttons are Expand Up on the first hunk, Expand All
+// In split mode, the expand buttons sit in both sides' gutters, the header
+// shows once on the right, and Expand All shows the hidden lines.
+async function checkSplit(file: Locator): Promise<void> {
+	// Each side shows three buttons: Expand Up on the first hunk, Expand All
 	// between hunks, and Expand Down after the last. The 33-line gap is
 	// shorter than @git-diff-view's composeLen (40), so it offers a single
 	// Expand All button.
 	const visible = expandButtons(file);
-	await expect(visible).toHaveCount(3);
+	await expect(visible).toHaveCount(6);
 
-	const gutter = await newGutterSpan(file);
+	const oldGutter = await gutterSpan(file, "old");
+	const newGutter = await gutterSpan(file, "new");
+	const inGutter = { old: 0, new: 0 };
 	for (const button of await visible.all()) {
 		const box = await button.boundingBox();
 		if (!box) throw new Error("visible expand button has no box");
 		const centre = box.x + box.width / 2;
-		expect(centre).toBeGreaterThanOrEqual(gutter.left);
-		expect(centre).toBeLessThanOrEqual(gutter.right);
+		if (centre >= oldGutter.left && centre <= oldGutter.right) inGutter.old++;
+		if (centre >= newGutter.left && centre <= newGutter.right) inGutter.new++;
 	}
-
-	// The emptied old-side action cell should match the hunk header background,
-	// rather than look like a blank button tile, while the right-hand cell
-	// holding the buttons keeps its tile colour.
-	const leftAction = file.locator("td.diff-line-hunk-action").first();
-	const leftHeader = file.locator("td.diff-line-hunk-content").first();
-	const rightAction = file
-		.locator("td.diff-line-hunk-action")
-		.filter({ has: page.locator('button[title^="Expand"]').filter({ visible: true }) })
-		.first();
-	const bg = (cell: Locator) => cell.evaluate((el) => getComputedStyle(el).backgroundColor);
-	expect(await bg(leftAction)).toBe(await bg(leftHeader));
-	expect(await bg(rightAction)).not.toBe(await bg(leftHeader));
+	expect(inGutter).toEqual({ old: 3, new: 3 });
 
 	// Each hunk header should appear once, not once per side, on the
-	// right beside its expand button.
+	// right.
 	const header = file.getByText(/^@@ -17,7 \+17,7 @@$/).filter({ visible: true });
 	await expect(header).toHaveCount(1);
 	const headerBox = await header.boundingBox();
 	if (!headerBox) throw new Error("hunk header has no box");
-	expect(headerBox.x).toBeGreaterThanOrEqual(gutter.right);
+	expect(headerBox.x).toBeGreaterThanOrEqual(newGutter.right);
 
 	await expect(file.getByText("line 40", { exact: true }).first()).toBeHidden();
-	await file.locator('button[title="Expand All"]').filter({ visible: true }).click();
+	await file.locator('button[title="Expand All"]').filter({ visible: true }).first().click();
 	await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();
 }
 
-test("hunk expand buttons stay in the single unified gutter, and in split mode, wrapped or not, sit in the right-hand gutter only and expand the hidden lines", async ({
+test("hunk expand buttons stay in the single unified gutter, and in split mode, wrapped or not, sit in both gutters and expand the hidden lines", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: twoHunkFixture() });
@@ -103,7 +93,7 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		await page.getByRole("button", { name: /^Split$/ }).click();
 		await expect(file.locator("td.diff-line-new-num").first()).toBeVisible();
 		await expect(wrapToggle).toBeChecked();
-		await checkSplit(page, file);
+		await checkSplit(file);
 
 		// A reload collapses what was expanded, so the wrap-off table starts
 		// with every line hidden again.
@@ -114,7 +104,7 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		// tables, so wait for the wrap-off table, whose hunk rows carry
 		// data-side, before measuring anything in it.
 		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
-		await checkSplit(page, file);
+		await checkSplit(file);
 	} finally {
 		await meerkat.kill();
 	}
