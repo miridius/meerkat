@@ -84,7 +84,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
     # Reviewer approves; the CLI is now in its post-decision halt window
-    # (Decision.current() is set, the BEAM about to exit 0). A version
+    # (Decision.current() is set, the BEAM about to exit with it). A version
     # landing now must not preempt that exit code with a restart (75).
     render_hook(view, "decision.approve", %{})
     send(view.pid, {:meerkat_version_available, "versions/v2"})

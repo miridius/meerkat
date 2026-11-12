@@ -212,14 +212,16 @@ trap 'rm -rf "$SMOKE_DIR"' EXIT
   # caller's local branch. Strip every `GIT_*` env var before
   # touching the throwaway repo.
   unset $(env | awk -F= '/^GIT_/ {print $1}')
+  # shellcheck source=bin/meerkat-attach
+  source bin/meerkat-attach
   cd "$SMOKE_DIR"
   git init -q -b main
   git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   echo "msg" > MSG
-  # Invoke the new version's launcher exactly as the wrapper does, but
+  # Invoke the new version's release exactly as the shepherd does, but
   # against $FINAL_DIR directly, since `current` isn't pointed at it yet.
-  MEERKAT_PWD="$SMOKE_DIR" "$FINAL_DIR/bin/meerkat" \
-    eval "Meerkat.CLI.main(System.argv()) |> System.halt()" --commit-msg MSG --no-open
+  MEERKAT_PWD="$SMOKE_DIR" meerkat_run_once "$FINAL_DIR/bin/meerkat" \
+    eval "$MEERKAT_CLI_HALT" --commit-msg MSG --no-open
 )
 
 # Flip `current` at the smoke-tested version. `mv -h` so the rename

@@ -14,8 +14,8 @@
 # underneath it without the commit ever ending, and the caller can exit
 # without ending the review. A crash (exit 2) is retried once (state
 # restored from the in-progress snapshot) before the commit aborts; a
-# clean decision (0/1) or a second crash reaches git through the caller,
-# so the hook proceeds (0) or aborts.
+# clean decision (76, passed on as 0, or 1) or a second crash reaches git
+# through the caller, so the hook proceeds (0) or aborts.
 #
 # Shares the preferred-port / signal-forwarding / open-marker
 # approach with the dev shepherd `bin/meerkat-beam`; a follow-up could
@@ -42,8 +42,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/meerkat-attach"
 
 # `--answers` reads the answers from stdin, and the loop below starts
 # the BEAM as a background job, which bash gives /dev/null as stdin.
-# So it runs once, with the caller's stdin, with no retry to re-read a
-# stdin already consumed.
+# So it runs once, through `meerkat_run_once`, which hands the BEAM the
+# caller's stdin, with no retry to re-read a stdin already consumed.
 for arg in "$@"; do
   if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
     if [[ -t 0 ]]; then
@@ -98,21 +98,9 @@ export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # from the serve dir.
 trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
 
-# Forward TERM/INT/HUP to the running BEAM. Bash never relays signals to
-# a foreground child, so without this a killed shepherd orphans a BEAM
-# that sits on its port forever. The BEAM runs as a
-# background job + `wait` so this fires immediately.
+# Forward TERM/INT/HUP to the running BEAM.
 beam_pid=""
-on_signal() {
-  local pids="${beam_pid:-$(jobs -p)}"
-  if [[ -n "$pids" ]]; then
-    # shellcheck disable=SC2086
-    kill -9 $pids 2>/dev/null
-    wait $pids 2>/dev/null
-  fi
-  exit 143
-}
-trap on_signal TERM INT HUP
+trap meerkat_on_signal TERM INT HUP
 
 crashed=0
 while true; do

@@ -232,7 +232,7 @@ defmodule Meerkat.CLIMainTest do
     assert Application.get_all_env(:meerkat) == env_before
   end
 
-  # OTP's own SIGTERM handling would exit 0 here, which means approved.
+  # OTP's own SIGTERM handling would exit 0 here, with no REJECT message.
   test "a SIGTERM while the review target resolves exits 143 with a REJECT message",
        %{repo: repo} do
     # gh does not return before the SIGTERM ends the review. Its sleep keeps

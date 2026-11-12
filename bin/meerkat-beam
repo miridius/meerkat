@@ -69,8 +69,8 @@ CLI_EVAL="File.cd!(System.get_env(\"MEERKAT_PWD\") || \".\"); $MEERKAT_CLI_HALT"
 
 # `--answers` reads the answers from stdin, and the loop below starts
 # the BEAM as a background job, which bash gives /dev/null as stdin.
-# So it runs once, with the caller's stdin, with no restart to re-read
-# a stdin already consumed.
+# So it runs once, through `meerkat_run_once`, which hands the BEAM the
+# caller's stdin, with no restart to re-read a stdin already consumed.
 for arg in "$@"; do
   if [[ "$arg" == "--answers" || "$arg" == "--answers=true" ]]; then
     if [[ -t 0 ]]; then
@@ -151,36 +151,10 @@ export MEERKAT_OPEN_MARKER="$OPEN_MARKER"
 # from the serve dir.
 trap 'code=$?; rm -f "$OPEN_MARKER"; echo "$code" >"$MEERKAT_SERVE_DIR/exit.tmp" && mv -f "$MEERKAT_SERVE_DIR/exit.tmp" "$MEERKAT_SERVE_DIR/exit"' EXIT
 
-# Forward TERM/INT to the running BEAM. Bash never relays signals to
-# a foreground child, so without this a killed shepherd (e2e runner
-# teardown, Ctrl-C wrappers) orphans a BEAM that sits on its
-# port forever. The BEAM runs as a background
-# job + `wait` below precisely so this trap fires immediately.
+# Forward TERM/INT/HUP to the running BEAM (e2e runner teardown,
+# Ctrl-C wrappers).
 beam_pid=""
-on_signal() {
-  # `jobs -p` fallback covers the window where the signal lands
-  # between the spawn and `beam_pid=$!` — without it that race
-  # orphans the just-forked BEAM on its port.
-  local pids="${beam_pid:-$(jobs -p)}"
-  if [[ -n "$pids" ]]; then
-    # SIGKILL, not SIGTERM: a TERM'd shepherd means the review is
-    # being abandoned, and graceful BEAM shutdown is all downside
-    # here — Bandit drains the still-connected LiveView socket (tens
-    # of seconds) and the logger's shutdown writes race whoever
-    # deletes the work dir next. State worth keeping is already on
-    # disk; persistence saves on every change.
-    # shellcheck disable=SC2086
-    kill -9 $pids 2>/dev/null
-    # Reap so the port is provably free before the shepherd exits.
-    # `kill -9` on an already-reaped pid returns 1, which would trip
-    # errexit inside this trap — but `beam_pid` is only ever
-    # non-empty inside the `set +e` window around the spawn/wait, so
-    # the trap body runs without errexit whenever pids is set.
-    wait $pids 2>/dev/null
-  fi
-  exit 143
-}
-trap on_signal TERM INT HUP
+trap meerkat_on_signal TERM INT HUP
 
 while true; do
   if ! precompile_if_stale || ! build_assets_if_stale; then

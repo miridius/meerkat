@@ -6,8 +6,8 @@
 # left running, relays its stderr, and exits with its decision. The
 # backend sits outside the caller's process tree, so killing the caller
 # leaves the review running for the next invocation to reattach to.
-# The definitions at the end, from `MEERKAT_CLI_HALT` on, are the
-# shepherds'.
+# The definitions at the end, from `MEERKAT_CLI_HALT` on, run the BEAM
+# and serve the review.
 #
 # Each run has its own <runs>/<key>.<uuid> directory; <runs>/<key> is
 # a symlink naming the current run by its relative sibling name,
@@ -584,9 +584,9 @@ _ma_attach() {
   esac
 }
 
-# The serve half. A BEAM SIGTERMed while it boots, before
+# Running the BEAM. A BEAM SIGTERMed while it boots, before
 # `Meerkat.CLI.main/1` installs its own handler, meets OTP's, which exits
-# 0. So a shepherd's BEAM halts with 76 when `main/1` returns 0, and
+# 0. So the launchers' BEAM halts with 76 when `main/1` returns 0, and
 # `meerkat_decision_code` reads only 76 as approval, and a bare exit 0 as
 # REJECT.
 MEERKAT_CLI_HALT='System.halt(case Meerkat.CLI.main(System.argv()) do 0 -> 76; code -> code end)'
@@ -602,20 +602,44 @@ meerkat_decision_code() {
   esac
 }
 
+# The launchers' TERM, INT and HUP trap. Bash never relays signals to a
+# foreground child, so without it a killed launcher orphans a BEAM that
+# sits on its port forever; the launchers run the BEAM as a background
+# job + `wait` so it fires immediately.
+meerkat_on_signal() {
+  # `jobs -p` fallback covers the window where the signal lands
+  # between the spawn and `beam_pid=$!` — without it that race
+  # orphans the just-forked BEAM on its port.
+  local pids="${beam_pid:-$(jobs -p)}"
+  if [[ -n "$pids" ]]; then
+    # SIGKILL, not SIGTERM: a TERM'd launcher means the review is
+    # being abandoned, and graceful BEAM shutdown is all downside
+    # here — Bandit drains the still-connected LiveView socket (tens
+    # of seconds) and the logger's shutdown writes race whoever
+    # deletes the work dir next. State worth keeping is already on
+    # disk; persistence saves on every change.
+    # Reap, quietly, so the port is provably free before the launcher
+    # exits; `|| :` keeps a pid already gone from tripping errexit.
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || :
+    # shellcheck disable=SC2086
+    wait $pids 2>/dev/null || :
+  fi
+  exit 143
+}
+
 # Runs the BEAM command given once, with the caller's stdin, and exits
 # with its decision. It runs as a background job so a TERM, INT or HUP
 # to the launcher can SIGKILL it rather than orphan it.
 meerkat_run_once() {
-  # Quietly: bash reports a reaped killed job on stderr. `|| :` keeps a
-  # signal that finds no job from tripping the dev launcher's errexit.
-  trap 'kill -9 $(jobs -p) 2>/dev/null || :; wait 2>/dev/null; exit 143' TERM INT HUP
+  trap meerkat_on_signal TERM INT HUP
   "$@" <&0 &
   local code=0
   wait $! || code=$?
   exit "$(meerkat_decision_code "$code")"
 }
 
-# A shepherd calls this before each BEAM it starts. It
+# The serve half: a shepherd calls this before each BEAM it starts. It
 # rewrites a missing `token` or `pid`, so losing one cannot leave callers
 # unable to reattach, or taking a live backend for dead.
 meerkat_restore_run_files() {

@@ -90,12 +90,15 @@ defmodule Meerkat.ShepherdTest do
            }
   end
 
-  test "--answers turns a BEAM exit 0 into 143" do
-    assert run_shepherd([0], args: ["--answers"], input: "{}") == %{
-             code: 143,
-             iterations: 1,
-             stdin: "{}"
-           }
+  test "--answers turns a BEAM exit 0 into 143 with a REJECT message" do
+    dir = Meerkat.TestHelpers.make_tmp_repo("meerkat-shep")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    fake_release(dir, "exit 0\n")
+    env = [{"MEERKAT_CURRENT_LINK", Path.join(dir, "current")}, {"INPUT_FILE", "/dev/null"}]
+    port = open_launcher(@shepherd, ["--answers"], dir, env)
+
+    assert {143, output} = await_result(port, dir)
+    assert output =~ "meerkat: the review BEAM exited 0 before meerkat decided"
   end
 
   test "--answers stopped by SIGTERM kills its BEAM and exits 143 without a message" do
@@ -127,7 +130,7 @@ defmodule Meerkat.ShepherdTest do
     System.cmd("kill", ["-TERM", await_file(caller_pid_file)])
 
     assert await_result(port, dir) == {143, ""}
-    await_gone(beam)
+    assert await_gone(beam), "the --answers BEAM #{beam} is still running"
   end
 
   test "--answers propagates a crash (exit 2) without a retry" do
