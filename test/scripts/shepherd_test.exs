@@ -1292,8 +1292,8 @@ defmodule Meerkat.ShepherdTest do
   defp build_shared(shared) do
     # The release prod tests run. Its BEAM is the script in
     # $FAKE_BEAM, run by this bash so that its args, `$$` and `exec` are
-    # the BEAM's own. Once a test's dir is gone, its BEAM crashes, so a
-    # shepherd that outlived its test aborts rather than respawning it.
+    # the BEAM's own. A BEAM started once its run dir is gone crashes, so
+    # a shepherd that outlived its test aborts after its one crash retry.
     executable(Path.join(shared, "rel/bin/meerkat"), ~S"""
     #!/usr/bin/env bash
     if [[ -n "${MEERKAT_SERVE_DIR:-}" && ! -d "$MEERKAT_SERVE_DIR" ]]; then exit 2; fi
@@ -1470,8 +1470,8 @@ defmodule Meerkat.ShepherdTest do
   # shadowing the commands it runs between BEAMs: each records what
   # `record_port_file/1` does, then runs its real command, or exits 0
   # without one; the dev stubs' `mix run` is the BEAM, and for prod `env`
-  # names the release. Returns what was
-  # recorded, in order and without repeats.
+  # names the release. Returns what was recorded, in order and without
+  # repeats.
   defp port_file_between_runs(
          launcher,
          stubs,
@@ -1801,9 +1801,10 @@ defmodule Meerkat.ShepherdTest do
 
     # A shepherd may not have written its pid file yet. Missed, it outlives
     # the test; once the shared stubs are deleted at the module's end, a
-    # dev one runs the real `mix` and starts a BEAM that never exits. Not every run dir gets a pid, so
-    # each wait gets 10 s, not @timeout_ms: after a wait that timed out,
-    # @timeout_ms of the 180 s test timeout is already spent.
+    # dev one runs the real `mix` and starts a BEAM that never exits. Not
+    # every run dir gets a pid, so each wait gets 10 s, not @timeout_ms:
+    # after a wait that timed out, @timeout_ms of the 180 s test timeout
+    # is already spent.
     detached =
       for run <- Path.wildcard(Path.join([dir, "runs", "*"])),
           backend = await_file(Path.join(run, "pid"), 10_000),
