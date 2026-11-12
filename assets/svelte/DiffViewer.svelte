@@ -1444,8 +1444,8 @@
      old header, new action, new header. The old header is the one with
      an action cell after it. */
   :global(.diff-content tr.diff-line-hunk > td.diff-line-hunk-content:has(~ td.diff-line-hunk-action) > *) {
-    /* Hiding the text instead of removing it keeps the old-side cell
-       as a spacer that holds its width. */
+    /* Hiding the text instead of removing it keeps its box, so the
+       old-side hunk row keeps its size. */
     visibility: hidden;
   }
   /*

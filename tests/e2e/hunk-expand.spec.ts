@@ -34,8 +34,9 @@ function expandButtons(file: Locator): Locator {
 }
 
 // In split mode, the expand buttons sit in both sides' gutters, the header
-// shows once on the right, and Expand All shows the hidden lines.
-async function checkSplit(file: Locator): Promise<void> {
+// shows once on the right, and the Expand All in the given side's gutter
+// shows the hidden lines.
+async function checkSplit(file: Locator, clickSide: "old" | "new"): Promise<void> {
 	// Each side shows three buttons: Expand Up on the first hunk, Expand All
 	// between hunks, and Expand Down after the last. The 33-line gap is
 	// shorter than @git-diff-view's composeLen (40), so it offers a single
@@ -45,13 +46,18 @@ async function checkSplit(file: Locator): Promise<void> {
 
 	const oldGutter = await gutterSpan(file, "old");
 	const newGutter = await gutterSpan(file, "new");
-	const inGutter = { old: 0, new: 0 };
-	for (const button of await visible.all()) {
+	const sideOf = async (button: Locator): Promise<"old" | "new" | undefined> => {
 		const box = await button.boundingBox();
 		if (!box) throw new Error("visible expand button has no box");
 		const centre = box.x + box.width / 2;
-		if (centre >= oldGutter.left && centre <= oldGutter.right) inGutter.old++;
-		if (centre >= newGutter.left && centre <= newGutter.right) inGutter.new++;
+		if (centre >= oldGutter.left && centre <= oldGutter.right) return "old";
+		if (centre >= newGutter.left && centre <= newGutter.right) return "new";
+		return undefined;
+	};
+	const inGutter = { old: 0, new: 0 };
+	for (const button of await visible.all()) {
+		const side = await sideOf(button);
+		if (side) inGutter[side]++;
 	}
 	expect(inGutter).toEqual({ old: 3, new: 3 });
 
@@ -64,7 +70,12 @@ async function checkSplit(file: Locator): Promise<void> {
 	expect(headerBox.x).toBeGreaterThanOrEqual(newGutter.right);
 
 	await expect(file.getByText("line 40", { exact: true }).first()).toBeHidden();
-	await file.locator('button[title="Expand All"]').filter({ visible: true }).first().click();
+	let expandAll: Locator | undefined;
+	for (const button of await file.locator('button[title="Expand All"]').filter({ visible: true }).all()) {
+		if ((await sideOf(button)) === clickSide) expandAll = button;
+	}
+	if (!expandAll) throw new Error(`no visible Expand All in the ${clickSide}-side gutter`);
+	await expandAll.click();
 	await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();
 }
 
@@ -93,7 +104,7 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		await page.getByRole("button", { name: /^Split$/ }).click();
 		await expect(file.locator("td.diff-line-new-num").first()).toBeVisible();
 		await expect(wrapToggle).toBeChecked();
-		await checkSplit(file);
+		await checkSplit(file, "old");
 
 		// A reload collapses what was expanded, so the wrap-off table starts
 		// with every line hidden again.
@@ -104,7 +115,7 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		// tables, so wait for the wrap-off table, whose hunk rows carry
 		// data-side, before measuring anything in it.
 		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
-		await checkSplit(file);
+		await checkSplit(file, "new");
 	} finally {
 		await meerkat.kill();
 	}
