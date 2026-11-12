@@ -1,7 +1,7 @@
 defmodule Meerkat.Version do
   @moduledoc """
   Identity and changelog of the running meerkat, for the toolbar version
-  chip. A prod release reads the manifest install.sh bakes into the version
+  chip. A prod release reads the manifest install.ts bakes into the version
   dir (the build commit, the repo URL, and the recent merged-PR subjects);
   a dev source tree reports the checkout's branch with no changelog.
   """

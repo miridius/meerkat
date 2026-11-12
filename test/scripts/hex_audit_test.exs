@@ -1,6 +1,7 @@
 defmodule Meerkat.HexAuditTest do
   # Runs the repo's real scripts/hex-audit.ts. Only mix is replaced, by a
   # stub on PATH that prints what a test sets up and exits with its code.
+  # scripts/hex-audit.test.ts tests the verdict; these test the CLI's seams.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/hex-audit.ts")
@@ -37,22 +38,13 @@ defmodule Meerkat.HexAuditTest do
     )
   end
 
-  test "passes a clean audit and shows its output", ctx do
-    assert {out, 0} = audit(ctx, "No retired or security advisory packages found\n", "", 0)
-    assert out =~ "No retired or security advisory packages found"
-  end
-
-  test "fails when mix hex.audit fails", ctx do
-    assert {out, 1} = audit(ctx, "Found retired packages\n", "", 1)
-    assert out =~ "Found retired packages"
-  end
-
   test "fails a passing audit when Hex could not fetch a record", ctx do
     err = "Failed to fetch record for bandit from registry (using cache instead)\n"
 
     assert {out, 1} =
              audit(ctx, "No retired or security advisory packages found\n", err, 0)
 
+    assert out =~ "No retired or security advisory packages found"
     assert out =~ "Failed to fetch record for bandit"
     assert out =~ "the audit is incomplete"
   end

@@ -148,6 +148,8 @@ defmodule Meerkat.PendingQuestionsTest do
 
   test "failure to persist is not treated as successful feedback", %{repo: repo} do
     path = PendingQuestions.path_for(repo)
+    # The state dir is the repo dir.
+    File.rm_rf!(Path.dirname(path))
     File.write!(Path.dirname(path), "not a directory")
     error = assert_raise File.Error, fn -> PendingQuestions.replace(repo, @questions) end
     assert error.action == "record owed questions"

@@ -8,7 +8,9 @@ defmodule Meerkat.CLIMainTest do
 
   alias Meerkat.{ApprovalCache, CLI, PendingAnswers, PendingQuestions}
 
-  # Built once, then copied for each test.
+  # Built once. A test that only adds files shares it, and its additions
+  # go when it ends; one that stages a file, tagged `:own_repo`, gets a
+  # copy.
   setup_all do
     template =
       fixture_template("meerkat-cli-main-template", fn repo ->
@@ -22,9 +24,14 @@ defmodule Meerkat.CLIMainTest do
     {:ok, template: template}
   end
 
-  setup %{template: template} do
+  setup %{template: template} = ctx do
     restore_signal_handler_on_exit()
-    repo = copy_fixture(template, "meerkat-cli-main")
+
+    repo =
+      if ctx[:own_repo],
+        do: copy_fixture(template, "meerkat-cli-main"),
+        else: tap(template, &remove_additions_on_exit/1)
+
     commit_msg = Path.join(repo, "COMMIT_MSG")
 
     put_env("MEERKAT_PWD", repo)
@@ -49,6 +56,7 @@ defmodule Meerkat.CLIMainTest do
   # Git names staged files from the root, and reads the paths it is given
   # from where it runs, so a review run from a subdirectory once looked up
   # none of its files' blobs and kept no approval.
+  @tag :own_repo
   test "a rerun from a subdirectory auto-approves the files approved there",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "src/a.txt", "a\n")
@@ -285,6 +293,7 @@ defmodule Meerkat.CLIMainTest do
 
   # The review binds a real port only outside the test VM, whose endpoint
   # already runs without a server.
+  @tag :own_repo
   test "a review opens the browser at the port it bound",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")
@@ -324,6 +333,7 @@ defmodule Meerkat.CLIMainTest do
   # As in `test_helper.exs`, the endpoint is already running under the
   # test config's `server: false` when `main/1` starts the review, so it
   # binds no port.
+  @tag :own_repo
   test "a review whose server bound no port opens no browser and rejects",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")

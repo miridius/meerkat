@@ -1170,7 +1170,7 @@ defmodule Meerkat.Git do
   # meerkat-invoked-from-a-hook ends up resolving paths against the
   # parent repo's gitdir instead of the cwd the caller asked for.
   # Pass them as `{key, nil}` to `System.cmd` to strip from the child
-  # env. Same shape as the `unset GIT_*` in `scripts/install.sh`.
+  # env. Same shape as `withoutGitVars` in `scripts/install.ts`.
   #
   # GIT_INDEX_FILE is not among them: it does not locate the repo, it
   # names the index git reads. During `git commit -a` or

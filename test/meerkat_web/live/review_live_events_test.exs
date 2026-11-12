@@ -21,7 +21,9 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
   alias Meerkat.{ApprovalCache, Decision, PendingAnswers, ReviewServer, ReviewState}
   alias MeerkatWeb.ReviewLive
-  import Meerkat.TestHelpers, only: [put_pending_answers: 2, stage: 3]
+
+  import Meerkat.TestHelpers,
+    only: [git: 2, import_commits: 2, put_pending_answers: 2, read_tree: 3]
 
   @plain_file plain_file()
   @md_file md_file()
@@ -349,27 +351,53 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
            )
   end
 
-  test "the toolbar shows one total when hiding files leaves it unchanged", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, "a.txt", "one\n")
-    stage(repo, "logo.bin", <<0, 1>>)
-    commit(repo, "base")
-    stage(repo, "a.txt", "two\n")
-    stage(repo, "logo.bin", <<0, 2>>)
+  # Repos the staged reviews below read, built once: `bin` stages a
+  # change to a text file and a binary one, `gen` to a text file and a
+  # generated -diff one.
+  setup_all do
+    dir =
+      Meerkat.TestHelpers.fixture_template("meerkat-lv-events", fn dir ->
+        staged_repo(Path.join(dir, "bin"), %{"a.txt" => "one\n", "logo.bin" => <<0, 1>>}, %{
+          "a.txt" => "two\n",
+          "logo.bin" => <<0, 2>>
+        })
+
+        attributes = %{".gitattributes" => "gen.txt linguist-generated -diff\n"}
+
+        staged_repo(
+          Path.join(dir, "gen"),
+          Map.merge(attributes, %{"a.txt" => "one\n", "gen.txt" => "old\n"}),
+          Map.merge(attributes, %{"a.txt" => "two\n", "gen.txt" => "new\nmore\n"})
+        )
+      end)
+
+    {:ok, bin_repo: Path.join(dir, "bin"), gen_repo: Path.join(dir, "gen")}
+  end
+
+  # A repo at `dir` whose HEAD and work tree hold `head` and whose index
+  # holds `index`.
+  defp staged_repo(dir, head, index) do
+    File.mkdir_p!(dir)
+    git(dir, ["init", "-q", "--initial-branch=main"])
+    import_commits(dir, [{"refs/heads/main", head}, {"refs/meerkat-test/index", index}])
+    git(dir, ["reset", "-q", "--hard"])
+    read_tree(dir, "refs/meerkat-test/index", nil)
+  end
+
+  test "the toolbar shows one total when hiding files leaves it unchanged", %{
+    conn: conn,
+    bin_repo: repo
+  } do
     {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
 
     view = mount_unbound(conn, %{state | hidden_extensions: MapSet.new(["bin"])})
     assert has_element?(view, ".toolbar-line-counts", ~r/^\s*\+1\s*-1\s*$/)
   end
 
-  test "a hidden generated -diff file counts in the whole diff's total", %{conn: conn} do
-    repo = tmp_git_repo()
-    stage(repo, ".gitattributes", "gen.txt linguist-generated -diff\n")
-    stage(repo, "a.txt", "one\n")
-    stage(repo, "gen.txt", "old\n")
-    commit(repo, "base")
-    stage(repo, "a.txt", "two\n")
-    stage(repo, "gen.txt", "new\nmore\n")
+  test "a hidden generated -diff file counts in the whole diff's total", %{
+    conn: conn,
+    gen_repo: repo
+  } do
     {:ok, state} = ReviewState.from_target({:staged, nil}, repo)
 
     view = mount_unbound(conn, state)

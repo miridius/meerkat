@@ -53,18 +53,36 @@ export function youngIn(output: string): string[] {
 // A failure to report: untilAccepted throws it, as does advisory-fixes.ts.
 export class Refusal extends Error {}
 
+// What a command ended with.
+export type Ran = { code: number; out: string; err: string };
+
+// What untilAccepted, and advisory-fixes.ts, run commands and write files
+// with; their bun tests pass a stand-in.
+export type Runner = {
+	run: (cmd: string[], env?: Record<string, string>) => Ran;
+	write: (path: string, body: string) => void;
+};
+
+export const system: Runner = {
+	run: (cmd, env = {}) => {
+		const p = Bun.spawnSync(cmd, { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+		return { code: p.exitCode ?? 1, out: p.stdout.toString(), err: p.stderr.toString() };
+	},
+	write: writeFileSync,
+};
+
 // untilAccepted CMD TEXT EXCLUDES: runs CMD with the workspace file
 // written as TEXT excluding EXCLUDES and each version CMD refuses as under
 // minimumReleaseAge, adding those a round at a time, and returns the
 // versions it added. It leaves the file as last written, and gives up
 // after 20 rounds.
-export function untilAccepted(cmd: string[], text: string, excludes: string[]): string[] {
+export function untilAccepted(cmd: string[], text: string, excludes: string[], sys = system): string[] {
 	const added: string[] = [];
 	for (let round = 0; round < 20; round++) {
-		writeFileSync(WORKSPACE, withExcludes(text, [...excludes, ...added]));
-		const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
-		const output = `${r.stdout.toString()}${r.stderr.toString()}`;
-		if (r.exitCode === 0) return added;
+		sys.write(WORKSPACE, withExcludes(text, [...excludes, ...added]));
+		const r = sys.run(cmd);
+		const output = `${r.out}${r.err}`;
+		if (r.code === 0) return added;
 		const young = youngIn(output).filter((v) => !excludes.includes(v) && !added.includes(v));
 		if (young.length === 0) throw new Refusal(`${cmd.join(" ")} failed:\n${output}`);
 		added.push(...young);
@@ -74,28 +92,31 @@ export function untilAccepted(cmd: string[], text: string, excludes: string[]): 
 
 class Unreadable extends Error {}
 
-function published(entry: string): Date {
+// published ENTRY RUN: when the registry published ENTRY, an exact
+// name@version, as `pnpm view`, run by RUN, lists its package's times.
+export function published(entry: string, run = system.run): Date {
 	const at = entry.lastIndexOf("@");
 	const [name, version] = [entry.slice(0, at), entry.slice(at + 1)];
 	if (at <= 0 || !/^\d/.test(version))
 		throw new Unreadable(`${entry} is not an exact name@version entry`);
-	const view = Bun.spawnSync(["pnpm", "view", name, "time", "--json"], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
+	const view = run(["pnpm", "view", name, "time", "--json"]);
 	const why = (reason: string) =>
 		new Unreadable(`could not read when the registry published ${entry}: ${reason}`);
-	if (view.exitCode !== 0)
-		throw why(`pnpm view exited ${view.exitCode}:\n${view.stderr.toString().trim()}`);
+	if (view.code !== 0) throw why(`pnpm view exited ${view.code}:\n${view.err.trim()}`);
 	let times: Record<string, string>;
 	try {
-		times = JSON.parse(view.stdout.toString());
+		times = JSON.parse(view.out);
 	} catch (e) {
 		throw why(`pnpm view printed no JSON (${e instanceof Error ? e.message : e})`);
 	}
 	const date = new Date(String(times?.[version]));
 	if (Number.isNaN(date.getTime())) throw why(`the registry lists no publish time for ${version}`);
 	return date;
+}
+
+// stale ENTRIES AT RUN: the ENTRIES 24h old at time AT.
+export function stale(entries: string[], at: number, run?: Runner["run"]): string[] {
+	return entries.filter((e) => at - published(e, run).getTime() >= DAY_MS);
 }
 
 function main(mode: string): number {
@@ -106,22 +127,22 @@ function main(mode: string): number {
 	const prefix = mode === "prune" ? "pre-commit: " : "";
 	const text = readFileSync(WORKSPACE, "utf8");
 	const entries = readExcludes(text);
-	let stale: string[];
+	let old: string[];
 	try {
-		stale = entries.filter((e) => Date.now() - published(e).getTime() >= DAY_MS);
+		old = stale(entries, Date.now());
 	} catch (e) {
 		if (!(e instanceof Unreadable)) throw e;
 		console.error(`${prefix}scripts/age-excludes.ts: ${e.message} — cannot check minimumReleaseAgeExclude.`);
 		return 2;
 	}
 	if (mode === "check") {
-		for (const e of stale)
+		for (const e of old)
 			console.log(`BLOCKED: ${WORKSPACE} excludes ${e} from minimumReleaseAge, but it is 24h old; commit to drop it`);
-		return stale.length > 0 ? 1 : 0;
+		return old.length > 0 ? 1 : 0;
 	}
-	if (stale.length > 0) {
-		writeFileSync(WORKSPACE, withExcludes(text, entries.filter((e) => !stale.includes(e))));
-		for (const e of stale) console.log(`${prefix}${e} is 24h old; dropped from minimumReleaseAgeExclude.`);
+	if (old.length > 0) {
+		writeFileSync(WORKSPACE, withExcludes(text, entries.filter((e) => !old.includes(e))));
+		for (const e of old) console.log(`${prefix}${e} is 24h old; dropped from minimumReleaseAgeExclude.`);
 	}
 	return 0;
 }

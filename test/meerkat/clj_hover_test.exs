@@ -1,9 +1,8 @@
 defmodule Meerkat.CljHoverTest do
-  # Hover answers on a real staged review, analysed by the real clj-kondo,
-  # which runs once for the module.
+  # Hover answers on a real staged review, analysed by the real clj-kondo.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, stage: 3]
+  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, read_tree: 3]
 
   alias Meerkat.{CljHover, Git}
 
@@ -131,19 +130,24 @@ defmodule Meerkat.CljHoverTest do
   ]
 
   # The repo and the dependency directory outside it, built and linted
-  # once. Every test that only reads them shares one copy; a test that
-  # changes the repo is tagged `:own_repo` and gets its own.
+  # once. The tests share them and one hover server; a test tagged
+  # `:own_server` gets its own server, and puts back what it changes.
   setup_all do
     template =
       Meerkat.TestHelpers.fixture_template("meerkat-clj-hover-template", fn template ->
         build_fixture(Path.join(template, "repo"), Path.join(template, "ext"))
       end)
 
-    {:ok, template: template, shared_dir: copy(template)}
+    dir = Path.join(template, "repo")
+    {:ok, shared: start(dir)}
   end
 
   setup ctx do
-    dir = if ctx[:own_repo], do: copy(ctx.template), else: ctx.shared_dir
+    if ctx[:own_server], do: start(ctx.shared.dir), else: ctx.shared
+  end
+
+  # A hover server for a staged review of `dir`.
+  defp start(dir) do
     {:ok, files} = Git.staged_file_diffs(dir)
     rid = "clj-hover-#{System.unique_integer([:positive])}"
     {:ok, pid} = CljHover.ensure_started(rid, dir, files)
@@ -154,14 +158,16 @@ defmodule Meerkat.CljHoverTest do
 
   defp build_fixture(dir, ext) do
     File.mkdir_p!(dir)
-    git(dir, ["init", "-q"])
-    git(dir, ["config", "user.email", "t@t.t"])
-    git(dir, ["config", "user.name", "t"])
-    git(dir, ["config", "core.hooksPath", "/dev/null"])
+    git(dir, ["init", "-q", "--initial-branch=main"])
 
-    Enum.each(@base, fn {path, text} -> stage(dir, path, text) end)
-    git(dir, ["commit", "-qm", "base"])
-    Enum.each(@staged, fn {path, text} -> stage(dir, path, text) end)
+    import_commits(dir, [
+      {"refs/heads/main", @base},
+      {"refs/meerkat-test/staged", Map.merge(@base, @staged)}
+    ])
+
+    git(dir, ["reset", "-q", "--hard"])
+    read_tree(dir, "refs/meerkat-test/staged", nil)
+    Enum.each(@staged, fn {path, text} -> write(dir, path, text) end)
 
     # The worktree differs from the index meerkat reviews, and holds an
     # untracked file beside tracked ones.
@@ -185,14 +191,16 @@ defmodule Meerkat.CljHoverTest do
     File.mkdir_p!(Path.join(dir, ".clj-kondo"))
     {_, _} = System.cmd("clj-kondo", ["--lint", "src", "shared", "web"], cd: dir)
     {_, _} = System.cmd("clj-kondo", ["--lint", "src/app/util.clj"], cd: dir)
+    File.chmod!(Path.join(dir, "vendor/vend/locked.clj"), 0)
   end
 
-  # Removed after the test, or after the module for `setup_all`.
-  defp copy(template) do
-    dir = Path.join(Meerkat.TestHelpers.copy_fixture(template, "meerkat-clj-hover"), "repo")
-    # Set here: a file no one can read cannot be copied.
-    File.chmod!(Path.join(dir, "vendor/vend/locked.clj"), 0)
-    dir
+  # Changes the shared repo's `path` to hold `text`, or removes it for
+  # nil, until the test ends.
+  defp change(ctx, path, text) do
+    file = Path.join(ctx.dir, path)
+    before = File.read!(file)
+    on_exit(fn -> File.write!(file, before) end)
+    if text, do: File.write!(file, text), else: File.rm!(file)
   end
 
   defp write(dir, path, text) do
@@ -278,18 +286,18 @@ defmodule Meerkat.CljHoverTest do
     refute hover_on(ctx, "src/app/core.clj", :new, "u/extra")
   end
 
-  @tag :own_repo
+  @tag :own_server
   test "a namespace is analysed once, keeping the source it was read with", ctx do
     assert %{source: "(ns app.top) (defn" <> _} =
              hover = hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
 
-    File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
+    change(ctx, "src/app/top.clj", nil)
     assert hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn") == hover
   end
 
-  @tag :own_repo
+  @tag :own_server
   test "a namespace whose cached file is gone, and off the classpath, answers nothing", ctx do
-    File.rm!(Path.join(ctx.dir, "src/app/top.clj"))
+    change(ctx, "src/app/top.clj", nil)
     refute hover_on(ctx, "src/app/core.clj", :new, "tp/top-fn")
   end
 
@@ -324,15 +332,14 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
   end
 
-  @tag :own_repo
+  @tag :own_server
   test "the classpath is read on the first lookup that needs it, then kept", ctx do
-    cp = Path.join(ctx.dir, ".cpcache/1.cp")
     # Opening the review and hovering a diff file's var leave it unread.
     assert %{name: "app.util/helper"} = hover_on(ctx, "src/app/core.clj", :new, "u/helper")
-    File.write!(cp, "vendor\n")
+    change(ctx, ".cpcache/1.cp", "vendor\n")
     refute hover_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
 
-    File.rm!(cp)
+    File.rm!(Path.join(ctx.dir, ".cpcache/1.cp"))
     assert %{doc: "Vendor doc."} = hover_on(ctx, "src/app/core.clj", :new, "t/tool-fn")
   end
 
@@ -372,6 +379,7 @@ defmodule Meerkat.CljHoverTest do
     refute CljHover.hover(ctx.rid, index, :new, 11, 1)
   end
 
+  @tag :own_server
   test "one server per review, not restarted after a crash", ctx do
     assert CljHover.ensure_started(ctx.rid, ctx.dir, ctx.files) == {:ok, ctx.pid}
 
