@@ -145,9 +145,9 @@ export const HOTKEYS: Hotkey[] = [
 	},
 	{
 		scope: "clojure",
-		keys: ["Ctrl-Alt-,", "Ctrl-Alt-Shift-,"],
-		does: "Thread the list one step with -> / ->>",
-		run: [() => claim((state) => thread(state, "->")), () => claim((state) => thread(state, "->>"))],
+		keys: ["Ctrl-Alt-,"],
+		does: "Thread the form into its list with -> or ->>, by its place",
+		run: [() => claim(thread)],
 	},
 	{
 		scope: "clojure",

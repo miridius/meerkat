@@ -418,50 +418,61 @@ describe("kill", () => {
 });
 
 describe("thread", () => {
-	const first = (s: EditorState) => thread(s, "->");
-	const last = (s: EditorState) => thread(s, "->>");
-
-	test("threads the caret's list by its first or last argument", () => {
-		expect(run(first, "(f (g |x) b)")).toBe("(f (-> |x g) b)");
-		expect(run(first, "(f |(g x) b)")).toBe("(-> |(g x) (f b))");
-		expect(run(last, "(map |f (filter p xs))")).toBe("(->> |(filter p xs) (map f))");
+	test("threads the caret's form with -> as the first argument, ->> as the last", () => {
+		expect(run(thread, "(f |(g x) b)")).toBe("|(-> (g x) (f b))");
+		expect(run(thread, "(f (g |x a) b)")).toBe("(f |(-> x (g a)) b)");
+		expect(run(thread, "(map f |(filter p xs))")).toBe("|(->> (filter p xs) (map f))");
+		expect(run(thread, "(map f (filter p xs)|)")).toBe("|(->> (filter p xs) (map f))");
 	});
 
-	test("threads an existing thread one step further", () => {
-		expect(run(first, "(-> |(g x 1) f)")).toBe("(-> |x (g 1) f)");
-		expect(run(last, "(->> |(filter p xs) (map f))")).toBe("(->> |xs (filter p) (map f))");
+	test("threads an only argument by where its call sits in the call around it", () => {
+		expect(run(thread, "(g |x)")).toBe("|(-> x g)");
+		expect(run(thread, "(count |(filter p xs))")).toBe("|(-> (filter p xs) count)");
+		expect(run(thread, "(map f (g |x))")).toBe("(map f |(->> x g))");
+		expect(run(thread, "(map f |(->> x g))")).toBe("|(->> x g (map f))");
+		expect(run(thread, "(assoc (g |x) :k 1)")).toBe("(assoc |(-> x g) :k 1)");
+		expect(run(thread, "(h (g |x))")).toBe("(h |(-> x g))");
+		expect(run(thread, "[a (g |x)]")).toBe("[a |(-> x g)]");
 	});
 
-	test("skips #_ forms when picking the argument", () => {
-		expect(run(first, "(f |#_a x b)")).toBe("(-> |x (f #_a b))");
-		expect(run(last, "(f |a b #_c)")).toBe("(->> |b (f a #_c))");
-		expect(run(first, "(-> |#_y (g x 1) f)")).toBe("(-> #_y |x (g 1) f)");
+	test("takes the call into a thread at the matching end, so repeating threads outward", () => {
+		expect(run(thread, "(h (f |(g x) b) c)")).toBe("(h |(-> (g x) (f b)) c)");
+		expect(run(thread, "(h |(-> (g x) (f b)) c)")).toBe("|(-> (g x) (f b) (h c))");
+		expect(run(thread, "(reduce + |(->> xs (map f)))")).toBe("|(->> xs (map f) (reduce +))");
+	});
+
+	test("starts a new thread around a thread at the other end", () => {
+		expect(run(thread, "(f |(->> xs (map g)) b)")).toBe("|(-> (->> xs (map g)) (f b))");
+	});
+
+	test("skips #_ forms when placing the form", () => {
+		expect(run(thread, "(f #_a |x b)")).toBe("|(-> x (f #_a b))");
+		expect(run(thread, "(f a |b #_c)")).toBe("|(->> b (f a #_c))");
 	});
 
 	test("does nothing to a list with a prefix in its opener", () => {
-		expect(run(first, "#?(:clj |1 :cljs 2)")).toBeNull();
-		expect(run(first, "#(f |% b)")).toBeNull();
+		expect(run(thread, "#?(:clj |1 :cljs 2)")).toBeNull();
+		expect(run(thread, "#(f |% b)")).toBeNull();
 	});
 
 	test("leaves a lone symbol or keyword step bare", () => {
-		expect(run(first, "(|f (g x))")).toBe("(-> |(g x) f)");
-		expect(run(first, "(|:k (g x))")).toBe("(-> |(g x) :k)");
+		expect(run(thread, "(count |(-> xs f))")).toBe("|(-> xs f count)");
+		expect(run(thread, "(:k |(-> m f))")).toBe("|(-> m f :k)");
 	});
 
 	test("keeps parentheses around a step whose head is not a symbol", () => {
-		expect(run(first, "(|(comp a b) x)")).toBe("(-> |x ((comp a b)))");
+		expect(run(thread, "((comp a b) |(-> x f))")).toBe("|(-> x f ((comp a b)))");
 	});
 
 	test("re-indents the lines it changes", () => {
-		expect(run(first, "(f |(g x) a\n   b)")).toBe("(-> |(g x) (f a\n             b))");
+		expect(run(thread, "(f |(g x) a\n   b)")).toBe("|(-> (g x) (f a\n             b))");
 	});
 
-	test("does nothing without an argument, a list to thread further, or a matching macro", () => {
-		expect(run(first, "(|f)")).toBeNull();
-		expect(run(first, "(-> |x f)")).toBeNull();
-		expect(run(last, "(-> |(g x) f)")).toBeNull();
-		expect(run(first, "[a |b]")).toBeNull();
-		expect(run(first, "(f |(g x)")).toBeNull();
+	test("does nothing on the head, a middle argument, or an unclosed list", () => {
+		expect(run(thread, "(|f a b)")).toBeNull();
+		expect(run(thread, "(f a |b c)")).toBeNull();
+		expect(run(thread, "[a |b]")).toBeNull();
+		expect(run(thread, "(f |(g x) b")).toBeNull();
 	});
 });
 

@@ -491,34 +491,48 @@ function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): str
 	return state.doc.sliceString(call.from, from) + state.doc.sliceString(to, call.to);
 }
 
-/** Thread the caret's list one step with `macro` (`->` threads its first
- *  argument, `->>` its last): `(f (g x) b)` becomes `(-> (g x) (f b))`.
- *  In a list that already threads with `macro`, its threaded value is
- *  threaded one step further: `(-> (g x) f)` becomes `(-> x g f)`. The
- *  caret lands before the threaded value. */
-export function thread(state: EditorState, macro: Thread): TransactionSpec | null {
+/** Whether `call` is the last argument, and not the first, of the call
+ *  around it. */
+function lastArgument(state: EditorState, call: SyntaxNode): boolean {
+	const outer = enclosing(state, element(call).from);
+	if (!outer || !isCall(outer)) return false;
+	const args = live(outer);
+	const at = args.findIndex((f) => f.from === element(call).from);
+	return at > 1 && at === args.length - 1;
+}
+
+/** Thread the form at the caret into the call around it, as Cursive's
+ *  Thread Form does: with `->` when it is the call's first argument,
+ *  `->>` when it is the last, so `(f (g x) b)` becomes
+ *  `(-> (g x) (f b))`. Where it is the only argument, Cursive asks which;
+ *  this takes `->>` when the call is itself the last argument, and not
+ *  the first, of the call around it, else `->`. A `->` thread that is
+ *  the call's first argument, or a `->>` thread that is its last, takes
+ *  the call in as its next step, so `(f (-> x g) b)` becomes
+ *  `(-> x g (f b))`. The caret lands on the new thread, so repeating the
+ *  key threads outward. */
+export function thread(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.thread", (pos) => {
 		const coll = enclosing(state, pos);
 		if (!coll || !isCall(coll) || !closerOf(coll) || !whole(coll)) return null;
 		const all = live(coll);
-		const pick = (args: SyntaxNode[]) => (macro === "->" ? args[1] : args[args.length - 1]);
-		const existing = threadOf(state, coll);
-		if (existing) {
-			const value = all[1];
-			if (existing !== macro || !value || !isCall(value) || live(value).length < 2) return null;
-			const arg = pick(live(value));
-			return {
-				changes: [{ from: value.from, to: value.to, insert: `${text(state, arg)} ${stepWithout(state, value, arg)}` }],
-				cursor: value.from,
-			};
+		const form =
+			all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+		if (!form || form === all[0] || !whole(form)) return null;
+		const first = form === all[1];
+		const last = form === all[all.length - 1];
+		const existing = threadOf(state, form);
+		const step = stepWithout(state, coll, form);
+		if ((existing === "->" && first) || (existing === "->>" && last)) {
+			const closer = closerOf(form) as SyntaxNode;
+			const into = `${state.doc.sliceString(form.from, closer.from)} ${step}${state.doc.sliceString(closer.from, form.to)}`;
+			return { changes: [{ from: coll.from, to: coll.to, insert: into }], cursor: coll.from };
 		}
-		if (all.length < 2) return null;
-		const arg = pick(all);
+		if (!first && !last) return null;
+		const macro: Thread = first && (!last || !lastArgument(state, coll)) ? "->" : "->>";
 		return {
-			changes: [
-				{ from: coll.from, to: coll.to, insert: `(${macro} ${text(state, arg)} ${stepWithout(state, coll, arg)})` },
-			],
-			cursor: coll.from + macro.length + 2,
+			changes: [{ from: coll.from, to: coll.to, insert: `(${macro} ${text(state, form)} ${step})` }],
+			cursor: coll.from,
 		};
 	});
 }

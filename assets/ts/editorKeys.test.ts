@@ -95,8 +95,8 @@ describe("hotkeyBindings", () => {
 		expect(press1("Mod-Shift-9", "(a |b)")).toBe("(a (|b))");
 		expect(press1("Mod-[", "(a |b)")).toBe("(a [|b])");
 		expect(press1("Ctrl-Shift-[", "(a |b)")).toBe("(a {|b})");
-		expect(press1("Ctrl-Alt-,", "(f |(g x))")).toBe("(-> |(g x) f)");
-		expect(press1("Ctrl-Alt-Shift-,", "(f |(g x))")).toBe("(->> |(g x) f)");
+		expect(press1("Ctrl-Alt-,", "(f |(g x) b)")).toBe("|(-> (g x) (f b))");
+		expect(press1("Ctrl-Alt-,", "(f b |(g x))")).toBe("|(->> (g x) (f b))");
 		expect(press1("Ctrl-Alt-.", "(-> x |f)")).toBe("|(f x)");
 		expect(press1("Ctrl-Alt-s", "(a |b)")).toBe("(a)| (b)");
 		expect(press1("Ctrl-Alt-j", "(a)| (b)")).toBe("(a| b)");
@@ -207,7 +207,7 @@ describe("cheatSheet", () => {
 			"⌘'",
 			"⌥S",
 			"⇧⌘9 / ⌘[ / ⌃⇧[",
-			"⌃⌥, / ⌃⌥⇧,",
+			"⌃⌥,",
 			"⌃⌥.",
 			"⌃⌥S",
 			"⌃⌥J",
