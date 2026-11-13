@@ -573,6 +573,7 @@ defmodule Meerkat.CLITest do
         flat = String.replace(banner, ~r/\s+/, " ")
         assert flat =~ "If you remind the user to review, give them the URL"
         assert flat =~ "do NOT poll, sleep, or schedule wake-ups"
+        assert flat =~ "Do NOT ask the user whether the review is done"
         assert flat =~ "approved or rejected, and carries any comments they left."
         assert flat =~ "not a `tail`/`head` of it"
       end

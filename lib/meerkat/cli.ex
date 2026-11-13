@@ -941,6 +941,7 @@ defmodule Meerkat.CLI do
     Agents: this #{process_desc} blocks until the review completes, then exits
     on its own — do NOT poll, sleep, or schedule wake-ups; just wait for the exit.
     If you remind the user to review, give them the URL in case they don't have it.
+    Do NOT ask the user whether the review is done: this process exits once they decide.
     Then read the process output to learn the outcome: it says whether the user
     approved or rejected, and carries any comments they left. Read the
     whole output, not a `tail`/`head` of it, or you'll miss the outcome line or
