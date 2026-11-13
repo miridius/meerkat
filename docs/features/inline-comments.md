@@ -120,7 +120,9 @@ When `finding_type === "suggestion"`:
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it
   as a suggested change. The submit also sends the editor's
-  language.
+  language. A Clojure suggestion is sent with every line re-indented
+  as Enter indents it, so the repair below sees indentation that
+  matches its brackets.
 - On save, the server formats a suggestion whose editor language is
   Clojure as it would sit in the file around the anchored lines, using
   `clj-paren-repair-claude-hook` from
@@ -128,7 +130,7 @@ When `finding_type === "suggestion"`:
   run in the reviewed repo. First it repairs unbalanced delimiters
   with parinfer, then it formats with cljfmt. The hook applies the
   repo's cljfmt config only when cljfmt's defaults would also
-  change the file. The suggestion is saved as typed when a repair
+  change the file. The suggestion is saved as sent when a repair
   would change lines outside the suggestion,
   when cljfmt joins a suggestion line onto a line around it, or when
   cljfmt changes more than whitespace, as a repo config that sorts
