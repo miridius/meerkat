@@ -60,9 +60,10 @@ test("Enter in a Clojure suggestion on lines inside a form indents as in the fil
 });
 
 // The browser seam of formatting on save: CommentForm.svelte sends the
-// editor's language, and the server formats only a Clojure suggestion.
-// The formatting is covered by test/meerkat_web/live/review_live_comments_test.exs.
-test("saving a Clojure suggestion runs the formatter hook", async ({ page }) => {
+// editor's language and a Clojure suggestion re-indented, and the server
+// formats only a Clojure suggestion. The formatting is covered by
+// test/meerkat_web/live/review_live_comments_test.exs.
+test("saving a Clojure suggestion re-indents it and runs the formatter hook", async ({ page }) => {
 	// A hook whose cljfmt pass widens the space in `(pos? x)` to three,
 	// which the save keeps.
 	const hookDir = ownedTmpDir("meerkat-e2e");
@@ -85,14 +86,22 @@ fi
 		try {
 			await page.goto(meerkat.url);
 			const fileSection = page.locator(".file-section").filter({ hasText: "core.clj" });
-			await dragLines(page, fileSection, 5, 6);
+			await dragLines(page, fileSection, 4, 6);
 			const form = fileSection.locator('tr.meerkat-form-row[data-meerkat-form-anchor="6"] .comment-form');
 			await form.getByRole("button", { name: /^Suggestion$/ }).click();
-			await expect(form.locator(".code-host .cm-line")).toHaveCount(2);
+			const lines = form.locator(".code-host .cm-line");
+			await expect(lines).toHaveCount(3);
+			await expect(lines.locator("span", { hasText: /^when$/ })).toHaveCount(1);
+			// `let` to `if-let` moves `[` past the binding below it.
+			await lines.first().click();
+			await page.keyboard.press("Home");
+			await page.keyboard.press("ArrowRight");
+			await page.keyboard.type("if-");
+			await expect(lines.first()).toHaveText("  (if-let [x (:x req)");
 			await form.getByRole("button", { name: "Add Comment" }).click();
 			await expect
 				.poll(() => fileSection.locator(".inline-comment pre").first().evaluate((el) => el.textContent))
-				.toContain("(pos?   x)");
+				.toBe("  (if-let [x (:x req)\n           y 2]\n    (when (pos?   x)\n");
 		} finally {
 			await meerkat.kill();
 		}
