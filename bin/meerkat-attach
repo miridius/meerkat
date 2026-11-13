@@ -403,8 +403,12 @@ _ma_caller_alive() {
 }
 
 # Whether ps shows pid $1 running meerkat: a reused pid runs something else.
+# A ps killed by a signal, as one sent to the caller's whole process group,
+# cannot tell, so the pid is taken as meerkat's, as where ps is denied.
 _ma_runs_meerkat() {
-  [[ "$(ps -p "$1" -o command= 2>/dev/null)" == *[Mm]eerkat* ]]
+  local command
+  command="$(ps -p "$1" -o command= 2>/dev/null)"
+  (($? > 128)) || [[ "$command" == *[Mm]eerkat* ]]
 }
 
 _ma_start_server() {

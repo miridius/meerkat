@@ -709,6 +709,65 @@ defmodule Meerkat.ShepherdTest do
              "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @still_open
   end
 
+  # A signal to the caller's whole process group can kill the ps a poll runs
+  # to check the backend before the caller's trap runs, as under load. Here
+  # that ps kills itself, and the group is signalled once a later poll checks
+  # the backend again.
+  test "a caller whose check of its backend is killed by a signal does not take the backend for dead" do
+    dir = test_dir()
+    runs = Path.join(dir, "runs")
+    started = Path.join(dir, "beam-started")
+    trigger = Path.join(dir, "trigger")
+    checked = Path.join(dir, "checked-again")
+    caller_pid_file = Path.join(dir, "caller-pid")
+
+    executable(Path.join(dir, "bin/ps"), ~S"""
+    #!/usr/bin/env bash
+    if [[ "$*" == *command=* ]]; then
+      [[ -e "$KILLED" ]] && touch "$CHECKED"
+      if rm "$TRIGGER" 2>/dev/null; then touch "$KILLED"; kill -TERM $$; fi
+    fi
+    exec /bin/ps "$@"
+    """)
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        fake_release("touch \"$BEAM_STARTED\"\nexec sleep 60\n") ++
+          [
+            {"BEAM_STARTED", started},
+            {"CALLER_PID_FILE", caller_pid_file},
+            {"TRIGGER", trigger},
+            {"KILLED", Path.join(dir, "killed")},
+            {"CHECKED", checked},
+            {"PATH", Path.join(dir, "bin") <> ":" <> System.fetch_env!("PATH")}
+          ],
+        own_group: true
+      )
+
+    backend = await_backend_pid(runs)
+
+    on_exit(fn ->
+      System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+
+      for run <- Path.wildcard(Path.join(runs, "*")),
+          do: await_file(Path.join(run, "exit"), 10_000)
+    end)
+
+    assert await_file(started) == ""
+    File.write!(trigger, "")
+    # A caller that took the backend for dead has already exited.
+    eventually(fn -> File.exists?(checked) or Port.info(port) == nil end, timeout: @timeout_ms)
+    System.cmd("kill", ["-TERM", "-" <> await_file(caller_pid_file)], stderr_to_stdout: true)
+
+    assert {143, output} = await_result(port, dir)
+    assert output == "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @rerun
+    [run] = Path.wildcard(Path.join(runs, "*.*"))
+    assert await_file(Path.join(run, "exit")) == "143"
+  end
+
   # The attach never connects, so neither caller hears from the backend; a leave
   # is logged and answered as if it ended the review.
   for {shown, beam} <- [{"has not shown", ""}, {"has shown", @serves}] do
