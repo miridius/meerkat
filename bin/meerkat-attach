@@ -398,8 +398,7 @@ _ma_caller_alive() {
   local pid
   pid="$(cat "$1/caller" 2>/dev/null)" || return 1
   [[ -n "$pid" ]] || return 1
-  _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid" || (($? == 2))
+  _ma_may_run_meerkat "$pid"
 }
 
 # Whether ps shows pid $1 running meerkat: a reused pid runs something else.
@@ -410,6 +409,11 @@ _ma_runs_meerkat() {
   cmdline="$(ps -p "$1" -o command= 2>/dev/null)"
   (($? > 128)) && return 2
   [[ "$cmdline" == *[Mm]eerkat* ]]
+}
+
+# Whether pid $1 may run meerkat: ps shows it does, or cannot tell.
+_ma_may_run_meerkat() {
+  _ma_runs_meerkat "$1" || (($? == 2)) || ! _ma_ps_works
 }
 
 _ma_start_server() {
@@ -469,8 +473,7 @@ _ma_server_alive() {
   [[ -f "$_MA_DIR/exit" ]] && return 0
   # The command check stops a reused pid passing for the backend. Where ps
   # cannot tell, the live pid is all there is to go on.
-  _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid" || (($? == 2))
+  _ma_may_run_meerkat "$pid"
 }
 
 _ma_bury_server() {
