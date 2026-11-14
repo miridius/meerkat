@@ -370,8 +370,8 @@ _ma_restore_caller() {
 
 # Once at invocation start, delete this key's finished run dirs whose
 # caller is not alive or whose exit file is over a minute old.
-# The minute limit covers callers ps cannot check, where it is denied,
-# and a reused pid that passes the command check.
+# The minute limit covers callers ps cannot check, where it is denied or
+# a signal kills it, and a reused pid that passes the command check.
 _ma_reap_finished() {
   local dir
   for dir in "$_MA_LINK".*/; do
@@ -404,7 +404,7 @@ _ma_caller_alive() {
 
 # Whether ps shows pid $1 running meerkat: a reused pid runs something else.
 # Returns 2 when ps cannot tell because a signal killed it, as one sent to
-# the caller's whole process group.
+# this invocation's whole process group.
 _ma_runs_meerkat() {
   local cmdline
   cmdline="$(ps -p "$1" -o command= 2>/dev/null)"
@@ -482,8 +482,9 @@ _ma_bury_server() {
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam=""
     read -r port beam 2>/dev/null <"$_MA_DIR/port"
-    # A BEAM whose shepherd died still holds the review's port. Only a pid
-    # ps shows running meerkat is killed.
+    # A BEAM whose shepherd died still holds the review's port. It is killed
+    # only once ps shows it running meerkat: a pid ps cannot check may have
+    # been reused.
     if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi

@@ -1047,48 +1047,6 @@ defmodule Meerkat.ShepherdTest do
       assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
     end
 
-    # A signal to the caller's whole process group can kill the ps that checks
-    # the BEAM's pid. Here every such ps kills itself, and the pid runs sleep,
-    # as a reused one would.
-    test "a caller whose check of the BEAM its backend left is killed by a signal does not kill that pid" do
-      dir = test_dir()
-      runs = Path.join(dir, "runs")
-
-      executable(Path.join(dir, "bin/ps"), ~S"""
-      #!/usr/bin/env bash
-      [[ "$*" == *command=* ]] && kill -TERM $$
-      exec /bin/ps "$@"
-      """)
-
-      release =
-        fake_release(~S"""
-        echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
-        exec sleep 60
-        """)
-
-      port =
-        open_launcher(
-          @shepherd,
-          ["--commit-msg", "/tmp/msg", "--no-open"],
-          dir,
-          release ++
-            [
-              {"INPUT_FILE", "/dev/null"},
-              {"PATH", Path.join(dir, "bin") <> ":" <> System.fetch_env!("PATH")}
-            ]
-        )
-
-      backend = await_backend_pid(runs)
-      beam = await_beam_pid(runs)
-
-      on_exit(fn -> System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true) end)
-
-      System.cmd("kill", ["-KILL", backend])
-
-      assert {2, _} = await_result(port, dir)
-      assert {_, 0} = System.cmd("kill", ["-0", beam], stderr_to_stdout: true)
-    end
-
     test "a backend stopped by SIGTERM kills its BEAM and records 143" do
       dir = test_dir()
       runs = Path.join(dir, "runs")
@@ -1151,6 +1109,28 @@ defmodule Meerkat.ShepherdTest do
           ~S"""
           _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_OWNED=1; _MA_HELD=1
           _ma_runs_meerkat() { rm -rf "$_MA_DIR"; return 1; }
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+    end
+
+    # A signal to the caller's whole process group can kill the ps that checks
+    # the BEAM's pid, which may since have been reused.
+    test "a caller whose check of the BEAM is killed by a signal does not kill that pid" do
+      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+      File.mkdir_p!(Path.join(runs, "key.r"))
+      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      on_exit(fn -> File.rm_rf!(runs) end)
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_RUN=r; _MA_OWNED=0
+          ps() { return 143; }
+          kill() { echo "kill $*"; }
           _ma_bury_server 2>&1; echo "next pass"
           """,
           runs
