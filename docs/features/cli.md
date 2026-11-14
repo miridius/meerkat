@@ -234,7 +234,8 @@ another.
 - **stderr**: an agent-facing pause banner when the review UI comes up
   (`⏸ Paused for human review at <url> — may take minutes or hours.`
   followed by wait-don't-poll instructions, an instruction to give
-  the user that URL with any reminder to review, and what an output ending
+  the user that URL with any reminder to review, one not to ask the
+  user whether the review is done, and what an output ending
   with no outcome line means; it names no exit codes, and
   the wording is target-aware — only a staged review with a
   commit-msg path, i.e. the hook flow, says `git commit`),
