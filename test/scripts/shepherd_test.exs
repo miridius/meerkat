@@ -709,6 +709,67 @@ defmodule Meerkat.ShepherdTest do
              "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @still_open
   end
 
+  # A signal to the caller's whole process group can kill the ps a poll runs
+  # to check the backend before the caller's trap runs, as under load. Here
+  # that ps kills itself, and the group is signalled once a later poll checks
+  # the backend again.
+  test "a caller whose check of its backend is killed by a signal does not take the backend for dead" do
+    dir = test_dir()
+    runs = Path.join(dir, "runs")
+    started = Path.join(dir, "beam-started")
+    trigger = Path.join(dir, "trigger")
+    checked = Path.join(dir, "checked-again")
+    caller_pid_file = Path.join(dir, "caller-pid")
+
+    executable(Path.join(dir, "bin/ps"), ~S"""
+    #!/usr/bin/env bash
+    if [[ "$*" == *command=* ]]; then
+      [[ -e "$KILLED" ]] && touch "$CHECKED"
+      if rm "$TRIGGER" 2>/dev/null; then touch "$KILLED"; kill -TERM $$; fi
+    fi
+    exec /bin/ps "$@"
+    """)
+
+    port =
+      open_launcher(
+        @shepherd,
+        ["--commit-msg", "/tmp/msg", "--no-open"],
+        dir,
+        fake_release("touch \"$BEAM_STARTED\"\nexec sleep 60\n") ++
+          [
+            {"BEAM_STARTED", started},
+            {"CALLER_PID_FILE", caller_pid_file},
+            {"TRIGGER", trigger},
+            {"KILLED", Path.join(dir, "killed")},
+            {"CHECKED", checked},
+            {"PATH", Path.join(dir, "bin") <> ":" <> System.fetch_env!("PATH")}
+          ],
+        own_group: true
+      )
+
+    backend = await_backend_pid(runs)
+
+    on_exit(fn ->
+      System.cmd("kill", ["-TERM", backend], stderr_to_stdout: true)
+
+      for run <- Path.wildcard(Path.join(runs, "*")),
+          do: await_file(Path.join(run, "exit"), 10_000)
+    end)
+
+    assert await_file(started) == ""
+    File.write!(trigger, "")
+    # A caller that took the backend for dead has already exited.
+    eventually(fn -> File.exists?(checked) or Port.info(port) == nil end, timeout: @timeout_ms) ||
+      flunk("the caller did not check its backend again")
+
+    System.cmd("kill", ["-TERM", "-" <> await_file(caller_pid_file)], stderr_to_stdout: true)
+
+    assert {143, output} = await_result(port, dir)
+    assert output == "meerkat: stopped waiting (SIGTERM) before the review completed. " <> @rerun
+    [run] = Path.wildcard(Path.join(runs, "*.*"))
+    assert await_file(Path.join(run, "exit")) == "143"
+  end
+
   # The attach never connects, so neither caller hears from the backend; a leave
   # is logged and answered as if it ended the review.
   for {shown, beam} <- [{"has not shown", ""}, {"has shown", @serves}] do
@@ -1038,10 +1099,7 @@ defmodule Meerkat.ShepherdTest do
     # The same removal, landing while the caller checks what runs on the
     # BEAM's pid.
     test "a caller whose run is removed while it checks the BEAM does not say its backend died" do
-      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
-      File.mkdir_p!(Path.join(runs, "key.r"))
-      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
-      on_exit(fn -> File.rm_rf!(runs) end)
+      runs = bury_runs()
 
       {out, 0} =
         attach_shell(
@@ -1056,14 +1114,32 @@ defmodule Meerkat.ShepherdTest do
       assert out == "next pass\n"
     end
 
+    # A signal to the caller's whole process group can kill the ps that checks
+    # the BEAM's pid, which may since have been reused.
+    test "a caller whose check of the BEAM is killed by a signal does not kill that pid" do
+      runs = bury_runs()
+
+      {out, 0} =
+        attach_shell(
+          ~S"""
+          _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_RUN=r; _MA_OWNED=0
+          ps() { : >"$_MA_LINK.checked"; return 143; }
+          kill() { echo "kill $*"; }
+          _ma_bury_server 2>&1; echo "next pass"
+          """,
+          runs
+        )
+
+      assert out == "next pass\n"
+      assert File.exists?(Path.join(runs, "key.checked"))
+      refute File.exists?(Path.join(runs, "key.r"))
+    end
+
     # An unreadable port file fails the read the way one removed after the
     # check does.
     test "a caller whose port file cannot be read after its check buries the run quietly" do
-      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
-      File.mkdir_p!(Path.join(runs, "key.r"))
-      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      runs = bury_runs()
       File.chmod!(Path.join([runs, "key.r", "port"]), 0o000)
-      on_exit(fn -> File.rm_rf!(runs) end)
 
       {out, 0} =
         attach_shell(
@@ -1866,6 +1942,15 @@ defmodule Meerkat.ShepherdTest do
     emptied = run_key(dir) <> ".emptied"
     File.mkdir_p!(Path.join(runs, emptied))
     File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+    runs
+  end
+
+  # A runs dir holding run key.r, whose port file names BEAM pid 999999.
+  defp bury_runs do
+    runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+    File.mkdir_p!(Path.join(runs, "key.r"))
+    File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+    on_exit(fn -> File.rm_rf!(runs) end)
     runs
   end
 

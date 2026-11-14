@@ -370,8 +370,8 @@ _ma_restore_caller() {
 
 # Once at invocation start, delete this key's finished run dirs whose
 # caller is not alive or whose exit file is over a minute old.
-# The minute limit covers callers ps cannot check, where it is denied,
-# and a reused pid that passes the command check.
+# The minute limit covers callers ps cannot check, where it is denied or
+# a signal kills it, and a reused pid that passes the command check.
 _ma_reap_finished() {
   local dir
   for dir in "$_MA_LINK".*/; do
@@ -398,13 +398,23 @@ _ma_caller_alive() {
   local pid
   pid="$(cat "$1/caller" 2>/dev/null)" || return 1
   [[ -n "$pid" ]] || return 1
-  _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid"
+  _ma_may_run_meerkat "$pid"
 }
 
 # Whether ps shows pid $1 running meerkat: a reused pid runs something else.
+# Returns 2 when ps cannot tell because a signal killed it, as one sent to
+# this invocation's whole process group.
 _ma_runs_meerkat() {
-  [[ "$(ps -p "$1" -o command= 2>/dev/null)" == *[Mm]eerkat* ]]
+  local cmdline
+  cmdline="$(ps -p "$1" -o command= 2>/dev/null)"
+  (($? > 128)) && return 2
+  [[ "$cmdline" == *[Mm]eerkat* ]]
+}
+
+# Whether pid $1 may run meerkat: ps shows it does, or cannot tell.
+_ma_may_run_meerkat() {
+  _ma_ps_works || return 0
+  _ma_runs_meerkat "$1" || (($? == 2))
 }
 
 _ma_start_server() {
@@ -464,8 +474,7 @@ _ma_server_alive() {
   [[ -f "$_MA_DIR/exit" ]] && return 0
   # The command check stops a reused pid passing for the backend. Where ps
   # cannot tell, the live pid is all there is to go on.
-  _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid"
+  _ma_may_run_meerkat "$pid"
 }
 
 _ma_bury_server() {
@@ -477,7 +486,9 @@ _ma_bury_server() {
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam=""
     read -r port beam 2>/dev/null <"$_MA_DIR/port"
-    # A BEAM whose shepherd died still holds the review's port.
+    # A BEAM whose shepherd died still holds the review's port. It is killed
+    # only if ps shows it running meerkat: a pid ps cannot check, which may
+    # have been reused, is left running.
     if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi
