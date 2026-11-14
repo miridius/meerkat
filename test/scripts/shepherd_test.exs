@@ -1099,10 +1099,7 @@ defmodule Meerkat.ShepherdTest do
     # The same removal, landing while the caller checks what runs on the
     # BEAM's pid.
     test "a caller whose run is removed while it checks the BEAM does not say its backend died" do
-      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
-      File.mkdir_p!(Path.join(runs, "key.r"))
-      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
-      on_exit(fn -> File.rm_rf!(runs) end)
+      runs = bury_runs()
 
       {out, 0} =
         attach_shell(
@@ -1120,16 +1117,13 @@ defmodule Meerkat.ShepherdTest do
     # A signal to the caller's whole process group can kill the ps that checks
     # the BEAM's pid, which may since have been reused.
     test "a caller whose check of the BEAM is killed by a signal does not kill that pid" do
-      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
-      File.mkdir_p!(Path.join(runs, "key.r"))
-      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
-      on_exit(fn -> File.rm_rf!(runs) end)
+      runs = bury_runs()
 
       {out, 0} =
         attach_shell(
           ~S"""
           _MA_LINK="$2/key"; _MA_DIR="$2/key.r"; _MA_RUN=r; _MA_OWNED=0
-          ps() { return 143; }
+          ps() { : >"$_MA_LINK.checked"; return 143; }
           kill() { echo "kill $*"; }
           _ma_bury_server 2>&1; echo "next pass"
           """,
@@ -1137,16 +1131,15 @@ defmodule Meerkat.ShepherdTest do
         )
 
       assert out == "next pass\n"
+      assert File.exists?(Path.join(runs, "key.checked"))
+      refute File.exists?(Path.join(runs, "key.r"))
     end
 
     # An unreadable port file fails the read the way one removed after the
     # check does.
     test "a caller whose port file cannot be read after its check buries the run quietly" do
-      runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
-      File.mkdir_p!(Path.join(runs, "key.r"))
-      File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+      runs = bury_runs()
       File.chmod!(Path.join([runs, "key.r", "port"]), 0o000)
-      on_exit(fn -> File.rm_rf!(runs) end)
 
       {out, 0} =
         attach_shell(
@@ -1949,6 +1942,15 @@ defmodule Meerkat.ShepherdTest do
     emptied = run_key(dir) <> ".emptied"
     File.mkdir_p!(Path.join(runs, emptied))
     File.ln_s!(emptied, Path.join(runs, run_key(dir)))
+    runs
+  end
+
+  # A runs dir holding run key.r, whose port file names BEAM pid 999999.
+  defp bury_runs do
+    runs = Meerkat.TestHelpers.tmp_path("meerkat-bury")
+    File.mkdir_p!(Path.join(runs, "key.r"))
+    File.write!(Path.join([runs, "key.r", "port"]), "4242 999999\n")
+    on_exit(fn -> File.rm_rf!(runs) end)
     runs
   end
 

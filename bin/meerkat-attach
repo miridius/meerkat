@@ -413,7 +413,8 @@ _ma_runs_meerkat() {
 
 # Whether pid $1 may run meerkat: ps shows it does, or cannot tell.
 _ma_may_run_meerkat() {
-  _ma_runs_meerkat "$1" || (($? == 2)) || ! _ma_ps_works
+  _ma_ps_works || return 0
+  _ma_runs_meerkat "$1" || (($? == 2))
 }
 
 _ma_start_server() {
@@ -486,8 +487,8 @@ _ma_bury_server() {
     local port beam=""
     read -r port beam 2>/dev/null <"$_MA_DIR/port"
     # A BEAM whose shepherd died still holds the review's port. It is killed
-    # only once ps shows it running meerkat: a pid ps cannot check may have
-    # been reused.
+    # only if ps shows it running meerkat: a pid ps cannot check, which may
+    # have been reused, is left running.
     if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi
