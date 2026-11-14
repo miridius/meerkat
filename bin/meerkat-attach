@@ -399,16 +399,17 @@ _ma_caller_alive() {
   pid="$(cat "$1/caller" 2>/dev/null)" || return 1
   [[ -n "$pid" ]] || return 1
   _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid"
+  _ma_runs_meerkat "$pid" || (($? == 2))
 }
 
 # Whether ps shows pid $1 running meerkat: a reused pid runs something else.
-# A ps killed by a signal, as one sent to the caller's whole process group,
-# cannot tell, so the pid is taken as meerkat's, as where ps is denied.
+# Returns 2 when ps cannot tell because a signal killed it, as one sent to
+# the caller's whole process group.
 _ma_runs_meerkat() {
-  local command
-  command="$(ps -p "$1" -o command= 2>/dev/null)"
-  (($? > 128)) || [[ "$command" == *[Mm]eerkat* ]]
+  local cmdline
+  cmdline="$(ps -p "$1" -o command= 2>/dev/null)"
+  (($? > 128)) && return 2
+  [[ "$cmdline" == *[Mm]eerkat* ]]
 }
 
 _ma_start_server() {
@@ -469,7 +470,7 @@ _ma_server_alive() {
   # The command check stops a reused pid passing for the backend. Where ps
   # cannot tell, the live pid is all there is to go on.
   _ma_ps_works || return 0
-  _ma_runs_meerkat "$pid"
+  _ma_runs_meerkat "$pid" || (($? == 2))
 }
 
 _ma_bury_server() {
@@ -481,7 +482,8 @@ _ma_bury_server() {
   if [[ -f "$_MA_DIR/port" ]]; then
     local port beam=""
     read -r port beam 2>/dev/null <"$_MA_DIR/port"
-    # A BEAM whose shepherd died still holds the review's port.
+    # A BEAM whose shepherd died still holds the review's port. Only a pid
+    # ps shows running meerkat is killed.
     if [[ -n "$beam" ]] && _ma_runs_meerkat "$beam"; then
       kill -9 "$beam" 2>/dev/null
     fi

@@ -759,7 +759,9 @@ defmodule Meerkat.ShepherdTest do
     assert await_file(started) == ""
     File.write!(trigger, "")
     # A caller that took the backend for dead has already exited.
-    eventually(fn -> File.exists?(checked) or Port.info(port) == nil end, timeout: @timeout_ms)
+    eventually(fn -> File.exists?(checked) or Port.info(port) == nil end, timeout: @timeout_ms) ||
+      flunk("the caller did not check its backend again")
+
     System.cmd("kill", ["-TERM", "-" <> await_file(caller_pid_file)], stderr_to_stdout: true)
 
     assert {143, output} = await_result(port, dir)
@@ -1043,6 +1045,48 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: the review backend died without a decision — defaulting to REJECT (commit aborted)."
 
       assert await_gone(beam), "the BEAM #{beam} its backend left is still running"
+    end
+
+    # A signal to the caller's whole process group can kill the ps that checks
+    # the BEAM's pid. Here every such ps kills itself, and the pid runs sleep,
+    # as a reused one would.
+    test "a caller whose check of the BEAM its backend left is killed by a signal does not kill that pid" do
+      dir = test_dir()
+      runs = Path.join(dir, "runs")
+
+      executable(Path.join(dir, "bin/ps"), ~S"""
+      #!/usr/bin/env bash
+      [[ "$*" == *command=* ]] && kill -TERM $$
+      exec /bin/ps "$@"
+      """)
+
+      release =
+        fake_release(~S"""
+        echo "1 $$" > "$MEERKAT_SERVE_DIR/port"
+        exec sleep 60
+        """)
+
+      port =
+        open_launcher(
+          @shepherd,
+          ["--commit-msg", "/tmp/msg", "--no-open"],
+          dir,
+          release ++
+            [
+              {"INPUT_FILE", "/dev/null"},
+              {"PATH", Path.join(dir, "bin") <> ":" <> System.fetch_env!("PATH")}
+            ]
+        )
+
+      backend = await_backend_pid(runs)
+      beam = await_beam_pid(runs)
+
+      on_exit(fn -> System.cmd("kill", ["-KILL", beam], stderr_to_stdout: true) end)
+
+      System.cmd("kill", ["-KILL", backend])
+
+      assert {2, _} = await_result(port, dir)
+      assert {_, 0} = System.cmd("kill", ["-0", beam], stderr_to_stdout: true)
     end
 
     test "a backend stopped by SIGTERM kills its BEAM and records 143" do
