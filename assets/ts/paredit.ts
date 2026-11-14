@@ -161,6 +161,12 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
+/** `state`'s text with every line re-indented, as `reindent` re-indents
+ *  the lines a change reaches. */
+export function reindented(state: EditorState): string {
+	return indentRange(state, 0, state.doc.length).apply(state.doc).toString();
+}
+
 /** Pull the form after the caret's collection into it; when no form
  *  follows it, the form after the nearest enclosing collection that has
  *  one. */

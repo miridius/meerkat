@@ -9,6 +9,7 @@ import {
 	deleteGuarded,
 	formStep,
 	raise,
+	reindented,
 	slurpBackward,
 	slurpForward,
 	splice,
@@ -42,6 +43,13 @@ function run(command: (s: EditorState) => TransactionSpec | null, marked: string
 	const doc = next.doc.toString();
 	return `${doc.slice(0, head)}|${doc.slice(head)}`;
 }
+
+describe("reindented", () => {
+	test("aligns lines a rename left behind their brackets", () => {
+		const typed = "(reagent/atom {:a #{}\n       :b #{}}))";
+		expect(reindented(stateOf(typed))).toBe("(reagent/atom {:a #{}\n               :b #{}}))");
+	});
+});
 
 describe("slurpForward", () => {
 	test("pulls the next form in", () => {
