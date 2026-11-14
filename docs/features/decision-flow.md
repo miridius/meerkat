@@ -99,8 +99,11 @@ Collecting an already completed review's held feedback still delivers
 that feedback. A partial answer set lists only the questions still owed.
 `--answers` itself is never blocked.
 
-Once all questions are answered, the next review opens with the existing
-Pending answers banner, including for an empty staged diff. Obligations
+`meerkat --answers` shows the answers on an answers page at once, so
+the agent need not rerun anything. Once all questions are answered, the
+next review opens with the existing Pending answers banner, including
+for an empty staged diff, unless the reviewer marked the answers read
+on that page. Obligations
 survive BEAM restarts, reinstalls and new agent sessions, independently
 of the in-progress snapshot. Cancel wipes the current round and owes
 nothing. See [pending-answers.md](pending-answers.md) for matching,
@@ -127,7 +130,8 @@ meerkat exits **0** before binding the server:
   → auto-approve with `meerkat: no staged file changes — auto-approving.`
 
 The UI never opens in these cases. This fast path is unreachable while
-questions are unanswered, or while answers await the reviewer's reading.
+questions are unanswered, or while answers await the reviewer's reading
+(until the reviewer marks them read on the answers page).
 
 A BEAM respawned by the shepherd for the same review skips the fast
 path and resumes the live review with its Approved ticks and comments,
