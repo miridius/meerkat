@@ -224,18 +224,22 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  A `make_tmp_repo/1` dir, removed when the test exits, for a test that
+  A `tmp_path/1` dir, removed when the test exits, for a test that
   needs only a place for meerkat's state, not git. Caches `:meerkat_dir`
   and `:approval_cache_path` in the application env as `Meerkat.CLI`
   does for a review, so neither runs git; the previous values come back
-  on exit. The cached values serve every repo path, not just this dir's.
+  on exit. The cached values serve every repo path, not just this dir's,
+  and every module running beside it, so only a module that is not async
+  can use it.
   Code that asks git itself, such as `Meerkat.PendingAnswers.save/2` or a
   staged-blob lookup, finds no repo here.
   """
   @spec make_state_repo(String.t()) :: String.t()
   def make_state_repo(prefix) do
-    dir = make_tmp_repo(prefix)
-    state_dir = Path.join([dir, ".git", "meerkat-precommit"])
+    dir = tmp_path(prefix)
+    File.mkdir_p!(dir)
+    # Nothing reads the state where git would put it, so it sits at the top.
+    state_dir = dir
 
     cached = [
       meerkat_dir: state_dir,
@@ -325,6 +329,20 @@ defmodule Meerkat.TestHelpers do
     dir
   end
 
+  @doc """
+  Removes, when the test exits, each path the test added under the
+  fixture tree `dir`, so the tests of a module that change a
+  `fixture_template/2` only by adding files can share it instead of
+  copying it each. A test that changes or removes a file it found there
+  needs `copy_fixture/2`.
+  """
+  @spec remove_additions_on_exit(String.t()) :: :ok
+  def remove_additions_on_exit(dir) do
+    paths = fn -> Path.wildcard(Path.join(dir, "**"), match_dot: true) end
+    before = MapSet.new(paths.())
+    on_exit(fn -> for path <- paths.(), path not in before, do: File.rm_rf!(path) end)
+  end
+
   # Any test run inside a git hook has GIT_DIR exported by git, pointing at
   # meerkat's own gitdir, which overrides `cd: dir` and would build the
   # fixture repo in the wrong place. The set `Meerkat.Git` strips, plus
@@ -346,10 +364,11 @@ defmodule Meerkat.TestHelpers do
   end
 
   @doc """
-  Commits each `{ref, files}` in `commits`, in order, through one `git
-  fast-import` in the git repo `dir`, and returns the commits. Each
-  commit's tree holds exactly `files`, which maps each path to its
-  content, or to `{:gitlink, oid}` for a submodule. Its parent is
+  Commits each `{ref, files}` or `{ref, files, message}` in `commits`,
+  in order, through one `git fast-import` in the git repo `dir`, and
+  returns the commits. Each commit's tree holds exactly `files`, which
+  maps each path to its content, or to `{:gitlink, oid}` for a
+  submodule. Its message is `message`, or empty. Its parent is
   `ref`'s tip, if it has one by then. Its committer and time are fixed,
   so two parentless commits of one tree are the same commit. The objects
   land in one pack, where `git add` and `git commit` would write a file
@@ -358,16 +377,19 @@ defmodule Meerkat.TestHelpers do
   """
   @spec import_commits(String.t(), [
           {String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}}
+          | {String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}, String.t()}
         ]) :: [String.t()]
   def import_commits(dir, commits) do
     {stream, {_, marks, _}} =
-      Enum.map_reduce(commits, {1, [], %{}}, fn {ref, files}, {mark, marks, tips} ->
+      Enum.map_reduce(commits, {1, [], %{}}, fn commit, {mark, marks, tips} ->
+        {ref, files, message} = with_message(commit)
         {blobs, entries, mark} = import_files(files, mark)
         parent = Map.get_lazy(tips, ref, fn -> existing_commit(dir, ref) end)
 
         commit = [
           blobs,
-          "commit #{ref}\nmark :#{mark}\ncommitter t <t@t.t> 0 +0000\ndata 0\n",
+          "commit #{ref}\nmark :#{mark}\ncommitter t <t@t.t> 0 +0000\n",
+          "data #{byte_size(message)}\n#{message}\n",
           if(parent, do: "from #{parent}\n", else: []),
           "deleteall\n",
           entries,
@@ -405,6 +427,9 @@ defmodule Meerkat.TestHelpers do
   @spec import_commit(String.t(), String.t(), %{String.t() => iodata() | {:gitlink, String.t()}}) ::
           String.t()
   def import_commit(dir, ref, files), do: hd(import_commits(dir, [{ref, files}]))
+
+  defp with_message({ref, files}), do: {ref, files, ""}
+  defp with_message(commit), do: commit
 
   defp import_files(files, mark) do
     Enum.reduce(files, {[], [], mark}, fn

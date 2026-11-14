@@ -1,7 +1,8 @@
 defmodule Meerkat.AgeExcludesTest do
   # Runs the repo's real scripts/age-excludes.ts in a scratch workspace,
   # with a pnpm stub on PATH whose `pnpm view NAME time --json` prints the
-  # publish times each test wrote for NAME.
+  # publish times each test wrote for NAME. scripts/age-excludes.test.ts
+  # tests the logic; these test the CLI's seams.
   use ExUnit.Case, async: true
 
   @script Path.join(File.cwd!(), "scripts/age-excludes.ts")
@@ -49,23 +50,6 @@ defmodule Meerkat.AgeExcludesTest do
     assert workspace(ctx) == @workspace <> @block <> ~s(  - "vite@8.3.2"\n)
   end
 
-  test "prune drops the list with its last entry", ctx do
-    excluding(ctx, ["@esbuild/darwin-arm64@0.30.1", "vite@8.3.1"])
-
-    assert {_, 0} = run(ctx, "prune")
-    assert workspace(ctx) == @workspace
-  end
-
-  test "prune keeps the keys around a list that is not last", ctx do
-    excluding(ctx, ["@esbuild/darwin-arm64@0.30.1", "vite@8.3.2"])
-    File.write!(Path.join(ctx.work, "pnpm-workspace.yaml"), workspace(ctx) <> "allowBuilds: {}\n")
-
-    assert {_, 0} = run(ctx, "prune")
-
-    assert workspace(ctx) ==
-             @workspace <> "\nallowBuilds: {}\n" <> @block <> ~s(  - "vite@8.3.2"\n)
-  end
-
   test "check fails the gate on an entry 24h old", ctx do
     excluding(ctx, ["vite@8.3.1", "vite@8.3.2"])
 
@@ -77,15 +61,7 @@ defmodule Meerkat.AgeExcludesTest do
     refute out =~ "vite@8.3.2"
   end
 
-  test "check passes young entries and no list", ctx do
-    excluding(ctx, ["vite@8.3.2"])
-    assert {"", 0} = run(ctx, "check")
-
-    File.write!(Path.join(ctx.work, "pnpm-workspace.yaml"), @workspace)
-    assert {"", 0} = run(ctx, "check")
-  end
-
-  test "an unreadable publish time fails closed", ctx do
+  test "an unreadable publish time fails closed, leaving the workspace", ctx do
     excluding(ctx, ["vite@9.0.0"])
 
     for mode <- ~w(check prune) do
@@ -93,28 +69,11 @@ defmodule Meerkat.AgeExcludesTest do
 
       assert out =~
                "could not read when the registry published vite@9.0.0: the registry lists no publish time for 9.0.0"
+
+      assert out =~ "cannot check minimumReleaseAgeExclude"
     end
 
     assert workspace(ctx) == @workspace <> @block <> ~s(  - "vite@9.0.0"\n)
-
-    File.write!(Path.join(ctx.times, "proxied"), "<html>")
-
-    for {entry, why} <- [
-          {"proxied@1.0.0", "pnpm view printed no JSON"},
-          {"missing@1.0.0", "pnpm view exited 1:\ncat: "}
-        ] do
-      excluding(ctx, [entry])
-      assert {out, 2} = run(ctx, "check")
-      assert out =~ "could not read when the registry published #{entry}: #{why}"
-    end
-  end
-
-  test "an entry that is not an exact name@version fails closed, naming it", ctx do
-    for entry <- ["vite", "@types/*"] do
-      excluding(ctx, [entry])
-      assert {out, 2} = run(ctx, "check")
-      assert out =~ "#{entry} is not an exact name@version entry"
-    end
   end
 
   defp hours_ago(h),

@@ -143,7 +143,7 @@ jobs:
       - run: bunx biome lint --error-on-warnings
       # The same runner as the pre-commit gate, so a test cannot pass there and
       # fail here only because the files share one BEAM.
-      - run: bash scripts/mix-test.sh
+      - run: bun scripts/mix-test.ts
 
       - working-directory: assets
         run: bun test

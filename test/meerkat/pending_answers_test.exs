@@ -15,11 +15,22 @@ defmodule Meerkat.PendingAnswersTest do
                  ]
                })
 
+  # One git repo for the save/2 tests, which remove what they wrote.
+  setup_all do
+    repo =
+      Meerkat.TestHelpers.fixture_template("meerkat-pending-answers-save", fn dir ->
+        Meerkat.TestHelpers.git(dir, ["init", "-q"])
+      end)
+
+    {:ok, git_repo: repo}
+  end
+
   describe "save/2" do
-    setup do
-      repo = Meerkat.TestHelpers.make_git_repo("meerkat-pending-answers-save")
-      on_exit(fn -> File.rm_rf!(repo) end)
-      {:ok, git_repo: repo}
+    setup %{git_repo: repo} do
+      on_exit(fn ->
+        File.rm_rf!(Path.dirname(PendingAnswers.path_for(repo)))
+        File.rm_rf!(Path.join(repo, "lib"))
+      end)
     end
 
     test "stores a v1 file with a createdAt stamp that load/1 reads back", %{git_repo: repo} do

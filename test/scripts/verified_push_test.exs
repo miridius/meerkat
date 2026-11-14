@@ -1,7 +1,9 @@
 defmodule Meerkat.VerifiedPushTest do
-  # Runs the repo's real scripts/verified-push.sh and scripts/checked-trees.sh
-  # in a fixture repo. check.sh and mutate.sh are replaced by stubs that log
+  # Runs the repo's real scripts/verified-push.ts and scripts/checked-trees.ts
+  # in a fixture repo. check.ts and mutate.ts are replaced by stubs that log
   # each run and, unless told to fail, record HEAD the way the real ones do.
+  # scripts/verified-push.test.ts covers which gates run on which tips; these
+  # tests cover what crosses into git, the temporary worktree and signals.
   use Meerkat.Case, async: false
 
   import Meerkat.TestHelpers, only: [git: 2, stage: 3, hook_env: 0, intercept_git: 3]
@@ -33,13 +35,13 @@ defmodule Meerkat.VerifiedPushTest do
     git(work, ["config", "user.name", "t"])
     File.mkdir_p!(Path.join(work, "scripts"))
 
-    for script <- ~w(verified-push.sh checked-trees.sh) do
+    for script <- ~w(verified-push.ts checked-trees.ts e2e-inputs.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
-    File.write!(Path.join([work, "scripts", "check.sh"]), """
+    File.write!(Path.join([work, "scripts", "check-stub.sh"]), """
     #!/usr/bin/env bash
-    echo "check.sh $* in $(git rev-parse HEAD)" >> '#{log}'
+    echo "check.ts $* in $(git rev-parse HEAD)" >> '#{log}'
     pwd -P >> '#{dirs}'
     # Blocks only the first check, so a test can see whether a later tip is
     # still checked after an interrupt. Like the BEAM, it handles SIGINT
@@ -54,15 +56,25 @@ defmodule Meerkat.VerifiedPushTest do
       wait "$sleeper" || exit
     fi
     [ -z "${STUB_FAIL:-}" ] || exit 1
-    [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh mark HEAD
+    bun scripts/checked-trees.ts mark HEAD
     """)
 
-    File.write!(Path.join([work, "scripts", "mutate.sh"]), """
+    File.write!(Path.join([work, "scripts", "mutate-stub.sh"]), """
     #!/usr/bin/env bash
-    echo "mutate.sh $* vs ${BASE_BRANCH:-} in $(git rev-parse HEAD)" >> '#{log}'
-    [ -z "${STUB_MUTATE_FAIL:-}" ] || exit 1
-    [ -n "${STUB_NO_MARK:-}" ] || bash scripts/checked-trees.sh --mutated mark HEAD
+    echo "mutate.ts $* vs ${BASE_BRANCH:-} in $(git rev-parse HEAD)" >> '#{log}'
+    bun scripts/checked-trees.ts --mutated mark HEAD
     """)
+
+    # verified-push.ts runs `bun scripts/check.ts` and `bun scripts/mutate.ts`,
+    # which hand over to the stubs.
+    for gate <- ~w(check mutate) do
+      File.write!(Path.join([work, "scripts", "#{gate}.ts"]), """
+      const r = Bun.spawnSync(["bash", "scripts/#{gate}-stub.sh", ...process.argv.slice(2)], {
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      process.exit(r.exitCode ?? 1);
+      """)
+    end
 
     File.write!(Path.join(work, "code.txt"), "base\n")
     git(work, ["add", "-A"])
@@ -71,40 +83,12 @@ defmodule Meerkat.VerifiedPushTest do
     {:ok, work: work, log: log, dirs: dirs}
   end
 
-  test "a tip already checked is pushed without checking it again", ctx do
-    mark(ctx.work, "HEAD")
-
-    assert {_, 0} = verified_push(ctx, ["HEAD"])
-    assert checks_run(ctx) == []
-  end
-
-  test "a Markdown-only commit on checked contents counts as checked", ctx do
-    mark(ctx.work, "HEAD")
-    commit(ctx.work, "docs/guide.md", "guide\n", "docs")
-
-    assert {_, 0} = verified_push(ctx, ["HEAD"])
-    assert checks_run(ctx) == []
-  end
-
   test "an unchecked HEAD in a clean worktree is checked, then recorded", ctx do
     commit(ctx.work, "code.txt", "rebased\n", "rebased")
 
     assert {out, 0} = verified_push(ctx, ["HEAD"])
     assert out =~ "checking it now"
     assert checks_run(ctx) == both_gates(git(ctx.work, ["rev-parse", "HEAD"]))
-    assert {_, 0} = checked(ctx.work, "HEAD")
-  end
-
-  # A rebase onto checked contents can still bring lib lines, conflict
-  # resolutions included, that no commit gate mutated. A BASE_BRANCH the
-  # user exported does not narrow the lines mutated.
-  test "a checked HEAD the mutation gate never recorded is mutation-tested, then recorded",
-       ctx do
-    commit(ctx.work, "code.txt", "rebased\n", "rebased")
-    mark_checked(ctx.work, "HEAD")
-
-    assert {_, 0} = verified_push(ctx, ["HEAD"], [{"BASE_BRANCH", "feature"}])
-    assert checks_run(ctx) == [mutation(git(ctx.work, ["rev-parse", "HEAD"]))]
     assert {_, 0} = checked(ctx.work, "HEAD")
   end
 
@@ -130,33 +114,6 @@ defmodule Meerkat.VerifiedPushTest do
     assert checks_run(ctx) == both_gates(git(ctx.work, ["rev-parse", "HEAD"]))
   end
 
-  test "an unchecked HEAD with a surviving mutant blocks the push", ctx do
-    commit(ctx.work, "code.txt", "rebased\n", "rebased")
-
-    assert {_, code} = verified_push(ctx, ["HEAD"], [{"STUB_MUTATE_FAIL", "1"}])
-    assert code != 0
-    assert checks_run(ctx) == both_gates(git(ctx.work, ["rev-parse", "HEAD"]))
-    assert {_, 1} = checked(ctx.work, "HEAD")
-  end
-
-  test "an unchecked HEAD whose checks fail blocks the push", ctx do
-    commit(ctx.work, "code.txt", "rebased\n", "rebased")
-
-    assert {_, code} = verified_push(ctx, ["HEAD"], [{"STUB_FAIL", "1"}])
-    assert code != 0
-    assert checks_run(ctx) == ["check.sh --head in #{git(ctx.work, ["rev-parse", "HEAD"])}"]
-  end
-
-  test "an unchecked HEAD beside an untracked file is refused unchecked", ctx do
-    commit(ctx.work, "code.txt", "rebased\n", "rebased")
-    File.write!(Path.join(ctx.work, "stray.txt"), "x\n")
-
-    assert {out, code} = verified_push(ctx, ["HEAD"])
-    assert code != 0
-    assert out =~ "uncommitted or untracked files"
-    assert checks_run(ctx) == []
-  end
-
   test "an untracked file is seen even when git status hides untracked files", ctx do
     git(ctx.work, ["config", "status.showUntrackedFiles", "no"])
     commit(ctx.work, "code.txt", "rebased\n", "rebased")
@@ -165,6 +122,7 @@ defmodule Meerkat.VerifiedPushTest do
     assert {out, code} = verified_push(ctx, ["HEAD"])
     assert code != 0
     assert out =~ "uncommitted or untracked files"
+    assert checks_run(ctx) == []
   end
 
   test "an unchecked tip other than HEAD is checked in a temporary worktree, then recorded",
@@ -180,24 +138,14 @@ defmodule Meerkat.VerifiedPushTest do
     assert_cleaned_up(ctx)
   end
 
-  for {gate, stub} <- [{"check", "STUB_FAIL"}, {"mutation test", "STUB_MUTATE_FAIL"}] do
-    test "a failing #{gate} of a tip other than HEAD blocks the push", ctx do
-      other = other_tip(ctx.work)
-
-      assert {out, code} = verified_push(ctx, [other], [{unquote(stub), "1"}])
-      assert code != 0
-      assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed the commit gate"
-      assert {_, 1} = checked(ctx.work, other)
-      assert_cleaned_up(ctx)
-    end
-  end
-
-  test "a tip other than HEAD whose check records nothing blocks the push", ctx do
+  test "a failing check of a tip other than HEAD blocks the push and removes its worktree",
+       ctx do
     other = other_tip(ctx.work)
 
-    assert {out, code} = verified_push(ctx, [other], [{"STUB_NO_MARK", "1"}])
+    assert {out, code} = verified_push(ctx, [other], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert out =~ "passed the commit gate but was not recorded"
+    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed the commit gate"
+    assert {_, 1} = checked(ctx.work, other)
     assert_cleaned_up(ctx)
   end
 
@@ -220,13 +168,13 @@ defmodule Meerkat.VerifiedPushTest do
     on_exit(fn -> Enum.each([fifo, fifo <> ".used"], &File.rm/1) end)
 
     # Signal the whole process group once the check has started, as Ctrl-C
-    # does. A bash caller stops after SIGINT only if verified-push.sh dies of
-    # it. For HUP and TERM the caller reports how verified-push.sh exited,
+    # does. A bash caller stops after SIGINT only if verified-push.ts dies of
+    # it. For HUP and TERM the caller reports how verified-push.ts exited,
     # catching the signal itself: macOS can deliver it to the caller only
-    # after its wait for verified-push.sh has returned.
+    # after its wait for verified-push.ts has returned.
     driver = """
     set -m
-    { trap : HUP TERM; bash scripts/verified-push.sh "$1" "$2"; echo "caller carried on: $?"; } &
+    { trap : HUP TERM; bun scripts/verified-push.ts "$1" "$2"; echo "caller carried on: $?"; } &
     read -r _ < "$3"
     kill -"$4" -- -$!
     wait $!
@@ -242,14 +190,13 @@ defmodule Meerkat.VerifiedPushTest do
       assert out =~ "caller carried on: #{128 + number}\n"
     end
 
-    assert checks_run(ctx) == ["check.sh --head in #{lower}"]
+    assert checks_run(ctx) == ["check.ts --head in #{lower}"]
     assert_cleaned_up(ctx)
   end
 
-  # macOS can deliver a process group's signal to the shell running a
-  # temporary worktree's check only once that shell has seen the check die of
-  # it and begun cleaning up; here the signal arrives from inside the cleanup.
-  # INT stands in for a second Ctrl-C.
+  # A signal can reach this process while it removes a temporary worktree;
+  # here it arrives from inside the removal. INT stands in for a second
+  # Ctrl-C.
   for signal <- ~w(INT HUP TERM) do
     test "SIG#{signal} during the removal of a temporary worktree does not cut it short", ctx do
       wrapper = ctx.log <> ".git-wrapper"
@@ -284,56 +231,11 @@ defmodule Meerkat.VerifiedPushTest do
     assert {_, 0} = checked(ctx.work, other)
   end
 
-  test "a stack's HEAD and the unchecked branch below it are both checked", ctx do
-    commit(ctx.work, "code.txt", "lower\n", "lower")
-    lower = git(ctx.work, ["rev-parse", "HEAD"])
-    commit(ctx.work, "code.txt", "upper\n", "upper")
-    upper = git(ctx.work, ["rev-parse", "HEAD"])
-
-    assert {_, 0} = verified_push(ctx, [lower, upper])
-    assert checks_run(ctx) == both_gates(lower) ++ both_gates(upper)
-    assert {_, 0} = checked(ctx.work, lower)
-    assert {_, 0} = checked(ctx.work, upper)
-  end
-
-  test "an unchecked tip fails after a checked one", ctx do
-    checked = git(ctx.work, ["rev-parse", "HEAD"])
-    mark(ctx.work, "HEAD")
-    other = other_tip(ctx.work)
-
-    assert {out, code} = verified_push(ctx, [checked, other], [{"STUB_FAIL", "1"}])
-    assert code != 0
-    assert out =~ "#{git(ctx.work, ["rev-parse", "--short", other])} failed"
-    assert checks_run(ctx) == ["check.sh --head in #{other}"]
-  end
-
-  test "an unchecked tip fails after a tag of something other than a commit", ctx do
-    blob = git(ctx.work, ["hash-object", "-w", "code.txt"])
-    other = other_tip(ctx.work)
-
-    assert {_, code} = verified_push(ctx, [blob, other], [{"STUB_FAIL", "1"}])
-    assert code != 0
-  end
-
-  test "an unchecked HEAD is refused when the worktree changed during its check", ctx do
-    commit(ctx.work, "code.txt", "rebased\n", "rebased")
-
-    assert {out, code} = verified_push(ctx, ["HEAD"], [{"STUB_NO_MARK", "1"}])
-    assert code != 0
-    assert out =~ "the worktree changed"
-  end
-
   test "a tag of something other than a commit is skipped", ctx do
     blob = git(ctx.work, ["hash-object", "-w", "code.txt"])
 
     assert {_, 0} = verified_push(ctx, [blob])
     assert checks_run(ctx) == []
-  end
-
-  test "a tip git cannot read is refused", ctx do
-    assert {out, code} = run(ctx.work, ["scripts/verified-push.sh", String.duplicate("1", 40)])
-    assert code != 0
-    assert out =~ "cannot read"
   end
 
   test "an annotated tag of an unchecked commit is checked as that commit", ctx do
@@ -344,7 +246,7 @@ defmodule Meerkat.VerifiedPushTest do
 
     assert {_, code} = verified_push(ctx, ["v1"], [{"STUB_FAIL", "1"}])
     assert code != 0
-    assert checks_run(ctx) == ["check.sh --head in #{tagged}"]
+    assert checks_run(ctx) == ["check.ts --head in #{tagged}"]
   end
 
   defp commit(work, name, content, message) do
@@ -362,7 +264,7 @@ defmodule Meerkat.VerifiedPushTest do
     git(work, ["rev-parse", "HEAD"])
   end
 
-  # An unchecked commit that is not HEAD. verified-push.sh treats every such
+  # An unchecked commit that is not HEAD. verified-push.ts treats every such
   # tip alike, whether it is a stack branch below HEAD or, as here, one HEAD
   # was reset off.
   defp other_tip(work) do
@@ -387,31 +289,28 @@ defmodule Meerkat.VerifiedPushTest do
     refute File.exists?(Path.dirname(tree))
   end
 
-  # Records rev as having passed both gates, or only check.sh.
+  # Records rev as having passed both gates.
   defp mark(work, rev) do
-    mark_checked(work, rev)
-    {_, 0} = run(work, ["scripts/checked-trees.sh", "--mutated", "mark", rev])
+    for store <- ["", "--mutated "] do
+      {_, 0} = run(work, ["-c", ~s(bun scripts/checked-trees.ts #{store}mark "$1"), "mark", rev])
+    end
   end
-
-  defp mark_checked(work, rev),
-    do: {_, 0} = run(work, ["scripts/checked-trees.sh", "mark", rev])
 
   # Exits 0 when rev is recorded as having passed both gates.
   defp checked(work, rev) do
     both =
-      ~s(bash scripts/checked-trees.sh has "$1" && bash scripts/checked-trees.sh --mutated has "$1")
+      ~s(bun scripts/checked-trees.ts has "$1" && bun scripts/checked-trees.ts --mutated has "$1")
 
     run(work, ["-c", both, "checked", rev])
   end
 
-  # What verified-push.sh logs for a commit that passes neither gate yet.
-  defp both_gates(sha), do: ["check.sh --head in #{sha}", mutation(sha)]
-
-  defp mutation(sha), do: "mutate.sh changed vs origin/main in #{sha}"
+  # What verified-push.ts logs for a commit that passes neither gate yet.
+  defp both_gates(sha),
+    do: ["check.ts --head in #{sha}", "mutate.ts changed vs origin/main in #{sha}"]
 
   defp verified_push(ctx, revs, env \\ []) do
     shas = Enum.map(revs, &git(ctx.work, ["rev-parse", &1]))
-    run(ctx.work, ["scripts/verified-push.sh" | shas], env)
+    run(ctx.work, ["-c", ~s(bun scripts/verified-push.ts "$@"), "verified-push" | shas], env)
   end
 
   defp run(work, args, env \\ []) do

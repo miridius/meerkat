@@ -22,7 +22,7 @@ defmodule Meerkat.MixProject do
   end
 
   defp releases do
-    # `scripts/install.sh` runs `mix release` and wraps the output in
+    # `scripts/install.ts` runs `mix release` and wraps the output in
     # a launcher at ~/.local/bin/meerkat. Auto-install via the
     # lefthook post-merge hook uses this path.
     [
@@ -75,7 +75,7 @@ defmodule Meerkat.MixProject do
       # Mutation testing — `mix muex` rewrites operators / literals
       # in `lib/` and runs the tests that reach each rewrite. A
       # mutation that every selected test passes = a test gap. See
-      # `scripts/mutate.sh` for the entry point. Pinned to the fork commit
+      # `scripts/mutate.ts` for the entry point. Pinned to the fork commit
       # that adds, on top of 0.13.1, test-selection fixes (multi-alias
       # test selection, crediting each test file with only the lines it
       # executed, selecting tests that name a module only as a value,

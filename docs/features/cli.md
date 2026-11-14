@@ -155,7 +155,7 @@ another.
   <path> no longer exists` and exits `64`; the running review keeps
   going, along with any decision it holds. Reviews of other targets
   ignore the value.
-- `BASE_BRANCH` — override `origin/main` in `scripts/mutate.sh
+- `BASE_BRANCH` — override `origin/main` in `scripts/mutate.ts
   changed` mode.
 
 ## Exit codes

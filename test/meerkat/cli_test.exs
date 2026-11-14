@@ -386,10 +386,16 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  # The git repo save_answers/2's tests share, each removing what it saved.
+  setup_all do
+    repo = make_git_repo("meerkat-cli-answers")
+    on_exit(fn -> File.rm_rf!(repo) end)
+    {:ok, answers_repo: repo}
+  end
+
   describe "save_answers/2" do
-    setup do
-      repo = make_git_repo("meerkat-cli-answers")
-      on_exit(fn -> File.rm_rf!(repo) end)
+    setup %{answers_repo: repo} do
+      on_exit(fn -> File.rm_rf!(Path.dirname(Meerkat.PendingAnswers.path_for(repo))) end)
       {:ok, repo: repo}
     end
 
@@ -1110,7 +1116,7 @@ defmodule Meerkat.CLITest do
 
     test "empty staged diff + no pending answers → auto-approves (fast path unchanged)",
          %{dir: dir} do
-      # The smoke-test path in scripts/install.sh and message-only
+      # The smoke-test path in scripts/install.ts and message-only
       # `git commit --amend` rely on this still skipping the UI.
       # Exact message: a mutation that drops the empty-staged clause
       # would surface the vacuous all-generated wording instead.
