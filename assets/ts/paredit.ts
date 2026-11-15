@@ -6,6 +6,8 @@ import {
 	type EditorState,
 	findClusterBreak,
 	type SelectionRange,
+	StateEffect,
+	StateField,
 	type Text,
 	type Transaction,
 	type TransactionSpec,
@@ -164,18 +166,44 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
+const setTypedQuote = StateEffect.define<number | null>();
+
+/** The opening quote of the string being typed, from the keystroke that
+ *  typed it until an edit lands outside that string, or null. */
+export const typedQuote = StateField.define<number | null>({
+	create: () => null,
+	update(quote, tr) {
+		for (const effect of tr.effects) if (effect.is(setTypedQuote)) return effect.value;
+		return quote === null ? null : tr.changes.mapPos(quote, 1);
+	},
+});
+
+/** `alignBelow`'s result: the changes, after `tr`'s, that shift lines,
+ *  or null when none shifts, and the string being typed after `tr`. */
+export interface Alignment {
+	shift: ChangeSet | null;
+	quote: number | null;
+}
+
+/** The effect that records `alignment`'s string being typed, or none
+ *  when `state` already holds it. */
+export function typedQuoteEffect(state: EditorState, alignment: Alignment): StateEffect<number | null>[] {
+	return (state.field(typedQuote, false) ?? null) === alignment.quote ? [] : [setTypedQuote.of(alignment.quote)];
+}
+
 /** The changes, after `tr`'s, that shift each line below its edited
  *  line by as much as `tr` moves the text that line aligns to, when every
- *  change sits on that one line; null when no line shifts. See
- *  "Structural typing in Clojure" in docs/features/inline-comments.md. */
-export function alignBelow(tr: Transaction): ChangeSet | null {
+ *  change sits on that one line. See "Structural typing in Clojure" in
+ *  docs/features/inline-comments.md. */
+export function alignBelow(tr: Transaction): Alignment {
+	const none = { shift: null, quote: null };
 	const state = tr.startState;
 	const doc = state.doc;
 	const parts: { from: number; to: number; inserted: Text }[] = [];
 	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, inserted }));
-	if (parts.length === 0) return null;
+	if (parts.length === 0) return none;
 	const edited = doc.lineAt(parts[0].from);
-	if (edited.number === doc.lines || parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return null;
+	if (edited.number === doc.lines || parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return none;
 	/** How far the changes move the text at `pos` on the edited line: to
 	 *  where a deletion of it starts. Text inserted onto the start of a
 	 *  form leaves the form starting where it did; the opener or character
@@ -190,14 +218,17 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 	// short stops them where it stopped.
 	let tree = parsed(tr.state, 50);
 	const line = tree.doc.line(edited.number);
-	// A string being typed on the edited line runs, until its closing
-	// quote, to the next quote in the text, past lines that are code: read
-	// it as closing right after the edit, where ` "` closes it even after
-	// a `\`.
+	// A string being typed on the edited line, from the quote this edit or
+	// an earlier keystroke typed, runs until its closing quote to the next
+	// quote in the text, past lines that are code: read it as closing
+	// right after the edit, where ` "` closes it even after a `\`.
 	const caret = tr.changes.mapPos(parts[parts.length - 1].to, 1);
-	const open = textStart(tree, caret);
+	const typedNow = parts.find(({ inserted }) => inserted.toString() === '"');
+	const earlier = state.field(typedQuote, false) ?? null;
+	const open = typedNow ? tr.changes.mapPos(typedNow.from, -1) : earlier === null ? null : tr.changes.mapPos(earlier, 1);
+	const typing = open !== null && open >= line.from && textStart(tree, caret) === open;
 	let quote = -1;
-	if (open !== null && open >= line.from && tree.doc.sliceString(open, open + 1) === '"' && inText(tree, line.to)) {
+	if (typing && inText(tree, line.to)) {
 		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
 		if (!inText(closed, line.to + 2)) [tree, quote] = [closed, caret];
 	}
@@ -238,7 +269,10 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 		const from = doc.line(n).from;
 		changes.push(shift > 0 ? { from, insert: " ".repeat(shift) } : { from, to: from - shift });
 	}
-	return changes.length === 0 ? null : state.changes(changes).map(tr.changes);
+	return {
+		shift: changes.length === 0 ? null : state.changes(changes).map(tr.changes),
+		quote: typing ? open : null,
+	};
 }
 
 /** Pull the form after the caret's collection into it; when no form

@@ -16,6 +16,8 @@ import {
 	slurpForward,
 	splice,
 	tightInClojure,
+	typedQuote,
+	typedQuoteEffect,
 } from "./paredit.js";
 import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit.js";
 
@@ -161,8 +163,10 @@ const EDITS = ["input", "delete", "edit", "move", "indent"];
  *  edit moves. */
 const keepAligned = State.transactionFilter.of((tr) => {
 	if (!tr.docChanged || !EDITS.some((event) => tr.isUserEvent(event))) return tr;
-	const shift = alignBelow(tr);
-	return shift ? [tr, { changes: shift, sequential: true }] : tr;
+	const alignment = alignBelow(tr);
+	const effects = typedQuoteEffect(tr.startState, alignment);
+	if (!alignment.shift && effects.length === 0) return tr;
+	return [tr, { changes: alignment.shift ?? [], sequential: true, effects }];
 });
 
 /** The key bindings for a file in `language`. */
@@ -196,7 +200,7 @@ export function editorKeys(language: string): Extension {
 	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
 	// Filters run last first: a paste re-indents its own lines, then the
 	// lines below keep their alignment.
-	if (language === "clojure") extensions.push(bracketTyping, keepAligned, reindentPaste);
+	if (language === "clojure") extensions.push(typedQuote, bracketTyping, keepAligned, reindentPaste);
 	return extensions;
 }
 

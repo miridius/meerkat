@@ -56,7 +56,7 @@ describe("alignBelow", () => {
 			return text;
 		});
 		const tr = stateOf(doc).update({ changes, userEvent: "input.type" });
-		const shift = alignBelow(tr);
+		const { shift } = alignBelow(tr);
 		return (shift ? shift.apply(tr.newDoc) : tr.newDoc).toString().split("\n");
 	}
 
@@ -98,29 +98,6 @@ describe("alignBelow", () => {
 		expect(edit("(«»let [y (inc x)\n  (g y))", "if-")).toEqual(["(if-let [y (inc x)", "  (g y))"]);
 	});
 
-	test("moves lines below a string being typed with the text above them", () => {
-		const keys = ['"', "m", '"', " "];
-		for (const [doc, typed, pressed = keys] of [
-			["(log/info {:a 1\n           :b 2})", '(log/info "m" {:a 1\n               :b 2})'],
-			// The string being typed runs to the next quote.
-			['(log/info {:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
-			['(log/info {:a "x"\n           :b 2})', '(log/info "m" {:a "x"\n               :b 2})'],
-			["(log/info {:a 1\n           :b 2})", '(log/info "\\n" {:a 1\n                :b 2})', ['"', "\\", "n", '"', " "]],
-			// Backspace on the quote just typed.
-			["(log/info {:a 1\n           :b 2})", "(log/info {:a 1\n           :b 2})", ['"', "\b"]],
-		] as [string, string, string[]?][]) {
-			let state = stateOf(doc);
-			for (const key of pressed) {
-				const at = state.doc.line(1).text.indexOf("{");
-				const change = key === "\b" ? { from: at - 1, to: at } : { from: at, insert: key };
-				const tr = state.update({ changes: change, userEvent: "input.type" });
-				const shift = alignBelow(tr);
-				state = stateOf((shift ? shift.apply(tr.newDoc) : tr.newDoc).toString());
-			}
-			expect(state.doc.toString()).toBe(typed);
-		}
-	});
-
 	test("moves lines below a string edited inside on their line", () => {
 		expect(edit('(log/info "a«»b" {:a 1\n                :b 2})', "x")).toEqual([
 			'(log/info "axb" {:a 1',
@@ -128,13 +105,8 @@ describe("alignBelow", () => {
 		]);
 	});
 
-	test("reads a string being typed as closed right after the edit", () => {
-		const doc = "(str «»x y z w v u t s)\n(defn g []\n  (let [a 1]\n    (foo a\n         b)))";
-		const lines = doc.replace("«»", "").split("\n");
-		expect(edit(doc.replace("«»", '"«»'), "a")).toEqual(['(str "ax y z w v u t s)', ...lines.slice(1)]);
-	});
-
 	test("leaves a string's lines when the string is not typed in on the edited line", () => {
+		expect(edit('(str "a«»b" "one\n          two")', "x")).toEqual(['(str "axb" "one', '          two")']);
 		expect(edit('(«»str "a\n        b")', "x")).toEqual(['(xstr "a', '        b")']);
 		expect(edit('(f "a\nb«»c\n      d")', "x")).toEqual(['(f "a', "bxc", '      d")']);
 		expect(edit('(foo«» bar\n  "s\n     baz)', "o")).toEqual(['(fooo bar', '  "s', "     baz)"]);
@@ -153,8 +125,8 @@ describe("alignBelow", () => {
 	});
 	test("shifts nothing for an edit across lines", () => {
 		const state = stateOf("(atom {:a 1\n       :b 2})");
-		expect(alignBelow(state.update({ changes: { from: 1, insert: "\n" } }))).toBeNull();
-		expect(alignBelow(state.update({ changes: { from: 11, to: 12 } }))).toBeNull();
+		expect(alignBelow(state.update({ changes: { from: 1, insert: "\n" } })).shift).toBeNull();
+		expect(alignBelow(state.update({ changes: { from: 11, to: 12 } })).shift).toBeNull();
 	});
 });
 

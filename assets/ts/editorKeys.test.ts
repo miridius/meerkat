@@ -175,6 +175,39 @@ describe("editorKeys", () => {
 		const spliced = press("Alt-s", "clojure", stateOf("(f (|g) {:a 1\n        :b 2})", [clojure, editorKeys("clojure")]));
 		expect(spliced.text).toBe("(f |g {:a 1\n      :b 2})");
 	});
+
+	/** `marked` after typing `keys` one by one at its `|`, where `\b`
+	 *  deletes the character before. */
+	function typeAt(marked: string, keys: string[]): string {
+		let state = stateOf(marked, [clojure, editorKeys("clojure")]);
+		let at = state.selection.main.head;
+		for (const key of keys) {
+			const changes = key === "\b" ? { from: at - 1, to: at } : { from: at, insert: key };
+			state = state.update({ changes, userEvent: "input.type" }).state;
+			at += key === "\b" ? -1 : key.length;
+		}
+		return state.doc.toString();
+	}
+
+	test("typing a string in Clojure moves the lines below with the text above them", () => {
+		const keys = ['"', "m", '"', " "];
+		for (const [doc, typed, pressed = keys] of [
+			["(log/info |{:a 1\n           :b 2})", '(log/info "m" {:a 1\n               :b 2})'],
+			// The string being typed runs to the next quote.
+			['(log/info |{:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
+			['(log/info |{:a "x"\n           :b 2})', '(log/info "m" {:a "x"\n               :b 2})'],
+			["(log/info |{:a 1\n           :b 2})", '(log/info "\\n" {:a 1\n                :b 2})', ['"', "\\", "n", '"', " "]],
+			// Backspace on the quote just typed.
+			["(log/info |{:a 1\n           :b 2})", "(log/info {:a 1\n           :b 2})", ['"', "\b"]],
+		] as [string, string, string[]?][]) {
+			expect(typeAt(doc, pressed)).toBe(typed);
+		}
+	});
+
+	test("a string being typed in Clojure is read as closed right after the edit", () => {
+		const doc = "(str x y z w v u t s)\n(defn g []\n  (let [a 1]\n    (foo a\n         b)))";
+		expect(typeAt(doc.replace("x", "|x"), ['"', "a"])).toBe(doc.replace("x", '"ax'));
+	});
 });
 
 describe("keyLabel", () => {
