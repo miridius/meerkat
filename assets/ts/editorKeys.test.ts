@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { history, undo } from "@codemirror/commands";
+import { history, isolateHistory, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type Transaction, type TransactionSpec } from "@codemirror/state";
@@ -7,6 +7,7 @@ import type { EditorView } from "@codemirror/view";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
 import { cheatSheet, editorKeys, hotkeyBindings, keyLabel } from "./editorKeys";
+import { typedQuote } from "./paredit";
 import { parsed } from "./syntaxEdit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
@@ -205,6 +206,25 @@ describe("editorKeys", () => {
 		] as [string, string, string[]?][]) {
 			expect(typeAt(doc, pressed)).toBe(typed);
 		}
+	});
+
+	test("a string stays typed through an undo inside it, and ends when its quote goes", () => {
+		const doc = "(log/info |{:a 1\n           :b 2})";
+		let state = stateOf(doc, [clojure, editorKeys("clojure"), history()]);
+		const type = (from: number, insert: string) => {
+			const annotations = isolateHistory.of("full");
+			state = state.update({ changes: { from, insert }, userEvent: "input.type", annotations }).state;
+		};
+		type(10, '"');
+		type(11, "a");
+		type(12, "b");
+		undo({ state, dispatch: (tr) => (state = tr.state) });
+		expect(state.field(typedQuote)).toBe(10);
+		expect(state.update({ changes: { from: 10, to: 11 }, userEvent: "undo" }).state.field(typedQuote)).toBeNull();
+		type(12, "c");
+		type(13, '"');
+		type(14, " ");
+		expect(state.doc.toString()).toBe('(log/info "ac" {:a 1\n                :b 2})');
 	});
 
 	test("a string being typed in Clojure is read as closed right after the edit", () => {

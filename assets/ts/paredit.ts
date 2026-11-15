@@ -1,10 +1,12 @@
 import { indentRange, syntaxTree } from "@codemirror/language";
 import {
+	type ChangeDesc,
 	type ChangeSet,
 	type ChangeSpec,
 	EditorSelection,
 	type EditorState,
 	findClusterBreak,
+	MapMode,
 	type SelectionRange,
 	StateEffect,
 	StateField,
@@ -166,24 +168,28 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-const setTypedQuote = StateEffect.define<number>();
+const setTypedQuote = StateEffect.define<number | null>();
+
+/** Where `quote` is after `changes`; null once they delete it. */
+const mapQuote = (quote: number | null, changes: ChangeDesc) =>
+	quote === null ? null : changes.mapPos(quote, 1, MapMode.TrackAfter);
 
 /** The opening quote of the string being typed, from the keystroke that
- *  types it until any other change to the text, undo and redo included,
- *  lands without saying it still is; or null. */
+ *  types it until an edit lands outside that string or the quote is
+ *  deleted; or null. */
 export const typedQuote = StateField.define<number | null>({
 	create: () => null,
 	update(quote, tr) {
 		for (const effect of tr.effects) if (effect.is(setTypedQuote)) return effect.value;
-		return tr.docChanged ? null : quote;
+		return mapQuote(quote, tr.changes);
 	},
 });
 
 /** `alignBelow`'s result: the changes, after `tr`'s, that shift lines,
- *  or null when none shifts, and the effects that keep `typedQuote`. */
+ *  or null when none shifts, and the effects that update `typedQuote`. */
 export interface Alignment {
 	shift: ChangeSet | null;
-	effects: StateEffect<number>[];
+	effects: StateEffect<number | null>[];
 }
 
 /** The changes, after `tr`'s, that shift each line below its edited
@@ -218,12 +224,10 @@ export function alignBelow(tr: Transaction): Alignment {
 	// quote in the text, past lines that are code: read it as closing
 	// right after the edit, where ` "` closes it even after a `\`.
 	const caret = tr.changes.mapPos(parts[parts.length - 1].to, 1);
-	const earlier = state.field(typedQuote, false) ?? null;
-	const typedNow = parts.find(({ inserted }) => inserted.toString() === '"');
-	const open = [
-		earlier === null ? null : tr.changes.mapPos(earlier, 1),
-		typedNow ? tr.changes.mapPos(typedNow.from, -1) : null,
-	].find((quote) => quote !== null && quote >= line.from && textStart(tree, caret) === quote) ?? null;
+	const earlier = mapQuote(state.field(typedQuote, false) ?? null, tr.changes);
+	const start = textStart(tree, caret);
+	const typedNow = parts.some(({ from, inserted }) => inserted.toString() === '"' && tr.changes.mapPos(from, -1) === start);
+	const open = start !== null && start >= line.from && (start === earlier || typedNow) ? start : null;
 	let quote = -1;
 	if (open !== null && stringAt(tree, line.to)) {
 		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
@@ -269,7 +273,7 @@ export function alignBelow(tr: Transaction): Alignment {
 	}
 	return {
 		shift: changes.length === 0 ? null : state.changes(changes).map(tr.changes),
-		effects: open !== null ? [setTypedQuote.of(open)] : [],
+		effects: open === earlier ? [] : [setTypedQuote.of(open)],
 	};
 }
 
