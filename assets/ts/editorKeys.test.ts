@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { history, isolateHistory, undo } from "@codemirror/commands";
+import { history, isolateHistory, redo, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type Transaction, type TransactionSpec } from "@codemirror/state";
@@ -208,23 +208,49 @@ describe("editorKeys", () => {
 		}
 	});
 
-	test("a string stays typed through an undo inside it, and ends when its quote goes", () => {
-		const doc = "(log/info |{:a 1\n           :b 2})";
+	/** The state after `steps` from `doc`: each types its text at its
+	 *  position as one undo step, or undoes or redoes one. */
+	function replay(doc: string, steps: ([number, string] | "undo" | "redo")[]): EditorState {
 		let state = stateOf(doc, [clojure, editorKeys("clojure"), history()]);
-		const type = (from: number, insert: string) => {
-			const annotations = isolateHistory.of("full");
-			state = state.update({ changes: { from, insert }, userEvent: "input.type", annotations }).state;
+		const dispatch = (tr: Transaction) => {
+			state = tr.state;
 		};
-		type(10, '"');
-		type(11, "a");
-		type(12, "b");
-		undo({ state, dispatch: (tr) => (state = tr.state) });
-		expect(state.field(typedQuote)).toBe(10);
-		expect(state.update({ changes: { from: 10, to: 11 }, userEvent: "undo" }).state.field(typedQuote)).toBeNull();
-		type(12, "c");
-		type(13, '"');
-		type(14, " ");
-		expect(state.doc.toString()).toBe('(log/info "ac" {:a 1\n                :b 2})');
+		for (const step of steps) {
+			if (step === "undo") undo({ state, dispatch });
+			else if (step === "redo") redo({ state, dispatch });
+			else {
+				const [from, insert] = step;
+				state = state.update({
+					changes: { from, insert },
+					userEvent: "input.type",
+					annotations: isolateHistory.of("full"),
+				}).state;
+			}
+		}
+		return state;
+	}
+
+	test("undo and redo in Clojure bring back a string being typed", () => {
+		const doc = "(log/info {:a 1\n           :b 2})";
+		const typed = (text: string) => `(log/info ${text} {:a 1\n${" ".repeat(12 + text.length)}:b 2})`;
+		const close = (at: number): [number, string][] => [
+			[at, '"'],
+			[at + 1, " "],
+		];
+		// Undo a letter, the closing quote, or the opening quote and redo it.
+		const letter = replay(doc, [[10, '"'], [11, "a"], [12, "b"], "undo", [12, "c"], ...close(13)]);
+		expect(letter.doc.toString()).toBe(typed('"ac"'));
+		const closing = replay(doc, [[10, '"'], [11, "a"], [12, '"'], "undo", [12, "c"], ...close(13)]);
+		expect(closing.doc.toString()).toBe(typed('"ac"'));
+		const opening = replay(doc, [[10, '"'], "undo", "redo", [11, "a"], ...close(12)]);
+		expect(opening.doc.toString()).toBe(typed('"a"'));
+	});
+
+	test("an edit outside a string being typed in Clojure ends it", () => {
+		const doc = "(log/info {:a 1\n           :b 2})";
+		expect(replay(doc, [[10, '"']]).field(typedQuote)).toBe(10);
+		expect(replay(doc, [[10, '"'], [1, "x"]]).field(typedQuote)).toBeNull();
+		expect(replay(doc, [[10, '"'], [doc.length, "x"]]).field(typedQuote)).toBeNull();
 	});
 
 	test("a string being typed in Clojure is read as closed right after the edit", () => {

@@ -1,3 +1,4 @@
+import { invertedEffects } from "@codemirror/commands";
 import { indentRange, syntaxTree } from "@codemirror/language";
 import {
 	type ChangeDesc,
@@ -168,21 +169,26 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-const setTypedQuote = StateEffect.define<number | null>();
-
 /** Where `quote` is after `changes`; null once they delete it. */
 const mapQuote = (quote: number | null, changes: ChangeDesc) =>
 	quote === null ? null : changes.mapPos(quote, 1, MapMode.TrackAfter);
 
+const setTypedQuote = StateEffect.define<number | null>({ map: mapQuote });
+
 /** The opening quote of the string being typed, from the keystroke that
- *  types it until an edit lands outside that string or the quote is
- *  deleted; or null. */
+ *  types it for as long as each edit lands in that string on the quote's
+ *  line; or null. Undo and redo bring it back with the text. */
 export const typedQuote = StateField.define<number | null>({
 	create: () => null,
 	update(quote, tr) {
 		for (const effect of tr.effects) if (effect.is(setTypedQuote)) return effect.value;
 		return mapQuote(quote, tr.changes);
 	},
+	provide: (field) =>
+		invertedEffects.of((tr) => {
+			const was = tr.startState.field(field);
+			return was === tr.state.field(field) ? [] : [setTypedQuote.of(was)];
+		}),
 });
 
 /** `alignBelow`'s result: the changes, after `tr`'s, that shift lines,
@@ -197,8 +203,9 @@ export interface Alignment {
  *  change sits on that one line. See "Structural typing in Clojure" in
  *  docs/features/inline-comments.md. */
 export function alignBelow(tr: Transaction): Alignment {
-	const none = { shift: null, effects: [] };
 	const state = tr.startState;
+	const typed = state.field(typedQuote, false) ?? null;
+	const none = { shift: null, effects: typed === null ? [] : [setTypedQuote.of(null)] };
 	const doc = state.doc;
 	const parts: { from: number; to: number; inserted: Text }[] = [];
 	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, inserted }));
@@ -224,10 +231,11 @@ export function alignBelow(tr: Transaction): Alignment {
 	// quote in the text, past lines that are code: read it as closing
 	// right after the edit, where ` "` closes it even after a `\`.
 	const caret = tr.changes.mapPos(parts[parts.length - 1].to, 1);
-	const earlier = mapQuote(state.field(typedQuote, false) ?? null, tr.changes);
-	const start = textStart(tree, caret);
-	const typedNow = parts.some(({ from, inserted }) => inserted.toString() === '"' && tr.changes.mapPos(from, -1) === start);
-	const open = start !== null && start >= line.from && (start === earlier || typedNow) ? start : null;
+	const earlier = mapQuote(typed, tr.changes);
+	const quotes = parts.filter(({ inserted }) => inserted.toString() === '"').map(({ from }) => tr.changes.mapPos(from, -1));
+	if (earlier !== null) quotes.push(earlier);
+	const start = quotes.length > 0 ? textStart(tree, caret) : null;
+	const open = start !== null && start >= line.from && quotes.includes(start) ? start : null;
 	let quote = -1;
 	if (open !== null && stringAt(tree, line.to)) {
 		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
