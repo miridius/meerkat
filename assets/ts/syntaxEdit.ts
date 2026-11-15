@@ -99,6 +99,8 @@ function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
 	let found: SyntaxNode | null = null;
 	for (let node = tree.resolveInner(pos, 1); node.from === pos && node.parent; node = node.parent) {
+		// Out of a token or a prefix only, not a form such as `[a]` in `[a][0]`.
+		if (node.firstChild && !PREFIX_NODES.has(node.name)) break;
 		const form = closedForm(state, tree.resolveInner(node.parent.to, -1), pos);
 		if (form?.from === pos) found = form;
 	}
