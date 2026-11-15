@@ -43,11 +43,12 @@ const CLOSERS = new Set(Object.values(OPENERS));
 
 /** Whether `node` is a token of punctuation alone, such as a bracket, a
  *  quote, an operator or a Clojure reader prefix like `#` or `#_`, but
- *  not a name such as `_` or `$`, nor a whole string such as `""` or
- *  `"("`. */
+ *  not a comment, a name such as `_` or `$`, nor a whole string such as
+ *  `""` or `"("`. */
 function punctuation(state: EditorState, node: SyntaxNode): boolean {
+	if (node.firstChild || /Comment/.test(node.name)) return false;
 	const text = state.doc.sliceString(node.from, node.to);
-	return !node.firstChild && /^[^\p{L}\p{N}\s]+$/u.test(text) && !/^[_$]+$|^(["'`]).*\1$/s.test(text);
+	return /^[^\p{L}\p{N}\s]+$/u.test(text) && !/^[_$]+$|^(["'`]).*\1$/s.test(text);
 }
 
 /** Whether `node` is a closing bracket or quote that ends its parent. */
@@ -56,8 +57,9 @@ function closing(state: EditorState, node: SyntaxNode): boolean {
 }
 
 /** Clojure's prefixes that are nodes of their own: `#:ns` before a map,
- *  `#inst` before a form, `#my.Rec` before a map and `^:private`. */
-const PREFIX_NODES = new Set(["KeywordPrefix", "ReaderTag", "ConstructorPrefix", "Metadata"]);
+ *  `#inst` before a form, `#my.Rec` before a map or vector, and `^:m`
+ *  or `#^:m`. */
+const PREFIX_NODES = new Set(["KeywordPrefix", "ReaderTag", "ConstructorPrefix", "Metadata", "ReaderMetadata"]);
 
 /** Whether only prefixes, and some, come before `node` in its parent:
  *  punctuation or one of `PREFIX_NODES`. */
@@ -70,19 +72,19 @@ function prefixed(state: EditorState, node: SyntaxNode): boolean {
 }
 
 /** The form `end`, a closing bracket or quote, ends, with any prefix
- *  such as `#`, `'` or `#:ns`. Null when `end` is no closer. */
-function closedForm(state: EditorState, end: SyntaxNode): SyntaxNode | null {
+ *  such as `#`, `'` or `#:ns` that starts after `start`. Null when `end`
+ *  is no closer. */
+function closedForm(state: EditorState, end: SyntaxNode, start = -1): SyntaxNode | null {
 	if (!end.parent || !closing(state, end)) return null;
 	let node = end.parent;
-	while (node.parent && !node.nextSibling && prefixed(state, node)) node = node.parent;
+	while (node.from > start && node.parent && !node.nextSibling && prefixed(state, node)) node = node.parent;
 	return node;
 }
 
-/** Whether `node` is a string a grammar parses as one token, with no
- *  quote tokens, such as `"b"`, `f'b'` or `` `b` ``. */
+/** Whether `node` is a string a grammar parses with no quote tokens,
+ *  such as `"b"`, `f'{b}'`, `u8"b"` or `` `b` ``. */
 function stringToken(state: EditorState, node: SyntaxNode): boolean {
-	if (node.firstChild) return false;
-	const open = /^[A-Za-z]{0,3}(["'`])/.exec(state.doc.sliceString(node.from, Math.min(node.to, node.from + 4)));
+	const open = /^[A-Za-z0-9]{0,3}(["'`])/.exec(state.doc.sliceString(node.from, Math.min(node.to, node.from + 4)));
 	return !!open && node.to - node.from > open[0].length && state.doc.sliceString(node.to - 1, node.to) === open[1];
 }
 
@@ -93,7 +95,7 @@ function stringToken(state: EditorState, node: SyntaxNode): boolean {
 function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
 	for (let node = tree.resolveInner(pos, 1); node.from === pos && node.parent; node = node.parent) {
-		const form = closedForm(state, tree.resolveInner(node.parent.to, -1));
+		const form = closedForm(state, tree.resolveInner(node.parent.to, -1), pos);
 		if (form?.from === pos) return form;
 	}
 	const before = tree.resolveInner(pos, -1);
