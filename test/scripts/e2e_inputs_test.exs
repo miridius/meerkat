@@ -12,7 +12,7 @@ defmodule Meerkat.E2eInputsTest do
     test/support/test_helpers.ex
     scripts/mix-test.ts
     scripts/check.ts.bak
-    scripts/checked-trees.ts
+    scripts/verified-push.ts
     .github/workflows/ci.yml
     .lefthook/pre-push/pre-push.ts
     lefthook.yml
@@ -25,6 +25,7 @@ defmodule Meerkat.E2eInputsTest do
 
   @inputs ~w(
     scripts/check.ts
+    scripts/checked-trees.ts
     scripts/e2e-inputs.ts
     lib/meerkat/git.ex
     config/dev.exs

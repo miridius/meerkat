@@ -11,6 +11,7 @@ import {
 	launcher,
 	repoUrl,
 	shellQuote,
+	status,
 	upToDate,
 	versionDirs,
 	versionId,
@@ -153,6 +154,11 @@ describe("gcVictims", () => {
 	test("keeps a dir a running review reads", () => {
 		expect(gcVictims(dirs, "/v/new", "/v/cur", 5, (d) => d === "/v/f")).toEqual(["/v/g"]);
 	});
+});
+
+test("status gives a command killed by a signal 128 plus its number, as bash does", () => {
+	expect(status(Bun.spawnSync(["sh", "-c", "kill -KILL $$"]))).toBe(137);
+	expect(status(Bun.spawnSync(["sh", "-c", "exit 3"]))).toBe(3);
 });
 
 describe("withoutGitVars", () => {

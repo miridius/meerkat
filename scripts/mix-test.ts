@@ -52,6 +52,13 @@ export function byLines(files: { file: string; lines: number }[]): string[] {
 
 export const jobCount = (cores: number) => Math.max(1, Math.floor(cores / 2));
 
+// The online cores, as getconf reports them.
+export function onlineCores(): number {
+	const cores = Number(Bun.spawnSync(["getconf", "_NPROCESSORS_ONLN"]).stdout.toString());
+	if (!Number.isInteger(cores) || cores < 1) throw new Error("getconf reports no online cores.");
+	return cores;
+}
+
 // Runs `run` on each item, at most `jobs` at once, and returns the results in the items' order.
 export async function pool<T>(items: string[], jobs: number, run: (item: string) => Promise<T>): Promise<T[]> {
 	const results: T[] = new Array(items.length);
@@ -71,7 +78,7 @@ export function failureReport(files: string[], runs: Run[]): string {
 	const failed = files.filter((_, i) => runs[i].status !== 0);
 	const outputs = files.map((file, i) => {
 		const { status, output } = runs[i];
-		if (status === null) return `\n=== mix test ${file} did not finish ===\n`;
+		if (status === null) return `\n=== mix test ${file} did not finish ===\n${output}`;
 		return status === 0 ? "" : `\n=== mix test ${file} ===\n${output}`;
 	});
 	const list = failed.map((file) => `  ${file}\n`).join("");
@@ -191,11 +198,7 @@ function realIo(logs: string): Io {
 	let runs = 0;
 	return {
 		compile: () => Bun.spawnSync(["mix", "compile"], { env, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1,
-		cores() {
-			const cores = Number(Bun.spawnSync(["getconf", "_NPROCESSORS_ONLN"]).stdout.toString());
-			if (!Number.isInteger(cores) || cores < 1) throw new Error("getconf reports no online cores.");
-			return cores;
-		},
+		cores: onlineCores,
 		testFiles: () =>
 			Array.from(new Bun.Glob("test/**/*_test.exs").scanSync({ dot: true }), (file) => ({
 				file,

@@ -15,9 +15,9 @@
 //
 // When the checks pass and the worktree held exactly the contents checked,
 // with no untracked file, both when they started and when they finished,
-// scripts/checked-trees.ts records those contents: with --e2e when the e2e
-// steps ran, and as checked when they ran or the contents' e2e inputs already
-// passed them. Contents that skipped them on inputs never recorded that way
+// scripts/checked-trees.ts records those contents: in its e2e record when the
+// e2e steps ran, and as checked when they ran or the contents' e2e inputs
+// already passed them. Contents that skipped them on inputs never recorded that way
 // stay unchecked, so the pre-push check runs every step on a tip that holds
 // them.
 
@@ -142,6 +142,20 @@ export function check(
 	return io.gate(p.label, tree.out.trim(), p.e2e);
 }
 
+// The command that runs the gated part in a gate slot, and what the gated
+// part reads back from its arguments after `check.ts`.
+export const gatedCommand = (label: string, tree: string, e2e: boolean) => [
+	"bash",
+	"scripts/gate-run.sh",
+	"bun",
+	"scripts/check.ts",
+	"--gated",
+	label,
+	tree,
+	e2e ? "1" : "0",
+];
+export const parseGated = ([, label, tree, e2e]: string[]) => ({ label, tree, e2e: e2e === "1" });
+
 const log: Log = (line) => writeSync(1, `${line}\n`);
 
 if (import.meta.main) {
@@ -151,12 +165,10 @@ if (import.meta.main) {
 	if (args[0] === "--gated") {
 		const run: Run = (step, env) =>
 			Bun.spawnSync(step.cmd, { cwd: step.dir ?? root, env, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1;
-		const [, label, tree, e2e] = args;
-		process.exit(gated(label, tree, e2e === "1", { git, records: records(git), root, env: process.env, run, log }));
+		const { label, tree, e2e } = parseGated(args);
+		process.exit(gated(label, tree, e2e, { git, records: records(git), root, env: process.env, run, log }));
 	}
 	const gate = (label: string, tree: string, e2e: boolean) =>
-		Bun.spawnSync(["bash", "scripts/gate-run.sh", "bun", "scripts/check.ts", "--gated", label, tree, e2e ? "1" : "0"], {
-			stdio: ["inherit", "inherit", "inherit"],
-		}).exitCode ?? 1;
+		Bun.spawnSync(gatedCommand(label, tree, e2e), { stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1;
 	process.exit(check(args, { git, log, gate }));
 }

@@ -12,8 +12,7 @@
 // hook, so run scripts/install.sh after them.
 
 import { join } from "node:path";
-
-type Env = Record<string, string | undefined>;
+import { type Env, withoutGitLocals } from "./checked-trees";
 
 // What to do for the branch `git rev-parse --abbrev-ref HEAD` named, or ""
 // when it failed: install on `main`, otherwise say why not.
@@ -21,12 +20,6 @@ export function plan(branch: string): { install: true } | { install: false; mess
 	if (branch === "main") return { install: true };
 	if (branch === "") return { install: false, message: "meerkat auto-install: couldn't resolve HEAD; skipping." };
 	return { install: false, message: `meerkat auto-install: HEAD=${branch} (not main); skipping.` };
-}
-
-// `env` without the variables `git rev-parse --local-env-vars` lists.
-export function withoutVars(env: Env, names: string): Env {
-	const drop = new Set(names.split("\n").filter((n) => n !== ""));
-	return Object.fromEntries(Object.entries(env).filter(([name]) => !drop.has(name)));
 }
 
 if (import.meta.main) {
@@ -42,7 +35,7 @@ if (import.meta.main) {
 	}
 	// Git exports GIT_DIR and friends to hooks; left set, they would point
 	// git dependencies' checkouts at this repository.
-	const gitFree = withoutVars(process.env, git("rev-parse", "--local-env-vars"));
+	const gitFree = withoutGitLocals(process.env, git("rev-parse", "--local-env-vars"));
 	const run = (cmd: string[], env: Env) => {
 		const code = Bun.spawnSync(cmd, { env, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1;
 		if (code !== 0) process.exit(code);

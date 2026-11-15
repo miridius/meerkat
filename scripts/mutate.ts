@@ -6,38 +6,38 @@
 // test or the code.
 //
 // Modes:
-//   scripts/mutate.ts             — mutate every line of every
+//   bun scripts/mutate.ts             — mutate every line of every
 //                                   lib/meerkat/*.ex (skips application —
 //                                   supervisor plumbing). Slow.
-//   scripts/mutate.ts changed     — mutate only the lib/**/*.ex lines changed
+//   bun scripts/mutate.ts changed     — mutate only the lib/**/*.ex lines changed
 //                                   vs the merge base with origin/main
 //                                   (override with BASE_BRANCH), uncommitted
 //                                   edits included (muex --since). The
 //                                   pre-push hook runs this mode on a pushed
 //                                   tip with no mutation record.
-//   scripts/mutate.ts staged      — mutate only the lib/**/*.ex lines staged
+//   bun scripts/mutate.ts staged      — mutate only the lib/**/*.ex lines staged
 //                                   for the next commit (muex --staged). The
 //                                   lefthook pre-commit hook runs this mode.
-//   scripts/mutate.ts <path…>     — mutate every line of the named
+//   bun scripts/mutate.ts <path…>     — mutate every line of the named
 //                                   lib/**/*.ex files, refusing any other
 //                                   path.
 //
 // Every mode fails when any mutant survives, no test reaches it, or its tests
 // time out.
 //
-// A pass of either gated mode records the contents it judged with
-// scripts/checked-trees.ts --mutated when they are known to be gated
+// A pass of either gated mode records the contents it judged in
+// scripts/checked-trees.ts's mutated record when they are known to be gated
 // throughout: see `plan`. Those modes run muex in a gate slot, through
 // scripts/gate-run.sh, which runs this script's gated part,
 // `mutate.ts --gated <run as JSON>`, in it.
 //
 // Pass extra muex flags through after `--`:
-//   scripts/mutate.ts changed -- --concurrency 4
+//   bun scripts/mutate.ts changed -- --concurrency 4
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { type Env, type Git, git, holds, type Records, records, withoutGitLocals } from "./checked-trees";
+import { jobCount, onlineCores } from "./mix-test";
 
 const NAME = "scripts/mutate.ts";
 
@@ -130,7 +130,11 @@ function libLinesAdded(g: Git, args: string[]): boolean | null {
 	return diff.status === 0 ? addsLines(diff.out) : null;
 }
 
-const gitPathIndex = (g: Git) => g(["rev-parse", "--path-format=absolute", "--git-path", "index"]).out.trim();
+// The absolute path of the index, or null when git cannot say.
+const gitPathIndex = (g: Git) => {
+	const r = g(["rev-parse", "--path-format=absolute", "--git-path", "index"]);
+	return r.status === 0 ? r.out.trim() : null;
+};
 
 // Decides what to mutate, and whether a pass records it, before any gate
 // slot is taken: a run that ends here returns its Done.
@@ -160,7 +164,8 @@ export function plan(args: string[], io: Io): Run | Done {
 			const base = io.env.BASE_BRANCH || "origin/main";
 			if (io.git(["rev-parse", "--verify", base]).status !== 0)
 				return { exit: 2, err: [`${NAME}: base ref '${base}' not found; fetch origin first.`] };
-			index = gitPathIndex(io.git);
+			index = gitPathIndex(io.git) ?? undefined;
+			if (index === undefined) return { exit: 2, err: [`${NAME}: git cannot find the index.`] };
 			// A run against origin/main on exactly HEAD judges every lib line
 			// HEAD changed since main.
 			const head = io.git(["rev-parse", "--verify", "--quiet", "HEAD^{tree}"]);
@@ -180,8 +185,11 @@ export function plan(args: string[], io: Io): Run | Done {
 			// During `git commit -a` or `git commit <paths>`, GIT_INDEX_FILE
 			// names a temporary index holding the commit's contents. --git-path
 			// resolves it (or the usual index) to an absolute path.
-			index = gitPathIndex(io.git);
-			tree = io.git(["write-tree"]).out.trim();
+			index = gitPathIndex(io.git) ?? undefined;
+			const written = io.git(["write-tree"]);
+			if (index === undefined || written.status !== 0)
+				return { exit: 2, err: [`${NAME}: git cannot read the staged contents.`] };
+			tree = written.out.trim();
 			// The commit's other lib lines come from HEAD, so its contents are
 			// gated throughout only when HEAD's were, or HEAD is in origin/main.
 			// A root commit stages every line.
@@ -330,14 +338,9 @@ export function muexArgs(run: Run, tests: string[], jobs: number, report: string
 	];
 }
 
-// muex runs as many test BEAMs at once as there are cores; like
-// scripts/mix-test.ts, cap them at half (at least one) so a commit leaves the
-// machine usable.
-export const jobsFor = (cores: number) => Math.max(1, Math.floor(cores / 2));
-
 // To find which tests execute which lines, muex first runs every test file
 // it is given under :cover, whatever lines are mutated. The files under
-// test/scripts drive shell scripts in subprocesses, so in their own BEAM they
+// test/scripts drive repo scripts in subprocesses, so in their own BEAM they
 // execute only the app-start lines every test file executes; leaving them out
 // cuts that run by over half without changing which mutants are killed.
 export const testPaths = (all: string[]) => all.filter((f) => !f.startsWith("test/scripts/"));
@@ -383,7 +386,10 @@ export function gated(run: Run, io: GatedIo): number {
 	const tests = testPaths(io.find("test", "_test.exs"));
 	// muex strips GIT_INDEX_FILE from the test runs it starts.
 	const muexEnv = run.index === undefined ? env : { ...env, GIT_INDEX_FILE: run.index };
-	const status = io.run(muexArgs(run, tests, jobsFor(io.cores), report), muexEnv);
+	// muex runs as many test BEAMs at once as there are cores; like
+	// scripts/mix-test.ts, cap them at half (at least one) so a commit leaves
+	// the machine usable.
+	const status = io.run(muexArgs(run, tests, jobCount(io.cores), report), muexEnv);
 	if (status !== 0) return status;
 
 	const record = () => !run.record || !holds(io.git, run.tree, env) || io.records.mark("mutated", run.tree);
@@ -432,7 +438,7 @@ if (import.meta.main) {
 		records: records(git),
 		env: process.env,
 		root,
-		cores: availableParallelism(),
+		cores: onlineCores(),
 		find: (dir, suffix, depth) => find(root, dir, suffix, depth),
 		run: (cmd, env) => Bun.spawnSync(cmd, { env, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1,
 		readReport: (path) => (statOf(path)?.isFile() ? JSON.parse(readFileSync(path, "utf8")).mutations : null),

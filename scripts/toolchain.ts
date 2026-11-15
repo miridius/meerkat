@@ -27,7 +27,7 @@
 // when there is one.
 //
 // main does its I/O through an Io: scripts/toolchain.test.ts drives it
-// with a stand-in, and the ExUnit test stubs curl and pnpm on PATH.
+// with a stand-in, and the ExUnit test stubs curl, gh and pnpm on PATH.
 
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

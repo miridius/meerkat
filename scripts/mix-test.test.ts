@@ -82,9 +82,9 @@ describe("runSuite", () => {
 	});
 
 	test("a file that did not finish fails the run", async () => {
-		const { status, out } = await suite({ runs: { [b]: [{ status: null, output: "", times: "" }] } });
+		const { status, out } = await suite({ runs: { [b]: [{ status: null, output: "half\n", times: "" }] } });
 		expect(status).toBe(1);
-		expect(out).toBe(`\n=== mix test ${b} did not finish ===\n\nmix test: 1 of 3 test files failed:\n  ${b}\n`);
+		expect(out).toBe(`\n=== mix test ${b} did not finish ===\nhalf\n\nmix test: 1 of 3 test files failed:\n  ${b}\n`);
 	});
 
 	test("no file is run again, nor the limits read, once a file has failed", async () => {

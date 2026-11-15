@@ -34,7 +34,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { constants as osConstants, homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 // How many version dirs to retain for rollback/history. A version a
@@ -238,9 +238,9 @@ export function withoutGitVars(env: Record<string, string | undefined>): Record<
 type Env = Record<string, string | undefined>;
 
 // The exit status bash gives a command that `Bun.spawnSync` reports.
-function status(result: { exitCode: number | null; signalCode?: string | null }): number {
+export function status(result: { exitCode: number | null; signalCode?: string | null }): number {
 	if (result.exitCode !== null) return result.exitCode;
-	const signal = result.signalCode ? constants.signals[result.signalCode as keyof typeof constants.signals] : 0;
+	const signal = result.signalCode ? osConstants.signals[result.signalCode as keyof typeof osConstants.signals] : 0;
 	return 128 + (signal ?? 0);
 }
 
@@ -393,7 +393,7 @@ function install(args: string[]): void {
 
 	// Smoke-test the new release BEFORE flipping `current` at it: an
 	// empty-staged-no-commit-msg invocation hits the auto-approve fast path
-	// (cli.ex auto_approve_decision/2 staged-empty branch), approves without
+	// (cli.ex auto_approve_decision/3 staged-empty branch), approves without
 	// binding a port, and proves the release boots end-to-end. Gating the
 	// flip on it means a build that fails its smoke test leaves `current` on
 	// the last good version and the next hook run rebuilds, instead of

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { plan, withoutVars } from "./auto-install";
+import { plan } from "./auto-install";
 
 describe("plan", () => {
 	test("installs on main", () => {
@@ -15,15 +15,6 @@ describe("plan", () => {
 			message: "meerkat auto-install: HEAD=feature (not main); skipping.",
 		});
 		expect(plan("")).toEqual({ install: false, message: "meerkat auto-install: couldn't resolve HEAD; skipping." });
-	});
-});
-
-describe("withoutVars", () => {
-	test("drops each variable named on its own line", () => {
-		expect(withoutVars({ GIT_DIR: "d", GIT_INDEX_FILE: "i", GIT_EDITOR: "e", PATH: "/bin" }, "GIT_DIR\nGIT_INDEX_FILE\n")).toEqual({
-			GIT_EDITOR: "e",
-			PATH: "/bin",
-		});
 	});
 });
 
@@ -50,7 +41,8 @@ describe("auto-install.ts", () => {
 		repo = join(base, "repo");
 		const log = join(base, "log");
 		mkdirSync(join(repo, "scripts"), { recursive: true });
-		copyFileSync(join(import.meta.dir, "auto-install.ts"), join(repo, "scripts/auto-install.ts"));
+		for (const name of ["auto-install.ts", "checked-trees.ts", "e2e-inputs.ts"])
+			copyFileSync(join(import.meta.dir, name), join(repo, "scripts", name));
 		writeFileSync(join(repo, "scripts/install.sh"), `echo install.sh >> '${log}'\n`);
 		git(base, "init", "-q", "--template=", "--initial-branch=main", repo);
 		git(repo, "add", ".");
@@ -103,8 +95,12 @@ exit 0
 
 	test("off main, does nothing", async () => {
 		git(repo, "switch", "-q", "-c", "feature");
-		const run = autoInstall();
-		expect(run).toEqual({ status: 0, stderr: "meerkat auto-install: HEAD=feature (not main); skipping.\n" });
-		expect(await logLines()).toEqual([]);
+		try {
+			const run = autoInstall();
+			expect(run).toEqual({ status: 0, stderr: "meerkat auto-install: HEAD=feature (not main); skipping.\n" });
+			expect(await logLines()).toEqual([]);
+		} finally {
+			git(repo, "switch", "-q", "main");
+		}
 	});
 });

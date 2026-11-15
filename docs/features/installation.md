@@ -1,8 +1,8 @@
 # Installation
 
 `~/.local/bin/meerkat` is the public entrypoint. `scripts/install.sh`
-installs the prod release there: it installs Bun through mise, then
-runs `scripts/install.ts`, which does the work.
+installs the prod release there: it installs Bun, through mise when
+mise is here, then runs `scripts/install.ts`, which does the work.
 
 `bin/meerkat-beam`, the dev launcher, runs meerkat from a checkout
 under `MIX_ENV=dev`, compiling and building assets first when they are
@@ -25,10 +25,10 @@ scripts/install.sh
 - Writes `~/.local/bin/meerkat` to exec that shepherd, which runs
   the release: no Mix. It replaces any other launcher there.
 
-The post-merge git hook (`scripts/no-main-commits.ts` enables
-lefthook, whose `scripts/auto-install.ts` runs `scripts/install.sh`
-on merge to `main`)
-auto-installs prod whenever a feature branch lands. So a
+The post-merge and post-checkout git hooks (lefthook, which
+`pnpm install` enables, runs `scripts/auto-install.ts`, which runs
+`scripts/install.sh` when HEAD is on `main`) auto-install prod
+whenever a feature branch lands. So a
 `bundled-fixes → main` merge gives every consumer the prod
 release without manual steps.
 

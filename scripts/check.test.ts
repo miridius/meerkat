@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { check, gated, plan, type Step, steps, toRecord } from "./check";
+import { check, gated, gatedCommand, parseGated, plan, type Step, steps, toRecord } from "./check";
 import type { Records, Store } from "./checked-trees";
 import { fakeGit } from "./fake-git";
 
@@ -178,6 +178,13 @@ describe("gated", () => {
 	test("fails when a record cannot be made", () => {
 		expect(run({ markFails: true }).status).toBe(1);
 	});
+});
+
+// gate-run.sh runs the command it is given, `bun scripts/check.ts` and the
+// gated part's arguments.
+test("the gated part reads back the label, tree and e2e choice it is given", () => {
+	for (const e2e of [true, false])
+		expect(parseGated(gatedCommand("pre-commit", "t1", e2e).slice(4))).toEqual({ label: "pre-commit", tree: "t1", e2e });
 });
 
 describe("check", () => {

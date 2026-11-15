@@ -9,7 +9,6 @@ import {
 	gated,
 	type Io,
 	judge,
-	jobsFor,
 	listMutants,
 	type Mutation,
 	muexArgs,
@@ -212,6 +211,13 @@ describe("plan", () => {
 			expect(r.marked).toEqual(["mutated t1"]);
 		});
 
+		test("refuses when git cannot write the staged tree or find the index", () => {
+			const refused = { exit: 2, err: ["scripts/mutate.ts: git cannot read the staged contents."] };
+			expect(run(["staged"], { ...STAGED, "write-tree": { status: 128, out: "" } }).result).toEqual(refused);
+			const noIndex = { ...STAGED, "rev-parse --path-format=absolute --git-path index": { status: 128, out: "" } };
+			expect(run(["staged"], noIndex).result).toEqual(refused);
+		});
+
 		// An external diff tool or textconv filter would hide the lines.
 		test("reads the diff git itself makes", () => {
 			const r = run(["staged"], STAGED);
@@ -323,10 +329,6 @@ describe("the muex run", () => {
 				.join(" ")
 				.split(" "),
 		);
-	});
-
-	test("runs half the cores' worth of test BEAMs, at least one", () => {
-		expect([jobsFor(1), jobsFor(2), jobsFor(9), jobsFor(16)]).toEqual([1, 1, 4, 8]);
 	});
 
 	test("leaves out the test files that drive scripts in subprocesses", () => {

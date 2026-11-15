@@ -565,6 +565,11 @@ describe("against a repo", () => {
 		expect(t.get("ref-names")).toBe("refs/tags/v2\nv2\n");
 	});
 
+	test("finds a private pattern in a non-ASCII ref name", () => {
+		const t = texts("main", [`^${sha("main")}`], ["refs/heads/jos\u00e9-fix"]);
+		expect(scan(git, locale, t, [], [], [{ line: 1, regex: "jos\u00e9" }], FILE)).toHaveLength(1);
+	});
+
 	test("asks the remote what it has, and whether it is ahead", () => {
 		expect(askRemote(git, remote)).toEqual({ have: [`^${sha("main")}`], ahead: true });
 		const r = run(["--remote", join(base, "missing.git"), "main"]);
@@ -607,6 +612,12 @@ describe("against a repo", () => {
 	test("lets allowed addresses through, with colour forced on in git config", () => {
 		const colour = { ...env, GIT_CONFIG_PARAMETERS: "'color.ui'='always'" };
 		expect(run(["--remote", remote, "emails"], work, colour)).toEqual({ status: 0, out: "", err: "" });
+	});
+
+	test("pushed, checks history only another remote's tracking branch has", () => {
+		const r = run(["--remote", remote, "--ref", "refs/heads/public", "public"]);
+		expect(r.status).toBe(1);
+		expect(r.err).toContain("in a commit, tag or ref name being pushed");
 	});
 
 	test("run by hand, skips history on a remote-tracking branch, and searches the whole tree from a subdirectory", () => {

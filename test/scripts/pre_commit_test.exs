@@ -79,7 +79,7 @@ defmodule Meerkat.PreCommitHookTest do
 
     for script <-
           ~w(check.ts checked-trees.ts e2e-inputs.ts gate-lock.sh gate-run.sh no-main-commits.ts
-             mutate.ts) do
+             mix-test.ts mutate.ts) do
       File.cp!(Path.join([@root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 

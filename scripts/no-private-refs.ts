@@ -34,7 +34,8 @@
 // it is meant to match. Run it after editing a pattern.
 //
 // The logic is in the exported functions, which bun tests drive on literal
-// inputs; only `collect` and the searches run git.
+// inputs; only `collect`, `askRemote`, `loadPrivate` and the searches run
+// git.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -96,10 +97,12 @@ export class Refusal extends Error {
 // Pushed content need not be valid text, so what git prints, and so each
 // text collected and each hit, is held as bytes: a string with one byte per
 // character (latin1). Patterns, paths, git's arguments and messages are
-// ordinary strings, and `display` turns bytes into one.
+// ordinary strings: `display` turns bytes into one, and `encode` one into
+// its UTF-8 bytes.
 const bytes = (s: string) => Buffer.from(s, "latin1");
 const text = (b: Buffer | Uint8Array) => Buffer.from(b).toString("latin1");
 export const display = (s: string) => bytes(s).toString("utf8");
+const encode = (s: string) => text(Buffer.from(s, "utf8"));
 
 export const dropAllowed = (hits: string[]) => hits.filter((hit) => !ALLOWED.test(hit));
 
@@ -401,7 +404,7 @@ export function collect(git: Git, tips: string[], refs: string[], exclude?: stri
 			object = tag.match(/^object (\S+)/)?.[1] ?? "";
 		}
 	}
-	if (refs.length > 0) texts.set("ref-names", refNameLines(refs));
+	if (refs.length > 0) texts.set("ref-names", encode(refNameLines(refs)));
 	return texts;
 }
 
@@ -485,10 +488,9 @@ export function selfTest(
 	privateFile: string,
 ): string[] {
 	const samples = new Map<string, string>([["empty/sample.txt", "\n"]]);
-	const utf8 = (s: string) => text(Buffer.from(s, "utf8"));
 	generic.forEach((p, i) => {
-		samples.set(`examples/match-${i}`, utf8(`${p.match}\n`));
-		samples.set(`examples/miss-${i}`, utf8(`${p.miss}\n`));
+		samples.set(`examples/match-${i}`, encode(`${p.match}\n`));
+		samples.set(`examples/miss-${i}`, encode(`${p.miss}\n`));
 	});
 	const dir = writeDir(samples);
 	const empty = join(dir, "empty");
