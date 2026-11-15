@@ -197,6 +197,7 @@ describe("editorKeys", () => {
 			['(log/info |{:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
 			['(log/info |{:a "x"\n           :b 2})', '(log/info "m" {:a "x"\n               :b 2})'],
 			["(log/info |{:a 1\n           :b 2})", '(log/info "\\n" {:a 1\n                :b 2})', ['"', "\\", "n", '"', " "]],
+			["(log/info |{:a 1 ; id\n           :b 2})", '(log/info "m" {:a 1 ; id\n               :b 2})'],
 			// Backspace on the quote just typed.
 			["(log/info |{:a 1\n           :b 2})", "(log/info {:a 1\n           :b 2})", ['"', "\b"]],
 		] as [string, string, string[]?][]) {

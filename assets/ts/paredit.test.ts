@@ -107,6 +107,11 @@ describe("alignBelow", () => {
 
 	test("leaves a string's lines when the string is not typed in on the edited line", () => {
 		expect(edit('(str "a«»b" "one\n          two")', "x")).toEqual(['(str "axb" "one', '          two")']);
+		expect(edit('(foo "a«»b" {:sql "S\n                FROM t"\n           :b 2})', "x")).toEqual([
+			'(foo "axb" {:sql "S',
+			'                FROM t"',
+			"            :b 2})",
+		]);
 		expect(edit('(«»str "a\n        b")', "x")).toEqual(['(xstr "a', '        b")']);
 		expect(edit('(f "a\nb«»c\n      d")', "x")).toEqual(['(f "a', "bxc", '      d")']);
 		expect(edit('(foo«» bar\n  "s\n     baz)', "o")).toEqual(['(fooo bar', '  "s', "     baz)"]);

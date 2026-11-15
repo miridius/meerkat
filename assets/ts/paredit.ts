@@ -228,14 +228,15 @@ export function alignBelow(tr: Transaction): Alignment {
 	const open = typedNow ? tr.changes.mapPos(typedNow.from, -1) : earlier === null ? null : tr.changes.mapPos(earlier, 1);
 	const typing = open !== null && open >= line.from && textStart(tree, caret) === open;
 	let quote = -1;
-	if (typing && inText(tree, line.to)) {
+	if (typing && stringAt(tree, line.to)) {
 		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
-		if (!inText(closed, line.to + 2)) [tree, quote] = [closed, caret];
+		if (!stringAt(closed, line.to + 2)) [tree, quote] = [closed, caret];
 	}
 	/** Where `pos` on the edited line in `tree` is after the edit. */
 	const after = (pos: number) => (quote >= 0 && pos > quote ? pos - 2 : pos);
+	const undo = tr.changes.invertedDesc;
 	/** Where `pos` on the edited line in `tree` was before the edit. */
-	const before = (pos: number) => tr.changes.invertedDesc.mapPos(after(pos), 1);
+	const before = (pos: number) => undo.mapPos(after(pos), 1);
 	/** How far the text above column `indent` moves, as a form's start or
 	 *  a character; none past the edited line's text. */
 	const above = (indent: number, form: boolean) =>
@@ -545,6 +546,12 @@ function textStart(state: EditorState, pos: number): number | null {
 		if (node.name === "Character") return node.from < pos && pos < node.to ? node.from : null;
 	}
 	return state.doc.sliceString(pos - 1, pos) === "\\" ? pos - 1 : null;
+}
+
+/** Whether `pos` sits in a string, a regex's included. */
+function stringAt(state: EditorState, pos: number): boolean {
+	const start = textStart(state, pos);
+	return start !== null && /^#?"/.test(state.doc.sliceString(start, start + 2));
 }
 
 /** Whether a selection end at `pos` splits a prefix from what it applies
