@@ -77,14 +77,6 @@ test("Clojure keys and structural typing work in a suggestion", async ({ page })
 		await expect.poll(text).toBe("    []((foo y bar))))");
 		await page.keyboard.press("Control+K");
 		await expect.poll(text).toBe("    []()))");
-
-		// An only argument: the completion list asks which macro.
-		await page.keyboard.type("g x");
-		await page.keyboard.press("Control+Alt+Comma");
-		const choices = form.locator(".cm-tooltip-autocomplete li");
-		await expect(choices).toHaveText(["->", "->>"]);
-		await choices.filter({ hasText: /^->>$/ }).click();
-		await expect.poll(text).toBe("    [](->> x g)))");
 	} finally {
 		await meerkat.kill();
 	}

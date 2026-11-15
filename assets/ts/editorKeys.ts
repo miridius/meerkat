@@ -1,19 +1,9 @@
-import { type CompletionContext, type CompletionResult, startCompletion } from "@codemirror/autocomplete";
 import { moveLineDown, moveLineUp } from "@codemirror/commands";
-import {
-	type EditorSelection,
-	type EditorState,
-	type Extension,
-	StateEffect,
-	StateField,
-	EditorState as State,
-	type TransactionSpec,
-} from "@codemirror/state";
+import { type EditorState, type Extension, EditorState as State, type TransactionSpec } from "@codemirror/state";
 import { type Command, type KeyBinding, keymap } from "@codemirror/view";
 import { SUPPORTED_LANGUAGES } from "./cmLang.js";
 import {
 	alignBelow,
-	asksThread,
 	barfBackward,
 	barfForward,
 	bracketTyping,
@@ -88,38 +78,6 @@ const cutKill: Command = (view) => {
 	return true;
 };
 
-const askThread = StateEffect.define<EditorSelection>();
-
-/** The selection Thread Form asked at which macro to thread with, until
- *  the text changes. */
-const threadAsked = StateField.define<EditorSelection | null>({
-	create: () => null,
-	update: (asked, tr) => tr.effects.find((e) => e.is(askThread))?.value ?? (tr.docChanged ? null : asked),
-});
-
-/** Cursive's Thread Form, which for an only argument asks, in the
- *  editor's completion list, whether to thread with `->` or `->>`. */
-const threadForm: Command = (view) => {
-	if (!asksThread(view.state)) return claim(thread)(view);
-	view.dispatch({ effects: askThread.of(view.state.selection) });
-	startCompletion(view);
-	return true;
-};
-
-/** The macros Thread Form offers, while the selection it asked at holds. */
-function threadChoices(context: CompletionContext): CompletionResult | null {
-	const asked = context.state.field(threadAsked, false);
-	if (!asked?.eq(context.state.selection)) return null;
-	return {
-		from: context.pos,
-		filter: false,
-		options: (["->", "->>"] as const).map((macro) => ({
-			label: macro,
-			apply: (view) => claim((state) => thread(state, macro))(view),
-		})),
-	};
-}
-
 export const HOTKEYS: Hotkey[] = [
 	{
 		scope: "all",
@@ -190,8 +148,8 @@ export const HOTKEYS: Hotkey[] = [
 	{
 		scope: "clojure",
 		keys: ["Ctrl-Alt-,"],
-		does: "Thread the form into its list with -> or ->>",
-		run: [() => threadForm],
+		does: "Thread the form into its list with -> or ->>, by its place",
+		run: [() => claim(thread)],
 	},
 	{
 		scope: "clojure",
@@ -293,10 +251,7 @@ export function editorKeys(language: string): Extension {
 	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
 	// Filters run last first: a paste re-indents its own lines, then the
 	// lines below keep their alignment.
-	if (language === "clojure") {
-		extensions.push(typedQuote, bracketTyping, keepAligned, reindentPaste);
-		extensions.push(threadAsked, State.languageData.of(() => [{ autocomplete: threadChoices }]));
-	}
+	if (language === "clojure") extensions.push(typedQuote, bracketTyping, keepAligned, reindentPaste);
 	return extensions;
 }
 

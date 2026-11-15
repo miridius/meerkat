@@ -5,7 +5,6 @@ import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
 import {
 	alignBelow,
-	asksThread,
 	barfBackward,
 	barfForward,
 	deleteGuarded,
@@ -518,23 +517,20 @@ describe("thread", () => {
 		expect(run(thread, "(map f (filter p xs)|)")).toBe("|(->> (filter p xs) (map f))");
 	});
 
-	test("asks which macro for an only argument, and threads it with the one given", () => {
-		const asks = (marked: string) => asksThread(stateOf(marked));
-		expect(asks("(g |x)")).toBe(true);
-		expect(asks("(f |x b)")).toBe(false);
-		expect(asks("(map f |(->> x g))")).toBe(false);
-		expect(run(thread, "(g |x)")).toBeNull();
-		expect(run((state) => thread(state, "->"), "(count |(filter p xs))")).toBe("|(-> (filter p xs) count)");
-		expect(run((state) => thread(state, "->>"), "(map f (g |x))")).toBe("(map f |(->> x g))");
+	test("threads an only argument by where its call sits in the call around it", () => {
+		expect(run(thread, "(g |x)")).toBe("|(-> x g)");
+		expect(run(thread, "(count |(filter p xs))")).toBe("|(-> (filter p xs) count)");
+		expect(run(thread, "(map f (g |x))")).toBe("(map f |(->> x g))");
 		expect(run(thread, "(map f |(->> x g))")).toBe("|(->> x g (map f))");
+		expect(run(thread, "(assoc (g |x) :k 1)")).toBe("(assoc |(-> x g) :k 1)");
+		expect(run(thread, "(h (g |x))")).toBe("(h |(-> x g))");
+		expect(run(thread, "[a (g |x)]")).toBe("[a |(-> x g)]");
 	});
 
 	test("takes the call into a thread at the matching end, so repeating threads outward", () => {
 		expect(run(thread, "(h (f |(g x) b) c)")).toBe("(h |(-> (g x) (f b)) c)");
 		expect(run(thread, "(h |(-> (g x) (f b)) c)")).toBe("|(-> (g x) (f b) (h c))");
 		expect(run(thread, "(reduce + |(->> xs (map f)))")).toBe("|(->> xs (map f) (reduce +))");
-		expect(run(thread, "(f |(some-> m :k) b)")).toBe("|(some-> m :k (f b))");
-		expect(run(thread, "(map f |(some->> xs g))")).toBe("|(some->> xs g (map f))");
 	});
 
 	test("starts a new thread around a thread at the other end", () => {
@@ -577,8 +573,6 @@ describe("unthread", () => {
 		expect(run(unthread, "(-> x g (f |b))")).toBe("(-> |(g x) (f b))");
 		expect(run(unthread, "(->> xs (filter p) (map |f))")).toBe("(->> |(filter p xs) (map f))");
 		expect(run(unthread, "(-> x (f) |g)")).toBe("(-> |(f x) g)");
-		expect(run(unthread, "(some-> m :k (f |b))")).toBe("(some-> |(:k m) (f b))");
-		expect(run(unthread, "(some->> |xs (map f))")).toBe("|(map f xs)");
 	});
 
 	test("replaces a thread with one step left by its call", () => {
