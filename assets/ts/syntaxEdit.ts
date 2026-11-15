@@ -71,9 +71,9 @@ function prefixed(state: EditorState, node: SyntaxNode): boolean {
 	return true;
 }
 
-/** The form `end`, a closing bracket or quote, ends, with any prefix
- *  such as `#`, `'` or `#:ns` that starts after `start`. Null when `end`
- *  is no closer. */
+/** The form `end`, a closing bracket or quote, ends, taking in any
+ *  prefix such as `#`, `'` or `#:ns` while the form starts after
+ *  `start`. Null when `end` is no closer. */
 function closedForm(state: EditorState, end: SyntaxNode, start = -1): SyntaxNode | null {
 	if (!end.parent || !closing(state, end)) return null;
 	let node = end.parent;
@@ -81,8 +81,9 @@ function closedForm(state: EditorState, end: SyntaxNode, start = -1): SyntaxNode
 	return node;
 }
 
-/** Whether `node` is a string a grammar parses with no quote tokens,
- *  such as `"b"`, `f'{b}'`, `u8"b"` or `` `b` ``. */
+/** Whether `node`'s text is a string: up to three letters or digits, a
+ *  quote, and the same quote at its end, such as `"b"`, `f'{b}'`,
+ *  `u8"b"` or `` `b` ``. */
 function stringToken(state: EditorState, node: SyntaxNode): boolean {
 	const open = /^[A-Za-z0-9]{0,3}(["'`])/.exec(state.doc.sliceString(node.from, Math.min(node.to, node.from + 4)));
 	return !!open && node.to - node.from > open[0].length && state.doc.sliceString(node.to - 1, node.to) === open[1];
@@ -90,14 +91,18 @@ function stringToken(state: EditorState, node: SyntaxNode): boolean {
 
 /** The form a caret at `pos` sits just before or just after: the
  *  bracketed form, with any prefix such as `#{`, `@(` or `#:ns{`, that
- *  starts or ends there, or a string token that ends there. The form
- *  after the caret wins when both hold. Null elsewhere. */
+ *  starts or ends there, or a string that ends there; between a prefix
+ *  and its bracket, the form without the prefix. The form after the
+ *  caret, the outermost one starting there, wins when both hold. Null
+ *  elsewhere. */
 function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
+	let found: SyntaxNode | null = null;
 	for (let node = tree.resolveInner(pos, 1); node.from === pos && node.parent; node = node.parent) {
 		const form = closedForm(state, tree.resolveInner(node.parent.to, -1), pos);
-		if (form?.from === pos) return form;
+		if (form?.from === pos) found = form;
 	}
+	if (found) return found;
 	const before = tree.resolveInner(pos, -1);
 	if (before.to !== pos) return null;
 	return stringToken(state, before) ? before : closedForm(state, before);

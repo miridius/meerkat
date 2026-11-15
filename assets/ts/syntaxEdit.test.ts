@@ -71,7 +71,7 @@ describe("expandSelection", () => {
 			const state = stateOf(doc, language);
 			return marked(apply(state, expandSelection(state)));
 		};
-		const prefixed = ["'#{b}", "@(b)", "#:n{:b 1}", "^:m (e)", "#^:m (e)", '#inst "x"', "#my.Rec{:b 1}", "#my.Rec[1]"];
+		const prefixed = ["'#{b}", "@(b)", "#:n{:b 1}", "^:m (e)", "#^{:m 1} (e)", '#inst "x"', "#my.Rec{:b 1}", "#my.Rec[1]"];
 		for (const form of ["(b)", "[b]", "{:b c}", "#{b}", '"b c"', ...prefixed]) {
 			expect(expand(`(a |${form} d)`, clojure())).toBe(`(a <${form}> d)`);
 			expect(expand(`(a ${form}| d)`, clojure())).toBe(`(a <${form}> d)`);
