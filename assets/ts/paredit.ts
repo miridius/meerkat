@@ -432,15 +432,15 @@ export const clojureItems: Entries = (node) => {
 	return key ? [] : items;
 };
 
-/** The form of `all` that `pos` is in or before, else the one it is
- *  after. */
+/** The form of `all` that `pos` is in or before, else the one ending at
+ *  `pos`. */
 function formAt(all: SyntaxNode[], pos: number): SyntaxNode | undefined {
 	return all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
 }
 
 /** Wrap the form at the caret in `open` and its closer, as Cursive's
  *  Wrap with () / [] / {} do: the form the caret is in or before, else
- *  the one it is after, else an empty pair. A selection is wrapped as
+ *  the one just before it, else an empty pair. A selection is wrapped as
  *  typing `open` wraps it. */
 export function wrap(state: EditorState, open: "(" | "[" | "{"): TransactionSpec | null {
 	if (state.selection.ranges.some((r) => !r.empty)) {
@@ -495,16 +495,15 @@ export function split(state: EditorState): TransactionSpec | null {
 		const closer = coll && closerOf(coll);
 		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
-		// The first half closes after its last form, or on its own line
-		// after a comment, which would hide a closer put on its line.
-		const start = coll.firstChild.to;
-		const back = (space: RegExp) => {
-			let from = pos;
-			while (from > start && space.test(state.doc.sliceString(from - 1, from))) from--;
-			return from;
-		};
-		let from = back(/\s/);
-		if (syntaxTree(state).resolveInner(from, -1).name === "LineComment") from = back(/[ \t]/);
+		// The first half closes after its last form, or on the line after
+		// a comment, which would hide a closer put on its line.
+		let before = coll.firstChild;
+		for (let child = before.nextSibling; child && child.to <= pos; child = child.nextSibling) before = child;
+		let from = before.to;
+		if (before.name === "LineComment") {
+			from = pos;
+			while (/[ \t]/.test(state.doc.sliceString(from - 1, from))) from--;
+		}
 		let to = pos;
 		while (to < closer.from && /\s/.test(state.doc.sliceString(to, to + 1))) to++;
 		// Each half keeps the prefixes on the collection, such as `#_` or `'`.
@@ -534,7 +533,7 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 		if (!prev || !next || !whole(prev) || sibling(prev, 1)?.from !== next.from || prev.name !== next.name) return null;
 		if (prev.name === "String" && plainStringAt(state, prev.to - 1) && plainStringAt(state, next.from + 1)) {
 			// A comment between the strings would go with the quotes.
-			if (state.doc.sliceString(prev.to, next.from).trim() !== "") return null;
+			if (prev.nextSibling?.from !== next.from) return null;
 			return { changes: [{ from: prev.to - 1, to: next.from + 1 }], cursor: prev.to - 1 };
 		}
 		const left = collOf(prev);
@@ -554,13 +553,6 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 					];
 		return { changes, cursor: closer.from };
 	});
-}
-
-/** Whether `node` is one token: it has no children, or one token that
- *  spans it, as a def's name `VarName { Symbol }` does. */
-function token(node: SyntaxNode): boolean {
-	const child = node.firstChild;
-	return child === null || (child.from === node.from && child.to === node.to && token(child));
 }
 
 /** Where Kill from `pos` stops: the end of the line, or before the
@@ -588,9 +580,13 @@ function killEnd(state: EditorState, pos: number): number | null {
 	}
 	let end = Math.min(line.to, limit);
 	if (end === pos) return pos === line.to && pos < limit ? pos + 1 : null;
+	// A form the caret is in is cut from inside one token, such as a
+	// symbol under metadata, or not at all.
+	const at = syntaxTree(state).resolveInner(pos, -1);
+	const inToken = at.firstChild === null && at.from < pos && pos < at.to;
 	for (const f of forms(parent)) {
 		if (f.to <= pos || f.from >= end) continue;
-		if (f.from < pos && !token(f)) return null;
+		if (f.from < pos && !inToken) return null;
 		if (f.to > end) {
 			if (!whole(f)) return null;
 			end = f.to;
@@ -650,12 +646,17 @@ function removal(node: SyntaxNode): [number, number] {
 	return prev.name === "LineComment" ? [node.from, next.from] : [prev.to, node.to];
 }
 
+/** Whether `coll` holds exactly `n` forms, `#_` ones included, and no
+ *  comment. */
+function holdsOnly(coll: SyntaxNode, n: number): boolean {
+	return forms(coll).length === n && coll.getChildren("LineComment").length === 0;
+}
+
 /** `call` without its argument `arg`, as a threading step: `(f b)` for
  *  `(f a b)` without `a`, or just `f` when nothing else is left. */
 function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): string {
 	const all = forms(call);
-	const bare = all.length === 2 && call.getChildren("LineComment").length === 0;
-	if (bare && (all[0].name === "Operator" || all[0].name === "Keyword")) return text(state, all[0]);
+	if (holdsOnly(call, 2) && (all[0].name === "Operator" || all[0].name === "Keyword")) return text(state, all[0]);
 	const [from, to] = removal(arg);
 	return state.doc.sliceString(call.from, from) + state.doc.sliceString(to, call.to);
 }
@@ -718,7 +719,7 @@ export function unthread(state: EditorState): TransactionSpec | null {
 			const [, value, step] = live(coll);
 			// The thread becomes the call only when it holds no other form,
 			// such as a `#_` one, or comment that would go with it.
-			const alone = forms(coll).length === (step ? 3 : 2) && coll.getChildren("LineComment").length === 0;
+			const alone = holdsOnly(coll, step ? 3 : 2);
 			if (!value || (!step && !alone)) return null;
 			if (!step) return { changes: [{ from: coll.from, to: coll.to, insert: text(state, value) }], cursor: coll.from };
 			let call: string;

@@ -405,6 +405,7 @@ describe("split", () => {
 	test("closes the first half on its last form's line at a line's start or end", () => {
 		expect(run(split, "(a\n |b)")).toBe("(a)|\n(b)");
 		expect(run(split, "(a|\n b)")).toBe("(a)|\n(b)");
+		expect(run(split, "(a \\ \n |b)")).toBe("(a \\ )|\n(b)");
 	});
 
 	test("closes the first half after a comment on the next line", () => {
@@ -459,6 +460,7 @@ describe("joinForms", () => {
 	test("joins sets and strings", () => {
 		expect(run(joinForms, "#{a} |#{b}")).toBe("#{a| b}");
 		expect(run(joinForms, '"ab" |"cd"')).toBe('"ab|cd"');
+		expect(run(joinForms, '"ab", |"cd"')).toBe('"ab|cd"');
 	});
 
 	test("joins lists with the same quote or deref", () => {
@@ -513,6 +515,7 @@ describe("kill", () => {
 		expect(killed('"ab|cd\nef"')).toEqual({ text: '"ab|\nef"', cut: "cd" });
 		expect(killed('"ab|\ncd"')).toEqual({ text: '"ab|cd"', cut: "\n" });
 		expect(killed('(re-find #"ab|cd" s)')).toEqual({ text: '(re-find #"ab|" s)', cut: "cd" });
+		expect(killed('(f "ab|" x)')).toBeNull();
 	});
 
 	test("cuts within a comment to the line's end, and no further", () => {
@@ -523,6 +526,7 @@ describe("kill", () => {
 	test("cuts from inside a symbol", () => {
 		expect(killed("(fo|o bar)")).toEqual({ text: "(fo|)", cut: "o bar" });
 		expect(killed("(defn fo|o [x] x)")).toEqual({ text: "(defn fo|)", cut: "o [x] x" });
+		expect(killed("(defn ^:private fo|o [x] x)")).toEqual({ text: "(defn ^:private fo|)", cut: "o [x] x" });
 	});
 
 	test("stops at a stray closer", () => {
