@@ -3,6 +3,7 @@ import { type EditorState, type Extension, EditorState as State, type Transactio
 import { type Command, type KeyBinding, keymap } from "@codemirror/view";
 import { SUPPORTED_LANGUAGES } from "./cmLang.js";
 import {
+	alignBelow,
 	barfBackward,
 	barfForward,
 	bracketTyping,
@@ -15,6 +16,7 @@ import {
 	slurpForward,
 	splice,
 	tightInClojure,
+	typedQuote,
 } from "./paredit.js";
 import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit.js";
 
@@ -152,6 +154,19 @@ const reindentPaste = State.transactionFilter.of((tr) => {
 	return spec.changes === tr.changes ? tr : spec;
 });
 
+/** The user events of edits: typing, deleting, pasting, the structural
+ *  keys, moves and the indent commands. Undo and redo replay their own. */
+const EDITS = ["input", "delete", "edit", "move", "indent"];
+
+/** Keep the lines below a line an edit changes aligned to the text the
+ *  edit moves. */
+const keepAligned = State.transactionFilter.of((tr) => {
+	if (!tr.docChanged || !EDITS.some((event) => tr.isUserEvent(event))) return tr;
+	const { shift, effects } = alignBelow(tr);
+	if (!shift && effects.length === 0) return tr;
+	return [tr, { changes: shift ?? [], sequential: true, effects }];
+});
+
 /** The key bindings for a file in `language`. */
 export function hotkeyBindings(language: string): KeyBinding[] {
 	const scopes = scopesFor(language);
@@ -181,7 +196,9 @@ export function hotkeyBindings(language: string): KeyBinding[] {
  *  `language`. */
 export function editorKeys(language: string): Extension {
 	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
-	if (language === "clojure") extensions.push(bracketTyping, reindentPaste);
+	// Filters run last first: a paste re-indents its own lines, then the
+	// lines below keep their alignment.
+	if (language === "clojure") extensions.push(typedQuote, bracketTyping, keepAligned, reindentPaste);
 	return extensions;
 }
 

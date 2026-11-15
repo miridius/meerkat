@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { insertNewlineAndIndent } from "@codemirror/commands";
-import { ensureSyntaxTree, getIndentation, LanguageSupport } from "@codemirror/language";
+import { getIndentation, LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Transaction } from "@codemirror/state";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
+import { parsed } from "./syntaxEdit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
 
@@ -13,10 +14,7 @@ function stateOf(doc: string, selection?: number): EditorState {
 		selection: selection === undefined ? undefined : EditorSelection.cursor(selection),
 		extensions: [clojure],
 	});
-	ensureSyntaxTree(state, doc.length, 5000);
-	// A fresh state's tree stops at its first time budget; an update takes
-	// the finished parse.
-	return state.update({}).state;
+	return parsed(state, 5000);
 }
 
 // cljfmt's own expected outputs (cljfmt/test/cljfmt/core_test.cljc,

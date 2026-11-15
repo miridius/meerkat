@@ -1,10 +1,18 @@
+import { invertedEffects } from "@codemirror/commands";
 import { indentRange, syntaxTree } from "@codemirror/language";
 import {
+	type ChangeDesc,
+	type ChangeSet,
 	type ChangeSpec,
 	EditorSelection,
 	type EditorState,
 	findClusterBreak,
+	MapMode,
 	type SelectionRange,
+	StateEffect,
+	StateField,
+	type Text,
+	type Transaction,
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -18,7 +26,7 @@ import {
 	isColl,
 	type SyntaxNode,
 } from "./clojureTree.js";
-import { type Entries, type Span, whole } from "./syntaxEdit.js";
+import { type Entries, parsed, type Span, whole } from "./syntaxEdit.js";
 
 /** Structural editing for Clojure, in the style of Cursive's paredit,
  *  over the Lezer tree of `@nextjournal/lang-clojure`. Each editing
@@ -158,6 +166,124 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 		selection: tr.newSelection.map(indent),
 		scrollIntoView: true,
 		userEvent: spec.userEvent,
+	};
+}
+
+/** Where `quote` is after `changes`; null once they delete it. */
+const mapQuote = (quote: number | null, changes: ChangeDesc) =>
+	quote === null ? null : changes.mapPos(quote, 1, MapMode.TrackAfter);
+
+const setTypedQuote = StateEffect.define<number | null>({ map: mapQuote });
+
+/** The opening quote of the string being typed, from the keystroke that
+ *  types it for as long as each edit lands in that string on the quote's
+ *  line; or null. Undo and redo bring it back with the text. */
+export const typedQuote = StateField.define<number | null>({
+	create: () => null,
+	update(quote, tr) {
+		// An undo step's effects run newest first, so the last one holds.
+		let next = mapQuote(quote, tr.changes);
+		for (const effect of tr.effects) if (effect.is(setTypedQuote)) next = effect.value;
+		return next;
+	},
+	provide: (field) =>
+		invertedEffects.of((tr) => {
+			const was = tr.startState.field(field);
+			return was === tr.state.field(field) ? [] : [setTypedQuote.of(was)];
+		}),
+});
+
+/** `alignBelow`'s result: the changes, after `tr`'s, that shift lines,
+ *  or null when none shifts, and the effects that update `typedQuote`. */
+export interface Alignment {
+	shift: ChangeSet | null;
+	effects: StateEffect<number | null>[];
+}
+
+/** The changes, after `tr`'s, that shift each line below its edited
+ *  line by as much as `tr` moves the text that line aligns to, when every
+ *  change sits on that one line. See "Structural typing in Clojure" in
+ *  docs/features/inline-comments.md. */
+export function alignBelow(tr: Transaction): Alignment {
+	const state = tr.startState;
+	const typed = state.field(typedQuote, false) ?? null;
+	const none = { shift: null, effects: typed === null ? [] : [setTypedQuote.of(null)] };
+	const doc = state.doc;
+	const parts: { from: number; to: number; inserted: Text }[] = [];
+	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, inserted }));
+	if (parts.length === 0) return none;
+	const edited = doc.lineAt(parts[0].from);
+	if (edited.number === doc.lines || parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return none;
+	/** How far the changes move the text at `pos` on the edited line: to
+	 *  where a deletion of it starts. Text inserted onto the start of a
+	 *  form leaves the form starting where it did; the opener or character
+	 *  it is typed before moves. */
+	const moved = (pos: number, form: boolean) =>
+		parts.reduce((sum, { from, to, inserted }) => {
+			const joins = from === to && /\S/.test(inserted.sliceString(inserted.length - 1));
+			if (to < pos || (to === pos && !(form && joins))) return sum + inserted.length - (to - from);
+			return from < pos && pos < to ? sum + from - pos : sum;
+		}, 0);
+	// The lines below are read in the text after the edit. A parse cut
+	// short stops them where it stopped.
+	let tree = parsed(tr.state, 50);
+	const line = tree.doc.line(edited.number);
+	// A string being typed on the edited line, from the quote this edit or
+	// an earlier keystroke typed, runs until its closing quote to the next
+	// quote in the text, past lines that are code: read it as closing
+	// right after the edit, where ` "` closes it even after a `\`.
+	const caret = tr.changes.mapPos(parts[parts.length - 1].to, 1);
+	const earlier = mapQuote(typed, tr.changes);
+	const quotes = parts.filter(({ inserted }) => inserted.toString() === '"').map(({ from }) => tr.changes.mapPos(from, -1));
+	if (earlier !== null) quotes.push(earlier);
+	const start = quotes.length > 0 ? textStart(tree, caret) : null;
+	const open = start !== null && start >= line.from && quotes.includes(start) ? start : null;
+	let quote = -1;
+	if (open !== null && stringAt(tree, line.to)) {
+		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
+		if (!stringAt(closed, line.to + 2)) [tree, quote] = [closed, caret];
+	}
+	/** Where `pos` on the edited line in `tree` is after the edit. */
+	const after = (pos: number) => (quote >= 0 && pos > quote ? pos - 2 : pos);
+	const undo = tr.changes.invertedDesc;
+	/** Where `pos` on the edited line in `tree` was before the edit. */
+	const before = (pos: number) => undo.mapPos(after(pos), 1);
+	/** How far the text above column `indent` moves, as a form's start or
+	 *  a character; none past the edited line's text. */
+	const above = (indent: number, form: boolean) =>
+		indent < edited.text.trimEnd().length ? moved(edited.from + indent, form) : 0;
+	const shifts = new Map<number, number>();
+	const changes: ChangeSpec[] = [];
+	// Line numbers are the same in `tree`, which adds no line.
+	for (let n = edited.number + 1; n <= doc.lines; n++) {
+		const below = tree.doc.line(n);
+		const indent = below.text.length - below.text.trimStart().length;
+		const start = below.from + indent;
+		// A string's lines are its text.
+		if (indent === below.length || inText(tree, start)) continue;
+		const coll = enclosing(tree, start);
+		// Past the collections that open on the edited line, nothing moves.
+		if (!coll || coll.from < edited.from) break;
+		const opener = tree.doc.lineAt(coll.from);
+		const onEdited = opener.number === edited.number;
+		// Where the opener was: a line's indentation is the one it had then.
+		const col = (onEdited ? before(coll.from) : coll.from) - opener.from;
+		// A line at or left of its opener, as one past a missing closer is,
+		// aligns to nothing in it.
+		if (indent <= col) continue;
+		let shift: number;
+		if (!onEdited) shift = shifts.get(opener.number) ?? 0;
+		else if (indent === col + 1 || indent === col + 2) shift = after(coll.from) - opener.from - col;
+		else shift = above(indent, true);
+		shift = Math.max(shift, -indent);
+		if (shift === 0) continue;
+		shifts.set(n, shift);
+		const from = doc.line(n).from;
+		changes.push(shift > 0 ? { from, insert: " ".repeat(shift) } : { from, to: from - shift });
+	}
+	return {
+		shift: changes.length === 0 ? null : state.changes(changes).map(tr.changes),
+		effects: open === earlier ? [] : [setTypedQuote.of(open)],
 	};
 }
 
@@ -431,6 +557,12 @@ function textStart(state: EditorState, pos: number): number | null {
 		if (node.name === "Character") return node.from < pos && pos < node.to ? node.from : null;
 	}
 	return state.doc.sliceString(pos - 1, pos) === "\\" ? pos - 1 : null;
+}
+
+/** Whether `pos` sits in a string, a regex's included. */
+function stringAt(state: EditorState, pos: number): boolean {
+	const start = textStart(state, pos);
+	return start !== null && /^#?"/.test(state.doc.sliceString(start, start + 2));
 }
 
 /** Whether a selection end at `pos` splits a prefix from what it applies

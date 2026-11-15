@@ -1,4 +1,4 @@
-import { syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import {
 	EditorSelection,
 	type EditorState,
@@ -14,6 +14,15 @@ import {
  *  null when it does nothing there. */
 
 export type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+
+/** `state` with its text parsed for up to `timeout` ms: to its end, or
+ *  as far as the parse got. */
+export function parsed(state: EditorState, timeout: number): EditorState {
+	ensureSyntaxTree(state, state.doc.length, timeout);
+	// The state keeps the tree it was created with; an update takes the
+	// finished parse.
+	return state.update({ filter: false }).state;
+}
 
 const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", '"': '"' };
 

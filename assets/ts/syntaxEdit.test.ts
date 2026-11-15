@@ -2,10 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { python } from "@codemirror/lang-python";
-import { ensureSyntaxTree, type LanguageSupport } from "@codemirror/language";
+import type { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type TransactionSpec } from "@codemirror/state";
 import { clojure } from "@nextjournal/lang-clojure";
-import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection, type Tight } from "./syntaxEdit";
+import {
+	expandSelection,
+	joinLines,
+	moveNode,
+	parsed,
+	selectionHistory,
+	shrinkSelection,
+	type Tight,
+} from "./syntaxEdit";
 
 /** A state from `marked`, whose `|` marks the caret, or `<` and `>` the
  *  selection. */
@@ -23,8 +31,7 @@ function stateOf(marked: string, language: LanguageSupport | Extension = []): Ed
 		selection = EditorSelection.single(from, to);
 	}
 	const state = EditorState.create({ doc, selection, extensions: [language, selectionHistory] });
-	ensureSyntaxTree(state, doc.length, 5000);
-	return state.update({}).state;
+	return parsed(state, 5000);
 }
 
 /** The text with the selection marked as `stateOf` reads it. */

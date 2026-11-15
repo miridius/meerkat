@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { ensureSyntaxTree, LanguageSupport } from "@codemirror/language";
+import { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type TransactionSpec } from "@codemirror/state";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
 import {
+	alignBelow,
 	barfBackward,
 	barfForward,
 	deleteGuarded,
@@ -15,6 +16,7 @@ import {
 	tightInClojure,
 	typeBracket,
 } from "./paredit";
+import { parsed } from "./syntaxEdit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
 
@@ -27,8 +29,7 @@ function stateOf(marked: string): EditorState {
 		selection: EditorSelection.cursor(pos),
 		extensions: [clojure, EditorState.allowMultipleSelections.of(true)],
 	});
-	ensureSyntaxTree(state, doc.length, 5000);
-	return state.update({}).state;
+	return parsed(state, 5000);
 }
 
 /** The text, with `|` at the caret, after `command`; null when it does
@@ -42,6 +43,97 @@ function run(command: (s: EditorState) => TransactionSpec | null, marked: string
 	const doc = next.doc.toString();
 	return `${doc.slice(0, head)}|${doc.slice(head)}`;
 }
+
+describe("alignBelow", () => {
+	/** The lines of `marked` after replacing its nth `«...»` with
+	 *  `inserts[n]`, in one change, with the lines below shifted as
+	 *  `alignBelow` says. */
+	function edit(marked: string, ...inserts: string[]): string[] {
+		const changes: { from: number; to: number; insert: string }[] = [];
+		const doc = marked.replace(/«([^»]*)»/g, (_whole, text: string, at: number) => {
+			const from = at - 2 * changes.length;
+			changes.push({ from, to: from + text.length, insert: inserts[changes.length] });
+			return text;
+		});
+		const tr = stateOf(doc).update({ changes, userEvent: "input.type" });
+		const { shift } = alignBelow(tr);
+		return (shift ? shift.apply(tr.newDoc) : tr.newDoc).toString().split("\n");
+	}
+
+	test("moves a map's lines with its opener", () => {
+		expect(edit("(def s («»atom {:a #{}\n              :b #{}}))", "reagent/")).toEqual([
+			"(def s (reagent/atom {:a #{}",
+			"                      :b #{}}))",
+		]);
+	});
+
+	test("moves lines aligned to a moved opener or argument, not those whose opener stays put", () => {
+		expect(edit("(f («»let [x 1\n         y 2]\n     x))", "if-")).toEqual(["(f (if-let [x 1", "            y 2]", "     x))"]);
+		expect(edit("(«»foo bar\n     baz)", "x")).toEqual(["(xfoo bar", "      baz)"]);
+	});
+
+	test("keeps a line under an argument typed onto, and moves one under an opener typed before", () => {
+		expect(edit("(swap! «»state assoc\n       :k v)", "app-")).toEqual(["(swap! app-state assoc", "       :k v)"]);
+		expect(edit("(def s «»{:a 1\n        :b 2})", "#")).toEqual(["(def s #{:a 1", "         :b 2})"]);
+	});
+
+	test("adds up the changes before the text a line aligns to, and skips blank lines", () => {
+		expect(edit("(def s «»atom« »{:a 1\n\n             :b 2})", "(", ") ")).toEqual([
+			"(def s (atom) {:a 1",
+			"",
+			"               :b 2})",
+		]);
+	});
+
+	test("moves lines left when the text before shrinks", () => {
+		expect(edit("(«reagent/»atom {:a 1\n               :b 2})", "")).toEqual(["(atom {:a 1", "       :b 2})"]);
+	});
+
+	test("moves a collection's lines when the line it opens on moves", () => {
+		expect(edit("(«»atom {:a\n       {:b 1\n        :c 2}})", "r/")).toEqual(["(r/atom {:a", "         {:b 1", "          :c 2}})"]);
+	});
+
+	test("leaves a string's lines and a line past a missing closer", () => {
+		expect(edit('(«»atom {:a "x\n  y"\n       :b 2})', "r/")).toEqual(['(r/atom {:a "x', '  y"', "         :b 2})"]);
+		expect(edit("(«»let [y (inc x)\n  (g y))", "if-")).toEqual(["(if-let [y (inc x)", "  (g y))"]);
+	});
+
+	test("moves lines below a string edited inside on their line", () => {
+		expect(edit('(log/info "a«»b" {:a 1\n                :b 2})', "x")).toEqual([
+			'(log/info "axb" {:a 1',
+			"                 :b 2})",
+		]);
+	});
+
+	test("leaves a string's lines when the string is not typed in on the edited line", () => {
+		expect(edit('(str "a«»b" "one\n          two")', "x")).toEqual(['(str "axb" "one', '          two")']);
+		expect(edit('(foo "a«»b" {:sql "S\n                FROM t"\n           :b 2})', "x")).toEqual([
+			'(foo "axb" {:sql "S',
+			'                FROM t"',
+			"            :b 2})",
+		]);
+		expect(edit('(«»str "a\n        b")', "x")).toEqual(['(xstr "a', '        b")']);
+		expect(edit('(f "a\nb«»c\n      d")', "x")).toEqual(['(f "a', "bxc", '      d")']);
+		expect(edit('(foo«» bar\n  "s\n     baz)', "o")).toEqual(['(fooo bar', '  "s', "     baz)"]);
+	});
+
+	test("moves a line under a form whose text before it is replaced, and none under no text", () => {
+		expect(edit("(f «aa »bb\n      cc)", "x")).toEqual(["(f xbb", "    cc)"]);
+		expect(edit("(f a«bc d»ef\n       g)", "")).toEqual(["(f aef", "    g)"]);
+		expect(edit("(->«»\n    x)", " ")).toEqual(["(-> ", "    x)"]);
+		expect(edit("(-«»>  \n    x)", ">")).toEqual(["(->>  ", "    x)"]);
+		expect(edit("(-«»>\n   x)", ">")).toEqual(["(->>", "   x)"]);
+	});
+
+	test("moves a line under a form when a new form is typed before it", () => {
+		expect(edit("(swap! «»state assoc\n       :k v)", "x ")).toEqual(["(swap! x state assoc", "         :k v)"]);
+	});
+	test("shifts nothing for an edit across lines", () => {
+		const state = stateOf("(atom {:a 1\n       :b 2})");
+		expect(alignBelow(state.update({ changes: { from: 1, insert: "\n" } })).shift).toBeNull();
+		expect(alignBelow(state.update({ changes: { from: 11, to: 12 } })).shift).toBeNull();
+	});
+});
 
 describe("slurpForward", () => {
 	test("pulls the next form in", () => {
