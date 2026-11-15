@@ -119,6 +119,11 @@ describe("hotkeyBindings", () => {
 		}
 	});
 
+	test("⌃K still cuts with no clipboard, and keeps the key where it cuts nothing", () => {
+		expect(press("Ctrl-k", "clojure", stateOf("(a |b c) d", [clojure]))).toEqual({ claimed: true, text: "(a |) d" });
+		expect(press("Ctrl-k", "clojure", stateOf("(a|)", [clojure]))).toEqual({ claimed: true, text: "(a|)" });
+	});
+
 	test("outside Clojure ⌃K is left to CodeMirror", () => {
 		expect(hotkeyBindings("javascript").map((b) => b.mac)).not.toContain("Ctrl-k");
 	});

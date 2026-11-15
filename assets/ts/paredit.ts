@@ -18,6 +18,7 @@ import {
 import { EditorView } from "@codemirror/view";
 import {
 	BRACKETS,
+	closedString,
 	closerOf,
 	forms,
 	holder,
@@ -431,17 +432,24 @@ export const clojureItems: Entries = (node) => {
 	return key ? [] : items;
 };
 
+/** The form of `all` that `pos` is in or before, else the one it is
+ *  after. */
+function formAt(all: SyntaxNode[], pos: number): SyntaxNode | undefined {
+	return all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+}
+
 /** Wrap the form at the caret in `open` and its closer, as Cursive's
  *  Wrap with () / [] / {} do: the form the caret is in or before, else
  *  the one it is after, else an empty pair. A selection is wrapped as
  *  typing `open` wraps it. */
 export function wrap(state: EditorState, open: "(" | "[" | "{"): TransactionSpec | null {
-	if (state.selection.ranges.some((r) => !r.empty)) return typeBracket(state, open);
+	if (state.selection.ranges.some((r) => !r.empty)) {
+		const spec = typeBracket(state, open);
+		return spec && reindent(state, spec);
+	}
 	return edit(state, "edit.wrap", (pos) => {
 		if (inText(state, pos)) return null;
-		const all = forms(enclosing(state, pos) ?? syntaxTree(state).topNode);
-		const form =
-			all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+		const form = formAt(forms(enclosing(state, pos) ?? syntaxTree(state).topNode), pos);
 		if (!form) return { changes: [{ from: pos, insert: open + PAIRS[open] }], cursor: pos + 1 };
 		if (!whole(form)) return null;
 		return {
@@ -454,18 +462,23 @@ export function wrap(state: EditorState, open: "(" | "[" | "{"): TransactionSpec
 	});
 }
 
-/** The closed string, not a regex's, whose quotes hold `pos`. */
-function closedString(state: EditorState, pos: number): SyntaxNode | null {
+/** The closed string, a regex's included, whose quotes hold `pos`. */
+function closedStringAt(state: EditorState, pos: number): SyntaxNode | null {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.name !== "String") continue;
-		const last = node.lastChild;
-		const closed = last !== null && last.name === '"' && last.from > node.from;
-		return closed && node.parent?.name !== "RegExp" && node.from < pos && pos < node.to ? node : null;
+		return closedString(node) && node.from < pos && pos < node.to ? node : null;
 	}
 	return null;
 }
 
-/** Whether the character before `pos` is escaped away by a backslash. */
+/** The closed string, not a regex's, whose quotes hold `pos`. */
+function plainStringAt(state: EditorState, pos: number): SyntaxNode | null {
+	const str = closedStringAt(state, pos);
+	return str?.parent?.name === "RegExp" ? null : str;
+}
+
+/** Whether `pos` sits just after a backslash that escapes the character
+ *  after it. */
 function afterEscape(state: EditorState, pos: number): boolean {
 	const before = state.doc.sliceString(Math.max(0, pos - 64), pos);
 	return /(^|[^\\])(\\\\)*\\$/.test(before);
@@ -475,20 +488,30 @@ function afterEscape(state: EditorState, pos: number): boolean {
  *  Split does: `(a |b)` becomes `(a)| (b)`. Not inside a form. */
 export function split(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.split", (pos) => {
-		const str = closedString(state, pos);
+		const str = plainStringAt(state, pos);
 		if (str) return afterEscape(state, pos) ? null : { changes: [{ from: pos, insert: '" "' }], cursor: pos + 1 };
 		if (inText(state, pos)) return null;
 		const coll = enclosing(state, pos);
 		const closer = coll && closerOf(coll);
 		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
-		let from = pos;
-		while (from > coll.firstChild.to && /[ \t]/.test(state.doc.sliceString(from - 1, from))) from--;
+		// The first half closes after its last form, or on its own line
+		// after a comment, which would hide a closer put on its line.
+		const start = coll.firstChild.to;
+		const back = (space: RegExp) => {
+			let from = pos;
+			while (from > start && space.test(state.doc.sliceString(from - 1, from))) from--;
+			return from;
+		};
+		let from = back(/\s/);
+		if (syntaxTree(state).resolveInner(from, -1).name === "LineComment") from = back(/[ \t]/);
 		let to = pos;
-		while (to < closer.from && /[ \t]/.test(state.doc.sliceString(to, to + 1))) to++;
+		while (to < closer.from && /\s/.test(state.doc.sliceString(to, to + 1))) to++;
 		// Each half keeps the prefixes on the collection, such as `#_` or `'`.
 		const opener = state.doc.sliceString(element(coll).from, coll.firstChild.to);
-		return { changes: [{ from, to, insert: `${closer.name} ${opener}` }], cursor: from + 1 };
+		const gap = state.doc.sliceString(from, to);
+		const between = gap.includes("\n") ? gap.slice(gap.indexOf("\n")) : " ";
+		return { changes: [{ from, to, insert: `${closer.name}${between}${opener}` }], cursor: from + 1 };
 	});
 }
 
@@ -509,7 +532,9 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 		const prev = all.findLast((f) => f.to <= pos);
 		const next = all.find((f) => f.from >= pos);
 		if (!prev || !next || !whole(prev) || sibling(prev, 1)?.from !== next.from || prev.name !== next.name) return null;
-		if (prev.name === "String" && closedString(state, prev.to - 1) && closedString(state, next.from + 1)) {
+		if (prev.name === "String" && plainStringAt(state, prev.to - 1) && plainStringAt(state, next.from + 1)) {
+			// A comment between the strings would go with the quotes.
+			if (state.doc.sliceString(prev.to, next.from).trim() !== "") return null;
 			return { changes: [{ from: prev.to - 1, to: next.from + 1 }], cursor: prev.to - 1 };
 		}
 		const left = collOf(prev);
@@ -531,14 +556,25 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 	});
 }
 
+/** Whether `node` is one token: it has no children, or one token that
+ *  spans it, as a def's name `VarName { Symbol }` does. */
+function token(node: SyntaxNode): boolean {
+	const child = node.firstChild;
+	return child === null || (child.from === node.from && child.to === node.to && token(child));
+}
+
 /** Where Kill from `pos` stops: the end of the line, or before the
  *  enclosing collection's closer or string's quote when that comes
  *  first, pushed past any form that crosses the line's end. At the end of
- *  a line, past the line break. Null when that would unbalance brackets. */
+ *  a line but a comment's, past the line break. Null when that would unbalance brackets. */
 function killEnd(state: EditorState, pos: number): number | null {
 	const line = state.doc.lineAt(pos);
-	const str = closedString(state, pos);
-	if (str) return afterEscape(state, pos) ? null : Math.min(line.to, str.to - 1);
+	const str = closedStringAt(state, pos);
+	if (str) {
+		if (afterEscape(state, pos)) return null;
+		const end = Math.min(line.to, str.to - 1);
+		return end === pos && pos < str.to - 1 ? pos + 1 : end;
+	}
 	if (inText(state, pos)) {
 		const comment = syntaxTree(state).resolveInner(pos, -1);
 		return comment.name === "LineComment" ? line.to : null;
@@ -554,8 +590,7 @@ function killEnd(state: EditorState, pos: number): number | null {
 	if (end === pos) return pos === line.to && pos < limit ? pos + 1 : null;
 	for (const f of forms(parent)) {
 		if (f.to <= pos || f.from >= end) continue;
-		const token = f.firstChild === null || f.name === "Operator";
-		if (f.from < pos && !token) return null;
+		if (f.from < pos && !token(f)) return null;
 		if (f.to > end) {
 			if (!whole(f)) return null;
 			end = f.to;
@@ -606,13 +641,22 @@ function threadOf(state: EditorState, coll: SyntaxNode): Thread | null {
 	return name === "->" || name === "->>" ? name : null;
 }
 
+/** The text that removes `node`, a child of a list, with the space after
+ *  it, or before it when it is last, so the space after a comment stays. */
+function removal(node: SyntaxNode): [number, number] {
+	const next = node.nextSibling as SyntaxNode;
+	if (!BRACKETS.has(next.name)) return [node.from, next.from];
+	const prev = node.prevSibling as SyntaxNode;
+	return prev.name === "LineComment" ? [node.from, next.from] : [prev.to, node.to];
+}
+
 /** `call` without its argument `arg`, as a threading step: `(f b)` for
  *  `(f a b)` without `a`, or just `f` when nothing else is left. */
 function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): string {
 	const all = forms(call);
-	if (all.length === 2 && (all[0].name === "Operator" || all[0].name === "Keyword")) return text(state, all[0]);
-	const i = all.findIndex((f) => f.from === arg.from);
-	const [from, to] = i === all.length - 1 ? [all[i - 1].to, arg.to] : [arg.from, all[i + 1].from];
+	const bare = all.length === 2 && call.getChildren("LineComment").length === 0;
+	if (bare && (all[0].name === "Operator" || all[0].name === "Keyword")) return text(state, all[0]);
+	const [from, to] = removal(arg);
 	return state.doc.sliceString(call.from, from) + state.doc.sliceString(to, call.to);
 }
 
@@ -641,8 +685,7 @@ export function thread(state: EditorState): TransactionSpec | null {
 		const coll = enclosing(state, pos);
 		if (!coll || !isCall(coll) || !closerOf(coll) || !whole(coll)) return null;
 		const all = live(coll);
-		const form =
-			all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+		const form = formAt(all, pos);
 		if (!form || form === all[0] || !whole(form)) return null;
 		const first = form === all[1];
 		const last = form === all[all.length - 1];
@@ -674,13 +717,13 @@ export function unthread(state: EditorState): TransactionSpec | null {
 			if (!whole(coll)) return null;
 			const [, value, step] = live(coll);
 			// The thread becomes the call only when it holds no other form,
-			// such as a `#_` one, that would go with it.
-			const alone = forms(coll).length === (step ? 3 : 2);
+			// such as a `#_` one, or comment that would go with it.
+			const alone = forms(coll).length === (step ? 3 : 2) && coll.getChildren("LineComment").length === 0;
 			if (!value || (!step && !alone)) return null;
 			if (!step) return { changes: [{ from: coll.from, to: coll.to, insert: text(state, value) }], cursor: coll.from };
 			let call: string;
 			if (step.name === "List") {
-				const args = forms(step);
+				const args = live(step);
 				const closer = closerOf(step) as SyntaxNode;
 				const at = macro === "->" ? (args[1]?.from ?? closer.from) : closer.from;
 				const lead = macro === "->" && args[1] ? "" : " ";
@@ -691,13 +734,12 @@ export function unthread(state: EditorState): TransactionSpec | null {
 				call = `(${text(state, step)} ${text(state, value)})`;
 			} else return null;
 			if (alone) return { changes: [{ from: coll.from, to: coll.to, insert: call }], cursor: coll.from };
-			// The step goes from after the form before it, keeping any `#_`
-			// form between the value and the step.
-			const before = forms(coll).findLast((f) => f.to <= step.from) as SyntaxNode;
+			// Any `#_` form or comment between the value and the step stays.
+			const [from, to] = removal(step);
 			return {
 				changes: [
 					{ from: value.from, to: value.to, insert: call },
-					{ from: before.to, to: step.to },
+					{ from, to },
 				],
 				cursor: value.from,
 			};

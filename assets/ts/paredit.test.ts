@@ -377,6 +377,12 @@ describe("wrap", () => {
 		expect(next.doc.toString()).toBe("(a [b c])");
 	});
 
+	test("re-indents the lines a wrapped selection changes", () => {
+		const state = stateOf("|(foo a\n     b)");
+		const next = state.update(wrap(state.update({ selection: EditorSelection.range(5, 13) }).state, "(") ?? {}).state;
+		expect(next.doc.toString()).toBe("(foo (a\n      b))");
+	});
+
 	test("does nothing in a string or comment, or to a list cut off from its closer", () => {
 		expect(run(paren, '"a |b"')).toBeNull();
 		expect(run(paren, "; a |b")).toBeNull();
@@ -394,6 +400,15 @@ describe("split", () => {
 		expect(run(split, "#{a |b}")).toBe("#{a}| #{b}");
 		expect(run(split, "'(a |b)")).toBe("'(a)| '(b)");
 		expect(run(split, "(a #_(b |c) d)")).toBe("(a #_(b)| #_(c) d)");
+	});
+
+	test("closes the first half on its last form's line at a line's start or end", () => {
+		expect(run(split, "(a\n |b)")).toBe("(a)|\n(b)");
+		expect(run(split, "(a|\n b)")).toBe("(a)|\n(b)");
+	});
+
+	test("closes the first half after a comment on the next line", () => {
+		expect(run(split, "(a ; c\n |b)")).toBe("(a ; c\n )| (b)");
 	});
 
 	test("does nothing to metadata", () => {
@@ -430,6 +445,15 @@ describe("joinForms", () => {
 	test("leaves no stray space beside an empty collection", () => {
 		expect(run(joinForms, "() |(b)")).toBe("(|b)");
 		expect(run(joinForms, "(a) |()")).toBe("(a|)");
+	});
+
+	test("keeps a comment between the forms", () => {
+		expect(run(joinForms, "() ; note\n|(b)")).toBe("(| ; note\n b)");
+		expect(run(joinForms, '"a" ; note\n|"b"')).toBeNull();
+	});
+
+	test("does nothing to a string with no closing quote", () => {
+		expect(run(joinForms, '"ab" |"cd')).toBeNull();
 	});
 
 	test("joins sets and strings", () => {
@@ -487,14 +511,18 @@ describe("kill", () => {
 	test("cuts within a string to its end or the line's", () => {
 		expect(killed('(f "ab|cd" x)')).toEqual({ text: '(f "ab|" x)', cut: "cd" });
 		expect(killed('"ab|cd\nef"')).toEqual({ text: '"ab|\nef"', cut: "cd" });
+		expect(killed('"ab|\ncd"')).toEqual({ text: '"ab|cd"', cut: "\n" });
+		expect(killed('(re-find #"ab|cd" s)')).toEqual({ text: '(re-find #"ab|" s)', cut: "cd" });
 	});
 
-	test("cuts within a comment to the line's end", () => {
+	test("cuts within a comment to the line's end, and no further", () => {
 		expect(killed("(a ; b |c\n d)")).toEqual({ text: "(a ; b |\n d)", cut: "c" });
+		expect(killed("; a|\n(b)")).toBeNull();
 	});
 
 	test("cuts from inside a symbol", () => {
 		expect(killed("(fo|o bar)")).toEqual({ text: "(fo|)", cut: "o bar" });
+		expect(killed("(defn fo|o [x] x)")).toEqual({ text: "(defn fo|)", cut: "o [x] x" });
 	});
 
 	test("stops at a stray closer", () => {
@@ -546,6 +574,12 @@ describe("thread", () => {
 		expect(run(thread, "(f a |b #_c)")).toBe("|(->> b (f a #_c))");
 	});
 
+	test("keeps comments in the call", () => {
+		expect(run(thread, "(f |(g x) ; c\n b)")).toBe("|(-> (g x) (f ; c\n           b))");
+		expect(run(thread, "(f a ; c\n |b)")).toBe("|(->> b (f a ; c\n          ))");
+		expect(run(thread, "(f ; c\n |(g x))")).toBe("|(-> (g x) (f ; c\n           ))");
+	});
+
 	test("does nothing to a list with a prefix in its opener", () => {
 		expect(run(thread, "#?(:clj |1 :cljs 2)")).toBeNull();
 		expect(run(thread, "#(f |% b)")).toBeNull();
@@ -593,6 +627,12 @@ describe("unthread", () => {
 		expect(run(unthread, "(-> |x #_(g) f)")).toBe("(-> |(f x) #_(g))");
 		expect(run(unthread, "(-> |x f #_(g) h)")).toBe("(-> |(f x) #_(g) h)");
 		expect(run(unthread, "(-> |(f x) #_(g))")).toBeNull();
+		expect(run(unthread, "(-> |x (#_z f b))")).toBe("|(#_z f x b)");
+	});
+
+	test("keeps comments among the steps", () => {
+		expect(run(unthread, "(-> |x ; c\n (f b))")).toBe("(-> |(f x b) ; c\n    )");
+		expect(run(unthread, "(-> |x ; c\n (f b) g)")).toBe("(-> |(f x b) ; c\n    g)");
 	});
 
 	test("does nothing outside a thread or with a step it cannot call", () => {
