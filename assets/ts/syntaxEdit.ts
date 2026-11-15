@@ -62,8 +62,8 @@ function prefixed(state: EditorState, node: SyntaxNode): boolean {
 /** The bracketed form a caret at `pos` sits just before or just after:
  *  the node whose opening punctuation starts at `pos`, such as `(`, `#{`
  *  or `@(`, or whose closing bracket or quote ends there, with any prefix
- *  such as `#` or `'`, or a string that ends there. The form after the caret wins when both hold.
- *  Null elsewhere. */
+ *  such as `#` or `'`, or a string that ends there. The form after the
+ *  caret wins when both hold. Null elsewhere. */
 function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
 	const after = tree.resolveInner(pos, 1);
