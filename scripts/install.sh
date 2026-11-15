@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if command -v mise >/dev/null; then
-  mise install bun
+  mise install --quiet bun
   mise_env=$(mise env --shell bash)
   eval "$mise_env"
 fi

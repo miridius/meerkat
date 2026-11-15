@@ -293,14 +293,14 @@ fi
 		const run = install();
 		expect(run.stdout).toMatch(/^meerkat: current already built from [0-9a-f]{12} \(clean tree\); skipping\./);
 		expect(run.status).toBe(0);
-		expect(await logLines()).toEqual(["mise install bun", "mise env --shell bash"]);
+		expect(await logLines()).toEqual(["mise install --quiet bun", "mise env --shell bash"]);
 	});
 
 	test("rebuilds without the prod launcher, installing the pinned tools and building on them", async () => {
 		const run = install({ MEERKAT_BIN_DIR: join(base, "empty-bin") });
 		expect(run.status).toBe(99);
 		expect(await logLines()).toEqual([
-			"mise install bun",
+			"mise install --quiet bun",
 			"mise env --shell bash",
 			"mise install erlang elixir bun",
 			"mise env --json",
@@ -313,7 +313,7 @@ fi
 		const run = install({ MEERKAT_BIN_DIR: join(base, "empty-bin"), MISE_ENV_STATUS: "3" });
 		expect(run.status).toBe(3);
 		expect(await logLines()).toEqual([
-			"mise install bun",
+			"mise install --quiet bun",
 			"mise env --shell bash",
 			"mise install erlang elixir bun",
 			"mise env --json",
