@@ -529,6 +529,12 @@ describe("kill", () => {
 		expect(killed("(defn ^:private fo|o [x] x)")).toEqual({ text: "(defn ^:private fo|)", cut: "o [x] x" });
 	});
 
+	test("does nothing from inside a prefix", () => {
+		expect(killed("(fn [^Str|ing s] s)")).toBeNull();
+		expect(killed('(f #in|st "2020")')).toBeNull();
+		expect(killed("(x #|?(:clj a) y)")).toBeNull();
+	});
+
 	test("stops at a stray closer", () => {
 		expect(killed("a |b) c")).toEqual({ text: "a |) c", cut: "b" });
 	});

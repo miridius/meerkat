@@ -495,8 +495,8 @@ export function split(state: EditorState): TransactionSpec | null {
 		const closer = coll && closerOf(coll);
 		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
-		// The first half closes after its last form, or on the line after
-		// a comment, which would hide a closer put on its line.
+		// The first half closes after its last form, or after a comment on
+		// the caret's line, as the comment would hide a closer on its own.
 		let before = coll.firstChild;
 		for (let child = before.nextSibling; child && child.to <= pos; child = child.nextSibling) before = child;
 		let from = before.to;
@@ -580,13 +580,13 @@ function killEnd(state: EditorState, pos: number): number | null {
 	}
 	let end = Math.min(line.to, limit);
 	if (end === pos) return pos === line.to && pos < limit ? pos + 1 : null;
-	// A form the caret is in is cut from inside one token, such as a
-	// symbol under metadata, or not at all.
+	// A form the caret is in is cut only from inside the token it ends
+	// with, such as a symbol under metadata, never from in a prefix.
 	const at = syntaxTree(state).resolveInner(pos, -1);
 	const inToken = at.firstChild === null && at.from < pos && pos < at.to;
 	for (const f of forms(parent)) {
 		if (f.to <= pos || f.from >= end) continue;
-		if (f.from < pos && !inToken) return null;
+		if (f.from < pos && !(inToken && at.to === f.to)) return null;
 		if (f.to > end) {
 			if (!whole(f)) return null;
 			end = f.to;
