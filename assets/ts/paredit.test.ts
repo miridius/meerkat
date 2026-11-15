@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ensureSyntaxTree, LanguageSupport } from "@codemirror/language";
+import { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type TransactionSpec } from "@codemirror/state";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
@@ -16,6 +16,7 @@ import {
 	tightInClojure,
 	typeBracket,
 } from "./paredit";
+import { parsed } from "./syntaxEdit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
 
@@ -28,8 +29,7 @@ function stateOf(marked: string): EditorState {
 		selection: EditorSelection.cursor(pos),
 		extensions: [clojure, EditorState.allowMultipleSelections.of(true)],
 	});
-	ensureSyntaxTree(state, doc.length, 5000);
-	return state.update({}).state;
+	return parsed(state, 5000);
 }
 
 /** The text, with `|` at the caret, after `command`; null when it does
@@ -99,21 +99,33 @@ describe("alignBelow", () => {
 	});
 
 	test("moves lines below a string being typed with the text above them", () => {
-		for (const [doc, typed] of [
+		const keys = ['"', "m", '"', " "];
+		for (const [doc, typed, pressed = keys] of [
 			["(log/info {:a 1\n           :b 2})", '(log/info "m" {:a 1\n               :b 2})'],
 			// The string being typed runs to the next quote.
 			['(log/info {:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
 			['(log/info {:a "x"\n           :b 2})', '(log/info "m" {:a "x"\n               :b 2})'],
-		]) {
+			["(log/info {:a 1\n           :b 2})", '(log/info "\\n" {:a 1\n                :b 2})', ['"', "\\", "n", '"', " "]],
+			// Backspace on the quote just typed.
+			["(log/info {:a 1\n           :b 2})", "(log/info {:a 1\n           :b 2})", ['"', "\b"]],
+		] as [string, string, string[]?][]) {
 			let state = stateOf(doc);
-			for (const key of ['"', "m", '"', " "]) {
+			for (const key of pressed) {
 				const at = state.doc.line(1).text.indexOf("{");
-				const tr = state.update({ changes: { from: at, insert: key }, userEvent: "input.type" });
+				const change = key === "\b" ? { from: at - 1, to: at } : { from: at, insert: key };
+				const tr = state.update({ changes: change, userEvent: "input.type" });
 				const shift = alignBelow(tr);
 				state = stateOf((shift ? shift.apply(tr.newDoc) : tr.newDoc).toString());
 			}
 			expect(state.doc.toString()).toBe(typed);
 		}
+	});
+
+	test("moves lines below a string edited inside on their line", () => {
+		expect(edit('(log/info "a«»b" {:a 1\n                :b 2})', "x")).toEqual([
+			'(log/info "axb" {:a 1',
+			"                 :b 2})",
+		]);
 	});
 
 	test("reads a string being typed as closed right after the edit", () => {

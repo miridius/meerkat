@@ -186,17 +186,25 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 			if (to < pos || (to === pos && !(form && joins))) return sum + inserted.length - (to - from);
 			return from < pos && pos < to ? sum + from - pos : sum;
 		}, 0);
+	// The lines below are read in the text after the edit. A parse cut
+	// short stops them where it stopped.
+	let tree = parsed(tr.state, 50);
+	const line = tree.doc.line(edited.number);
 	// A string being typed on the edited line runs, until its closing
 	// quote, to the next quote in the text, past lines that are code: read
-	// the text as if it closed right after the edit. `quote` is where that
-	// closing quote goes, and `tree` the text with it.
-	const open = textStart(state, parts[0].from);
-	const typed = open !== null && open >= edited.from && doc.sliceString(open, open + 1) === '"';
-	const quote = typed ? parts[parts.length - 1].to : -1;
-	// A parse cut short stops the lines below where it stopped.
-	const tree = typed ? parsed(state.update({ changes: { from: quote, insert: '"' }, filter: false }).state, 50) : state;
-	/** Where `pos` on the edited line in `tree` is in the text. */
-	const untyped = (pos: number) => (typed && pos > quote ? pos - 1 : pos);
+	// it as closing right after the edit, where ` "` closes it even after
+	// a `\`.
+	const caret = tr.changes.mapPos(parts[parts.length - 1].to, 1);
+	const open = textStart(tree, caret);
+	let quote = -1;
+	if (open !== null && open >= line.from && tree.doc.sliceString(open, open + 1) === '"' && inText(tree, line.to)) {
+		const closed = parsed(tree.update({ changes: { from: caret, insert: ' "' }, filter: false }).state, 50);
+		if (!inText(closed, line.to + 2)) [tree, quote] = [closed, caret];
+	}
+	/** Where `pos` on the edited line in `tree` is after the edit. */
+	const after = (pos: number) => (quote >= 0 && pos > quote ? pos - 2 : pos);
+	/** Where `pos` on the edited line in `tree` was before the edit. */
+	const before = (pos: number) => tr.changes.invertedDesc.mapPos(after(pos), 1);
 	/** How far the text above column `indent` moves, as a form's start or
 	 *  a character; none past the edited line's text. */
 	const above = (indent: number, form: boolean) =>
@@ -214,14 +222,15 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 		// Past the collections that open on the edited line, nothing moves.
 		if (!coll || coll.from < edited.from) break;
 		const opener = tree.doc.lineAt(coll.from);
-		const at = opener.number === edited.number ? untyped(coll.from) : coll.from;
-		const col = at - opener.from;
+		const onEdited = opener.number === edited.number;
+		// Where the opener was: a line's indentation is the one it had then.
+		const col = (onEdited ? before(coll.from) : coll.from) - opener.from;
 		// A line at or left of its opener, as one past a missing closer is,
 		// aligns to nothing in it.
 		if (indent <= col) continue;
 		let shift: number;
-		if (opener.number !== edited.number) shift = shifts.get(opener.number) ?? 0;
-		else if (indent === col + 1 || indent === col + 2) shift = moved(at, false);
+		if (!onEdited) shift = shifts.get(opener.number) ?? 0;
+		else if (indent === col + 1 || indent === col + 2) shift = after(coll.from) - opener.from - col;
 		else shift = above(indent, true);
 		shift = Math.max(shift, -indent);
 		if (shift === 0) continue;

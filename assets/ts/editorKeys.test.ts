@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { history, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
-import { ensureSyntaxTree, LanguageSupport } from "@codemirror/language";
+import { LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type Transaction, type TransactionSpec } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
 import { cheatSheet, editorKeys, hotkeyBindings, keyLabel } from "./editorKeys";
+import { parsed } from "./syntaxEdit";
 
 const clojure = new LanguageSupport(clojureLanguage, clojureIndent);
 
@@ -14,8 +15,7 @@ function stateOf(marked: string, extensions: Extension[]): EditorState {
 	const pos = marked.indexOf("|");
 	const doc = marked.replace("|", "");
 	const state = EditorState.create({ doc, selection: EditorSelection.cursor(pos), extensions });
-	ensureSyntaxTree(state, doc.length, 5000);
-	return state.update({}).state;
+	return parsed(state, 5000);
 }
 
 function marked(state: EditorState): string {
