@@ -1,10 +1,13 @@
 import { indentRange, syntaxTree } from "@codemirror/language";
 import {
+	type ChangeSet,
 	type ChangeSpec,
 	EditorSelection,
 	type EditorState,
 	findClusterBreak,
+	type Line,
 	type SelectionRange,
+	type Transaction,
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -161,10 +164,51 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-/** `state`'s text with every line re-indented, as `reindent` re-indents
- *  the lines a change reaches. */
-export function reindented(state: EditorState): string {
-	return indentRange(state, 0, state.doc.length).apply(state.doc).toString();
+/** The changes, after `tr`'s, that shift the lines below its edited line
+ *  aligned to text its changes move by as much, when every change sits
+ *  on that one line; null when no line shifts. See "Structural typing in
+ *  Clojure" in docs/features/inline-comments.md. */
+export function alignBelow(tr: Transaction): ChangeSet | null {
+	const state = tr.startState;
+	const doc = state.doc;
+	// Each change's end, and how far it moves the text after it.
+	const moves: { at: number; by: number }[] = [];
+	let line: Line | null = null;
+	let oneLine = true;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		const at = doc.lineAt(fromA);
+		if (toA > at.to || inserted.lines > 1 || (line && line.number !== at.number)) oneLine = false;
+		line = at;
+		moves.push({ at: toA, by: inserted.length - (toA - fromA) });
+	});
+	const edited = line as Line | null;
+	if (!oneLine || !edited) return null;
+	const moved = (pos: number) => moves.reduce((sum, { at, by }) => (at <= pos ? sum + by : sum), 0);
+	const shifts = new Map<number, number>();
+	const changes: ChangeSpec[] = [];
+	for (let n = edited.number + 1; n <= doc.lines; n++) {
+		const below = doc.line(n);
+		const indent = below.text.length - below.text.trimStart().length;
+		const start = below.from + indent;
+		if (indent === below.length || inText(state, start)) continue;
+		const coll = enclosing(state, start);
+		if (!coll) continue;
+		const opener = doc.lineAt(coll.from);
+		const col = coll.from - opener.from;
+		// A line left of its opener, as one past a missing closer is,
+		// aligns to nothing in it.
+		if (indent <= col) continue;
+		let shift = shifts.get(opener.number) ?? 0;
+		if (opener.number === edited.number) {
+			const anchor = indent === col + 1 || indent === col + 2 ? coll.from : Math.min(opener.from + indent, opener.to);
+			shift = moved(anchor);
+		}
+		shift = Math.max(shift, -indent);
+		if (shift === 0) continue;
+		shifts.set(n, shift);
+		changes.push(shift > 0 ? { from: below.from, insert: " ".repeat(shift) } : { from: below.from, to: below.from - shift });
+	}
+	return changes.length === 0 ? null : state.changes(changes).map(tr.changes);
 }
 
 /** Pull the form after the caret's collection into it; when no form

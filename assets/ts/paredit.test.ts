@@ -4,12 +4,12 @@ import { EditorSelection, EditorState, type TransactionSpec } from "@codemirror/
 import { clojureLanguage } from "@nextjournal/lang-clojure";
 import { clojureIndent } from "./clojureIndent";
 import {
+	alignBelow,
 	barfBackward,
 	barfForward,
 	deleteGuarded,
 	formStep,
 	raise,
-	reindented,
 	slurpBackward,
 	slurpForward,
 	splice,
@@ -44,10 +44,46 @@ function run(command: (s: EditorState) => TransactionSpec | null, marked: string
 	return `${doc.slice(0, head)}|${doc.slice(head)}`;
 }
 
-describe("reindented", () => {
-	test("aligns lines a rename left behind their brackets", () => {
-		const typed = "(reagent/atom {:a #{}\n       :b #{}}))";
-		expect(reindented(stateOf(typed))).toBe("(reagent/atom {:a #{}\n               :b #{}}))");
+describe("alignBelow", () => {
+	/** The lines of `doc` after replacing its `«...»` with `insert`, with
+	 *  the lines below shifted as `alignBelow` says. */
+	function edit(marked: string, insert: string): string[] {
+		const from = marked.indexOf("«");
+		const to = marked.indexOf("»") - 1;
+		const state = stateOf(marked.replace(/[«»]/g, ""));
+		const tr = state.update({ changes: { from, to, insert }, userEvent: "input.type" });
+		const shift = alignBelow(tr);
+		return (shift ? shift.apply(tr.newDoc) : tr.newDoc).toString().split("\n");
+	}
+
+	test("moves a map's lines with its opener", () => {
+		expect(edit("(def s («»atom {:a #{}\n              :b #{}}))", "reagent/")).toEqual([
+			"(def s (reagent/atom {:a #{}",
+			"                      :b #{}}))",
+		]);
+	});
+
+	test("moves lines aligned to an argument, not those indented past the opener", () => {
+		expect(edit("(f («»let [x 1\n         y 2]\n     x))", "if-")).toEqual(["(f (if-let [x 1", "            y 2]", "     x))"]);
+		expect(edit("(«»foo bar\n     baz)", "x")).toEqual(["(xfoo bar", "      baz)"]);
+	});
+
+	test("moves lines left when the text before shrinks", () => {
+		expect(edit("(«reagent/»atom {:a 1\n               :b 2})", "")).toEqual(["(atom {:a 1", "       :b 2})"]);
+	});
+
+	test("moves a collection's lines when the line it opens on moves", () => {
+		expect(edit("(«»atom {:a\n       {:b 1\n        :c 2}})", "r/")).toEqual(["(r/atom {:a", "         {:b 1", "          :c 2}})"]);
+	});
+
+	test("leaves a string's lines and a line past a missing closer", () => {
+		expect(edit('(«»atom {:a "x\n  y"\n       :b 2})', "r/")).toEqual(['(r/atom {:a "x', '  y"', "         :b 2})"]);
+		expect(edit("(«»let [y (inc x)\n  (g y))", "if-")).toEqual(["(if-let [y (inc x)", "  (g y))"]);
+	});
+
+	test("shifts nothing for an edit across lines", () => {
+		const state = stateOf("(atom {:a 1\n       :b 2})");
+		expect(alignBelow(state.update({ changes: { from: 1, insert: "\n" } }))).toBeNull();
 	});
 });
 

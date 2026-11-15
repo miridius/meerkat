@@ -60,10 +60,10 @@ test("Enter in a Clojure suggestion on lines inside a form indents as in the fil
 });
 
 // The browser seam of formatting on save: CommentForm.svelte sends the
-// editor's language and a Clojure suggestion re-indented, and the server
-// formats only a Clojure suggestion. The formatting is covered by
+// editor's language and the suggestion as it looks in the editor, and the
+// server formats only a Clojure suggestion. The formatting is covered by
 // test/meerkat_web/live/review_live_comments_test.exs.
-test("saving a Clojure suggestion re-indents it and runs the formatter hook", async ({ page }) => {
+test("saving a Clojure suggestion sends it as shown and runs the formatter hook", async ({ page }) => {
 	// A hook whose cljfmt pass widens the space in `(pos? x)` to three,
 	// which the save keeps.
 	const hookDir = ownedTmpDir("meerkat-e2e");
@@ -98,10 +98,17 @@ fi
 			await page.keyboard.press("ArrowRight");
 			await page.keyboard.type("if-");
 			await expect(lines.first()).toHaveText("  (if-let [x (:x req)");
+			// Without its `]`, re-indenting by the brackets would put the body
+			// in the bindings. The hook stand-in repairs nothing, so the save
+			// shows what was sent.
+			await lines.nth(1).click();
+			await page.keyboard.press("End");
+			await page.keyboard.press("Shift+ArrowLeft");
+			await page.keyboard.press("Backspace");
 			await form.getByRole("button", { name: "Add Comment" }).click();
 			await expect
 				.poll(() => fileSection.locator(".inline-comment pre").first().evaluate((el) => el.textContent))
-				.toBe("  (if-let [x (:x req)\n           y 2]\n    (when (pos?   x)\n");
+				.toBe("  (if-let [x (:x req)\n           y 2\n    (when (pos?   x)\n");
 		} finally {
 			await meerkat.kill();
 		}

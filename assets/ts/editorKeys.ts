@@ -3,6 +3,7 @@ import { type EditorState, type Extension, EditorState as State, type Transactio
 import { type Command, type KeyBinding, keymap } from "@codemirror/view";
 import { SUPPORTED_LANGUAGES } from "./cmLang.js";
 import {
+	alignBelow,
 	barfBackward,
 	barfForward,
 	bracketTyping,
@@ -152,6 +153,16 @@ const reindentPaste = State.transactionFilter.of((tr) => {
 	return spec.changes === tr.changes ? tr : spec;
 });
 
+/** Keep the lines below a typed or deleted-in line aligned to the text
+ *  the edit moves. A paste re-indents instead. */
+const keepAligned = State.transactionFilter.of((tr) => {
+	if (!tr.docChanged || !(tr.isUserEvent("input") || tr.isUserEvent("delete")) || tr.isUserEvent("input.paste")) {
+		return tr;
+	}
+	const shift = alignBelow(tr);
+	return shift ? [tr, { changes: shift, sequential: true }] : tr;
+});
+
 /** The key bindings for a file in `language`. */
 export function hotkeyBindings(language: string): KeyBinding[] {
 	const scopes = scopesFor(language);
@@ -181,7 +192,7 @@ export function hotkeyBindings(language: string): KeyBinding[] {
  *  `language`. */
 export function editorKeys(language: string): Extension {
 	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
-	if (language === "clojure") extensions.push(bracketTyping, reindentPaste);
+	if (language === "clojure") extensions.push(bracketTyping, reindentPaste, keepAligned);
 	return extensions;
 }
 

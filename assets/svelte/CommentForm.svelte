@@ -10,7 +10,6 @@
   import { createCmEditor, setCmRulers } from "../ts/cmEditor";
   import { cheatSheet } from "../ts/editorKeys";
   import { languageFor } from "../ts/languageFor";
-  import { reindented } from "../ts/paredit";
   import { isMacPlatform } from "../ts/sendFeedbackShortcut";
   import type { EditorView } from "@codemirror/view";
 
@@ -237,10 +236,7 @@
     // concrete code rewrite.
     if (code.trim().length === 0) return prose;
     const fence = `\`\`\`${language || ""}`;
-    // The server's paren repair reads a Clojure suggestion's structure
-    // from its indentation, so it goes out indented as its brackets say.
-    const sent = language === "clojure" && cmView ? reindented(cmView.state) : code;
-    return `${prose}\n\n${fence}\n${sent}\n\`\`\``;
+    return `${prose}\n\n${fence}\n${code}\n\`\`\``;
   }
 
   const submitEnabled = $derived(

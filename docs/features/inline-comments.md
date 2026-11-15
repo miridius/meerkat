@@ -120,9 +120,7 @@ When `finding_type === "suggestion"`:
   `<prose>\n\n\`\`\`<lang>\n<code>\n\`\`\``. The fence carries the
   same language tag so GitHub (or any markdown renderer) treats it
   as a suggested change. The submit also sends the editor's
-  language. A Clojure suggestion is sent with every line re-indented
-  as Enter indents it, so the repair below sees indentation that
-  matches its brackets.
+  language.
 - On save, the server formats a suggestion whose editor language is
   Clojure as it would sit in the file around the anchored lines, using
   `clj-paren-repair-claude-hook` from
@@ -130,7 +128,7 @@ When `finding_type === "suggestion"`:
   run in the reviewed repo. First it repairs unbalanced delimiters
   with parinfer, then it formats with cljfmt. The hook applies the
   repo's cljfmt config only when cljfmt's defaults would also
-  change the file. The suggestion is saved as sent when a repair
+  change the file. The suggestion is saved as typed when a repair
   would change lines outside the suggestion,
   when cljfmt joins a suggestion line onto a line around it, or when
   cljfmt changes more than whitespace, as a repo config that sorts
@@ -222,6 +220,17 @@ changes each list once.
 - Deleting a selection is never blocked.
 - Lines that slurp, barf, raise, splice, a node move or a paste
   change re-indent, as Enter indents them.
+- Typing or deleting on one line shifts the lines below it that are
+  aligned to text the edit moves, such as the inside of a map whose
+  `{` moves when `atom` before it becomes `reagent/atom`, so they stay
+  aligned. A line in a collection that opens on the edited line
+  follows the opener when indented one or two columns past it, and
+  otherwise the text above its first character; a line in a
+  collection that opens on a line that moved moves with it. A line
+  inside a string, or left of its collection's opener as one past a
+  missing closer is, stays put. The save's repair, which reads the
+  structure from the indentation, gets the suggestion as it looks in
+  the editor.
 
 **Keys cheat sheet:** on macOS, a "Keys" link in the editor's corner
 opens the list of keys for this file's language, ⌃J join lines
