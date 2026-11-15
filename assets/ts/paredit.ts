@@ -455,7 +455,7 @@ export function wrap(state: EditorState, open: "(" | "[" | "{"): TransactionSpec
 }
 
 /** The closed string, not a regex's, whose quotes hold `pos`. */
-function stringAt(state: EditorState, pos: number): SyntaxNode | null {
+function closedString(state: EditorState, pos: number): SyntaxNode | null {
 	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
 		if (node.name !== "String") continue;
 		const last = node.lastChild;
@@ -475,7 +475,7 @@ function afterEscape(state: EditorState, pos: number): boolean {
  *  Split does: `(a |b)` becomes `(a)| (b)`. Not inside a form. */
 export function split(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.split", (pos) => {
-		const str = stringAt(state, pos);
+		const str = closedString(state, pos);
 		if (str) return afterEscape(state, pos) ? null : { changes: [{ from: pos, insert: '" "' }], cursor: pos + 1 };
 		if (inText(state, pos)) return null;
 		const coll = enclosing(state, pos);
@@ -509,7 +509,7 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 		const prev = all.findLast((f) => f.to <= pos);
 		const next = all.find((f) => f.from >= pos);
 		if (!prev || !next || !whole(prev) || sibling(prev, 1)?.from !== next.from || prev.name !== next.name) return null;
-		if (prev.name === "String" && stringAt(state, prev.to - 1) && stringAt(state, next.from + 1)) {
+		if (prev.name === "String" && closedString(state, prev.to - 1) && closedString(state, next.from + 1)) {
 			return { changes: [{ from: prev.to - 1, to: next.from + 1 }], cursor: prev.to - 1 };
 		}
 		const left = collOf(prev);
@@ -537,7 +537,7 @@ export function joinForms(state: EditorState): TransactionSpec | null {
  *  a line, past the line break. Null when that would unbalance brackets. */
 function killEnd(state: EditorState, pos: number): number | null {
 	const line = state.doc.lineAt(pos);
-	const str = stringAt(state, pos);
+	const str = closedString(state, pos);
 	if (str) return afterEscape(state, pos) ? null : Math.min(line.to, str.to - 1);
 	if (inText(state, pos)) {
 		const comment = syntaxTree(state).resolveInner(pos, -1);
@@ -581,7 +581,12 @@ export function kill(state: EditorState): { spec: TransactionSpec; text: string 
 	return spec && { spec, text: cut.join("\n") };
 }
 
-type Thread = "->" | "->>";
+const THREADS = ["->", "->>", "some->", "some->>"] as const;
+type Thread = (typeof THREADS)[number];
+
+/** Whether `macro` threads through first arguments, as `->` does, not
+ *  last ones, as `->>` does. */
+const threadsFirst = (macro: Thread) => !macro.endsWith(">>");
 
 /** The source text of `node`. */
 function text(state: EditorState, node: SyntaxNode): string {
@@ -603,7 +608,7 @@ function isCall(coll: SyntaxNode): boolean {
 function threadOf(state: EditorState, coll: SyntaxNode): Thread | null {
 	const head = isCall(coll) ? live(coll)[0] : undefined;
 	const name = head && text(state, head);
-	return name === "->" || name === "->>" ? name : null;
+	return THREADS.find((macro) => macro === name) ?? null;
 }
 
 /** `call` without its argument `arg`, as a threading step: `(f b)` for
@@ -616,45 +621,56 @@ function stepWithout(state: EditorState, call: SyntaxNode, arg: SyntaxNode): str
 	return state.doc.sliceString(call.from, from) + state.doc.sliceString(to, call.to);
 }
 
-/** Whether `call` is the last argument, and not the first, of the call
- *  around it. */
-function lastArgument(state: EditorState, call: SyntaxNode): boolean {
-	const outer = enclosing(state, element(call).from);
-	if (!outer || !isCall(outer)) return false;
-	const args = live(outer);
-	const at = args.findIndex((f) => f.from === element(call).from);
-	return at > 1 && at === args.length - 1;
+/** Where Thread Form at `pos` threads: the call around the caret, the
+ *  argument to thread, and whether that is the call's first and its last
+ *  argument. Null where it threads nothing. */
+function threadSite(state: EditorState, pos: number) {
+	const coll = enclosing(state, pos);
+	if (!coll || !isCall(coll) || !closerOf(coll) || !whole(coll)) return null;
+	const all = live(coll);
+	const form =
+		all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
+	if (!form || form === all[0] || !whole(form)) return null;
+	const first = form === all[1];
+	const last = form === all[all.length - 1];
+	const existing = threadOf(state, form);
+	// A thread the call can join as its next step.
+	const into = existing !== null && (threadsFirst(existing) ? first : last);
+	return { coll, form, first, last, into };
+}
+
+/** Whether some caret's form is its call's only argument and no thread
+ *  the call can join, where Thread Form asks which macro, as Cursive's
+ *  does. */
+export function asksThread(state: EditorState): boolean {
+	return state.selection.ranges.some((range) => {
+		const site = threadSite(state, range.head);
+		return site?.first && site.last && !site.into;
+	});
 }
 
 /** Thread the form at the caret into the call around it, as Cursive's
  *  Thread Form does: with `->` when it is the call's first argument,
  *  `->>` when it is the last, so `(f (g x) b)` becomes
- *  `(-> (g x) (f b))`. Where it is the only argument, Cursive asks which;
- *  this takes `->>` when the call is itself the last argument, and not
- *  the first, of the call around it, else `->`. A `->` thread that is
- *  the call's first argument, or a `->>` thread that is its last, takes
- *  the call in as its next step, so `(f (-> x g) b)` becomes
+ *  `(-> (g x) (f b))`, and with `only` when it is the only one, where
+ *  Cursive asks which. A `->` or `some->` thread that is the call's first
+ *  argument, or a `->>` or `some->>` thread that is its last, takes the
+ *  call in as its next step, so `(f (-> x g) b)` becomes
  *  `(-> x g (f b))`. The caret lands on the new thread, so repeating the
  *  key threads outward. */
-export function thread(state: EditorState): TransactionSpec | null {
+export function thread(state: EditorState, only?: "->" | "->>"): TransactionSpec | null {
 	return edit(state, "edit.thread", (pos) => {
-		const coll = enclosing(state, pos);
-		if (!coll || !isCall(coll) || !closerOf(coll) || !whole(coll)) return null;
-		const all = live(coll);
-		const form =
-			all.find((f) => f.from <= pos && pos < f.to) ?? all.find((f) => f.from >= pos) ?? all.find((f) => f.to === pos);
-		if (!form || form === all[0] || !whole(form)) return null;
-		const first = form === all[1];
-		const last = form === all[all.length - 1];
-		const existing = threadOf(state, form);
+		const site = threadSite(state, pos);
+		if (!site) return null;
+		const { coll, form, first, last } = site;
 		const step = stepWithout(state, coll, form);
-		if ((existing === "->" && first) || (existing === "->>" && last)) {
+		if (site.into) {
 			const closer = closerOf(form) as SyntaxNode;
 			const into = `${state.doc.sliceString(form.from, closer.from)} ${step}${state.doc.sliceString(closer.from, form.to)}`;
 			return { changes: [{ from: coll.from, to: coll.to, insert: into }], cursor: coll.from };
 		}
-		if (!first && !last) return null;
-		const macro: Thread = first && (!last || !lastArgument(state, coll)) ? "->" : "->>";
+		const macro = first && last ? only : first ? "->" : last ? "->>" : undefined;
+		if (!macro) return null;
 		return {
 			changes: [{ from: coll.from, to: coll.to, insert: `(${macro} ${text(state, form)} ${step})` }],
 			cursor: coll.from,
@@ -662,9 +678,9 @@ export function thread(state: EditorState): TransactionSpec | null {
 	});
 }
 
-/** Undo one step of the nearest `->` or `->>` around the caret, as
- *  Cursive's Unthread Form does: `(-> x g f)` becomes `(-> (g x) f)`, and
- *  `(-> (g x))` or `(-> x g)` becomes `(g x)`. */
+/** Undo one step of the nearest `->`, `->>`, `some->` or `some->>` around
+ *  the caret, as Cursive's Unthread Form does: `(-> x g f)` becomes
+ *  `(-> (g x) f)`, and `(-> (g x))` or `(-> x g)` becomes `(g x)`. */
 export function unthread(state: EditorState): TransactionSpec | null {
 	return edit(state, "edit.unthread", (pos) => {
 		for (let coll = enclosing(state, pos); coll; coll = enclosing(state, element(coll).from)) {
@@ -682,9 +698,9 @@ export function unthread(state: EditorState): TransactionSpec | null {
 			if (step.name === "List") {
 				const args = forms(step);
 				const closer = closerOf(step) as SyntaxNode;
-				const at = macro === "->" ? (args[1]?.from ?? closer.from) : closer.from;
-				const lead = macro === "->" && args[1] ? "" : " ";
-				const trail = macro === "->" && args[1] ? " " : "";
+				const at = threadsFirst(macro) ? (args[1]?.from ?? closer.from) : closer.from;
+				const lead = threadsFirst(macro) && args[1] ? "" : " ";
+				const trail = threadsFirst(macro) && args[1] ? " " : "";
 				call =
 					state.doc.sliceString(step.from, at) + lead + text(state, value) + trail + state.doc.sliceString(at, step.to);
 			} else if (step.name === "Symbol" || step.name === "Keyword") {

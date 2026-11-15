@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { history, isolateHistory, redo, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { LanguageSupport } from "@codemirror/language";
@@ -102,6 +103,32 @@ describe("hotkeyBindings", () => {
 		expect(press1("Ctrl-Alt-.", "(-> x |f)")).toBe("|(f x)");
 		expect(press1("Ctrl-Alt-s", "(a |b)")).toBe("(a)| (b)");
 		expect(press1("Ctrl-Alt-j", "(a)| (b)")).toBe("(a| b)");
+	});
+
+	test("⌃⌥, on an only argument offers -> and ->> in the completion list", () => {
+		let state = stateOf("(map f (g |x))", [clojure, editorKeys("clojure")]);
+		const view = {
+			get state() {
+				return state;
+			},
+			dispatch: (spec: TransactionSpec) => {
+				state = state.update(spec).state;
+			},
+		} as unknown as EditorView;
+		const threadKey = hotkeyBindings("clojure").find((b) => b.mac === "Ctrl-Alt-,");
+		expect(threadKey?.run?.(view)).toBe(true);
+		expect(marked(state)).toBe("(map f (g |x))");
+		const offered = () => {
+			const context = new CompletionContext(state, state.selection.main.head, true);
+			const sources = state.languageDataAt<CompletionSource>("autocomplete", context.pos);
+			return sources.map((source) => source(context) as CompletionResult | null).find((result) => result);
+		};
+		const result = offered();
+		expect(result?.options.map((o) => o.label)).toEqual(["->", "->>"]);
+		const apply = result?.options[1].apply as (view: EditorView) => void;
+		apply(view);
+		expect(marked(state)).toBe("(map f |(->> x g))");
+		expect(offered()).toBeUndefined();
 	});
 
 	test("⌃K cuts to the end of the list into the clipboard", async () => {
