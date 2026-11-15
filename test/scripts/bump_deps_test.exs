@@ -2,7 +2,7 @@ defmodule Meerkat.BumpDepsHookTest do
   # The seams between Git, the repo's real lefthook.yml and
   # scripts/bump-deps.ts and scripts/rebase-bump.ts: commits and a rebase
   # through hooks that run the real scripts, with mix, pnpm, bun and curl
-  # replaced by stubs on PATH, and check.sh and mutate.sh by stubs in the
+  # replaced by stubs on PATH, and check.ts and mutate.ts by stubs in the
   # fixture. The stubs log each run, report the outdated packages a test
   # sets up, and record an update by appending a line to the file it would
   # change. scripts/bump-deps.test.ts and scripts/rebase-bump.test.ts cover
@@ -155,7 +155,7 @@ defmodule Meerkat.BumpDepsHookTest do
     File.cp!(Path.join(root, "lefthook.yml"), Path.join(work, "lefthook.yml"))
 
     for script <-
-          ~w(no-main-commits.sh bump-deps.ts deps-common.ts bump-hex-requirements.exs rebase-bump.ts) do
+          ~w(no-main-commits.ts checked-trees.ts bump-deps.ts deps-common.ts bump-hex-requirements.exs rebase-bump.ts) do
       File.cp!(Path.join([root, "scripts", script]), Path.join([work, "scripts", script]))
     end
 
@@ -168,8 +168,12 @@ defmodule Meerkat.BumpDepsHookTest do
     # test/scripts/pre_commit_test.exs covers the checks and the mutation
     # gate. This check records the mix.lock it was given to check, by a
     # relative path: copy_fixture would rewrite a tracked file naming base.
-    File.write!(Path.join([work, "scripts", "check.sh"]), "git show :mix.lock > ../seen\n")
-    File.write!(Path.join([work, "scripts", "mutate.sh"]), "exit 0\n")
+    File.write!(Path.join([work, "scripts", "check.ts"]), """
+    import { writeFileSync } from "node:fs";
+    writeFileSync("../seen", Bun.spawnSync(["git", "show", ":mix.lock"]).stdout);
+    """)
+
+    File.write!(Path.join([work, "scripts", "mutate.ts"]), "")
 
     File.write!(Path.join(work, ".gitignore"), "node_modules\n")
     File.write!(Path.join(work, "mix.exs"), @mix_exs)
@@ -206,7 +210,7 @@ defmodule Meerkat.BumpDepsHookTest do
     #!/usr/bin/env bash
     cmd="$(basename "$0") $*"
     case "$cmd" in
-      "bun scripts/bump-deps.ts" | "bun scripts/rebase-bump.ts "*) exec '#{bun}' "$@" ;;
+      "bun scripts/bump-deps.ts" | "bun scripts/rebase-bump.ts "* | "bun scripts/check.ts" | "bun scripts/mutate.ts staged" | "bun scripts/no-main-commits.ts") exec '#{bun}' "$@" ;;
     esac
     echo "$cmd" >> '#{log}'
     case "$cmd" in

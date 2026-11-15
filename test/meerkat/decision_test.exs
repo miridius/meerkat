@@ -95,7 +95,10 @@ defmodule Meerkat.DecisionTest do
     end
 
     test "unrecorded questions are never delivered as a decision", %{repo: repo} do
-      File.write!(Path.dirname(PendingQuestions.path_for(repo)), "not a directory")
+      # The state dir is the repo dir.
+      state_dir = Path.dirname(PendingQuestions.path_for(repo))
+      File.rm_rf!(state_dir)
+      File.write!(state_dir, "not a directory")
       parent = self()
       spawn(fn -> send(parent, {:awaited, catch_exit(Decision.await())}) end)
       # Let the waiter reach the server before the submit crashes it.
@@ -477,7 +480,7 @@ defmodule Meerkat.DecisionTest do
          %{repo: repo} do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "600")
       {first, _} = spawn_caller("run-a")
-      anchor = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "run-a", "abc123"])
+      anchor = Path.join([Meerkat.Git.meerkat_dir(repo), "deadlines", "run-a", "abc123"])
       File.write!(anchor, Integer.to_string(System.system_time(:millisecond) - 3_600_000))
       Process.exit(first, :kill)
 
@@ -528,7 +531,7 @@ defmodule Meerkat.DecisionTest do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
       System.put_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "false")
       {_pid, _} = spawn_caller("run-h")
-      run_dir = Path.join([repo, ".git", "meerkat-precommit", "deadlines", "run-h"])
+      run_dir = Path.join([Meerkat.Git.meerkat_dir(repo), "deadlines", "run-h"])
       backdated_s = System.system_time(:second) - 3600
       File.touch!(run_dir, backdated_s)
 

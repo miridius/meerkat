@@ -105,7 +105,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
     test "is formatted on save inside the anchored side's file, when added and when edited",
          %{conn: conn, calls: calls} do
-      repo = tmp_git_repo()
+      repo = state_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
 
       render_hook(view, "comment_form.show_at_line", %{
@@ -145,7 +145,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
     end
 
     test "on the new side is formatted inside the new file", %{conn: conn, calls: calls} do
-      repo = tmp_git_repo()
+      repo = state_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
 
       render_hook(view, "comment_form.show_at_line", %{
@@ -173,7 +173,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
     end
 
     test "on a file comment is formatted on its own", %{conn: conn, calls: calls} do
-      repo = tmp_git_repo()
+      repo = state_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
 
       render_click(view, "comment_form.show_file", %{"file_index" => "0"})
@@ -187,7 +187,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
     @tag :capture_log
     test "keeps the old comment when formatting its edit fails", %{conn: conn} do
-      repo = tmp_git_repo()
+      repo = state_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file]}, repo)
       Process.flag(:trap_exit, true)
 
@@ -237,7 +237,7 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
 
     test "is left alone in other languages, other files, other finding types and global comments",
          %{conn: conn, calls: calls} do
-      repo = tmp_git_repo()
+      repo = state_repo()
       {view, rid} = mount_bound(conn, %ReviewState{files: [@clj_file, @md_file]}, repo)
 
       # A README's suggestion that ends in a Clojure example.

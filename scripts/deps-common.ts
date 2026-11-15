@@ -146,7 +146,7 @@ export function requireTools(sys: Sys, ...tools: string[]) {
 }
 
 // withoutGitEnv: the environment change that drops GIT_INDEX_FILE and the
-// other variables Git exports to hooks, as scripts/check.sh does, so
+// other variables Git exports to hooks, as scripts/check.ts does, so
 // fetching a git dependency into deps/ leaves this checkout's index alone.
 export async function withoutGitEnv(sys: Sys): Promise<Record<string, undefined>> {
 	const ran = await sys.run(["git", "rev-parse", "--local-env-vars"]);

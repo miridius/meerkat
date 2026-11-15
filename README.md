@@ -157,12 +157,12 @@ See `CLAUDE.md` for the development workflow.
 ## Quality gates
 
 ```bash
-bun run test                         # scripts/mix-test.sh (ExUnit, one BEAM per test file), assets bun tests, e2e/lib bun tests, then Playwright
+bun run test                         # scripts/mix-test.ts (ExUnit, one BEAM per test file), assets bun tests, e2e/lib and scripts bun tests, then Playwright
 mix format --check-formatted         # Elixir formatting
 mix compile --warnings-as-errors     # strict compile
 ```
 
-ExUnit (including LiveViewTest) and the assets bun tests test each piece. The Playwright suite in `tests/e2e/` drives a real meerkat binary, with one test per seam only it reaches, such as browser Svelte/JS to LiveView, and one per major feature.
+ExUnit (including LiveViewTest) and the assets and scripts bun tests test each piece. The Playwright suite in `tests/e2e/` drives a real meerkat binary, with one test per seam only it reaches, such as browser Svelte/JS to LiveView, and one per major feature.
 
 ## License
 
