@@ -65,6 +65,22 @@ describe("expandSelection", () => {
 		expect(expandSelection(state)).toBeNull();
 	});
 
+	test("selects the whole form from a caret just before its opener or after its closer", () => {
+		const expand = (doc: string, language: LanguageSupport) => {
+			const state = stateOf(doc, language);
+			return marked(apply(state, expandSelection(state)));
+		};
+		for (const form of ["(b)", "[b]", "{:b c}", "#{b}", '"b c"']) {
+			expect(expand(`(a |${form} d)`, clojure())).toBe(`(a <${form}> d)`);
+			expect(expand(`(a ${form}| d)`, clojure())).toBe(`(a <${form}> d)`);
+			expect(expand(`(a ${form}|)`, clojure())).toBe(`(a <${form}>)`);
+		}
+		for (const form of ["(b)", "[b]", "{b}", '"b"', "'b'"]) {
+			expect(expand(`f(a, |${form});`, javascript())).toBe(`f(a, <${form}>);`);
+			expect(expand(`f(a, ${form}|);`, javascript())).toBe(`f(a, <${form}>);`);
+		}
+	});
+
 	test("grows by syntax in other languages", () => {
 		let state = stateOf("f(a, |b + 1);", javascript());
 		state = apply(state, expandSelection(state));
