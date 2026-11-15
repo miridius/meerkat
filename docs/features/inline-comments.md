@@ -230,7 +230,8 @@ changes each list once.
   not move; a line with no text above it stays put. A line in a
   collection that opens on a line that moved moves with it. A line
   inside a string stays put. A string being typed, from the keystroke
-  that types its opening quote until an edit lands outside it, that
+  that types its opening quote until an edit lands outside it or an
+  undo or redo, that
   runs on past its line, as while a string is typed
   before a map, is read as closing right after the edit. A line at or left of its
   collection's opener, as one past a missing closer is, stays put. A

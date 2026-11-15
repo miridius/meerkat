@@ -17,7 +17,6 @@ import {
 	splice,
 	tightInClojure,
 	typedQuote,
-	typedQuoteEffect,
 } from "./paredit.js";
 import { expandSelection, joinLines, moveNode, selectionHistory, shrinkSelection } from "./syntaxEdit.js";
 
@@ -163,10 +162,9 @@ const EDITS = ["input", "delete", "edit", "move", "indent"];
  *  edit moves. */
 const keepAligned = State.transactionFilter.of((tr) => {
 	if (!tr.docChanged || !EDITS.some((event) => tr.isUserEvent(event))) return tr;
-	const alignment = alignBelow(tr);
-	const effects = typedQuoteEffect(tr.startState, alignment);
-	if (!alignment.shift && effects.length === 0) return tr;
-	return [tr, { changes: alignment.shift ?? [], sequential: true, effects }];
+	const { shift, effects } = alignBelow(tr);
+	if (!shift && effects.length === 0) return tr;
+	return [tr, { changes: shift ?? [], sequential: true, effects }];
 });
 
 /** The key bindings for a file in `language`. */
