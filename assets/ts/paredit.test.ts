@@ -408,8 +408,9 @@ describe("split", () => {
 		expect(run(split, "(a \\ \n |b)")).toBe("(a \\ )|\n(b)");
 	});
 
-	test("closes the first half after a comment on the next line", () => {
+	test("closes the first half after a comment on the caret's line", () => {
 		expect(run(split, "(a ; c\n |b)")).toBe("(a ; c\n )| (b)");
+		expect(run(split, "(a ; c\n\n |b)")).toBe("(a ; c\n\n )| (b)");
 	});
 
 	test("does nothing to metadata", () => {
@@ -531,7 +532,7 @@ describe("kill", () => {
 
 	test("does nothing from inside a prefix", () => {
 		expect(killed("(fn [^Str|ing s] s)")).toBeNull();
-		expect(killed('(f #in|st "2020")')).toBeNull();
+		expect(killed("(f #|_x y)")).toBeNull();
 		expect(killed("(x #|?(:clj a) y)")).toBeNull();
 	});
 

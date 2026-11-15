@@ -495,8 +495,9 @@ export function split(state: EditorState): TransactionSpec | null {
 		const closer = coll && closerOf(coll);
 		if (!coll || !closer || !coll.firstChild || inPrefix(coll)) return null;
 		if (forms(coll).some((f) => f.from < pos && pos < f.to)) return null;
-		// The first half closes after its last form, or after a comment on
-		// the caret's line, as the comment would hide a closer on its own.
+		// The first half closes after its last form, or, after a comment,
+		// on the caret's line: on the comment's line, the comment would
+		// swallow the closer.
 		let before = coll.firstChild;
 		for (let child = before.nextSibling; child && child.to <= pos; child = child.nextSibling) before = child;
 		let from = before.to;
@@ -558,7 +559,8 @@ export function joinForms(state: EditorState): TransactionSpec | null {
 /** Where Kill from `pos` stops: the end of the line, or before the
  *  enclosing collection's closer or string's quote when that comes
  *  first, pushed past any form that crosses the line's end. At the end of
- *  a line but a comment's, past the line break. Null when that would unbalance brackets. */
+ *  a line but a comment's, past the line break. Null when that would
+ *  unbalance brackets, or from inside a prefix such as `^String`. */
 function killEnd(state: EditorState, pos: number): number | null {
 	const line = state.doc.lineAt(pos);
 	const str = closedStringAt(state, pos);
