@@ -167,6 +167,11 @@ describe("editorKeys", () => {
 		expect(next.doc.toString()).toBe("(f g (if x\n         a\n         b))");
 		const indented = state.update({ changes: { from: 0, insert: "  " }, userEvent: "input.indent" }).state;
 		expect(indented.doc.toString()).toBe("  (f (if x\n         a\n         b))");
+		const reindented = state.update({ changes: { from: 0, insert: "  " }, userEvent: "indent" }).state;
+		expect(reindented.doc.toString()).toBe("  (f (if x\n         a\n         b))");
+		// `c` sat under `b`, whose place the swap gives to `aaaa`'s start.
+		const swapped = press("Mod-Shift-ArrowDown", "clojure", stateOf("(f |aaaa b\n        c)", [clojure, editorKeys("clojure")]));
+		expect(swapped.text.replace("|", "")).toBe("(f b aaaa\n     c)");
 		const spliced = press("Alt-s", "clojure", stateOf("(f (|g) {:a 1\n        :b 2})", [clojure, editorKeys("clojure")]));
 		expect(spliced.text).toBe("(f |g {:a 1\n      :b 2})");
 	});

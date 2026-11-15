@@ -1,5 +1,4 @@
 import {
-	ensureSyntaxTree,
 	getIndentation,
 	IndentContext,
 	indentService,
@@ -8,6 +7,7 @@ import {
 	LanguageSupport,
 } from "@codemirror/language";
 import { type Compartment, EditorState, type Extension, Prec, type Text } from "@codemirror/state";
+import { parsed } from "./syntaxEdit.js";
 
 /** The text of `source` above its line `line` (1-based), split the way
  *  the server cuts the editor's seed from it: it ends with a line break,
@@ -69,10 +69,7 @@ function formIndentation(above: string, language: Compartment): Extension {
 					doc,
 					extensions: [support, indentUnit.of(cx.state.facet(indentUnit)), EditorState.tabSize.of(cx.state.tabSize)],
 				});
-				ensureSyntaxTree(created, doc.length, 1000);
-				// The state keeps the tree it was created with; an update
-				// takes the finished parse.
-				cache = { doc: cx.state.doc, state: created.update({}).state };
+				cache = { doc: cx.state.doc, state: parsed(created, 1000) };
 			}
 			const options = (cx as unknown as { options: IndentOptions }).options;
 			const override = options.overrideIndentation;

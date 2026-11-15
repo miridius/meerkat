@@ -1,4 +1,4 @@
-import { ensureSyntaxTree, indentRange, syntaxTree } from "@codemirror/language";
+import { indentRange, syntaxTree } from "@codemirror/language";
 import {
 	type ChangeSet,
 	type ChangeSpec,
@@ -21,7 +21,7 @@ import {
 	isColl,
 	type SyntaxNode,
 } from "./clojureTree.js";
-import { type Entries, type Span, whole } from "./syntaxEdit.js";
+import { type Entries, parsed, type Span, whole } from "./syntaxEdit.js";
 
 /** Structural editing for Clojure, in the style of Cursive's paredit,
  *  over the Lezer tree of `@nextjournal/lang-clojure`. Each editing
@@ -175,7 +175,7 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, inserted }));
 	if (parts.length === 0) return null;
 	const edited = doc.lineAt(parts[0].from);
-	if (parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return null;
+	if (edited.number === doc.lines || parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return null;
 	/** How far the changes move the text at `pos` on the edited line: to
 	 *  where a deletion of it starts. Text inserted onto the start of a
 	 *  form leaves the form starting where it did; the opener or character
@@ -186,20 +186,17 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 			if (to < pos || (to === pos && !(form && joins))) return sum + inserted.length - (to - from);
 			return from < pos && pos < to ? sum + from - pos : sum;
 		}, 0);
-	// A string typed on the edited line runs, until its closing quote, to
-	// the next quote in the text, past lines that are code: read the
-	// lines below as if it closed at the line's end.
-	const open = textStart(state, edited.to);
-	const typed =
-		open !== null && open >= edited.from && doc.sliceString(open, open + 1) === '"' && parts.some((p) => p.from > open);
-	let tree = state;
-	if (typed) {
-		const closed = state.update({ changes: { from: edited.to, insert: '"' }, filter: false }).state;
-		if (!ensureSyntaxTree(closed, closed.doc.length, 50)) return null;
-		// The state keeps the tree it was created with; an update takes the
-		// finished parse.
-		tree = closed.update({ filter: false }).state;
-	}
+	// A string being typed on the edited line runs, until its closing
+	// quote, to the next quote in the text, past lines that are code: read
+	// the text as if it closed right after the edit. `quote` is where that
+	// closing quote goes, and `tree` the text with it.
+	const open = textStart(state, parts[0].from);
+	const typed = open !== null && open >= edited.from && doc.sliceString(open, open + 1) === '"';
+	const quote = typed ? parts[parts.length - 1].to : -1;
+	// A parse cut short stops the lines below where it stopped.
+	const tree = typed ? parsed(state.update({ changes: { from: quote, insert: '"' }, filter: false }).state, 50) : state;
+	/** Where `pos` on the edited line in `tree` is in the text. */
+	const untyped = (pos: number) => (typed && pos > quote ? pos - 1 : pos);
 	/** How far the text above column `indent` moves, as a form's start or
 	 *  a character; none past the edited line's text. */
 	const above = (indent: number, form: boolean) =>
@@ -217,13 +214,14 @@ export function alignBelow(tr: Transaction): ChangeSet | null {
 		// Past the collections that open on the edited line, nothing moves.
 		if (!coll || coll.from < edited.from) break;
 		const opener = tree.doc.lineAt(coll.from);
-		const col = coll.from - opener.from;
+		const at = opener.number === edited.number ? untyped(coll.from) : coll.from;
+		const col = at - opener.from;
 		// A line at or left of its opener, as one past a missing closer is,
 		// aligns to nothing in it.
 		if (indent <= col) continue;
 		let shift: number;
 		if (opener.number !== edited.number) shift = shifts.get(opener.number) ?? 0;
-		else if (indent === col + 1 || indent === col + 2) shift = moved(coll.from, false);
+		else if (indent === col + 1 || indent === col + 2) shift = moved(at, false);
 		else shift = above(indent, true);
 		shift = Math.max(shift, -indent);
 		if (shift === 0) continue;

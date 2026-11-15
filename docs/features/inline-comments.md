@@ -220,8 +220,8 @@ changes each list once.
 - Deleting a selection is never blocked.
 - Lines that slurp, barf, raise, splice, a node move or a paste
   change re-indent, as Enter indents them.
-- An edit within one line, typed, deleted, pasted, indented or by a
-  structural key, shifts the lines below it that are aligned to text
+- An edit within one line, typed, deleted, pasted, indented, moved or
+  by a structural key, shifts the lines below it that are aligned to text
   the edit moves, such as the inside of a map whose `{` moves when
   `atom` before it becomes `reagent/atom`, so they stay aligned. A
   line in a collection that opens on the edited line follows the
@@ -231,7 +231,7 @@ changes each list once.
   collection that opens on a line that moved moves with it. A line
   inside a string stays put. A string that opens on the edited line
   and is edited inside, as while a string is typed before a map, is
-  read as closing at that line's end. A line at or left of its
+  read as closing right after the edit. A line at or left of its
   collection's opener, as one past a missing closer is, stays put. A
   paste re-indents its own lines first. The save's repair, which reads
   the structure from the indentation, gets the suggestion as it looks

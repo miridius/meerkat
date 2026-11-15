@@ -103,6 +103,7 @@ describe("alignBelow", () => {
 			["(log/info {:a 1\n           :b 2})", '(log/info "m" {:a 1\n               :b 2})'],
 			// The string being typed runs to the next quote.
 			['(log/info {:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
+			['(log/info {:a "x"\n           :b 2})', '(log/info "m" {:a "x"\n               :b 2})'],
 		]) {
 			let state = stateOf(doc);
 			for (const key of ['"', "m", '"', " "]) {
@@ -115,7 +116,7 @@ describe("alignBelow", () => {
 		}
 	});
 
-	test("reads a string being typed as closed at the line's end", () => {
+	test("reads a string being typed as closed right after the edit", () => {
 		const doc = "(str «»x y z w v u t s)\n(defn g []\n  (let [a 1]\n    (foo a\n         b)))";
 		const lines = doc.replace("«»", "").split("\n");
 		expect(edit(doc.replace("«»", '"«»'), "a")).toEqual(['(str "ax y z w v u t s)', ...lines.slice(1)]);
