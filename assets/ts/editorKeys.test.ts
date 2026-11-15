@@ -209,8 +209,9 @@ describe("editorKeys", () => {
 	});
 
 	/** The state after `steps` from `doc`: each types its text at its
-	 *  position as one undo step, or undoes or redoes one. */
-	function replay(doc: string, steps: ([number, string] | "undo" | "redo")[]): EditorState {
+	 *  position as a new undo step, or, marked "join", in the step before;
+	 *  or undoes or redoes one. */
+	function replay(doc: string, steps: ([number, string, "join"?] | "undo" | "redo")[]): EditorState {
 		let state = stateOf(doc, [clojure, editorKeys("clojure"), history()]);
 		const dispatch = (tr: Transaction) => {
 			state = tr.state;
@@ -219,11 +220,11 @@ describe("editorKeys", () => {
 			if (step === "undo") undo({ state, dispatch });
 			else if (step === "redo") redo({ state, dispatch });
 			else {
-				const [from, insert] = step;
+				const [from, insert, join] = step;
 				state = state.update({
 					changes: { from, insert },
 					userEvent: "input.type",
-					annotations: isolateHistory.of("full"),
+					annotations: join ? [] : isolateHistory.of("before"),
 				}).state;
 			}
 		}
@@ -244,6 +245,14 @@ describe("editorKeys", () => {
 		expect(closing.doc.toString()).toBe(typed('"ac"'));
 		const opening = replay(doc, [[10, '"'], "undo", "redo", [11, "a"], ...close(12)]);
 		expect(opening.doc.toString()).toBe(typed('"a"'));
+		// One undo step that ends the string and types another.
+		const merged = replay(doc, [[10, '"'], [11, "a"], [12, '"'], [13, " ", "join"], [14, '"', "join"], "undo"]);
+		expect(merged.field(typedQuote)).toBe(10);
+	});
+
+	test("deleting the opening quote of a string being typed in Clojure ends it", () => {
+		const state = replay("(log/info {:a 1\n           :b 2})", [[10, '"']]);
+		expect(state.update({ changes: { from: 10, to: 11 } }).state.field(typedQuote)).toBeNull();
 	});
 
 	test("an edit outside a string being typed in Clojure ends it", () => {

@@ -181,8 +181,10 @@ const setTypedQuote = StateEffect.define<number | null>({ map: mapQuote });
 export const typedQuote = StateField.define<number | null>({
 	create: () => null,
 	update(quote, tr) {
-		for (const effect of tr.effects) if (effect.is(setTypedQuote)) return effect.value;
-		return mapQuote(quote, tr.changes);
+		// An undo step's effects run newest first, so the last one holds.
+		let next = mapQuote(quote, tr.changes);
+		for (const effect of tr.effects) if (effect.is(setTypedQuote)) next = effect.value;
+		return next;
 	},
 	provide: (field) =>
 		invertedEffects.of((tr) => {
