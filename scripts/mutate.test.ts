@@ -181,6 +181,8 @@ describe("plan", () => {
 		test("refuses a base that does not exist, or a diff git cannot make", () => {
 			expect(run(["changed"], {}).result).toEqual({ exit: 2, err: ["scripts/mutate.ts: base ref 'origin/main' not found; fetch origin first."] });
 			expect(run(["changed"], HEAD).result).toEqual({ exit: 2, err: ["scripts/mutate.ts: git diff --merge-base origin/main failed."] });
+			const noIndex = { ...HEAD, "rev-parse --path-format=absolute --git-path index": { status: 128, out: "" } };
+			expect(run(["changed"], noIndex).result).toEqual({ exit: 2, err: ["scripts/mutate.ts: git cannot find the index."] });
 		});
 	});
 
@@ -349,6 +351,7 @@ describe("the muex run", () => {
 		});
 		const { r, marked } = memoryRecords();
 		const events: string[] = [];
+		const cmds: string[][] = [];
 		const envs: Record<string, unknown>[] = [];
 		const lines: string[] = [];
 		const io: GatedIo = {
@@ -361,6 +364,7 @@ describe("the muex run", () => {
 			run: (cmd, env) => {
 				const c = cmd.slice(0, 2).join(" ");
 				events.push(c);
+				cmds.push(cmd);
 				envs.push(env);
 				if (c === "mix muex") return muexStatus;
 				return cmd.join(" ") === fail ? 3 : 0;
@@ -370,7 +374,7 @@ describe("the muex run", () => {
 			log: (l) => lines.push(l),
 			err: (l) => lines.push(l),
 		};
-		return { status: gated(run, io), events, envs, marked, out: lines.join("\n") };
+		return { status: gated(run, io), events, cmds, envs, marked, out: lines.join("\n") };
 	};
 
 	test("prepares the suite, removes the last run's report, runs muex, and records what passed", () => {
@@ -384,6 +388,9 @@ describe("the muex run", () => {
 		expect(r.envs[3]).toEqual({ PATH: "/bin", GIT_INDEX_FILE: "/r/.git/index.lock" });
 		expect(r.marked).toEqual(["mutated t1"]);
 		expect(r.out).toBe("scripts/mutate.ts: no mutant of the staged lib/ lines survived.");
+		// Half the 8 cores' worth of test BEAMs.
+		const muex = r.cmds[3];
+		expect(muex[muex.indexOf("--concurrency") + 1]).toBe("4");
 	});
 
 	test("a failing step or muex run fails the run and records nothing", () => {

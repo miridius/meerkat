@@ -6,19 +6,19 @@
 // test or the code.
 //
 // Modes:
-//   bun scripts/mutate.ts             — mutate every line of every
+//   bun scripts/mutate.ts         — mutate every line of every
 //                                   lib/meerkat/*.ex (skips application —
 //                                   supervisor plumbing). Slow.
-//   bun scripts/mutate.ts changed     — mutate only the lib/**/*.ex lines changed
+//   bun scripts/mutate.ts changed — mutate only the lib/**/*.ex lines changed
 //                                   vs the merge base with origin/main
 //                                   (override with BASE_BRANCH), uncommitted
 //                                   edits included (muex --since). The
 //                                   pre-push hook runs this mode on a pushed
 //                                   tip with no mutation record.
-//   bun scripts/mutate.ts staged      — mutate only the lib/**/*.ex lines staged
+//   bun scripts/mutate.ts staged  — mutate only the lib/**/*.ex lines staged
 //                                   for the next commit (muex --staged). The
 //                                   lefthook pre-commit hook runs this mode.
-//   bun scripts/mutate.ts <path…>     — mutate every line of the named
+//   bun scripts/mutate.ts <path…> — mutate every line of the named
 //                                   lib/**/*.ex files, refusing any other
 //                                   path.
 //
@@ -438,7 +438,9 @@ if (import.meta.main) {
 		records: records(git),
 		env: process.env,
 		root,
-		cores: onlineCores(),
+		get cores() {
+			return onlineCores();
+		},
 		find: (dir, suffix, depth) => find(root, dir, suffix, depth),
 		run: (cmd, env) => Bun.spawnSync(cmd, { env, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 1,
 		readReport: (path) => (statOf(path)?.isFile() ? JSON.parse(readFileSync(path, "utf8")).mutations : null),

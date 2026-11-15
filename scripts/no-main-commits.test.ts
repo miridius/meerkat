@@ -23,7 +23,11 @@ test("lets a commit on a detached HEAD through", () => {
 
 test("run by git on a detached HEAD, lets the commit through", () => {
 	const repo = mkdtempSync(join(tmpdir(), "meerkat-no-main-"));
-	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+	const env = {
+		...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_"))),
+		GIT_CONFIG_GLOBAL: join(import.meta.dir, "../test/support/test.gitconfig"),
+		GIT_CONFIG_NOSYSTEM: "1",
+	};
 	const git = (...args: string[]) => {
 		if (Bun.spawnSync(["git", ...args], { cwd: repo, env }).exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
 	};

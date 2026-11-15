@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build + install meerkat for the current host: scripts/install.ts does
-# the work. This installs the Bun that runs it first, through mise when
-# mise is here, since Bun may not exist yet.
+# the work. When mise is here, this first installs the Bun that runs it
+# through mise, since Bun may not exist yet.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

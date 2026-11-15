@@ -1,7 +1,7 @@
 # Installation
 
 `~/.local/bin/meerkat` is the public entrypoint. `scripts/install.sh`
-installs the prod release there: it installs Bun, through mise when
+installs the prod release there: it installs Bun through mise when
 mise is here, then runs `scripts/install.ts`, which does the work.
 
 `bin/meerkat-beam`, the dev launcher, runs meerkat from a checkout
