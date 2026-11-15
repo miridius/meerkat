@@ -220,17 +220,22 @@ changes each list once.
 - Deleting a selection is never blocked.
 - Lines that slurp, barf, raise, splice, a node move or a paste
   change re-indent, as Enter indents them.
-- Typing or deleting on one line shifts the lines below it that are
-  aligned to text the edit moves, such as the inside of a map whose
-  `{` moves when `atom` before it becomes `reagent/atom`, so they stay
-  aligned. A line in a collection that opens on the edited line
-  follows the opener when indented one or two columns past it, and
-  otherwise the text above its first character; a line in a
+- An edit within one line, typed, deleted, pasted, indented or by a
+  structural key, shifts the lines below it that are aligned to text
+  the edit moves, such as the inside of a map whose `{` moves when
+  `atom` before it becomes `reagent/atom`, so they stay aligned. A
+  line in a collection that opens on the edited line follows the
+  opener when indented one or two columns past it, and otherwise the
+  text above its first character, which text typed onto its start does
+  not move; a line with no text above it stays put. A line in a
   collection that opens on a line that moved moves with it. A line
-  inside a string, or left of its collection's opener as one past a
-  missing closer is, stays put. The save's repair, which reads the
-  structure from the indentation, gets the suggestion as it looks in
-  the editor.
+  inside a string stays put, unless the string opens on the edited
+  line and has no closing quote yet, as while a string is typed there:
+  then it follows the text above it. A line at or left of its
+  collection's opener, as one past a missing closer is, stays put. A
+  paste re-indents its own lines first. The save's repair, which reads
+  the structure from the indentation, gets the suggestion as it looks
+  in the editor.
 
 **Keys cheat sheet:** on macOS, a "Keys" link in the editor's corner
 opens the list of keys for this file's language, ⌃J join lines

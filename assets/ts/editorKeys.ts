@@ -153,12 +153,14 @@ const reindentPaste = State.transactionFilter.of((tr) => {
 	return spec.changes === tr.changes ? tr : spec;
 });
 
-/** Keep the lines below a typed or deleted-in line aligned to the text
- *  the edit moves. A paste re-indents instead. */
+/** The user events of edits: typing, deleting, pasting, the structural
+ *  keys and the indent commands. Undo and redo replay their own. */
+const EDITS = ["input", "delete", "edit", "indent"];
+
+/** Keep the lines below a line an edit changes aligned to the text the
+ *  edit moves. */
 const keepAligned = State.transactionFilter.of((tr) => {
-	if (!tr.docChanged || !(tr.isUserEvent("input") || tr.isUserEvent("delete")) || tr.isUserEvent("input.paste")) {
-		return tr;
-	}
+	if (!tr.docChanged || !EDITS.some((event) => tr.isUserEvent(event))) return tr;
 	const shift = alignBelow(tr);
 	return shift ? [tr, { changes: shift, sequential: true }] : tr;
 });
@@ -192,7 +194,9 @@ export function hotkeyBindings(language: string): KeyBinding[] {
  *  `language`. */
 export function editorKeys(language: string): Extension {
 	const extensions: Extension[] = [selectionHistory, keymap.of(hotkeyBindings(language))];
-	if (language === "clojure") extensions.push(bracketTyping, reindentPaste, keepAligned);
+	// Filters run last first: a paste re-indents its own lines, then the
+	// lines below keep their alignment.
+	if (language === "clojure") extensions.push(bracketTyping, keepAligned, reindentPaste);
 	return extensions;
 }
 

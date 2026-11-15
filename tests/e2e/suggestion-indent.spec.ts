@@ -98,9 +98,10 @@ fi
 			await page.keyboard.press("ArrowRight");
 			await page.keyboard.type("if-");
 			await expect(lines.first()).toHaveText("  (if-let [x (:x req)");
-			// Without its `]`, re-indenting by the brackets would put the body
-			// in the bindings. The hook stand-in repairs nothing, so the save
-			// shows what was sent.
+			// Without the `]`, re-indenting the lines by their brackets would
+			// put the body in the bindings, so the save must send them as
+			// shown. The hook stand-in repairs nothing, so the save shows what
+			// was sent, with its cljfmt widening.
 			await lines.nth(1).click();
 			await page.keyboard.press("End");
 			await page.keyboard.press("Shift+ArrowLeft");

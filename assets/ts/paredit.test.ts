@@ -45,13 +45,17 @@ function run(command: (s: EditorState) => TransactionSpec | null, marked: string
 }
 
 describe("alignBelow", () => {
-	/** The lines of `doc` after replacing its `«...»` with `insert`, with
-	 *  the lines below shifted as `alignBelow` says. */
-	function edit(marked: string, insert: string): string[] {
-		const from = marked.indexOf("«");
-		const to = marked.indexOf("»") - 1;
-		const state = stateOf(marked.replace(/[«»]/g, ""));
-		const tr = state.update({ changes: { from, to, insert }, userEvent: "input.type" });
+	/** The lines of `marked` after replacing its nth `«...»` with
+	 *  `inserts[n]`, in one change, with the lines below shifted as
+	 *  `alignBelow` says. */
+	function edit(marked: string, ...inserts: string[]): string[] {
+		const changes: { from: number; to: number; insert: string }[] = [];
+		const doc = marked.replace(/«([^»]*)»/g, (_whole, text: string, at: number) => {
+			const from = at - 2 * changes.length;
+			changes.push({ from, to: from + text.length, insert: inserts[changes.length] });
+			return text;
+		});
+		const tr = stateOf(doc).update({ changes, userEvent: "input.type" });
 		const shift = alignBelow(tr);
 		return (shift ? shift.apply(tr.newDoc) : tr.newDoc).toString().split("\n");
 	}
@@ -63,9 +67,22 @@ describe("alignBelow", () => {
 		]);
 	});
 
-	test("moves lines aligned to an argument, not those indented past the opener", () => {
+	test("moves lines aligned to a moved opener or argument, not those whose opener stays put", () => {
 		expect(edit("(f («»let [x 1\n         y 2]\n     x))", "if-")).toEqual(["(f (if-let [x 1", "            y 2]", "     x))"]);
 		expect(edit("(«»foo bar\n     baz)", "x")).toEqual(["(xfoo bar", "      baz)"]);
+	});
+
+	test("keeps a line under an argument typed onto, and moves one under an opener typed before", () => {
+		expect(edit("(swap! «»state assoc\n       :k v)", "app-")).toEqual(["(swap! app-state assoc", "       :k v)"]);
+		expect(edit("(def s «»{:a 1\n        :b 2})", "#")).toEqual(["(def s #{:a 1", "         :b 2})"]);
+	});
+
+	test("adds up the changes before the text a line aligns to, and skips blank lines", () => {
+		expect(edit("(def s «»atom« »{:a 1\n\n             :b 2})", "(", ") ")).toEqual([
+			"(def s (atom) {:a 1",
+			"",
+			"               :b 2})",
+		]);
 	});
 
 	test("moves lines left when the text before shrinks", () => {
@@ -81,9 +98,25 @@ describe("alignBelow", () => {
 		expect(edit("(«»let [y (inc x)\n  (g y))", "if-")).toEqual(["(if-let [y (inc x)", "  (g y))"]);
 	});
 
+	test("moves lines below a string being typed with the text above them", () => {
+		let state = stateOf("(log/info {:a 1\n           :b 2})");
+		for (const key of ['"', "m", '"', " "]) {
+			const at = state.doc.line(1).text.indexOf("{");
+			const tr = state.update({ changes: { from: at, insert: key }, userEvent: "input.type" });
+			const shift = alignBelow(tr);
+			state = stateOf((shift ? shift.apply(tr.newDoc) : tr.newDoc).toString());
+		}
+		expect(state.doc.toString()).toBe('(log/info "m" {:a 1\n               :b 2})');
+	});
+
+	test("moves a line under a form whose text before it is replaced, and none under no text", () => {
+		expect(edit("(f «aa »bb\n      cc)", "x")).toEqual(["(f xbb", "    cc)"]);
+		expect(edit("(->«»\n    x)", " ")).toEqual(["(-> ", "    x)"]);
+	});
 	test("shifts nothing for an edit across lines", () => {
 		const state = stateOf("(atom {:a 1\n       :b 2})");
 		expect(alignBelow(state.update({ changes: { from: 1, insert: "\n" } }))).toBeNull();
+		expect(alignBelow(state.update({ changes: { from: 11, to: 12 } }))).toBeNull();
 	});
 });
 

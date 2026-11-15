@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { history, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { ensureSyntaxTree, LanguageSupport } from "@codemirror/language";
 import { EditorSelection, EditorState, type Extension, type Transaction, type TransactionSpec } from "@codemirror/state";
@@ -148,6 +149,26 @@ describe("editorKeys", () => {
 		const state = stateOf("(let [x 1]\n  |)", [clojure, editorKeys("clojure")]);
 		const next = state.update({ changes: { from: 13, insert: "\nb" }, userEvent: "input.type" }).state;
 		expect(next.doc.toString()).toBe("(let [x 1]\n  \nb)");
+	});
+
+	test("a deletion in Clojure keeps the lines below aligned, and one undo takes both back", () => {
+		const doc = "(reagent/atom {:a 1\n               :b 2})";
+		const state = stateOf(doc, [clojure, editorKeys("clojure"), history()]);
+		const next = state.update({ changes: { from: 1, to: 9 }, userEvent: "delete.backward" }).state;
+		expect(next.doc.toString()).toBe("(atom {:a 1\n       :b 2})");
+		let undone = next;
+		undo({ state: next, dispatch: (tr) => (undone = tr.state) });
+		expect(undone.doc.toString()).toBe(doc);
+	});
+
+	test("a one-line paste, indent or structural key keeps the lines below aligned too", () => {
+		const state = stateOf("(f (if x\n       a\n       b))", [clojure, editorKeys("clojure")]);
+		const next = state.update({ changes: { from: 3, insert: "g " }, userEvent: "input.paste" }).state;
+		expect(next.doc.toString()).toBe("(f g (if x\n         a\n         b))");
+		const indented = state.update({ changes: { from: 0, insert: "  " }, userEvent: "indent.more" }).state;
+		expect(indented.doc.toString()).toBe("  (f (if x\n         a\n         b))");
+		const spliced = press("Alt-s", "clojure", stateOf("(f (|g) {:a 1\n        :b 2})", [clojure, editorKeys("clojure")]));
+		expect(spliced.text).toBe("(f |g {:a 1\n      :b 2})");
 	});
 });
 

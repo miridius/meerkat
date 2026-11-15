@@ -5,7 +5,6 @@ import {
 	EditorSelection,
 	type EditorState,
 	findClusterBreak,
-	type Line,
 	type SelectionRange,
 	type Transaction,
 	type TransactionSpec,
@@ -13,6 +12,7 @@ import {
 import { EditorView } from "@codemirror/view";
 import {
 	BRACKETS,
+	closedString,
 	closerOf,
 	forms,
 	holder,
@@ -164,44 +164,64 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-/** The changes, after `tr`'s, that shift the lines below its edited line
- *  aligned to text its changes move by as much, when every change sits
- *  on that one line; null when no line shifts. See "Structural typing in
- *  Clojure" in docs/features/inline-comments.md. */
+/** The string whose text holds `pos`, or null. */
+function stringAt(state: EditorState, pos: number): SyntaxNode | null {
+	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
+		if (node.name === "String") return inString(node, pos) ? node : null;
+	}
+	return null;
+}
+
+/** The changes, after `tr`'s, that shift each line below its edited
+ *  line by as much as `tr` moves the text that line aligns to, when every
+ *  change sits on that one line; null when no line shifts. See
+ *  "Structural typing in Clojure" in docs/features/inline-comments.md. */
 export function alignBelow(tr: Transaction): ChangeSet | null {
 	const state = tr.startState;
 	const doc = state.doc;
-	// Each change's end, and how far it moves the text after it.
-	const moves: { at: number; by: number }[] = [];
-	let line: Line | null = null;
-	let oneLine = true;
-	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-		const at = doc.lineAt(fromA);
-		if (toA > at.to || inserted.lines > 1 || (line && line.number !== at.number)) oneLine = false;
-		line = at;
-		moves.push({ at: toA, by: inserted.length - (toA - fromA) });
-	});
-	const edited = line as Line | null;
-	if (!oneLine || !edited) return null;
-	const moved = (pos: number) => moves.reduce((sum, { at, by }) => (at <= pos ? sum + by : sum), 0);
+	const parts: { from: number; to: number; text: string }[] = [];
+	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, text: inserted.toString() }));
+	if (parts.length === 0) return null;
+	const edited = doc.lineAt(parts[0].from);
+	if (parts.some(({ from, to, text }) => from < edited.from || to > edited.to || text.includes("\n"))) return null;
+	/** How far the changes move the text at `pos` on the edited line.
+	 *  Text inserted onto the start of a form leaves the form starting
+	 *  where it did; the opener or character it is typed before moves. */
+	const moved = (pos: number, form: boolean) =>
+		parts.reduce((sum, { from, to, text }) => {
+			const joins = from === to && /\S$/.test(text);
+			return to < pos || (to === pos && !(form && joins)) ? sum + text.length - (to - from) : sum;
+		}, 0);
+	/** How far the text above column `indent` moves, as a form's start or
+	 *  a character; none past the edited line's end. */
+	const above = (indent: number, form: boolean) => (indent < edited.length ? moved(edited.from + indent, form) : 0);
 	const shifts = new Map<number, number>();
 	const changes: ChangeSpec[] = [];
 	for (let n = edited.number + 1; n <= doc.lines; n++) {
 		const below = doc.line(n);
 		const indent = below.text.length - below.text.trimStart().length;
 		const start = below.from + indent;
-		if (indent === below.length || inText(state, start)) continue;
-		const coll = enclosing(state, start);
-		if (!coll) continue;
-		const opener = doc.lineAt(coll.from);
-		const col = coll.from - opener.from;
-		// A line left of its opener, as one past a missing closer is,
-		// aligns to nothing in it.
-		if (indent <= col) continue;
-		let shift = shifts.get(opener.number) ?? 0;
-		if (opener.number === edited.number) {
-			const anchor = indent === col + 1 || indent === col + 2 ? coll.from : Math.min(opener.from + indent, opener.to);
-			shift = moved(anchor);
+		if (indent === below.length) continue;
+		let shift = 0;
+		const str = stringAt(state, start);
+		if (str) {
+			// A closed string's lines are its text. One with no closer that
+			// opens on the edited line is code being typed, such as a string
+			// argument typed before a map, whose closing quote comes next.
+			if (closedString(str) || str.from < edited.from) continue;
+			shift = above(indent, false);
+		} else {
+			const coll = enclosing(state, start);
+			// Past the collections that open on the edited line, nothing moves.
+			if (!coll || coll.from < edited.from) break;
+			const opener = doc.lineAt(coll.from);
+			const col = coll.from - opener.from;
+			// A line at or left of its opener, as one past a missing closer
+			// is, aligns to nothing in it.
+			if (indent <= col) continue;
+			if (opener.number !== edited.number) shift = shifts.get(opener.number) ?? 0;
+			else if (indent === col + 1 || indent === col + 2) shift = moved(coll.from, false);
+			else shift = above(indent, true);
 		}
 		shift = Math.max(shift, -indent);
 		if (shift === 0) continue;
