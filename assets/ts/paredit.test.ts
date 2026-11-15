@@ -533,6 +533,10 @@ describe("thread", () => {
 		expect(run(thread, "(reduce + |(->> xs (map f)))")).toBe("|(->> xs (map f) (reduce +))");
 	});
 
+	test("puts the caret on the thread when its line re-indents", () => {
+		expect(run(thread, "(let [y 1]\n(f |(g y) b))")).toBe("(let [y 1]\n  |(-> (g y) (f b)))");
+	});
+
 	test("starts a new thread around a thread at the other end", () => {
 		expect(run(thread, "(f |(->> xs (map g)) b)")).toBe("|(-> (->> xs (map g)) (f b))");
 	});

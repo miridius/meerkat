@@ -165,7 +165,7 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	if (indent.empty) return spec;
 	return {
 		changes: tr.changes.compose(indent),
-		selection: tr.newSelection.map(indent),
+		selection: tr.newSelection.map(indent, 1),
 		scrollIntoView: true,
 		userEvent: spec.userEvent,
 	};
