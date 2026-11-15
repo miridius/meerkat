@@ -70,15 +70,30 @@ describe("expandSelection", () => {
 			const state = stateOf(doc, language);
 			return marked(apply(state, expandSelection(state)));
 		};
-		for (const form of ["(b)", "[b]", "{:b c}", "#{b}", '"b c"']) {
+		const prefixed = ["'#{b}", "@(b)", "#:n{:b 1}", "^:m (e)", '#inst "x"', "#my.Rec{:b 1}"];
+		for (const form of ["(b)", "[b]", "{:b c}", "#{b}", '"b c"', ...prefixed]) {
 			expect(expand(`(a |${form} d)`, clojure())).toBe(`(a <${form}> d)`);
 			expect(expand(`(a ${form}| d)`, clojure())).toBe(`(a <${form}> d)`);
 			expect(expand(`(a ${form}|)`, clojure())).toBe(`(a <${form}>)`);
 		}
-		for (const form of ["(b)", "[b]", "{b}", '"b"', "'b'"]) {
+		for (const form of ["(b)", "[b]", "{b}", '"b"', "'b'", "`b`", "-(b)"]) {
 			expect(expand(`f(a, |${form});`, javascript())).toBe(`f(a, <${form}>);`);
 			expect(expand(`f(a, ${form}|);`, javascript())).toBe(`f(a, <${form}>);`);
 		}
+		expect(expand(`f(a, f'b'|)`, python())).toBe(`f(a, <f'b'>)`);
+		expect(expand("((b)| d)", clojure())).toBe("(<(b)> d)");
+		expect(expand("(a (b)|[c])", clojure())).toBe("(a (b)<[c]>)");
+	});
+
+	test("takes no string, name or operator before a form's opener as its prefix", () => {
+		const expand = (doc: string) => {
+			const state = stateOf(doc, javascript());
+			return marked(apply(state, expandSelection(state)));
+		};
+		expect(expand('x = |"(" + f(y);')).toBe('x = <"("> + f(y);');
+		expect(expand('x = "-" + (y)|;')).toBe('x = "-" + <(y)>;');
+		expect(expand("_ = (a)|;")).toBe("_ = <(a)>;");
+		expect(expand("x = |!f(y);")).toBe("x = <!>f(y);");
 	});
 
 	test("grows by syntax in other languages", () => {

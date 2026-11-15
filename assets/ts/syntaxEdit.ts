@@ -42,48 +42,68 @@ function interior(state: EditorState, node: SyntaxNode): { from: number; to: num
 const CLOSERS = new Set(Object.values(OPENERS));
 
 /** Whether `node` is a token of punctuation alone, such as a bracket, a
- *  quote or a Clojure reader prefix like `#` or `#_`. */
+ *  quote, an operator or a Clojure reader prefix like `#` or `#_`, but
+ *  not a name such as `_` or `$`, nor a whole string such as `""` or
+ *  `"("`. */
 function punctuation(state: EditorState, node: SyntaxNode): boolean {
-	return !node.firstChild && /^[^\p{L}\p{N}\s]+$/u.test(state.doc.sliceString(node.from, node.to));
+	const text = state.doc.sliceString(node.from, node.to);
+	return !node.firstChild && /^[^\p{L}\p{N}\s]+$/u.test(text) && !/^[_$]+$|^(["'`]).*\1$/s.test(text);
 }
 
 /** Whether `node` is a closing bracket or quote that ends its parent. */
-function closer(state: EditorState, node: SyntaxNode): boolean {
+function closing(state: EditorState, node: SyntaxNode): boolean {
 	return !node.firstChild && !node.nextSibling && CLOSERS.has(state.doc.sliceString(node.from, node.to));
 }
 
-/** Whether only punctuation, and some, comes before `node` in its parent. */
+/** Clojure's prefixes that are nodes of their own: `#:ns` before a map,
+ *  `#inst` before a form, `#my.Rec` before a map and `^:private`. */
+const PREFIX_NODES = new Set(["KeywordPrefix", "ReaderTag", "ConstructorPrefix", "Metadata"]);
+
+/** Whether only prefixes, and some, come before `node` in its parent:
+ *  punctuation or one of `PREFIX_NODES`. */
 function prefixed(state: EditorState, node: SyntaxNode): boolean {
 	if (!node.prevSibling) return false;
-	for (let sib = node.prevSibling; sib; sib = sib.prevSibling) if (!punctuation(state, sib)) return false;
+	for (let sib = node.prevSibling; sib; sib = sib.prevSibling) {
+		if (!PREFIX_NODES.has(sib.name) && !punctuation(state, sib)) return false;
+	}
 	return true;
 }
 
-/** The bracketed form a caret at `pos` sits just before or just after:
- *  the node whose opening punctuation starts at `pos`, such as `(`, `#{`
- *  or `@(`, or whose closing bracket or quote ends there, with any prefix
- *  such as `#` or `'`, or a string that ends there. The form after the
- *  caret wins when both hold. Null elsewhere. */
-function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
-	const tree = syntaxTree(state);
-	const after = tree.resolveInner(pos, 1);
-	const form = after.parent;
-	if (form && after.from === pos && !after.prevSibling && punctuation(state, after)) {
-		if (closer(state, tree.resolveInner(form.to, -1))) return form;
-	}
-	const before = tree.resolveInner(pos, -1);
-	if (before.to !== pos || !before.parent) return null;
-	// A string a grammar parses as one token, with no quote tokens.
-	if (before.to - before.from > 1 && /["'`]$/.test(state.doc.sliceString(before.from, before.to))) return before;
-	if (!closer(state, before)) return null;
-	let node = before.parent;
+/** The form `end`, a closing bracket or quote, ends, with any prefix
+ *  such as `#`, `'` or `#:ns`. Null when `end` is no closer. */
+function closedForm(state: EditorState, end: SyntaxNode): SyntaxNode | null {
+	if (!end.parent || !closing(state, end)) return null;
+	let node = end.parent;
 	while (node.parent && !node.nextSibling && prefixed(state, node)) node = node.parent;
 	return node;
 }
 
+/** Whether `node` is a string a grammar parses as one token, with no
+ *  quote tokens, such as `"b"`, `f'b'` or `` `b` ``. */
+function stringToken(state: EditorState, node: SyntaxNode): boolean {
+	if (node.firstChild) return false;
+	const open = /^[A-Za-z]{0,3}(["'`])/.exec(state.doc.sliceString(node.from, Math.min(node.to, node.from + 4)));
+	return !!open && node.to - node.from > open[0].length && state.doc.sliceString(node.to - 1, node.to) === open[1];
+}
+
+/** The form a caret at `pos` sits just before or just after: the
+ *  bracketed form, with any prefix such as `#{`, `@(` or `#:ns{`, that
+ *  starts or ends there, or a string token that ends there. The form
+ *  after the caret wins when both hold. Null elsewhere. */
+function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
+	const tree = syntaxTree(state);
+	for (let node = tree.resolveInner(pos, 1); node.from === pos && node.parent; node = node.parent) {
+		const form = closedForm(state, tree.resolveInner(node.parent.to, -1));
+		if (form?.from === pos) return form;
+	}
+	const before = tree.resolveInner(pos, -1);
+	if (before.to !== pos) return null;
+	return stringToken(state, before) ? before : closedForm(state, before);
+}
+
 /** The next range out from `range`: the word at a caret, or the form
- *  whose bracket it touches, then each enclosing node, the inside of its
- *  brackets before the node itself. */
+ *  whose bracket, quote or prefix it touches, then each enclosing node,
+ *  the inside of its brackets before the node itself. */
 function expandRange(state: EditorState, range: SelectionRange): { from: number; to: number } | null {
 	const { from, to } = range;
 	let start: SyntaxNode | null = null;
