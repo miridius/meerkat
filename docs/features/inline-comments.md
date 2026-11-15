@@ -137,7 +137,7 @@ When `finding_type === "suggestion"`:
 
 ### Editor hotkeys
 
-The keys follow Cursive's macOS keymap, except ⌃J and ⌃⇧[ (wrap in
+The keys follow Cursive's macOS keymap, except ⌃J and ⌃{ (wrap in
 { }), and exist on macOS only: on Windows and Linux, every key below
 keeps CodeMirror's own binding. Structural typing in Clojure works
 everywhere.
@@ -179,11 +179,9 @@ nothing, and ⇧⌘↑ / ⇧⌘↓ keep CodeMirror's own binding for the key
 | ⌃⌘J / ⌃⌘K | Slurp / barf backward |
 | ⌘' | Raise the form at the caret, replacing its parent |
 | ⌥S | Splice: remove the enclosing brackets with any prefix on them, such as `#`, `'`, `@`, `^:m ` or `#my.Rec` (also works where ⌥S types ß) |
-| ⇧⌘9 / ⌘[ / ⌃⇧[ | Wrap the form the caret is in or before in ( ) / [ ] / { }; else the form just before the caret, else insert an empty pair. A selection is wrapped as typing the opener wraps it. ⌃⇧[ replaces Cursive's ⇧⌘[, which is Chrome's previous tab and cannot be taken by a page |
-| ⌃⌥, | Thread the form the caret is in or before, else the one it is after, into the list around it, as Cursive's Thread Form does, choosing the macro by the form's place: as the first argument `(f (g x) b)` becomes `(-> (g x) (f b))`, as the last `(f b (g x))` becomes `(->> (g x) (f b))`. Where Cursive asks which, for an only argument, the list's own place decides: `->>` when it is the last argument, and not the first, of the list around it, else `->`, so `(map f (g x))` becomes `(map f (->> x g))`. A `->` form that is the first argument, or a `->>` form that is the last, takes the list in as its next step instead: `(f (-> x g) b)` becomes `(-> x g (f b))`. The caret lands on the new thread, so repeating the key threads outward. Nothing happens on the list's head or a middle argument; `#_` forms are not counted, and a list with a prefix in its opener, such as `#?(` or `#(`, is not threaded |
-| ⌃⌥. | Unthread one step of the nearest enclosing `->` or `->>`: `(-> x g f)` becomes `(-> (g x) f)`; with one step left, the thread becomes the call, unless it also holds a `#_` form, which stays |
-| ⌃⌥S | Split the list or string at the caret in two: `(a b)` becomes `(a) (b)` at a caret before `b`, `"ab"` becomes `"a" "b"`. Each half keeps the list's prefixes, such as `#`, `'` or `#_`. Not inside a symbol or other form, nor in metadata |
-| ⌃⌥J | Join the two forms either side of the caret, both strings or both collections of the same kind and prefix: `(a) (b)` becomes `(a b)`, `"a" "b"` becomes `"ab"` |
+| ⌘( / ⌘[ / ⌃{ | Wrap the form the caret is in or before in ( ) / [ ] / { }; else the form just before the caret, else insert an empty pair. A selection is wrapped as typing the opener wraps it. ⌃{ replaces Cursive's ⌘{, which is Chrome's previous tab and cannot be taken by a page |
+| ⌃⌥, / ⌃⌥. | Thread the form the caret is in or before, else the one it is after, into the list around it, as Cursive's Thread Form does, choosing the macro by the form's place: as the first argument `(f (g x) b)` becomes `(-> (g x) (f b))`, as the last `(f b (g x))` becomes `(->> (g x) (f b))`. Where Cursive asks which, for an only argument, the list's own place decides: `->>` when it is the last argument, and not the first, of the list around it, else `->`, so `(map f (g x))` becomes `(map f (->> x g))`. A `->` form that is the first argument, or a `->>` form that is the last, takes the list in as its next step instead: `(f (-> x g) b)` becomes `(-> x g (f b))`. The caret lands on the new thread, so repeating the key threads outward. Nothing happens on the list's head or a middle argument; `#_` forms are not counted, and a list with a prefix in its opener, such as `#?(` or `#(`, is not threaded. Unthread one step of the nearest enclosing `->` or `->>`: `(-> x g f)` becomes `(-> (g x) f)`; with one step left, the thread becomes the call, unless it also holds a `#_` form, which stays |
+| ⌃⌥S / ⌃⌥J | Split the list or string at the caret in two: `(a b)` becomes `(a) (b)` at a caret before `b`, `"ab"` becomes `"a" "b"`. Each half keeps the list's prefixes, such as `#`, `'` or `#_`. Not inside a symbol or other form, nor in metadata. Join the two forms either side of the caret, both strings or both collections of the same kind and prefix: `(a) (b)` becomes `(a b)`, `"a" "b"` becomes `"ab"` |
 | ⌃K | Kill: cut to the clipboard from the caret to the end of the line, or to the enclosing list's closer or string's quote when that comes first, taking in a form that crosses the line's end. At the end of a line, cut the line break. In a comment, cut to the line's end |
 
 Outside Clojure, ⇧⌘K keeps CodeMirror's delete line, ⌃K keeps
@@ -249,7 +247,8 @@ changes each list once.
 
 **Keys cheat sheet:** on macOS, a "Keys" link in the editor's corner
 opens the list of keys for this file's language, ⌃J join lines
-included, written in ⌘/⌃/⌥/⇧ symbols. Clicking outside it or
+included, written in ⌘/⌃/⌥/⇧ symbols. Where Shift makes a key type
+its own symbol, the sheet shows that symbol in place of ⇧: ⌘( for ⇧⌘9. Clicking outside it or
 pressing Escape closes it and leaves the form open.
 
 ## Rendered comment

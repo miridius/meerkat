@@ -140,34 +140,22 @@ export const HOTKEYS: Hotkey[] = [
 	},
 	{
 		scope: "clojure",
-		// Cursive's ⇧⌘[ is Chrome's previous tab, which pages cannot take.
+		// Cursive's ⌘{ is Chrome's previous tab, which pages cannot take.
 		keys: ["Mod-Shift-9", "Mod-[", "Ctrl-Shift-["],
 		does: "Wrap the form in ( ) / [ ] / { }",
 		run: (["(", "[", "{"] as const).map((open) => () => claim((state) => wrap(state, open))),
 	},
 	{
 		scope: "clojure",
-		keys: ["Ctrl-Alt-,"],
-		does: "Thread the form into its list with -> or ->>, by its place",
-		run: [() => claim(thread)],
+		keys: ["Ctrl-Alt-,", "Ctrl-Alt-."],
+		does: "Thread / unthread the form with -> or ->>",
+		run: [() => claim(thread), () => claim(unthread)],
 	},
 	{
 		scope: "clojure",
-		keys: ["Ctrl-Alt-."],
-		does: "Unthread one step of the enclosing -> or ->>",
-		run: [() => claim(unthread)],
-	},
-	{
-		scope: "clojure",
-		keys: ["Ctrl-Alt-s"],
-		does: "Split the list or string in two at the caret",
-		run: [() => claim(split)],
-	},
-	{
-		scope: "clojure",
-		keys: ["Ctrl-Alt-j"],
-		does: "Join the forms either side of the caret",
-		run: [() => claim(joinForms)],
+		keys: ["Ctrl-Alt-s", "Ctrl-Alt-j"],
+		does: "Split / join lists or strings at the caret",
+		run: [() => claim(split), () => claim(joinForms)],
 	},
 	{
 		scope: "clojure",
@@ -263,12 +251,23 @@ const MAC_SYMBOLS: [string, string][] = [
 	["Mod", "⌘"],
 ];
 const KEY_NAMES: Record<string, string> = { ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" };
+/** The symbol Shift types on each US-layout key that has one of its own. */
+const SHIFTED: Record<string, string> = Object.fromEntries(
+	["`~", "1!", "2@", "3#", "4$", "5%", "6^", "7&", "8*", "9(", "0)", "-_", "=+", "[{", "]}", "\\|", ";:", "'\"", ",<", ".>", "/?"].map(
+		([base, shifted]) => [base, shifted],
+	),
+);
 
-/** `key` as a person reads it on macOS: ⌥⇧↑. macOS writes modifiers in
- *  the order Control, Option, Shift, Command. */
+/** `key` as a person reads it on macOS: ⌥⇧↑, with Shift written as the
+ *  symbol it types where the key has one: ⌘( for ⇧⌘9. macOS writes
+ *  modifiers in the order Control, Option, Shift, Command. */
 export function keyLabel(key: string): string {
-	const parts = key.split("-");
-	const name = parts.pop() as string;
+	let parts = key.split("-");
+	let name = parts.pop() as string;
+	if (parts.includes("Shift") && name in SHIFTED) {
+		parts = parts.filter((m) => m !== "Shift");
+		name = SHIFTED[name];
+	}
 	const shown = KEY_NAMES[name] ?? name.toUpperCase();
 	return MAC_SYMBOLS.filter(([m]) => parts.includes(m)).map(([, symbol]) => symbol).join("") + shown;
 }

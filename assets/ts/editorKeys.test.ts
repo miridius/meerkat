@@ -306,6 +306,11 @@ describe("keyLabel", () => {
 		expect(keyLabel("Ctrl-Cmd-j")).toBe("⌃⌘J");
 		expect(keyLabel("Mod-'")).toBe("⌘'");
 	});
+
+	test("writes Shift as the symbol it types where the key has one", () => {
+		expect(keyLabel("Mod-Shift-9")).toBe("⌘(");
+		expect(keyLabel("Ctrl-Shift-[")).toBe("⌃{");
+	});
 });
 
 describe("cheatSheet", () => {
@@ -323,11 +328,9 @@ describe("cheatSheet", () => {
 			"⌃⌘J / ⌃⌘K",
 			"⌘'",
 			"⌥S",
-			"⇧⌘9 / ⌘[ / ⌃⇧[",
-			"⌃⌥,",
-			"⌃⌥.",
-			"⌃⌥S",
-			"⌃⌥J",
+			"⌘( / ⌘[ / ⌃{",
+			"⌃⌥, / ⌃⌥.",
+			"⌃⌥S / ⌃⌥J",
 			"⌃K",
 		]);
 	});
