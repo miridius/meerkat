@@ -1,4 +1,4 @@
-import { indentRange, syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, indentRange, syntaxTree } from "@codemirror/language";
 import {
 	type ChangeSet,
 	type ChangeSpec,
@@ -6,13 +6,13 @@ import {
 	type EditorState,
 	findClusterBreak,
 	type SelectionRange,
+	type Text,
 	type Transaction,
 	type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
 	BRACKETS,
-	closedString,
 	closerOf,
 	forms,
 	holder,
@@ -164,14 +164,6 @@ export function reindent(state: EditorState, spec: TransactionSpec): Transaction
 	};
 }
 
-/** The string whose text holds `pos`, or null. */
-function stringAt(state: EditorState, pos: number): SyntaxNode | null {
-	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1); node; node = node.parent) {
-		if (node.name === "String") return inString(node, pos) ? node : null;
-	}
-	return null;
-}
-
 /** The changes, after `tr`'s, that shift each line below its edited
  *  line by as much as `tr` moves the text that line aligns to, when every
  *  change sits on that one line; null when no line shifts. See
@@ -179,54 +171,65 @@ function stringAt(state: EditorState, pos: number): SyntaxNode | null {
 export function alignBelow(tr: Transaction): ChangeSet | null {
 	const state = tr.startState;
 	const doc = state.doc;
-	const parts: { from: number; to: number; text: string }[] = [];
-	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, text: inserted.toString() }));
+	const parts: { from: number; to: number; inserted: Text }[] = [];
+	tr.changes.iterChanges((from, to, _fromB, _toB, inserted) => parts.push({ from, to, inserted }));
 	if (parts.length === 0) return null;
 	const edited = doc.lineAt(parts[0].from);
-	if (parts.some(({ from, to, text }) => from < edited.from || to > edited.to || text.includes("\n"))) return null;
-	/** How far the changes move the text at `pos` on the edited line.
-	 *  Text inserted onto the start of a form leaves the form starting
-	 *  where it did; the opener or character it is typed before moves. */
+	if (parts.some(({ to, inserted }) => to > edited.to || inserted.lines > 1)) return null;
+	/** How far the changes move the text at `pos` on the edited line: to
+	 *  where a deletion of it starts. Text inserted onto the start of a
+	 *  form leaves the form starting where it did; the opener or character
+	 *  it is typed before moves. */
 	const moved = (pos: number, form: boolean) =>
-		parts.reduce((sum, { from, to, text }) => {
-			const joins = from === to && /\S$/.test(text);
-			return to < pos || (to === pos && !(form && joins)) ? sum + text.length - (to - from) : sum;
+		parts.reduce((sum, { from, to, inserted }) => {
+			const joins = from === to && /\S/.test(inserted.sliceString(inserted.length - 1));
+			if (to < pos || (to === pos && !(form && joins))) return sum + inserted.length - (to - from);
+			return from < pos && pos < to ? sum + from - pos : sum;
 		}, 0);
+	// A string typed on the edited line runs, until its closing quote, to
+	// the next quote in the text, past lines that are code: read the
+	// lines below as if it closed at the line's end.
+	const open = textStart(state, edited.to);
+	const typed =
+		open !== null && open >= edited.from && doc.sliceString(open, open + 1) === '"' && parts.some((p) => p.from > open);
+	let tree = state;
+	if (typed) {
+		const closed = state.update({ changes: { from: edited.to, insert: '"' }, filter: false }).state;
+		if (!ensureSyntaxTree(closed, closed.doc.length, 50)) return null;
+		// The state keeps the tree it was created with; an update takes the
+		// finished parse.
+		tree = closed.update({ filter: false }).state;
+	}
 	/** How far the text above column `indent` moves, as a form's start or
-	 *  a character; none past the edited line's end. */
-	const above = (indent: number, form: boolean) => (indent < edited.length ? moved(edited.from + indent, form) : 0);
+	 *  a character; none past the edited line's text. */
+	const above = (indent: number, form: boolean) =>
+		indent < edited.text.trimEnd().length ? moved(edited.from + indent, form) : 0;
 	const shifts = new Map<number, number>();
 	const changes: ChangeSpec[] = [];
+	// Line numbers are the same in `tree`, which adds no line.
 	for (let n = edited.number + 1; n <= doc.lines; n++) {
-		const below = doc.line(n);
+		const below = tree.doc.line(n);
 		const indent = below.text.length - below.text.trimStart().length;
 		const start = below.from + indent;
-		if (indent === below.length) continue;
-		let shift = 0;
-		const str = stringAt(state, start);
-		if (str) {
-			// A closed string's lines are its text. One with no closer that
-			// opens on the edited line is code being typed, such as a string
-			// argument typed before a map, whose closing quote comes next.
-			if (closedString(str) || str.from < edited.from) continue;
-			shift = above(indent, false);
-		} else {
-			const coll = enclosing(state, start);
-			// Past the collections that open on the edited line, nothing moves.
-			if (!coll || coll.from < edited.from) break;
-			const opener = doc.lineAt(coll.from);
-			const col = coll.from - opener.from;
-			// A line at or left of its opener, as one past a missing closer
-			// is, aligns to nothing in it.
-			if (indent <= col) continue;
-			if (opener.number !== edited.number) shift = shifts.get(opener.number) ?? 0;
-			else if (indent === col + 1 || indent === col + 2) shift = moved(coll.from, false);
-			else shift = above(indent, true);
-		}
+		// A string's lines are its text.
+		if (indent === below.length || inText(tree, start)) continue;
+		const coll = enclosing(tree, start);
+		// Past the collections that open on the edited line, nothing moves.
+		if (!coll || coll.from < edited.from) break;
+		const opener = tree.doc.lineAt(coll.from);
+		const col = coll.from - opener.from;
+		// A line at or left of its opener, as one past a missing closer is,
+		// aligns to nothing in it.
+		if (indent <= col) continue;
+		let shift: number;
+		if (opener.number !== edited.number) shift = shifts.get(opener.number) ?? 0;
+		else if (indent === col + 1 || indent === col + 2) shift = moved(coll.from, false);
+		else shift = above(indent, true);
 		shift = Math.max(shift, -indent);
 		if (shift === 0) continue;
 		shifts.set(n, shift);
-		changes.push(shift > 0 ? { from: below.from, insert: " ".repeat(shift) } : { from: below.from, to: below.from - shift });
+		const from = doc.line(n).from;
+		changes.push(shift > 0 ? { from, insert: " ".repeat(shift) } : { from, to: from - shift });
 	}
 	return changes.length === 0 ? null : state.changes(changes).map(tr.changes);
 }

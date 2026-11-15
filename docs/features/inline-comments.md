@@ -229,9 +229,9 @@ changes each list once.
   text above its first character, which text typed onto its start does
   not move; a line with no text above it stays put. A line in a
   collection that opens on a line that moved moves with it. A line
-  inside a string stays put, unless the string opens on the edited
-  line and has no closing quote yet, as while a string is typed there:
-  then it follows the text above it. A line at or left of its
+  inside a string stays put. A string that opens on the edited line
+  and is edited inside, as while a string is typed before a map, is
+  read as closing at that line's end. A line at or left of its
   collection's opener, as one past a missing closer is, stays put. A
   paste re-indents its own lines first. The save's repair, which reads
   the structure from the indentation, gets the suggestion as it looks

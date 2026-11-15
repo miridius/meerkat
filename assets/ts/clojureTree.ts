@@ -28,7 +28,7 @@ export function holds(coll: SyntaxNode, pos: number): boolean {
 
 /** Whether `node`, a String, has its closing quote: the quote it opens
  *  with is its first child. */
-export function closedString(node: SyntaxNode): boolean {
+function closedString(node: SyntaxNode): boolean {
 	const last = node.lastChild;
 	return last !== null && last.name === '"' && last.from > node.from;
 }

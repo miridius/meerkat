@@ -154,8 +154,8 @@ const reindentPaste = State.transactionFilter.of((tr) => {
 });
 
 /** The user events of edits: typing, deleting, pasting, the structural
- *  keys and the indent commands. Undo and redo replay their own. */
-const EDITS = ["input", "delete", "edit", "indent"];
+ *  keys, moves and the indent commands. Undo and redo replay their own. */
+const EDITS = ["input", "delete", "edit", "move", "indent"];
 
 /** Keep the lines below a line an edit changes aligned to the text the
  *  edit moves. */

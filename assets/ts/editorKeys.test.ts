@@ -165,7 +165,7 @@ describe("editorKeys", () => {
 		const state = stateOf("(f (if x\n       a\n       b))", [clojure, editorKeys("clojure")]);
 		const next = state.update({ changes: { from: 3, insert: "g " }, userEvent: "input.paste" }).state;
 		expect(next.doc.toString()).toBe("(f g (if x\n         a\n         b))");
-		const indented = state.update({ changes: { from: 0, insert: "  " }, userEvent: "indent.more" }).state;
+		const indented = state.update({ changes: { from: 0, insert: "  " }, userEvent: "input.indent" }).state;
 		expect(indented.doc.toString()).toBe("  (f (if x\n         a\n         b))");
 		const spliced = press("Alt-s", "clojure", stateOf("(f (|g) {:a 1\n        :b 2})", [clojure, editorKeys("clojure")]));
 		expect(spliced.text).toBe("(f |g {:a 1\n      :b 2})");

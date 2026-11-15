@@ -99,19 +99,44 @@ describe("alignBelow", () => {
 	});
 
 	test("moves lines below a string being typed with the text above them", () => {
-		let state = stateOf("(log/info {:a 1\n           :b 2})");
-		for (const key of ['"', "m", '"', " "]) {
-			const at = state.doc.line(1).text.indexOf("{");
-			const tr = state.update({ changes: { from: at, insert: key }, userEvent: "input.type" });
-			const shift = alignBelow(tr);
-			state = stateOf((shift ? shift.apply(tr.newDoc) : tr.newDoc).toString());
+		for (const [doc, typed] of [
+			["(log/info {:a 1\n           :b 2})", '(log/info "m" {:a 1\n               :b 2})'],
+			// The string being typed runs to the next quote.
+			['(log/info {:a 1\n           :b "x"})', '(log/info "m" {:a 1\n               :b "x"})'],
+		]) {
+			let state = stateOf(doc);
+			for (const key of ['"', "m", '"', " "]) {
+				const at = state.doc.line(1).text.indexOf("{");
+				const tr = state.update({ changes: { from: at, insert: key }, userEvent: "input.type" });
+				const shift = alignBelow(tr);
+				state = stateOf((shift ? shift.apply(tr.newDoc) : tr.newDoc).toString());
+			}
+			expect(state.doc.toString()).toBe(typed);
 		}
-		expect(state.doc.toString()).toBe('(log/info "m" {:a 1\n               :b 2})');
+	});
+
+	test("reads a string being typed as closed at the line's end", () => {
+		const doc = "(str «»x y z w v u t s)\n(defn g []\n  (let [a 1]\n    (foo a\n         b)))";
+		const lines = doc.replace("«»", "").split("\n");
+		expect(edit(doc.replace("«»", '"«»'), "a")).toEqual(['(str "ax y z w v u t s)', ...lines.slice(1)]);
+	});
+
+	test("leaves a string's lines when the string is not typed in on the edited line", () => {
+		expect(edit('(«»str "a\n        b")', "x")).toEqual(['(xstr "a', '        b")']);
+		expect(edit('(f "a\nb«»c\n      d")', "x")).toEqual(['(f "a', "bxc", '      d")']);
+		expect(edit('(foo«» bar\n  "s\n     baz)', "o")).toEqual(['(fooo bar', '  "s', "     baz)"]);
 	});
 
 	test("moves a line under a form whose text before it is replaced, and none under no text", () => {
 		expect(edit("(f «aa »bb\n      cc)", "x")).toEqual(["(f xbb", "    cc)"]);
+		expect(edit("(f a«bc d»ef\n       g)", "")).toEqual(["(f aef", "    g)"]);
 		expect(edit("(->«»\n    x)", " ")).toEqual(["(-> ", "    x)"]);
+		expect(edit("(-«»>  \n    x)", ">")).toEqual(["(->>  ", "    x)"]);
+		expect(edit("(-«»>\n   x)", ">")).toEqual(["(->>", "   x)"]);
+	});
+
+	test("moves a line under a form when a new form is typed before it", () => {
+		expect(edit("(swap! «»state assoc\n       :k v)", "x ")).toEqual(["(swap! x state assoc", "         :k v)"]);
 	});
 	test("shifts nothing for an edit across lines", () => {
 		const state = stateOf("(atom {:a 1\n       :b 2})");
