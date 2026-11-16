@@ -41,6 +41,7 @@ defmodule Meerkat.SignalHandler do
   def init({[], _erl_signal_handler_result}), do: :erl_signal_handler.init([])
 
   @impl true
+  # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143" ExUnit test and e2e "a SIGTERM to the BEAM ends the review at once and the caller exits 143" in tests/e2e/detach.spec.ts kill it
   def handle_event(:sigterm, state) do
     IO.puts(
       :stderr,

@@ -60,6 +60,7 @@ defmodule Meerkat.Timeout do
       {:unrecognised, raw} ->
         IO.puts(
           :stderr,
+          # muex:ignore pure observability: only reorders the warning text
           "meerkat: ignoring MEERKAT_AUTO_APPROVE_ON_TIMEOUT=#{inspect(raw)} " <>
             "(expected true or false); a review that times out will wait."
         )
@@ -118,6 +119,7 @@ defmodule Meerkat.Timeout do
   """
   @spec prune_stale(String.t()) :: :ok
   def prune_stale(repo_path) do
+    # muex:ignore equivalent: disabled, do_prune_stale/1 adds :infinity, raises, and its catch returns :ok
     if disabled?() do
       :ok
     else
@@ -141,6 +143,7 @@ defmodule Meerkat.Timeout do
           _ = File.rm_rf(Path.join(parent, entry))
         end
 
+      # muex:ignore equivalent: without this clause the catch below turns the CaseClauseError into the same :ok
       _ ->
         :ok
     end
@@ -222,6 +225,7 @@ defmodule Meerkat.Timeout do
   defp saved_state(repo_path, review_id) do
     case Application.get_env(:meerkat, :review_state) do
       %ReviewState{} = base -> Persistence.load(repo_path, review_id, base)
+      # muex:ignore equivalent: without this clause the catch below turns the CaseClauseError into the same nil
       _ -> nil
     end
   catch

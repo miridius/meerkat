@@ -190,6 +190,7 @@ defmodule Meerkat.CLI do
   def flush_logs do
     case :logger.get_handler_config(:meerkat_file) do
       {:ok, _} -> :logger_std_h.filesync(:meerkat_file)
+      # muex:ignore equivalent: without this clause the rescue below turns the CaseClauseError into the same :ok
       _ -> :ok
     end
   rescue
@@ -283,6 +284,7 @@ defmodule Meerkat.CLI do
 
         _ =
           if run,
+            # muex:ignore unreachable I/O seam: only a served review has a caller's run, and ExUnit cannot serve; killed by e2e detach.spec.ts "a SIGTERM to the caller's whole process group stops the countdown and leaves the review, with comments typed meanwhile, for a rerun"
             do: Timeout.clear(repo_path(), review_id, run),
             else: Timeout.clear(repo_path(), review_id)
 
@@ -827,6 +829,7 @@ defmodule Meerkat.CLI do
 
     case Application.ensure_all_started(:meerkat) do
       {:ok, _} -> :ok
+      # muex:ignore unreachable I/O seam: the test BEAM already runs the app, so starting it never fails under ExUnit; killed by e2e port.spec.ts "a review whose stable port is taken is served on another port"
       {:error, reason} -> {:error, reason}
     end
   end
@@ -836,11 +839,14 @@ defmodule Meerkat.CLI do
   # and lists instead of assuming a particular nesting.
   defp port_in_use?(:eaddrinuse), do: true
   defp port_in_use?(term) when is_tuple(term), do: port_in_use?(Tuple.to_list(term))
+
+  # muex:ignore equivalent: swapping the names only reorders two pure checks joined by `or`
   defp port_in_use?([head | tail]), do: port_in_use?(head) or port_in_use?(tail)
   defp port_in_use?(_term), do: false
 
   defp preferred_port(value) do
     case Integer.parse(value || "") do
+      # muex:ignore equivalent: `in` admits the same integers from a range whichever end comes first
       {port, ""} when port in 1..65_535 -> port
       _ -> nil
     end
@@ -913,6 +919,7 @@ defmodule Meerkat.CLI do
     if @env == :dev do
       Keyword.merge(base, always)
     else
+      # muex:ignore equivalent: the two lists share no key, so either order merges the same settings
       Keyword.merge(base, always ++ prod_overrides)
     end
   end
@@ -984,16 +991,19 @@ defmodule Meerkat.CLI do
       pause_banner(target, review_url()) <>
         "debug logs at: #{Application.get_env(:meerkat, :log_path)}\n"
 
+    # Announcing a served review reads the bound HTTP port; tests run the
+    # endpoint with server: false, so only e2e reaches that branch.
+    # muex:ignore unreachable I/O seam: ExUnit cannot serve; killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
     if serve_dir do
+      # muex:ignore unreachable I/O seam: ExUnit cannot serve; the attached caller prints this banner, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
       Application.put_env(:meerkat, :review_banner, banner)
       {:ok, {_ip, port}} = MeerkatWeb.Endpoint.server_info(:http)
 
-      # Announcing reads the bound HTTP port; tests run the endpoint with
-      # server: false.
       # muex:ignore unreachable I/O seam: killed by restart.spec.ts
       :ok = mark_served(serve_dir)
       # The caller attaches on the port, and kills this BEAM by pid if its
       # shepherd dies before a decision.
+      # muex:ignore unreachable I/O seam: ExUnit cannot serve; the caller attaches on this port, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
       :ok = Meerkat.AtomicFile.write(Path.join(serve_dir, "port"), "#{port} #{System.pid()}\n")
     else
       IO.write(:stderr, banner)
@@ -1020,6 +1030,7 @@ defmodule Meerkat.CLI do
     nil
   end
 
+  # muex:ignore unreachable I/O seam: only a served review delivers through Decision, and ExUnit cannot serve; killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
   defp deliver(outcome, _serve_dir) do
     :ok = Decision.publish(outcome)
     Decision.await_delivery()
@@ -1109,6 +1120,7 @@ defmodule Meerkat.CLI do
   defp review_url do
     case MeerkatWeb.Endpoint.server_info(:http) do
       {:ok, {_ip, port}} ->
+        # muex:ignore unreachable I/O seam: tests run the endpoint with server: false, so it reports no bound port; the e2e runner opens this URL, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
         "http://127.0.0.1:#{port}/"
 
       other ->

@@ -61,8 +61,10 @@ defmodule Meerkat.VersionTest do
   test "falls back to dev info without a release root" do
     System.delete_env("RELEASE_ROOT")
 
-    info = Version.info()
+    log = capture_log(fn -> send(self(), {:info, Version.info()}) end)
+    assert_received {:info, info}
 
+    assert log == "", "a dev tree expects no manifest, so its absence is not warned about"
     assert info.dev?
     assert info.changelog == []
     assert String.starts_with?(info.label, "dev: ")
@@ -75,6 +77,27 @@ defmodule Meerkat.VersionTest do
     on_exit(fn -> File.rm_rf!(dir) end)
 
     log = capture_log(fn -> assert Version.info().dev? end)
-    assert log =~ "unreadable version manifest"
+    assert log =~ "Meerkat.Version: unreadable version manifest ({:error, :enoent})"
+  end
+
+  test "a manifest written with CRLF line endings or trailing spaces still parses" do
+    dir = Meerkat.TestHelpers.tmp_path("meerkat-crlf")
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, "meerkat_version"),
+      "2b4dd74ce4c3abc\r\nhttps://github.com/miridius/meerkat \r\nSome change (#5)\r\n"
+    )
+
+    System.put_env("RELEASE_ROOT", dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    info = Version.info()
+
+    assert info.label == "2b4dd74"
+
+    assert info.changelog == [
+             %{number: 5, title: "Some change", url: "https://github.com/miridius/meerkat/pull/5"}
+           ]
   end
 end

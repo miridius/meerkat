@@ -89,6 +89,66 @@ defmodule MeerkatWeb.FileContentControllerTest do
       conn = get(conn, "/api/file")
       assert conn.status == 400
     end
+
+    test "400 when file_index is not a whole number", %{conn: conn, review_id: rid} do
+      conn = get(conn, "/api/file?review_id=#{rid}&file_index=1x&side=new")
+      assert conn.status == 400
+      assert conn.resp_body == "invalid file_index"
+    end
+
+    test "the old side of an added file is empty, not an error", %{conn: conn, review_id: rid} do
+      conn = get(conn, "/api/file?review_id=#{rid}&file_index=1&side=old")
+      assert conn.status == 200
+      assert conn.resp_body == ""
+    end
+
+    test "is served as UTF-8 plain text, named for download", %{conn: conn, review_id: rid} do
+      conn = get(conn, "/api/file?review_id=#{rid}&file_index=0&side=new")
+      assert ["text/plain;" <> _] = get_resp_header(conn, "content-type")
+
+      assert get_resp_header(conn, "content-disposition") ==
+               [~s|inline; filename="a.txt"; filename*=UTF-8''a.txt|]
+    end
+
+    test "503 with a retry-after when the review server times out", %{conn: conn} do
+      rid = stuck_review_server(:timeout)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        conn = get(conn, "/api/file?review_id=#{rid}&file_index=0&side=new")
+        assert conn.status == 503
+        assert conn.resp_body == "review server busy; retry"
+        assert get_resp_header(conn, "retry-after") == ["5"]
+      end)
+    end
+
+    test "500 naming the reason when the review server dies mid-request", %{conn: conn} do
+      rid = stuck_review_server(:boom)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        conn = get(conn, "/api/file?review_id=#{rid}&file_index=0&side=new")
+        assert conn.status == 500
+        assert conn.resp_body =~ ~r/^review server error: \{:boom, /
+      end)
+    end
+  end
+
+  # Registers a stand-in review server that exits with `reason` when
+  # called, so the caller sees `GenServer.call` exit with that reason.
+  defp stuck_review_server(reason) do
+    rid = "fcc-stuck-#{System.unique_integer([:positive])}"
+    test = self()
+
+    spawn(fn ->
+      {:ok, _} = Registry.register(Meerkat.ReviewRegistry, rid, nil)
+      send(test, :registered)
+
+      receive do
+        {:"$gen_call", _from, _msg} -> exit(reason)
+      end
+    end)
+
+    assert_receive :registered
+    rid
   end
 
   defp mk_tmp(prefix), do: Meerkat.TestHelpers.make_tmp_repo(prefix)

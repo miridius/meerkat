@@ -300,6 +300,26 @@ defmodule Meerkat.MarkdownTest do
       assert n =~ "after"
     end
 
+    test "a closed fence ends its block, so only the paragraph after it is tinted" do
+      # The closing fence is longer than the opener, which CommonMark allows.
+      fence = "```elixir\ncode\n````\n\n"
+
+      %{old_html: old, new_html: new} =
+        Markdown.render_diff_sides(fence <> "old para", fence <> "new para", :modified)
+
+      pre = ~s(<pre><code class="language-elixir">code\n</code></pre>)
+      assert old == pre <> ~s(\n<div class="md-del"><p>old para</p></div>)
+      assert new == pre <> ~s(\n<div class="md-ins"><p>new para</p></div>)
+    end
+
+    test "raw HTML in an unchanged block renders on both sides" do
+      %{old_html: old, new_html: new} =
+        Markdown.render_diff_sides("a <em>hi</em>\n\nold", "a <em>hi</em>\n\nnew", :modified)
+
+      assert String.starts_with?(old, "<p>a <em>hi</em></p>\n")
+      assert String.starts_with?(new, "<p>a <em>hi</em></p>\n")
+    end
+
     test "renders a raw HTML block" do
       src = ~s(<p align="center"><img src="https://example.com/logo.png"></p>)
       %{new_html: n} = Markdown.render_diff_sides("", src, :added)

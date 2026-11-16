@@ -100,6 +100,44 @@ defmodule Meerkat.VersionWatcherTest do
     assert_receive {:meerkat_version_available, _}
   end
 
+  test "stays quiet while current still points at the version it booted", %{link: link} do
+    Phoenix.PubSub.subscribe(Meerkat.PubSub, VersionWatcher.topic())
+    start(link, viewers_fun: fn -> 1 end)
+
+    refute_receive {:meerkat_version_available, _}, 100
+  end
+
+  test "keeps watching through a moment with no current link", %{dir: dir, link: link} do
+    Phoenix.PubSub.subscribe(Meerkat.PubSub, VersionWatcher.topic())
+    pid = start(link, viewers_fun: fn -> 1 end)
+
+    File.rm!(link)
+    # Long enough for several polls to find no link.
+    Process.sleep(50)
+    assert Process.alive?(pid)
+
+    File.ln_s!(Path.join(dir, "v2"), link)
+    assert_broadcast_target("v2")
+  end
+
+  test "logs a new version once, not on every re-broadcast", %{dir: dir, link: link} do
+    Phoenix.PubSub.subscribe(Meerkat.PubSub, VersionWatcher.topic())
+
+    # The test config logs only warnings; the watcher's info lines are the subject.
+    level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: level) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        start(link, viewers_fun: fn -> 1 end)
+        flip(link, Path.join(dir, "v2"))
+        for _ <- 1..3, do: assert_receive({:meerkat_version_available, _})
+      end)
+
+    assert [_] = Regex.scan(~r/Meerkat\.VersionWatcher: new version live \(v2\)/, log)
+  end
+
   test "broadcasts the new target after a second flip", %{dir: dir, link: link} do
     File.mkdir_p!(Path.join(dir, "v3"))
     Phoenix.PubSub.subscribe(Meerkat.PubSub, VersionWatcher.topic())

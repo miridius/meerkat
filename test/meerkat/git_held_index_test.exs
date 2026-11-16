@@ -219,6 +219,14 @@ defmodule Meerkat.GitHeldIndexTest do
     end)
   end
 
+  test "`with_index/3` naming an index that is gone is an error, and `fun` is not run",
+       %{dir: dir} do
+    gone = Path.join(dir, ".git/next-index-5.lock")
+
+    assert Git.with_index(dir, gone, fn -> flunk("ran with a missing index") end) ==
+             {:error, "the index #{gone} no longer exists"}
+  end
+
   test "with no copy kept, reads use the index the environment names", %{dir: dir} do
     put_env("GIT_INDEX_FILE", index(dir, "next-index-3.lock", :env))
 

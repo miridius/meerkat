@@ -123,6 +123,10 @@ defmodule Meerkat.GitOidsTest do
       assert Git.effective_oids_many(dir, [entry("wëird.rs", :deleted)]) ==
                {:ok, %{"wëird.rs" => blob_oid(@head["wëird.rs"])}}
     end
+
+    test "entries that are not a list are refused rather than read as no changes", %{dir: dir} do
+      assert_raise FunctionClauseError, fn -> Git.effective_oids_many(dir, %{}) end
+    end
   end
 
   describe "git/2 fixture helper" do

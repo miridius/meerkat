@@ -33,6 +33,7 @@ defmodule MeerkatWeb.ReviewLive do
   }
 
   @impl true
+  # muex:ignore equivalent: mount ignores both params and session, so swapping them changes nothing
   def mount(_params, _session, socket) do
     # phx-track-static only sends the page's asset URLs on join; LiveView
     # never reloads the page on a mismatch by itself.
@@ -518,6 +519,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       form == nil ->
+        # muex:ignore pure observability: only reorders the stderr breadcrumb text
         IO.puts(:stderr, "meerkat: comment.submit ignored — form not open: #{inspect(key)}")
 
         {:reply,
@@ -850,9 +852,15 @@ defmodule MeerkatWeb.ReviewLive do
 
     clear_pending_answers()
 
+    # Decision.submit/1 broadcasts the decision to this LiveView, whose
+    # :meerkat_decision handler assigns the same done view and wipes the
+    # same drafts; {:already_decided, _} follows an earlier broadcast
+    # that already did both.
     {:noreply,
      socket
+     # muex:ignore equivalent: the decision broadcast assigns the same done view (see above)
      |> assign(done: done_view(settled(submitted)), pending_answers: nil)
+     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see above)
      |> wipe_drafts()}
   end
 
@@ -910,6 +918,7 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply,
      socket
      |> assign(done: done_view(settled(submitted)), pending_answers: nil)
+     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see decision.approve)
      |> wipe_drafts()}
   end
 
@@ -2459,6 +2468,7 @@ defmodule MeerkatWeb.ReviewLive do
   # Files matching the current substring filter — the set the bulk
   # Hide/Show buttons operate on. Empty input → every file.
   defp matched_file_names(state, input) do
+    # muex:ignore equivalent: filter_input is always a string, so the nil fallback never runs
     needle = String.downcase(input || "")
 
     state.files

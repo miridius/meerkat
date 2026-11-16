@@ -126,6 +126,25 @@ defmodule Meerkat.ReviewStateTest do
                ReviewState.blocks("```\na\n\nb\n```")
     end
 
+    test "prose after a fenced block keeps its order, and a later fence is still found" do
+      msg = "Intro\n```\ncode\n```\nafter one\nafter two\n~~~\nmore\n~~~"
+
+      assert [
+               %{start_line: 1, end_line: 1, text: "Intro"},
+               %{start_line: 2, end_line: 4},
+               %{start_line: 5, end_line: 6, text: "after one\nafter two"},
+               %{start_line: 7, end_line: 9, text: "~~~\nmore\n~~~"}
+             ] = ReviewState.blocks(msg)
+    end
+
+    test "asterisk bullets are list items too" do
+      assert [
+               %{start_line: 1, end_line: 1},
+               %{start_line: 3, end_line: 3, text: "* one"},
+               %{start_line: 4, end_line: 4, text: "* two"}
+             ] = ReviewState.blocks("Subject\n\n* one\n* two")
+    end
+
     test "a whitespace-only separator line produces no block of its own" do
       # The separator is `" "`, not the empty string, so it is dropped by
       # the all-blank check rather than the leading-empty-line check.
@@ -209,6 +228,31 @@ defmodule Meerkat.ReviewStateTest do
 
       assert [%{start_line: 1, text: "Subject"}, %{start_line: 3, text: "Real body line."}] =
                state.commit_message_blocks
+    end
+
+    test "a staged review on a PR's branch carries the PR, even with no readable message",
+         %{base: base, repo: repo} do
+      pr = %{
+        number: 7,
+        baseRefName: "develop",
+        headRefName: "main",
+        title: "Add a",
+        body: "Adds a.",
+        url: "https://github.com/example/example/pull/7"
+      }
+
+      stub_gh(base, """
+      cat <<'EOF_JSON'
+      #{Jason.encode!(pr)}
+      EOF_JSON
+      """)
+
+      missing_msg = Path.join(base, "NO_SUCH_COMMIT_MSG")
+
+      assert {:ok, state} = ReviewState.from_target({:staged, missing_msg}, repo)
+      assert state.commit_message == ""
+      assert state.pr == %{number: 7, title: "Add a", url: pr.url}
+      assert state.base_branch == "develop"
     end
 
     test "a single ref reviews that commit and its message; a two-dot range, only its files",

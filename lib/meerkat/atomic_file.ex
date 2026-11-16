@@ -31,10 +31,12 @@ defmodule Meerkat.AtomicFile do
     end
   end
 
+  # muex:ignore equivalent: write/2 discards cleanup_tmp/1's return value
   defp cleanup_tmp(tmp) do
     case File.rm(tmp) do
       :ok -> :ok
       {:error, :enoent} -> :ok
+      # muex:ignore pure observability: the arguments only shape the warning text
       {:error, reason} -> log_rm_failure(tmp, reason)
     end
   end

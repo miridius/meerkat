@@ -222,6 +222,18 @@ defmodule Meerkat.GitTest do
       assert Map.keys(result) == ["tab\there\r\nlf.txt"]
     end
 
+    test "a quoted path's bell, backspace, form-feed and vertical-tab escapes stand for " <>
+           "their bytes" do
+      diff =
+        ~s(diff --git "a/x\\a\\b\\f\\v.txt" "b/x\\a\\b\\f\\v.txt"\n) <>
+          ~s(--- "a/x\\a\\b\\f\\v.txt"\n) <>
+          ~s(+++ "b/x\\a\\b\\f\\v.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["x\a\b\f\v.txt"]
+    end
+
     test "a backslash short of three octal digits stands for itself" do
       diff =
         ~s(diff --git "a/a\\00n.txt" "b/a\\00n.txt"\n) <>
@@ -318,6 +330,19 @@ defmodule Meerkat.GitTest do
       assert {:error, reason} = result
       assert reason =~ "couldn't parse staged-diff block"
       assert capture =~ reason
+    end
+
+    test "each malformed block is reported in order by its first line, cut to 200 characters" do
+      long = "diff --git " <> String.duplicate("x", 300)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert Git.parse_multi_file_diff_for_test(
+                 long <> "\n@@ -1 +1 @@\n-x\n+y\ndiff --git second\n@@ -1 +1 @@\n-x\n+y\n"
+               ) ==
+                 {:error,
+                  "couldn't parse staged-diff block (first line: #{String.slice(long, 0, 200)}); " <>
+                    "couldn't parse staged-diff block (first line: diff --git second)"}
+      end)
     end
   end
 
@@ -495,6 +520,25 @@ defmodule Meerkat.GitTest do
   describe "current_branch/1" do
     test "names the branch HEAD is on", %{repo: repo} do
       assert Git.current_branch(repo) == "feature/x"
+    end
+  end
+
+  describe "commit_message/2" do
+    setup do
+      dir = make_git_repo("meerkat-git-commit-message")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir}
+    end
+
+    test "is the commit's full message, trimmed", %{dir: dir} do
+      commit(dir, "Subject\n\nBody line.")
+
+      assert Git.commit_message(dir, "HEAD") == {:ok, "Subject\n\nBody line."}
+    end
+
+    test "for a ref that names no commit, returns git's error", %{dir: dir} do
+      assert {:error, "git log -1 --format=%B no-such-ref exited 128: " <> _} =
+               Git.commit_message(dir, "no-such-ref")
     end
   end
 

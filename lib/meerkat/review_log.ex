@@ -97,6 +97,7 @@ defmodule Meerkat.ReviewLog do
 
   ## Internals
 
+  # muex:ignore equivalent: start/2 and finalize/3 discard write_log/1's return value
   defp write_log(%__MODULE__{path: path, record: record}) do
     case Jason.encode(record) do
       {:ok, json} ->

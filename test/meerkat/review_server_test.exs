@@ -42,6 +42,20 @@ defmodule Meerkat.ReviewServerTest do
       assert pid1 == pid2
     end
 
+    test "the server is registered under the id it was started for", %{
+      repo: repo,
+      review_id: id
+    } do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{},
+          review_id: "a-stale-id"
+        })
+
+      assert [{^pid, _}] = Registry.lookup(Meerkat.ReviewRegistry, id)
+    end
+
     test "different review_ids → different pids", %{repo: repo} do
       {:ok, pid_a} =
         ReviewServer.ensure_started("rs_a_#{System.unique_integer([:positive])}", %{
@@ -278,6 +292,23 @@ defmodule Meerkat.ReviewServerTest do
         assert {{:function_clause, _}, _} =
                  catch_exit(GenServer.call(pid, {:set_file_override, "a.ex", :bogus}))
       end)
+    end
+
+    test "reject a non-binary review id and an unknown file override",
+         %{repo: repo, review_id: id} do
+      non_binary_review_id = Process.get(:non_binary_review_id, :review)
+      unknown_override = Process.get(:unknown_override, :bogus)
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.ensure_started(non_binary_review_id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{}
+        })
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.set_file_override(id, "a.ex", unknown_override)
+      end
     end
   end
 
