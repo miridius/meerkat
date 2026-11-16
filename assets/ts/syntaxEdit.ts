@@ -93,14 +93,14 @@ function stringToken(state: EditorState, node: SyntaxNode): boolean {
  *  bracketed form, with any prefix such as `#{`, `@(` or `#:ns{`, that
  *  starts or ends there, or a string that ends there; between a prefix
  *  and its bracket, the form without the prefix. The form after the
- *  caret, the outermost one starting there, wins when both hold. Null
- *  elsewhere. */
+ *  caret, with all its prefixes, wins when both hold. Null elsewhere. */
 function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
 	let found: SyntaxNode | null = null;
 	for (let node = tree.resolveInner(pos, 1); node.from === pos && node.parent; node = node.parent) {
-		// Out of a token or a prefix only, not a form such as `[a]` in `[a][0]`.
-		if (node.firstChild && !PREFIX_NODES.has(node.name)) break;
+		// Out of punctuation or a prefix only, not a form such as `[a]` or
+		// `"a"` in `[a][0]` or `"a"[0]`.
+		if (!PREFIX_NODES.has(node.name) && !punctuation(state, node)) break;
 		const form = closedForm(state, tree.resolveInner(node.parent.to, -1), pos);
 		if (form?.from === pos) found = form;
 	}

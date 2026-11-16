@@ -86,6 +86,7 @@ describe("expandSelection", () => {
 		expect(expand(`f(a, u8"b"|);`, cpp())).toBe(`f(a, <u8"b">);`);
 		expect(expand("(a @|(b) d)", clojure())).toBe("(a @<(b)> d)");
 		expect(expand("x = |[a][0];", javascript())).toBe("x = <[a]>[0];");
+		expect(expand('x = |"a"[0];', javascript())).toBe('x = <"a">[0];');
 		expect(expand("((b)| d)", clojure())).toBe("(<(b)> d)");
 		expect(expand(";;\n(b)|", clojure())).toBe(";;\n<(b)>");
 		expect(expand("(a (b)|[c])", clojure())).toBe("(a (b)<[c]>)");
