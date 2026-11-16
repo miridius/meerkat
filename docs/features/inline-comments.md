@@ -157,8 +157,11 @@ everywhere.
 | ⌥↑ / ⌥↓ | Expand / shrink the selection to the enclosing node |
 | ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, map or dict entry) past its previous / next sibling |
 
-⌥↑ first selects the word at the caret, then each enclosing node,
-the inside of its brackets before the node itself. In a Clojure map,
+⌥↑ first selects the word at the caret, or the whole form when the
+caret is just before its opening bracket or quote (with any prefix,
+such as Clojure's `#{`) or just after its closing one, the form after
+the caret when it touches two; then each enclosing node, the inside
+of its brackets before the node itself. In a Clojure map,
 a key moves with its value, along with a `#_` form between them, and
 any other `#_` form moves on its own; in a map without a value for
 each key, no key, value or `#_` form in it moves, only the whole map. Metadata
