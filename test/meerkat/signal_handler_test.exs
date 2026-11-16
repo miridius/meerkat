@@ -15,7 +15,8 @@ defmodule Meerkat.SignalHandlerTest do
     assert SignalHandler.install() == :ok
 
     handlers = :gen_event.which_handlers(:erl_signal_server)
-    assert SignalHandler in handlers
+    # A second install must not add a second copy of the handler.
+    assert Enum.count(handlers, &(&1 == SignalHandler)) == 1
     refute :erl_signal_handler in handlers
   end
 

@@ -213,6 +213,15 @@ defmodule Meerkat.GitIntegrationTest do
     assert Git.staged_blob_oid(staged, "a.txt") == oid
   end
 
+  test "an index entry git lists in an unexpected shape is an error naming the path", %{
+    staged: staged
+  } do
+    stub_git("ls-files", {"garbage\n", 0})
+
+    assert Git.fetch_staged_blob_oid(staged, "a.txt") ==
+             {:error, ~s(unexpected `git ls-files -s` output for a.txt: "garbage\\n")}
+  end
+
   test "generated convenience lookup respects explicit true, set and false attributes", %{
     staged: staged
   } do

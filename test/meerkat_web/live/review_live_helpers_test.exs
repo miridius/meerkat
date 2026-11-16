@@ -425,6 +425,18 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
 
       assert msg =~ "refresh the review"
     end
+
+    test "a git failure blocks the approve and names git's error" do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-lv-nogit-oid")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      {:stale, msg} =
+        ReviewLive.stale_oid_check_for_test(dir, %{file_name: "f.ex", effective_oid: "abc"}, true)
+
+      assert msg =~
+               ~r/\ACouldn't verify f\.ex's staged blob OID \(git .+ exited \d+: .+\)\. Resolve the git issue and refresh before approving\.\z/s
+    end
   end
 
   describe "finding atom whitelist" do
@@ -532,6 +544,13 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert ReviewLive.comment_count_for_test(state) == 6
       assert ReviewLive.comments_for_test(state) == true
       assert ReviewLive.comments_for_test(%ReviewState{}) == false
+    end
+
+    test "a comment on any one surface counts" do
+      assert ReviewLive.comments_for_test(%ReviewState{comments: [%{}]})
+      assert ReviewLive.comments_for_test(%ReviewState{file_comments: [%{}]})
+      assert ReviewLive.comments_for_test(%ReviewState{global_comments: [%{}]})
+      assert ReviewLive.comments_for_test(%ReviewState{commit_message_comments: [%{}]})
     end
   end
 
@@ -690,6 +709,51 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
                "**a.ex**:\n\n**issue:** file note",
                "**commit message (line 1-2)**:\n\n**issue:** subject note"
              ]
+    end
+  end
+
+  describe "github_payload review body" do
+    test "folds global, file and commit-message comments into ---separated sections" do
+      state = %ReviewState{
+        files: [%{file_name: "a.ex"}],
+        pr: %{number: 1},
+        global_comments: [%{id: "g1", finding_type: :issue, body: "note"}],
+        file_comments: [
+          %{
+            id: "f1",
+            file_index: 0,
+            finding_type: :question,
+            body: "why?"
+          }
+        ],
+        commit_message_comments: [
+          %{
+            id: "c1",
+            start_line: 1,
+            end_line: 1,
+            finding_type: :issue,
+            body: "vague"
+          },
+          %{
+            id: "c2",
+            start_line: 3,
+            end_line: 4,
+            finding_type: :suggestion,
+            body: "reword"
+          }
+        ]
+      }
+
+      assert ReviewLive.github_payload_for_test(state).body ==
+               Enum.join(
+                 [
+                   "**issue:** note",
+                   "**a.ex**:\n\n**question:** why?",
+                   "**commit message (line 1)**:\n\n**issue:** vague",
+                   "**commit message (line 3-4)**:\n\n**suggestion:** reword"
+                 ],
+                 "\n\n---\n\n"
+               )
     end
   end
 

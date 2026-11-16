@@ -538,6 +538,20 @@ defmodule Meerkat.DecisionTest do
       assert eventually(fn -> File.stat!(run_dir, time: :posix).mtime > backdated_s end)
     end
 
+    test "a DOWN for a process it never monitored leaves the deadline armed" do
+      armed = System.system_time(:millisecond) + 600_000
+      Application.put_env(:meerkat, :review_deadline_ms, armed)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Decision, {:DOWN, make_ref(), :process, self(), :normal})
+          :sys.get_state(Decision)
+        end)
+
+      assert log =~ "Meerkat.Decision: unexpected message {:DOWN"
+      assert Application.get_env(:meerkat, :review_deadline_ms) == armed
+    end
+
     test "a review whose caller has left does not time out" do
       System.put_env("MEERKAT_REVIEW_TIMEOUT", "1")
       parent = self()
@@ -967,6 +981,12 @@ defmodule Meerkat.DecisionTest do
       assert Decision.end_unattended() == :ended
       assert Decision.end_unattended() == :ended
       assert Decision.current() == {:ended, ""}
+    end
+  end
+
+  describe "start_link/1" do
+    test "registers the one Decision under its module name" do
+      assert Decision.start_link() == {:error, {:already_started, Process.whereis(Decision)}}
     end
   end
 

@@ -45,7 +45,14 @@ defmodule Meerkat.AtomicFileTest do
       File.chmod!(ro_dir, 0o555)
 
       try do
-        assert {:error, _} = AtomicFile.write(Path.join(ro_dir, "x.txt"), "fail")
+        # The tmp file was never created, so there is nothing to clean
+        # up and no cleanup failure to warn about.
+        stderr =
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert {:error, _} = AtomicFile.write(Path.join(ro_dir, "x.txt"), "fail")
+          end)
+
+        assert stderr == ""
       after
         File.chmod!(ro_dir, 0o755)
       end

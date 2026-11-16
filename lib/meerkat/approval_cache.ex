@@ -19,6 +19,8 @@ defmodule Meerkat.ApprovalCache do
   """
 
   @cache_version 2
+  # muex:ignore equivalent: a 1 ms shift in the 10 s wait moves the force-take by under one 25 ms poll
+  @lock_wait_ms 10_000
 
   @type branch :: String.t()
   @type file_name :: String.t()
@@ -264,14 +266,15 @@ defmodule Meerkat.ApprovalCache do
   @doc """
   Read-modify-write `path` via `fun`. Atomic on disk via tmp-rename;
   cross-process mutual exclusion via a `<path>.lock.d` lockdir
-  (POSIX-atomic `mkdir`, 10 s wait then force-take).
+  (POSIX-atomic `mkdir`, a `lock_wait_ms` wait, 10 s by default, then
+  force-take).
   """
-  @spec modify(String.t(), (t -> t)) :: {:ok, t} | {:error, term()}
-  def modify(path, fun) when is_function(fun, 1) do
+  @spec modify(String.t(), (t -> t), pos_integer()) :: {:ok, t} | {:error, term()}
+  def modify(path, fun, lock_wait_ms \\ @lock_wait_ms) when is_function(fun, 1) do
     # Cross-process advisory lock via atomic mkdir of `<path>.lock.d`.
     # POSIX mkdir is atomic — the kernel either creates the directory
     # and we own it, or returns EEXIST and another worktree's commit
-    # owns it. Spin with 25ms backoff up to 10s, then take the lock
+    # owns it. Spin with 25ms backoff up to `lock_wait_ms`, then take the lock
     # by force (stale lockdir from a killed process is the only way
     # the wait exceeds reasonable bounds — release happens in the
     # `after` block, and a SIGKILL during the critical section is
@@ -281,7 +284,7 @@ defmodule Meerkat.ApprovalCache do
     lock_dir = "#{path}.lock.d"
 
     with :ok <- mkdir_p_or_log(Path.dirname(lock_dir)),
-         {:ok, :acquired} <- acquire_lockdir(lock_dir, 10_000) do
+         {:ok, :acquired} <- acquire_lockdir(lock_dir, lock_wait_ms) do
       try do
         new_cache = path |> load() |> fun.()
 
@@ -329,20 +332,21 @@ defmodule Meerkat.ApprovalCache do
   # each other's writes.
   defp acquire_lockdir(lock_dir, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    acquire_loop(lock_dir, deadline)
+    acquire_loop(lock_dir, deadline, timeout_ms)
   end
 
-  defp acquire_loop(lock_dir, deadline) do
+  defp acquire_loop(lock_dir, deadline, timeout_ms) do
     case File.mkdir(lock_dir) do
       :ok ->
         {:ok, :acquired}
 
       {:error, :eexist} ->
+        # muex:ignore equivalent: `>=` differs only when a poll lands on the deadline's exact millisecond
         if System.monotonic_time(:millisecond) > deadline do
-          force_take(lock_dir)
+          force_take(lock_dir, timeout_ms)
         else
           Process.sleep(25)
-          acquire_loop(lock_dir, deadline)
+          acquire_loop(lock_dir, deadline, timeout_ms)
         end
 
       {:error, reason} ->
@@ -356,10 +360,10 @@ defmodule Meerkat.ApprovalCache do
     end
   end
 
-  defp force_take(lock_dir) do
+  defp force_take(lock_dir, timeout_ms) do
     IO.puts(
       :stderr,
-      "meerkat: warning — approval-cache lock at #{lock_dir} held for >10s. " <>
+      "meerkat: warning — approval-cache lock at #{lock_dir} held for >#{timeout_ms} ms. " <>
         "Likely stale (killed meerkat). Forcing take."
     )
 

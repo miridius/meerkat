@@ -154,6 +154,7 @@ defmodule Meerkat.PlantUML do
   defp kill_port(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} when is_integer(pid) ->
+        # muex:ignore pure observability: only routes kill's own error text, which is discarded
         _ = System.cmd("kill", ["-KILL", Integer.to_string(pid)], stderr_to_stdout: true)
 
       _ ->

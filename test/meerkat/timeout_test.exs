@@ -1,18 +1,6 @@
 defmodule Meerkat.TimeoutTest do
   use Meerkat.Case, async: false
 
-  # Surviving muex mutants in lib/meerkat/timeout.ex, with why they are
-  # not test gaps:
-  #
-  # Equivalent (no input distinguishes mutant from original):
-  # * `do_prune_stale/1`'s `case File.ls(parent)` — deleting the
-  #   `_ -> :ok` fallback raises `CaseClauseError`; the function's own
-  #   `catch _, _ -> :ok` catches it and returns the same `:ok`.
-  # * `saved_state/2`'s `case` on
-  #   `Application.get_env(:meerkat, :review_state)` — deleting the
-  #   `_ -> nil` fallback raises `CaseClauseError`; the function's own
-  #   `catch _, _ -> nil` returns the same `nil`.
-
   import ExUnit.CaptureIO
   import Meerkat.TestHelpers
 
@@ -195,6 +183,10 @@ defmodule Meerkat.TimeoutTest do
     end
 
     test "a run with no deadline directory is left without one", %{repo: repo} do
+      # Another run's anchor makes the deadlines directory exist, so only
+      # keep_alive/1's own check stops it creating this run's.
+      with_run_id("other", fn -> Timeout.deadline_ms(repo, "abc123") end)
+
       with_run_id("fresh", fn -> :ok = Timeout.keep_alive(repo) end)
 
       refute File.exists?(run_dir(repo, "fresh"))
@@ -292,6 +284,25 @@ defmodule Meerkat.TimeoutTest do
       with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
 
       assert File.exists?(anchor_path(repo, "abc123", "overdue"))
+    end
+
+    test "a run exactly as old as the limit plus two checks is kept", %{repo: repo} do
+      window_s = div(Timeout.limit_ms() + 2 * Timeout.check_interval_ms(), 1000)
+
+      # The cutoff is read from the clock, so retry until the backdate and
+      # the prune fall in the same second.
+      kept? =
+        Enum.find_value(1..20, fn _ ->
+          with_run_id("edge", fn -> Timeout.deadline_ms(repo, "abc123") end)
+          now_s = System.system_time(:second)
+          :ok = File.touch!(run_dir(repo, "edge"), now_s - window_s)
+          with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
+
+          if System.system_time(:second) == now_s,
+            do: {:checked, File.exists?(run_dir(repo, "edge"))}
+        end)
+
+      assert kept? == {:checked, true}
     end
 
     test "a repo that has never held an anchor is pruned without error", %{repo: repo} do

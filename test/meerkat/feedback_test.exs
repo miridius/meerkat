@@ -47,6 +47,34 @@ defmodule Meerkat.FeedbackTest do
     end
   end
 
+  test "feedback without questions is the framing header, then the comment blocks" do
+    assert Feedback.format(state_with_global_comment(), :timeout) ==
+             "Nobody reviewed this commit. It was auto-approved when the review timed out, " <>
+               "and the comments below are what the user had saved before that.\n\n" <>
+               "\nGlobal comments:\n  > **issue:** needs work\n\n"
+  end
+
+  test "feedback with a question reads framing, action summary, question directive, then comments" do
+    state = %ReviewState{global_comments: [comment(body: "why?", finding_type: :question)]}
+
+    out = Feedback.format(state, :rejection)
+
+    positions =
+      Enum.map(
+        [
+          "The user rejected the commit",
+          "▶ ACTION:",
+          "⚠ Answer the reviewer",
+          "Global comments:"
+        ],
+        fn marker -> out |> :binary.match(marker) |> elem(0) end
+      )
+
+    assert hd(positions) == 0
+    assert positions == Enum.sort(positions)
+    assert String.ends_with?(out, "Do NOT edit code for this comment.\n\n")
+  end
+
   test "auto mode has no framing header" do
     out = Feedback.format(state_with_global_comment(), :auto)
     assert out == "\nGlobal comments:\n  > **issue:** needs work\n\n"
@@ -349,6 +377,56 @@ defmodule Meerkat.FeedbackTest do
       # Old-side quote uses the `-` prefix; new-side would be `+`.
       assert out =~ "- a"
       refute out =~ "+ a"
+    end
+
+    test "inline comments quote new-side lines with `+` and old-side lines with `-`, whatever the side's type" do
+      state = %ReviewState{
+        comments: [
+          inline_comment(start_line: 1, end_line: 1, side: :new, body: "atom new"),
+          inline_comment(start_line: 1, end_line: 1, side: "new", body: "string new"),
+          inline_comment(start_line: 2, end_line: 2, side: "old", body: "string old")
+        ],
+        files: [%{file_name: "x.rs", old_content: "a\nb\nc", new_content: "A\nB\nC"}]
+      }
+
+      out = Feedback.format(state, :rejection)
+
+      assert out =~ "x.rs:1 (new)\n    + A\n    > **issue:** atom new"
+      assert out =~ "x.rs:1 (new)\n    + A\n    > **issue:** string new"
+      assert out =~ "x.rs:2 (old)\n    - b\n    > **issue:** string old"
+    end
+
+    test "an inline comment quotes exactly its line range" do
+      state = %ReviewState{
+        comments: [inline_comment(start_line: 2, end_line: 3, body: "these two")],
+        files: [%{file_name: "x.rs", new_content: "one\ntwo\nthree\nfour\nfive"}]
+      }
+
+      out = Feedback.format(state, :rejection)
+
+      assert out =~ "x.rs:2-3 (new)\n    + two\n    + three\n    > **issue:** these two"
+    end
+
+    test "an inline comment on a file the state no longer lists names it by index" do
+      state = %ReviewState{comments: [inline_comment(file_index: 5, body: "gone")]}
+
+      assert Feedback.format(state, :rejection) =~ "\n  file #5:1 (new)\n"
+    end
+
+    test "a whitespace-only finding type renders the bare body, unlabelled" do
+      state = %ReviewState{global_comments: [comment(body: "plain words", finding_type: "  ")]}
+
+      assert Feedback.format(state, :rejection) =~ "  > plain words\n"
+    end
+
+    test "a commit-message comment with no commit message renders without a quote" do
+      state = %ReviewState{
+        commit_message: nil,
+        commit_message_comments: [comment(start_line: 1, end_line: 1, body: "add a body")]
+      }
+
+      assert Feedback.format(state, :rejection) =~
+               "\n  commit-message:1\n\n    > **issue:** add a body\n"
     end
 
     test "commit_message_comments surface renders with the commit-msg line tag" do

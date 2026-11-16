@@ -1,54 +1,9 @@
 defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
-  # Surviving muex mutants in lib/meerkat/cli.ex, with why they are not
-  # test gaps (see CLAUDE.md's Mutation testing — every survivor is
-  # fixed or documented; muex runs ExUnit only, so it cannot see the
-  # e2e suite's coverage of the glue ExUnit cannot reach):
-  #
-  # - `main/1`'s answers/review branch, auto/live dispatch, invert +
-  #   case-clause deletions — a live review boots the endpoint and
-  #   `--answers` reads stdin, unrunnable under ExUnit. The auto clause
-  #   and a live dispatch that stops at target resolution are covered by
-  #   cli_main_test.exs; the rest e2e by answers.spec.ts "questions
-  #   block a real git hook until answers sent through the launcher
-  #   reach the next page" (true branch) and decision.spec.ts "feedback
-  #   typed in plain and Suggestion forms and sent by its shortcut
-  #   reaches the caller as exit 1 with the comments bracketed, saved to
-  #   a file, and no server logs" (live clause).
-  # - `flush_logs/0`'s handler-absent `_ -> :ok` clause — equivalent:
-  #   flush_logs' own `rescue _ -> :ok catch _, _ -> :ok` swallows the
-  #   CaseClauseError the deletion raises, so no input distinguishes the
-  #   mutant from the original.
-  # - `run_live_review/2`'s case on `ReviewState.from_target` — the
-  #   `{:ok, _}` clause boots the live review UI; covered e2e by
-  #   decision.spec.ts "feedback typed in plain and Suggestion forms and
-  #   sent by its shortcut reaches the caller as exit 1 with the comments
-  #   bracketed, saved to a file, and no server logs". The
-  #   `{:error, _}` clause is covered by cli_main_test.exs.
-  # - `run_live_review/2`'s deadline setup (swap the put_env arguments,
-  #   invert `is_nil(serve_dir)`) — equivalent under a launcher:
-  #   `Meerkat.Decision` re-arms the deadline when the first caller
-  #   attaches, milliseconds after boot, and disarms it when the caller
-  #   leaves. decision_test.exs "a review whose caller has left does not
-  #   time out" pins that behaviour.
-  # - `run_live_review/2`'s `if run` (invert) — which run's deadline
-  #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
-  #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
-  # - `start_app!/2` (deleting the preferred-port clause) and
-  #   `run_live_review_safe/2`'s `PortInUseError` rescue — they boot the
-  #   endpoint, unrunnable under ExUnit. Covered e2e by port.spec.ts
-  #   "without --port, a review binds its stable port, or another port
-  #   while another review holds it" and "an explicit --port that is
-  #   taken fails to start and names the port".
-  # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
-  #   System.halt/1, killing the ExUnit VM by design (see args_error
-  #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
-  #   exits 64 and names the option".
-  # - The staged-diff auto-approve path in `auto_approve_staged/2`
-  #   (statement deletion among the Git shell-outs) — real-git I/O
-  #   wiring; covered by the real-git `auto_approve_decision/3` tests
-  #   below.
+  # `main/1` itself, including a live review run in the test BEAM, is
+  # covered by cli_main_test.exs. Mutants no ExUnit test can reach carry a
+  # `# muex:ignore` comment in cli.ex naming the e2e test that kills them.
 
   import Meerkat.TestHelpers
 
@@ -442,7 +397,7 @@ defmodule Meerkat.CLITest do
         end)
 
       assert code == 64
-      assert stderr =~ "needs a git repository"
+      assert stderr =~ ~r/\Ameerkat: --answers needs a git repository: .+\n\z/
     end
 
     test "a refused write → exit 74, not the code for bad input", %{repo: repo} do
@@ -662,6 +617,23 @@ defmodule Meerkat.CLITest do
       assert {:error, :closed} =
                :gen_tcp.recv(socket, 0, ExUnit.configuration()[:assert_receive_timeout])
     end
+
+    test "keeps the rest of the configured endpoint settings" do
+      base = Application.get_env(:meerkat, MeerkatWeb.Endpoint)
+      config = CLI.endpoint_config_for_test(4321)
+
+      assert config[:pubsub_server] == base[:pubsub_server]
+      assert config[:live_view] == base[:live_view]
+    end
+
+    test "accepts websocket origins on loopback hosts only" do
+      {module, function, args} = CLI.endpoint_config_for_test(4321)[:check_origin]
+      origin_ok? = &apply(module, function, [URI.parse(&1) | args])
+
+      assert origin_ok?.("http://127.0.0.1:4321")
+      assert origin_ok?.("http://localhost:4321")
+      refute origin_ok?.("http://example.com")
+    end
   end
 
   describe "endpoint_config/2's Vite manifest" do
@@ -702,6 +674,50 @@ defmodule Meerkat.CLITest do
       on_exit(fn -> Application.delete_env(:meerkat, :vite_manifest_path) end)
 
       assert CLI.endpoint_config_for_test(0)[:vite_manifest] == PhoenixVite.Manifest.parse(json)
+    end
+  end
+
+  describe "start_app!/3" do
+    # Fails with the start error a taken port gives, for each port in `taken`.
+    defp start_with_taken(taken) do
+      test = self()
+
+      fn port ->
+        send(test, {:started, port})
+        if port in taken, do: {:error, {:listener, :eaddrinuse}}, else: :ok
+      end
+    end
+
+    test "with --port 0, binds the preferred port when it is free" do
+      assert CLI.start_app_for_test(0, 4798, start_with_taken([])) == :ok
+      assert_received {:started, 4798}
+      refute_received {:started, _}
+    end
+
+    test "with --port 0, a taken preferred port falls back to an OS-assigned one" do
+      assert_raise RuntimeError, fn ->
+        CLI.start_app_for_test(0, 4798, start_with_taken([4798]))
+      end
+
+      assert_received {:started, 4798}
+      assert_received {:started, 0}
+      refute_received {:started, _}
+    end
+
+    test "an explicit port that is taken raises naming the port" do
+      assert_raise Meerkat.PortInUseError, ~r/4799/, fn ->
+        CLI.start_app_for_test(4799, nil, start_with_taken([4799]))
+      end
+    end
+
+    test "any other start failure raises with its reason, preferred port or not" do
+      fail = fn _port -> {:error, :boom} end
+
+      for {port, preferred} <- [{0, 4798}, {4799, nil}] do
+        assert_raise RuntimeError, "meerkat failed to start: :boom", fn ->
+          CLI.start_app_for_test(port, preferred, fail)
+        end
+      end
     end
   end
 
@@ -870,7 +886,10 @@ defmodule Meerkat.CLITest do
         end)
 
       assert_received {:opened, _}
-      assert err =~ "couldn't stamp browser-open marker at #{marker}"
+
+      assert err =~
+               "meerkat: warning — couldn't stamp browser-open marker at #{marker}: " <>
+                 ":eisdir (may re-open browser on next restart)\n"
     end
   end
 
@@ -918,11 +937,14 @@ defmodule Meerkat.CLITest do
       assert err =~ "PAYLOAD-BODY"
     end
 
-    test "a timeout with no saved comments prints no feedback banner", %{path: path} do
+    test "a timeout with no saved comments prints only the notice naming the time limit",
+         %{path: path} do
       {code, err} = exit_code({:timeout, ""}, path)
       assert code == 0
-      assert err =~ "Nobody read this diff."
-      refute err =~ "Review timed out, commit auto-approved unread"
+      limit = CLI.limit_phrase_for_test(Meerkat.Timeout.limit_ms())
+
+      assert err ==
+               "No review within #{limit}: commit auto-approved. Nobody read this diff.\n"
     end
 
     test "reject exits 1 and carries the comments", %{path: path} do
@@ -1018,9 +1040,26 @@ defmodule Meerkat.CLITest do
       out = CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", bad)
 
       refute File.exists?(bad)
-      assert out =~ "couldn't save full feedback to #{bad} (:enoent)"
-      assert out =~ "full feedback could not be written to disk"
-      assert out =~ "PAYLOAD-BODY"
+      banner = CLI.feedback_banner_for_test(:reject, nil, :error)
+
+      # The warning first, then the payload between two copies of the banner.
+      assert out ==
+               "meerkat: warning — couldn't save full feedback to #{bad} (:enoent).\n" <>
+                 banner <> "PAYLOAD-BODY" <> banner
+
+      assert banner =~ "full feedback could not be written to disk"
+    end
+
+    test "a payload that is not a string is refused before any feedback file is written" do
+      path = Path.join(make_tmp_repo("meerkat-cli-fb-iodata"), "fb.txt")
+      # Decoded at runtime, so the compiler cannot flag the list.
+      payload = Jason.decode!(~s(["PAYLOAD-BODY"]))
+
+      assert_raise FunctionClauseError, fn ->
+        CLI.write_feedback_for_test(:reject, payload, "no-live-review", path)
+      end
+
+      refute File.exists?(path)
     end
 
     test "a live review's comments are counted in the banner and saved beside its review log" do

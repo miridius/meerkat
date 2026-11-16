@@ -30,6 +30,19 @@ defmodule Meerkat.QuarantineTest do
       assert log =~ "Resetting."
     end
 
+    test "the warning names where the file went, so the user can recover it", %{dir: dir} do
+      path = Path.join(dir, "bad.json")
+      File.write!(path, "broken")
+
+      log = capture_io(:stderr, fn -> Quarantine.move(path, "bad", "thing", " Resetting.") end)
+
+      [moved] = File.ls!(dir) |> Enum.filter(&String.starts_with?(&1, "bad.json.corrupt."))
+
+      assert log ==
+               "meerkat: warning — thing at #{path} unusable (bad); " <>
+                 "moved to #{Path.join(dir, moved)}. Resetting.\n"
+    end
+
     test "succeeds without a success suffix when caller omits one", %{dir: dir} do
       path = Path.join(dir, "bad.json")
       File.write!(path, "x")

@@ -386,6 +386,7 @@ defmodule Meerkat.Persistence do
     |> Enum.reduce(base, fn {atom, str}, acc ->
       case Map.get(form, str) || Map.get(form, atom) do
         nil -> acc
+        # muex:ignore equivalent: acc holds only :surface and :anchor, so put_new never finds the key
         v -> Map.put(acc, atom, v)
       end
     end)
@@ -394,11 +395,13 @@ defmodule Meerkat.Persistence do
   defp migrate_finding_type(%{finding_type: "thought"} = c),
     do: Map.put(c, :finding_type, "follow_up")
 
+  # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
   defp migrate_finding_type(%{finding_type: :thought} = c),
     do: Map.put(c, :finding_type, :follow_up)
 
   defp migrate_finding_type(c), do: c
 
+  # muex:ignore equivalent: the catch-all clause also returns :inline
   defp surface_atom("inline"), do: :inline
   defp surface_atom("file"), do: :file
   defp surface_atom("global"), do: :global

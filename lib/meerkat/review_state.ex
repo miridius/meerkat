@@ -192,6 +192,7 @@ defmodule Meerkat.ReviewState do
   Lines are 1-indexed.
   """
   @spec blocks(String.t()) :: [block]
+  # muex:ignore equivalent: the general clause also maps "" to [], its one blank line dropped as a blank paragraph
   def blocks(""), do: []
 
   def blocks(message) do
@@ -224,6 +225,7 @@ defmodule Meerkat.ReviewState do
   defp split_off_fenced_code([], prose_acc, out) do
     finalise =
       case Enum.reverse(prose_acc) do
+        # muex:ignore equivalent: chunk_paragraphs/1 turns the {:prose, []} it adds into no blocks
         [] -> out
         lines -> [{:prose, lines} | out]
       end
@@ -263,8 +265,10 @@ defmodule Meerkat.ReviewState do
   # paragraphs, each a non-empty list of `{text, line_no}`.
   defp chunk_paragraphs(indexed_lines) do
     indexed_lines
+    # muex:ignore equivalent: negating the key splits the lines at the same places
     |> Enum.chunk_by(fn {text, _} -> String.trim(text) == "" end)
     |> Enum.reject(fn chunk ->
+      # muex:ignore equivalent: a chunk led by "" is all blank, so the Enum.all?/2 check below already rejects it
       match?([{<<>>, _} | _], chunk) or
         Enum.all?(chunk, fn {text, _} -> String.trim(text) == "" end)
     end)

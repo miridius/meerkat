@@ -330,6 +330,7 @@ defmodule Meerkat.Decision do
     displace(displaced, @taken_over)
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
+    # muex:ignore equivalent: a fresh monitor ref is never already a key, so put and put_new agree
     callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
     # The attached caller is watched from here on, not the recorded one.
     {:reply, {:ok, state.outcome}, %{state | callers: callers, caller_check: nil}}

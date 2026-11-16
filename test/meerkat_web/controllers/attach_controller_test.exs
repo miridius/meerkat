@@ -1,12 +1,6 @@
 defmodule MeerkatWeb.AttachControllerTest do
   use MeerkatWeb.ConnCase, async: false
 
-  # Surviving muex mutant in attach_controller.ex, and why it is not a test gap:
-  # - await_outcome/1 (delete the `{:error, _} -> conn` clause from
-  #   `case chunk(conn, ["d ", text, "\n"])`) handles a displaced caller whose
-  #   connection closed before the `d` frame was written. Plug's test adapter
-  #   never fails a chunk, so ExUnit cannot reach it.
-
   import Meerkat.TestHelpers
 
   alias Meerkat.{Decision, PendingAnswers, PendingQuestions, ReviewState}
@@ -519,6 +513,90 @@ defmodule MeerkatWeb.AttachControllerTest do
 
       assert {conn.status, conn.resp_body} == {200, "open\n"}
       assert Decision.current() == nil
+    end
+  end
+
+  test "a request with no run id, or a run that is not a string, is refused", %{conn: conn} do
+    conn = put_req_header(conn, "x-meerkat-token", @token)
+
+    for query <- ["", "?run[]=a", "?run[x]=a"] do
+      refuted = get(conn, "/api/attach" <> query)
+      assert {refuted.status, refuted.resp_body} == {400, "bad request\n"}
+    end
+
+    assert map_size(:sys.get_state(Decision).callers) == 0
+  end
+
+  test "a caller waiting on the review is sent a heartbeat while nobody decides",
+       %{conn: conn} do
+    task = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
+    # Longer than one 500 ms heartbeat interval.
+    Process.sleep(700)
+    :ok = Decision.publish({0, "approved\n"})
+
+    assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/
+  end
+
+  describe "a caller whose connection has closed" do
+    # Plug's test adapter never fails a chunk, so these go over a real socket.
+    setup do
+      http = Meerkat.CLI.endpoint_config_for_test(0)[:http]
+      server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+      %{port: port}
+    end
+
+    # Attaches as `run` over TCP, reads the banner, then hangs up. Zero
+    # linger resets the connection, so the server's next write fails.
+    defp attach_and_hang_up(port, run) do
+      {:ok, socket} =
+        :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false, linger: {true, 0}])
+
+      :ok =
+        :gen_tcp.send(
+          socket,
+          "GET /api/attach?run=#{run}&quiet=0 HTTP/1.1\r\nhost: localhost\r\n" <>
+            "x-meerkat-token: #{@token}\r\n\r\n"
+        )
+
+      recv_until(socket, "BANNER line", "")
+      :ok = :gen_tcp.close(socket)
+    end
+
+    defp recv_until(socket, wanted, seen) do
+      unless seen =~ wanted do
+        {:ok, more} = :gen_tcp.recv(socket, 0, 5_000)
+        recv_until(socket, wanted, seen <> more)
+      end
+    end
+
+    test "stops waiting once a heartbeat cannot be sent, without crashing", %{port: port} do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          attach_and_hang_up(port, @own_run)
+          # Heartbeats go every 500 ms; a write to the closed socket fails
+          # within a few, and the handler returns.
+          await_callers(0)
+          Process.sleep(100)
+        end)
+
+      refute log =~ "error"
+    end
+
+    test "is displaced quietly, without crashing", %{conn: conn, port: port} do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          attach_and_hang_up(port, @own_run)
+          await_attached()
+          task = Task.async(fn -> attach(conn, "later-run") end)
+          await_attached()
+          :ok = Decision.publish({0, "approved\n"})
+          Task.await(task)
+          Process.sleep(100)
+        end)
+
+      refute log =~ "error"
     end
   end
 
