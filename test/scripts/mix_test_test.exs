@@ -92,7 +92,7 @@ defmodule Meerkat.MixTestScriptTest do
     refute out =~ "x/y_z_test.exs"
 
     test_run = fn file ->
-      ~s(["test", "--no-compile", "#{file}"] | test | +S 4 +sbwt none +S 2 | 0 | 2)
+      ~s(["test", "--no-compile", "#{file}"] | test | +S 4 +sbwt none +sbwtdcpu none +sbwtdio none +S 2 | 0 | 2)
     end
 
     assert [~s(["compile"] | test | +S 2 | unset | 2) | tests] = lines(Path.join(base, "loads"))
@@ -135,7 +135,7 @@ defmodule Meerkat.MixTestScriptTest do
     secs = for {{out, status}, secs} <- Task.await_many(runs, :infinity), do: {status, out, secs}
 
     assert Enum.sort(lines(Path.join(dir, "runs"))) ==
-             for(file <- files, do: "test --no-compile #{file} | +S 4 +sbwt none  | 0")
+             for(file <- files, do: "test --no-compile #{file} | unset | 0")
 
     assert most_at_once(Path.join(dir, "spans")) == 2
     refute File.exists?(Path.join(dir, "slot_fd"))

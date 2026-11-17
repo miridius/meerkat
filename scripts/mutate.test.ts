@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Records, Store } from "./checked-trees";
 import { fakeGit } from "./fake-git";
+import { QUIET_BEAM } from "./mix-test";
 import {
 	addsLines,
 	announce,
@@ -384,8 +385,12 @@ describe("the muex run", () => {
 		expect(r.envs[0]).toEqual({ PATH: "/bin", MIX_ENV: "test" });
 		expect(r.envs[1]).toEqual({ PATH: "/bin" });
 		expect(r.envs[2]).toEqual({ PATH: "/bin", MIX_ENV: "test" });
-		// muex alone reads the commit's index.
-		expect(r.envs[3]).toEqual({ PATH: "/bin", GIT_INDEX_FILE: "/r/.git/index.lock" });
+		// muex alone reads the commit's index, and its BEAMs do not busy-wait.
+		expect(r.envs[3]).toEqual({
+			PATH: "/bin",
+			GIT_INDEX_FILE: "/r/.git/index.lock",
+			ELIXIR_ERL_OPTIONS: `${QUIET_BEAM} `,
+		});
 		expect(r.marked).toEqual(["mutated t1"]);
 		expect(r.out).toBe("scripts/mutate.ts: no mutant of the staged lib/ lines survived.");
 		// Half the 8 cores' worth of test BEAMs.
@@ -417,6 +422,6 @@ describe("the muex run", () => {
 
 	test("a run without an index of its own gives muex none", () => {
 		const r = runGated({ ...RUN, mode: "paths", label: "selected", scope: [], index: undefined, record: false });
-		expect(r.envs[3]).toEqual({ PATH: "/bin" });
+		expect(r.envs[3]).toEqual({ PATH: "/bin", ELIXIR_ERL_OPTIONS: `${QUIET_BEAM} ` });
 	});
 });

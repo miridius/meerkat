@@ -151,7 +151,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Daily audit:** `.github/workflows/audit.yml` runs `mix deps.get`, `bun scripts/hex-audit.ts` and `pnpm audit` daily on `main`, and on demand on any branch through `workflow_dispatch`, so an advisory published on a day without commits fails a run on `main`. It caches its tools as CI does, and opens no issues.
 
-`scripts/mix-test.ts` runs each test file in its own BEAM, at most half the online cores' worth at once across all test runs in all worktrees of the repo. Each test BEAM gets `+S 4 +sbwt none` (four schedulers, no busy-waiting) ahead of any `ELIXIR_ERL_OPTIONS` already set. When every file passes, each one over the limit in `scripts/test-file-limit.json` without an entry there giving a non-empty `reason` is run again, one at a time, and fails the run if it is still over or then fails; a missing or malformed limits file, or an entry without a reason, fails it too. Locally the limit is 10 s of CPU time, which leaves out programs the test BEAM starts; in CI (`CI=true`), 60 s of wall time.
+`scripts/mix-test.ts` runs each test file in its own BEAM, at most half the online cores' worth at once across all test runs in all worktrees of the repo. Each test BEAM gets `+S 4 +sbwt none +sbwtdcpu none +sbwtdio none` (four schedulers, none of them busy-waiting, dirty ones included) ahead of any `ELIXIR_ERL_OPTIONS` already set. When every file passes, each one over the limit in `scripts/test-file-limit.json` without an entry there giving a non-empty `reason` is run again, one at a time, and fails the run if it is still over or then fails; a missing or malformed limits file, or an entry without a reason, fails it too. Locally the limit is 10 s of CPU time, which leaves out programs the test BEAM starts; in CI (`CI=true`), 60 s of wall time.
 
 `bun run test` runs `scripts/mix-test.ts`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` and `bun test scripts` from the repo root, then `bun run test:e2e`.
 
@@ -198,6 +198,7 @@ their own BEAM they execute only the app-start lines every test file
 executes; leaving them out roughly halves the mutation gate.
 Put a test that calls `lib/` code directly, not through a subprocess,
 outside `test/scripts`.
+Every BEAM muex starts gets the test BEAMs' scheduler flags.
 A mutant on a line no test executes is skipped as `no_coverage`.
 For a line `:cover` has no entry for, such as a `def` header, muex
 falls back to dependency analysis and then to every test file it was given.

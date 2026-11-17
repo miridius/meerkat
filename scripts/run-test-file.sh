@@ -7,9 +7,8 @@
 # shell and BEAM wait for, but not the programs the BEAM starts through
 # ports: erl_child_setup, which reaps those, outlives the BEAM unwaited for.
 #
-# The test BEAM runs four schedulers that do not busy-wait (`+S 4 +sbwt
-# none`); ELIXIR_ERL_OPTIONS already set comes after them, so it wins. Timed
-# file by file, that used a fifth to a third less CPU in no more wall time.
+# The test BEAM's scheduler flags come from scripts/mix-test.ts, in
+# ELIXIR_ERL_OPTIONS.
 #
 # It also skips mix's build lock (MIX_OS_CONCURRENCY_LOCK=0): mix test takes
 # it even with --no-compile, so the test BEAMs queued on it as they started.
@@ -34,6 +33,5 @@ test_file_lock "$1"
 exec 4>&2
 TIMEFORMAT='%6R %6U %6S'
 {
-  time MIX_OS_CONCURRENCY_LOCK=0 ELIXIR_ERL_OPTIONS="+S 4 +sbwt none ${ELIXIR_ERL_OPTIONS:-}" \
-    mix test --no-compile "$2" 9>&- 2>&4 4>&-
+  time MIX_OS_CONCURRENCY_LOCK=0 mix test --no-compile "$2" 9>&- 2>&4 4>&-
 } 2>"$3"

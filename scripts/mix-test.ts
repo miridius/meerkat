@@ -59,6 +59,18 @@ export function onlineCores(): number {
 	return cores;
 }
 
+// Four schedulers, and no scheduler, dirty ones included, busy-waits. Timed file by file, `+S 4 +sbwt none` used a fifth
+// to a third less CPU in no more wall time. Each BEAM's dirty schedulers, 4 CPU and 10 IO, still spun: in the mutation
+// gate, the dirty flags cut its peak of runnable threads from about 100 to under 40.
+export const QUIET_BEAM = "+S 4 +sbwt none +sbwtdcpu none +sbwtdio none";
+
+// `env` with each BEAM started under it running as QUIET_BEAM says, ahead of any ELIXIR_ERL_OPTIONS already set, which
+// so wins.
+export const quietBeams = (env: Record<string, string | undefined>) => ({
+	...env,
+	ELIXIR_ERL_OPTIONS: `${QUIET_BEAM} ${env.ELIXIR_ERL_OPTIONS ?? ""}`,
+});
+
 // Runs `run` on each item, at most `jobs` at once, and returns the results in the items' order.
 export async function pool<T>(items: string[], jobs: number, run: (item: string) => Promise<T>): Promise<T[]> {
 	const results: T[] = new Array(items.length);
@@ -208,7 +220,7 @@ function realIo(logs: string): Io {
 			const log = join(logs, String(runs++));
 			const out = openSync(log, "w");
 			const proc = Bun.spawn(["bash", "scripts/run-test-file.sh", String(slots), file, `${log}.secs`], {
-				env,
+				env: quietBeams(env),
 				stdio: ["ignore", out, out],
 			});
 			closeSync(out);
