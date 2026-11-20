@@ -371,10 +371,6 @@ defmodule Meerkat.Feedback do
       nil ->
         ""
 
-      # muex:ignore equivalent: without this clause "" splits to [""], which joins back to ""
-      "" ->
-        ""
-
       str ->
         str
         |> String.split("\n")

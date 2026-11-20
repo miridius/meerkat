@@ -98,6 +98,21 @@ defmodule Meerkat.VersionTest do
       assert Version.dev_branch(dir) == "unknown"
     end
 
+    # A child's stderr bypasses ExUnit, so a separate BEAM, its stderr
+    # folded into the output, asks.
+    test "prints nothing outside a git repo", %{dir: dir} do
+      ebin = Application.app_dir(:meerkat, "ebin")
+
+      {out, 0} =
+        System.cmd(
+          "elixir",
+          ["-pa", ebin, "-e", "IO.write(Meerkat.Version.dev_branch(hd(System.argv())))", dir],
+          stderr_to_stdout: true
+        )
+
+      assert out == "unknown"
+    end
+
     test "is unknown when git cannot be run", %{dir: dir} do
       Meerkat.TestHelpers.put_env("PATH", dir)
       assert Version.dev_branch(dir) == "unknown"

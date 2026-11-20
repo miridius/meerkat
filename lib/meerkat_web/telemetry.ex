@@ -14,7 +14,6 @@ defmodule MeerkatWeb.Telemetry do
   @impl true
   def init(_arg) do
     children = [
-      # muex:ignore equivalent: the poller has no measurements, so how often it runs none is never seen
       {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
     ]
 

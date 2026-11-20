@@ -31,7 +31,6 @@ defmodule Meerkat.AtomicFile do
     end
   end
 
-  # muex:ignore equivalent: write/2 discards cleanup_tmp/1's return value
   defp cleanup_tmp(tmp) do
     case File.rm(tmp) do
       :ok -> :ok
@@ -40,7 +39,6 @@ defmodule Meerkat.AtomicFile do
     end
   end
 
-  # muex:ignore equivalent: cleanup_tmp/1 returns this value, which write/2 discards
   defp log_rm_failure(path, reason) do
     IO.puts(:stderr, "meerkat: tmp cleanup at #{path} failed: #{inspect(reason)}")
   end

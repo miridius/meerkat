@@ -853,26 +853,17 @@ defmodule MeerkatWeb.ReviewLive do
     clear_pending_answers()
 
     # Decision.submit/1 broadcasts the decision to this LiveView, whose
-    # :meerkat_decision handler assigns the same done view and wipes the
-    # same drafts; {:already_decided, _} follows an earlier broadcast
-    # that already did both.
-    {:noreply,
-     socket
-     # muex:ignore equivalent: the decision broadcast assigns the same done view (see above)
-     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
-     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see above)
-     |> wipe_drafts()}
+    # :meerkat_decision handler wipes the drafts; {:already_decided, _}
+    # follows an earlier broadcast that already did.
+    {:noreply, assign(socket, done: done_view(settled(submitted)), pending_answers: nil)}
   end
 
   def handle_event("decision.reject", _, socket) do
     submitted = Decision.submit_review(:reject, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
-    {:noreply,
-     socket
-     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
-     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see decision.approve)
-     |> wipe_drafts()}
+    # The decision broadcast wipes the drafts (see decision.approve).
+    {:noreply, assign(socket, done: done_view(settled(submitted)), pending_answers: nil)}
   end
 
   def handle_event("decision.post_to_github", _, socket) do
@@ -916,11 +907,8 @@ defmodule MeerkatWeb.ReviewLive do
     submitted = Decision.submit_review(:cancel, socket.assigns.state, socket.assigns.repo_path)
     clear_pending_answers()
 
-    {:noreply,
-     socket
-     |> assign(done: done_view(settled(submitted)), pending_answers: nil)
-     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see decision.approve)
-     |> wipe_drafts()}
+    # The decision broadcast wipes the drafts (see decision.approve).
+    {:noreply, assign(socket, done: done_view(settled(submitted)), pending_answers: nil)}
   end
 
   defp settled({:ok, decision}), do: decision
@@ -1058,7 +1046,6 @@ defmodule MeerkatWeb.ReviewLive do
   # mode hook on this branch can short-circuit the diff for any file
   # whose content didn't change between approve and re-run. Like a
   # toggle, it writes only under a staged review's `approval_key`.
-  # muex:ignore equivalent: Decision discards the on_accept callback's result
   defp bulk_persist_approval_cache(repo_path, %ReviewState{files: files} = state) do
     with branch when is_binary(branch) <- state.approval_key,
          path when is_binary(path) <- ApprovalCache.path_for(repo_path) do
@@ -2314,8 +2301,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp toolbar_title(%ReviewState{pr: %{title: t}}) when is_binary(t) and t != "", do: t
 
   defp toolbar_title(%ReviewState{commit_message: msg}) when is_binary(msg) and msg != "" do
-    # muex:ignore equivalent: a split's first part is the same for any parts limit above 1
-    msg |> String.split("\n", parts: 2) |> List.first() |> String.trim()
+    msg |> String.split("\n") |> List.first() |> String.trim()
   end
 
   defp toolbar_title(%ReviewState{head_branch: b}) when is_binary(b) and b != "", do: b
@@ -3188,17 +3174,11 @@ defmodule MeerkatWeb.ReviewLive do
   # can edit-toward instead of starting from a blank slate. Returns
   # "" if the file or content is missing.
   defp extract_snippet(file, from, to, side) do
-    case side_content(file, side) do
-      # muex:ignore equivalent: without this clause, splitting "" and slicing it joins back to ""
-      "" ->
-        ""
-
-      str ->
-        str
-        |> String.split("\n")
-        |> Enum.slice((from - 1)..(to - 1))
-        |> Enum.join("\n")
-    end
+    file
+    |> side_content(side)
+    |> String.split("\n")
+    |> Enum.slice((from - 1)..(to - 1))
+    |> Enum.join("\n")
   end
 
   # The file's content on `side`, or "" if the file or content is missing.
@@ -3208,7 +3188,6 @@ defmodule MeerkatWeb.ReviewLive do
   defp side_content(%{} = file, side) when side in ["old", :old],
     do: Map.get(file, :old_content) || ""
 
-  # muex:ignore equivalent: swapping the two ignored arguments changes nothing
   defp side_content(_file, _side), do: ""
 
   # Draft key shape: `meerkat:draft:<review_id>:<surface>:<anchor>[:edit:<id>]`.

@@ -75,20 +75,20 @@ defmodule Meerkat.Version do
   def source_root, do: Path.expand("../..", __DIR__)
 
   @doc false
-  # Test seam: the branch checked out at `root`, or "unknown".
+  # Test seam: the branch checked out at `root`, or "unknown". git's
+  # stderr is dropped: it must neither reach the label nor the terminal.
   def dev_branch(root) do
-    case System.cmd("git", ["-C", root, "branch", "--show-current"]) do
+    script = "exec git branch --show-current 2>/dev/null"
+
+    case System.cmd("/bin/sh", ["-c", script], cd: root) do
       {out, 0} ->
         case String.trim(out) do
           "" -> "unknown"
           branch -> branch
         end
 
-      # muex:ignore equivalent: without this clause the CaseClauseError is rescued below to the same "unknown"
       _ ->
         "unknown"
     end
-  rescue
-    _ -> "unknown"
   end
 end

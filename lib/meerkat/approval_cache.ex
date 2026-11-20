@@ -164,7 +164,6 @@ defmodule Meerkat.ApprovalCache do
   def approved?(cache, branch, file_name, oid) do
     cache
     |> Map.get(branch, %{})
-    # muex:ignore equivalent: an OID is a string, so no default list holding a non-string matches one
     |> Map.get(file_name, [])
     |> Enum.any?(&(&1 == oid))
   end
