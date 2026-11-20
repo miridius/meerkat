@@ -132,7 +132,7 @@ defmodule Meerkat.GitHub do
   rescue
     # Before ErlangError, which also catches these: they start as Erlang
     # errors such as {:badkey, _} and :badarg.
-    e in [KeyError, ArgumentError, FunctionClauseError] ->
+    e in [KeyError, ArgumentError, FunctionClauseError, BadMapError] ->
       IO.puts(
         :stderr,
         "meerkat: warning — gh pr view returned an unexpected JSON shape: " <>

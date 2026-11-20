@@ -204,7 +204,9 @@ defmodule Meerkat.GitHubTest do
     for {label, json} <- [
           {"no number", ~s({"url":"u"})},
           {"a number that is not numeric", ~s({"number":"x"})},
-          {"a fractional number", ~s({"number":1.5})}
+          {"a fractional number", ~s({"number":1.5})},
+          {"a list for the PR", "[]"},
+          {"null for the PR", "null"}
         ] do
       test "a PR with #{label} means no PR, warning of an unexpected shape",
            %{dir: dir, bin: bin} do
