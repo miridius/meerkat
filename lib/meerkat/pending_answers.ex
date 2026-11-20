@@ -191,8 +191,7 @@ defmodule Meerkat.PendingAnswers do
   """
   @spec write(String.t(), [parsed_answer]) :: :ok | {:error, :write_failed, String.t()}
   def write(repo_path, answers) do
-    # muex:ignore equivalent: Jason encodes a DateTime with DateTime.to_iso8601/1 itself
-    created_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    created_at = DateTime.utc_now() |> DateTime.truncate(:second)
     payload = %{"version" => @version, "createdAt" => created_at, "answers" => answers}
     path = path_for(repo_path)
 

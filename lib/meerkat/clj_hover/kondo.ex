@@ -81,7 +81,6 @@ defmodule Meerkat.CljHover.Kondo do
         reduce(analysis)
 
       _ ->
-        # muex:ignore observability: log text only
         IO.puts(:stderr, "meerkat: clj-kondo exited #{status} with no analysis in #{root}")
         @empty
     end

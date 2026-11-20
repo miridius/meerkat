@@ -96,7 +96,6 @@ defmodule Meerkat.ReviewLog do
 
   ## Internals
 
-  # muex:ignore equivalent: start/2 and finalize/3 discard write_log/1's return value
   defp write_log(%__MODULE__{path: path, record: record}) do
     case Jason.encode(record) do
       {:ok, json} ->
@@ -127,12 +126,7 @@ defmodule Meerkat.ReviewLog do
     now = DateTime.utc_now()
     iso = DateTime.to_iso8601(now)
 
-    fname =
-      [now.year, now.month, now.day, now.hour, now.minute, now.second]
-      # muex:ignore equivalent: each part pads at most one char, and padding "0x" supplies the same "0"
-      |> Enum.map_join("", &(Integer.to_string(&1, 10) |> String.pad_leading(2, "0")))
-
-    {iso, fname}
+    {iso, Calendar.strftime(now, "%Y%m%d%H%M%S")}
   end
 
   @doc false

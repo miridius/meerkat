@@ -418,8 +418,10 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert System.monotonic_time(:millisecond) - started < 1_000
   end
 
-  test "a displaced caller that never exits holds back the 409 for a second at most",
+  test "a displaced caller that never exits holds back the 409 only for the exit wait",
        %{conn: conn, current: current} do
+    Application.put_env(:meerkat, :displaced_exit_wait_ms, 300)
+    on_exit(fn -> Application.delete_env(:meerkat, :displaced_exit_wait_ms) end)
     stuck = for _ <- 1..2, do: fake_caller("waiting-run", fn -> Process.sleep(:infinity) end)
     change_staged_content(current)
 
@@ -440,10 +442,13 @@ defmodule MeerkatWeb.AttachControllerTest do
            end)
 
     :erlang.suspend_process(task.pid)
-    Process.sleep(1_100)
+    Process.sleep(310)
+    resumed = System.monotonic_time(:millisecond)
     :erlang.resume_process(task.pid)
 
     {conn, monitors} = Task.await(task)
+    # Its wait was already over, far short of the default second.
+    assert System.monotonic_time(:millisecond) - resumed < 500
     assert conn.status == 409
     assert Enum.all?(stuck, &({:process, &1} not in monitors))
     Enum.each(stuck, &Process.exit(&1, :kill))
@@ -656,13 +661,25 @@ defmodule MeerkatWeb.AttachControllerTest do
 
   test "a caller waiting on the review is sent a heartbeat while nobody decides",
        %{conn: conn} do
+    shorten_heartbeat()
     task = Task.async(fn -> attach(conn, @own_run) end)
     await_attached()
-    # Longer than one 500 ms heartbeat interval.
-    Process.sleep(700)
+    # Several heartbeat intervals.
+    Process.sleep(50)
     :ok = Decision.publish({0, "approved\n"})
 
     assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/
+  end
+
+  defp shorten_heartbeat do
+    Application.put_env(:meerkat, :attach_heartbeat_ms, 10)
+    on_exit(fn -> Application.delete_env(:meerkat, :attach_heartbeat_ms) end)
+  end
+
+  # Monitors the one attached caller's connection process.
+  defp monitor_caller do
+    [{pid, _run}] = Map.values(:sys.get_state(Decision).callers)
+    Process.monitor(pid)
   end
 
   describe "a caller whose connection has closed" do
@@ -699,13 +716,17 @@ defmodule MeerkatWeb.AttachControllerTest do
     end
 
     test "stops waiting once a heartbeat cannot be sent, without crashing", %{port: port} do
+      shorten_heartbeat()
+
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           attach_and_hang_up(port, @own_run)
-          # Heartbeats go every 500 ms; a write to the closed socket fails
-          # within a few, and the handler returns.
+          await_attached()
+          ref = monitor_caller()
+          # A write to the closed socket fails within a few heartbeats,
+          # and the handler returns.
           await_callers(0)
-          Process.sleep(100)
+          assert_receive {:DOWN, ^ref, :process, _, _}
         end)
 
       refute log =~ "error"
@@ -716,11 +737,12 @@ defmodule MeerkatWeb.AttachControllerTest do
         ExUnit.CaptureLog.capture_log(fn ->
           attach_and_hang_up(port, @own_run)
           await_attached()
+          ref = monitor_caller()
           task = Task.async(fn -> attach(conn, "later-run") end)
           await_attached()
           :ok = Decision.publish({0, "approved\n"})
           Task.await(task)
-          Process.sleep(100)
+          assert_receive {:DOWN, ^ref, :process, _, _}
         end)
 
       refute log =~ "error"

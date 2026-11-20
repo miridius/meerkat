@@ -192,9 +192,6 @@ defmodule Meerkat.ReviewState do
   Lines are 1-indexed.
   """
   @spec blocks(String.t()) :: [block]
-  # muex:ignore equivalent: the general clause also maps "" to [], its one blank line dropped as a blank paragraph
-  def blocks(""), do: []
-
   def blocks(message) do
     indexed = message |> String.split("\n") |> Enum.with_index(1)
 
@@ -267,15 +264,11 @@ defmodule Meerkat.ReviewState do
   # paragraphs, each a non-empty list of `{text, line_no}`.
   defp chunk_paragraphs(indexed_lines) do
     indexed_lines
-    # muex:ignore equivalent: negating the key splits the lines at the same places
-    |> Enum.chunk_by(fn {text, _} -> String.trim(text) == "" end)
-    |> Enum.reject(fn chunk ->
-      # muex:ignore equivalent: chunk_by leaves each chunk all blank or all not, so all? and any? agree
-      blank? = Enum.all?(chunk, fn {text, _} -> String.trim(text) == "" end)
-      # muex:ignore equivalent: a chunk led by "" is all blank, so blank? already rejects it
-      match?([{<<>>, _} | _], chunk) or blank?
-    end)
+    |> Enum.chunk_by(&blank_line?/1)
+    |> Enum.reject(fn [first | _] -> blank_line?(first) end)
   end
+
+  defp blank_line?({text, _}), do: String.trim(text) == ""
 
   # If every line of the paragraph looks like a list item, each
   # becomes its own block; otherwise the paragraph stays as one block.

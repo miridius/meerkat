@@ -50,6 +50,10 @@ defmodule MeerkatWeb.AttachController do
   # muex:ignore equivalent: a 1 ms shift in the heartbeat interval changes only when a heartbeat goes
   @heartbeat_ms 500
 
+  # How long a replaced review waits for its displaced callers to exit.
+  # muex:ignore equivalent: a 1 ms shift only moves when a stuck caller is given up on
+  @displaced_exit_wait_ms 1_000
+
   plug :require_token
   plug :require_run
 
@@ -190,12 +194,11 @@ defmodule MeerkatWeb.AttachController do
     Git.with_index(repo_path, caller_index, fn -> ReviewState.from_target(target, repo_path) end)
   end
 
-  # muex:ignore equivalent: the one caller discards await_exits/1's return value
   defp await_exits(pids) do
     refs = Enum.map(pids, &Process.monitor/1)
 
-    # muex:ignore equivalent: a 1 ms shift only moves when a stuck caller is given up on; tests kill `-`
-    deadline = System.monotonic_time(:millisecond) + 1_000
+    wait_ms = Application.get_env(:meerkat, :displaced_exit_wait_ms, @displaced_exit_wait_ms)
+    deadline = System.monotonic_time(:millisecond) + wait_ms
 
     # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value; tests kill the call's removal
     Enum.each(refs, fn ref ->
@@ -261,7 +264,7 @@ defmodule MeerkatWeb.AttachController do
           {:error, _} -> conn
         end
     after
-      @heartbeat_ms ->
+      Application.get_env(:meerkat, :attach_heartbeat_ms, @heartbeat_ms) ->
         case chunk(conn, "k\n") do
           {:ok, conn} -> await_outcome(conn)
           {:error, _} -> conn

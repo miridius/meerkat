@@ -18,14 +18,12 @@ defmodule MeerkatWeb do
     end
   end
 
-  # muex:ignore equivalent: no module uses MeerkatWeb, :channel
   def channel do
     quote do
       use Phoenix.Channel
     end
   end
 
-  # muex:ignore equivalent: no module uses MeerkatWeb, :controller
   def controller do
     quote do
       use Phoenix.Controller, formats: [:html, :json]
@@ -39,15 +37,6 @@ defmodule MeerkatWeb do
   def live_view do
     quote do
       use Phoenix.LiveView
-
-      unquote(html_helpers())
-    end
-  end
-
-  # muex:ignore equivalent: no module uses MeerkatWeb, :live_component
-  def live_component do
-    quote do
-      use Phoenix.LiveComponent
 
       unquote(html_helpers())
     end

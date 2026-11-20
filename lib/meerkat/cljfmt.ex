@@ -97,7 +97,6 @@ defmodule Meerkat.Cljfmt do
 
     with true <- strip(formatted) == strip(above <> code <> below),
          [{_, ^first, _} | _] <- picked,
-         # muex:ignore equivalent: swapping the tuple's first two elements swaps `_` with `_`
          {_, _, ^last} <- List.last(picked) do
       {:ok,
        blank_lines(code, &Enum.take_while/2) ++

@@ -11,7 +11,6 @@ defmodule Meerkat.CljHover do
   cached for the life of the server.
   """
 
-  # muex:ignore equivalent: the module defines each callback it uses, and gen_server drops unexpected messages itself
   use GenServer
 
   alias Meerkat.CljHover.{Classpath, Kondo}

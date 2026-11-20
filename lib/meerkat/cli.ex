@@ -261,7 +261,6 @@ defmodule Meerkat.CLI do
         # muex:ignore unreachable I/O seam: killed by cli_main_test "a review whose preferred port is taken…"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
 
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…"
         decision = await_decision_or_reject()
 
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; conclude_review/5 itself is tested in cli_live_review_test): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…" and detach.spec.ts "a review with no comments ends once its caller is stopped…"
@@ -337,8 +336,7 @@ defmodule Meerkat.CLI do
 
   @spec parse_args([String.t()]) :: {:ok, opts} | {:error, String.t()}
   def parse_args(argv) do
-    # muex:ignore equivalent: OptionParser looks aliases up by key, and a bare atom in the list is no key
-    {parsed, positional, invalid} = OptionParser.parse(argv, strict: @switches, aliases: [])
+    {parsed, positional, invalid} = OptionParser.parse(argv, strict: @switches)
 
     case args_error(parsed, positional, invalid) do
       nil ->
@@ -464,7 +462,6 @@ defmodule Meerkat.CLI do
     )
   end
 
-  # muex:ignore equivalent: swapping ignored arguments changes nothing
   defp auto_approve_decision(_target, _repo_path, _serve_dir), do: :live
 
   # `:live` for a served review, else for one with answers pending, asking
@@ -760,7 +757,6 @@ defmodule Meerkat.CLI do
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
     # ExUnit runs no live review in its own VM, where a regression would
     # wait on a human forever.
-    # muex:ignore unreachable I/O seam: killed by decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
     meerkat_dir = cache_review_paths(repo_path)
 
     # Application env carries the derived target + initial state into
@@ -870,9 +866,10 @@ defmodule Meerkat.CLI do
   defp port_in_use?([head | tail]), do: port_in_use?(head) or port_in_use?(tail)
   defp port_in_use?(_term), do: false
 
+  defp preferred_port(nil), do: nil
+
   defp preferred_port(value) do
-    # muex:ignore equivalent: any string standing in for an unset value parses to no port, as "" does
-    case Integer.parse(value || "") do
+    case Integer.parse(value) do
       # muex:ignore equivalent: `in` admits the same integers from a range whichever end comes first
       {port, ""} when port in 1..65_535 -> port
       _ -> nil
@@ -893,7 +890,7 @@ defmodule Meerkat.CLI do
   defp redirect_logs_to_file(meerkat_dir) do
     log_path = Path.join(meerkat_dir, "meerkat.log")
 
-    # muex:ignore equivalent: the one caller runs after ReviewLog.start/2 has made a directory inside meerkat_dir
+    # muex:ignore equivalent: the one caller runs after ReviewLog.start/2 wrote inside meerkat_dir; had that failed, the handler below raises too
     File.mkdir_p!(meerkat_dir)
     {:ok, %{formatter: formatter}} = :logger.get_handler_config(:default)
 
@@ -1021,7 +1018,6 @@ defmodule Meerkat.CLI do
   defp announce_url(
          target,
          serve_dir,
-         # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a URL; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
          url \\ review_url(),
          # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a stand-in; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
          server_info \\ &MeerkatWeb.Endpoint.server_info/1

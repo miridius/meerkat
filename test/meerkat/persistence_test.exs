@@ -291,15 +291,6 @@ defmodule Meerkat.PersistenceTest do
       assert [%{"anchor" => "x"}] = saved["open_forms"]
     end
 
-    test "a snapshot whose open form's anchor is not a map fails to load",
-         %{repo: repo, review_id: id} do
-      path = Persistence.path_for(repo, id)
-      File.mkdir_p!(Path.dirname(path))
-      File.write!(path, ~s({"open_forms": [{"surface": "inline", "anchor": []}]}))
-
-      assert_raise FunctionClauseError, fn -> Persistence.load(repo, id, %ReviewState{}) end
-    end
-
     test "open forms on every surface round-trip", %{repo: repo, review_id: id} do
       forms = for surface <- [:inline, :file, :global, :commit_msg], do: %{surface: surface}
       :ok = Persistence.save(repo, id, %ReviewState{open_forms: forms})
@@ -307,6 +298,14 @@ defmodule Meerkat.PersistenceTest do
       loaded = Persistence.load(repo, id, %ReviewState{})
 
       assert Enum.map(loaded.open_forms, & &1.surface) == [:inline, :file, :global, :commit_msg]
+    end
+
+    test "an open form loads without the prefill fields it was saved without",
+         %{repo: repo, review_id: id} do
+      form = %{surface: :file, anchor: %{file_index: 0}}
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: [form]})
+
+      assert Persistence.load(repo, id, %ReviewState{}).open_forms == [form]
     end
 
     test "an open form's surface that names none loads as inline, and a JSON literal as itself",

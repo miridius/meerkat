@@ -154,7 +154,6 @@ defmodule Meerkat.Git do
     with {:ok, output} <- run_git(repo_path, args),
          "refs/heads/" <> name <-
            output
-           # muex:ignore equivalent: a blank line names no file, so read_head_name/1 reads it as nil either way
            |> String.split("\n", trim: true)
            |> Enum.find_value(&read_head_name/1),
          true <- name != "" do
@@ -187,8 +186,7 @@ defmodule Meerkat.Git do
 
       {:ok, output} ->
         # Format: `<mode> <oid> <stage>\t<path>`
-        # muex:ignore equivalent: only the first two fields are read, which any `parts:` of 3 or more leaves the same
-        case String.split(String.trim(output), [" ", "\t"], parts: 4) do
+        case String.split(String.trim(output), [" ", "\t"]) do
           [_mode, oid | _] -> {:ok, oid}
           _ -> {:error, "unexpected `git ls-files -s` output for #{path}: #{inspect(output)}"}
         end
@@ -235,7 +233,6 @@ defmodule Meerkat.Git do
       {:ok, output} ->
         map =
           output
-          # muex:ignore equivalent: a blank line splits into one field, which put_staged_oid/2 skips
           |> String.split("\n", trim: true)
           |> Enum.reduce(%{}, &put_staged_oid/2)
 
@@ -276,7 +273,6 @@ defmodule Meerkat.Git do
       {:ok, output} ->
         map =
           output
-          # muex:ignore equivalent: a blank line splits into one field, which put_head_oid/2 skips
           |> String.split("\n", trim: true)
           |> Enum.reduce(%{}, &put_head_oid/2)
 
@@ -340,9 +336,6 @@ defmodule Meerkat.Git do
   @spec linguist_generated_many(String.t(), [String.t()]) :: %{
           String.t() => {:generated, boolean()} | {:error, String.t()}
         }
-  # muex:ignore equivalent: without this clause, [] reaches check_attrs/3's [] clause, which runs no git, and Map.new/2 of no paths is %{} too
-  def linguist_generated_many(_repo_path, []), do: %{}
-
   def linguist_generated_many(repo_path, paths) when is_list(paths) do
     case check_attrs(repo_path, ["linguist-generated"], paths) do
       {:ok, answered} ->
@@ -387,7 +380,6 @@ defmodule Meerkat.Git do
       {:ok,
        output
        |> String.split(<<0>>)
-       # muex:ignore equivalent: swapping the two equal 3s changes nothing
        |> Enum.chunk_every(3, 3, :discard)
        |> Enum.reduce(%{}, fn [path, attr, value], acc ->
          Map.update(acc, path, %{attr => value}, &Map.put(&1, attr, value))
@@ -875,9 +867,6 @@ defmodule Meerkat.Git do
   # inside `staged_hunks_many`.
   def parse_multi_file_diff_for_test(output), do: parse_multi_file_diff(output)
 
-  # muex:ignore equivalent: without this clause, "" splits into no blocks and the next clause gives {:ok, %{}} too
-  defp parse_multi_file_diff(""), do: {:ok, %{}}
-
   defp parse_multi_file_diff(output) do
     output
     |> String.split(~r/^(?=diff --git )/m, trim: true)
@@ -894,8 +883,7 @@ defmodule Meerkat.Git do
           # Propagate the error to every file rather than silently dropping it.
           first_line =
             block
-            # muex:ignore equivalent: hd/1 takes the same first line however many parts follow it
-            |> String.split("\n", parts: 2)
+            |> String.split("\n")
             |> hd()
             |> String.slice(0, 200)
 
@@ -940,8 +928,7 @@ defmodule Meerkat.Git do
       name ->
         hunks =
           block
-          # muex:ignore equivalent: the next stage keeps only pieces starting with @@, so the empty one goes too
-          |> String.split(~r/^(?=@@ )/m, trim: true)
+          |> String.split(~r/^(?=@@ )/m)
           |> Enum.filter(&String.starts_with?(&1, "@@"))
           |> Meerkat.Intraline.split()
 
@@ -962,8 +949,7 @@ defmodule Meerkat.Git do
           # Strip the optional `\t<timestamp/mode>` suffix git appends
           # in some configurations. A file name can contain a space but
           # not a tab, and a quoted one carries `\t` as two characters.
-          # muex:ignore equivalent: hd/1 takes the same text before the first tab however many parts follow it
-          rest |> String.split("\t", parts: 2) |> hd() |> side_path(side)
+          rest |> String.split("\t") |> hd() |> side_path(side)
 
         _ ->
           nil
@@ -989,7 +975,6 @@ defmodule Meerkat.Git do
   defp unescape_git_path(<<?", _rest::binary>>, acc), do: acc
 
   defp unescape_git_path(<<?\\, a, b, c, rest::binary>>, acc)
-       # muex:ignore equivalent: in a guard, ?7..?0 holds the same digits as ?0..?7
        when a in ?0..?7 and b in ?0..?7 and c in ?0..?7 do
     # muex:ignore equivalent: `+ ?0` on `a` or `b` adds 96 * 64 or 96 * 8, multiples of 256 `<<byte>>` drops
     byte = (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)
@@ -1568,10 +1553,6 @@ defmodule Meerkat.Git do
   # blocks within it; we pass them through verbatim.
   defp hunks_for_path(repo_path, diff_args) do
     case run_git(repo_path, diff_args) do
-      # muex:ignore equivalent: without it, "" or "x", having no @@ line, gets {[], []} from the next clause
-      {:ok, ""} ->
-        {[], []}
-
       {:ok, output} ->
         # Drop the leading `diff --git`, `index`, `---`, `+++` lines.
         # Keep everything from the first `@@` onwards, then split into
@@ -1580,8 +1561,7 @@ defmodule Meerkat.Git do
         # highlighting.
         hunks =
           output
-          # muex:ignore equivalent: the next stage keeps only pieces starting with @@, so the empty one goes too
-          |> String.split(~r/^(?=@@ )/m, trim: true)
+          |> String.split(~r/^(?=@@ )/m)
           |> Enum.filter(&String.starts_with?(&1, "@@"))
           |> Meerkat.Intraline.split()
 

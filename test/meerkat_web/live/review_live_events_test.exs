@@ -663,8 +663,11 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     {view, _rid} = mount_bound(conn, state, repo)
 
+    # The click's own reply, rendered before the decision broadcast
+    # reaches this view, is already the done view.
     html = render_click(view, "decision.approve", %{})
     assert html =~ "Approved"
+    refute html =~ "approve-btn"
     assert_push_event(view, "drafts:wipe", %{})
 
     cache = ApprovalCache.load_for(repo)

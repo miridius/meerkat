@@ -15,8 +15,6 @@ defmodule Meerkat.Markdown do
   """
   @spec to_safe_html(String.t() | nil) :: String.t()
   def to_safe_html(nil), do: ""
-  # muex:ignore equivalent: the general clause renders "" to "" too
-  def to_safe_html(""), do: ""
 
   def to_safe_html(body) do
     render_fragment(body, hardbreaks: true, escape: true)
@@ -94,8 +92,6 @@ defmodule Meerkat.Markdown do
     |> String.split("\n")
     |> group_lines()
     |> Enum.map(&String.trim_trailing/1)
-    # muex:ignore equivalent: every block group_lines/1 returns starts with a non-blank line, so none is blank
-    |> Enum.reject(&(String.trim(&1) == ""))
   end
 
   # Fold lines into blocks. `fence` holds the open fence marker (```` or
@@ -125,7 +121,6 @@ defmodule Meerkat.Markdown do
     end
   end
 
-  # muex:ignore equivalent: without it the empty block the general clause adds is "", which split_blocks/1 drops
   defp flush(blocks, []), do: blocks
   defp flush(blocks, current), do: [current |> Enum.reverse() |> Enum.join("\n") | blocks]
 

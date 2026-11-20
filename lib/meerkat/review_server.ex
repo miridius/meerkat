@@ -381,7 +381,6 @@ defmodule Meerkat.ReviewServer do
       {:error, reason} ->
         IO.puts(
           :stderr,
-          # muex:ignore pure observability: only reorders the warning text
           "meerkat: warning — couldn't persist review #{id} state: #{inspect(reason)}. " <>
             "In-memory state preserved; comments may be lost if the BEAM dies before next save."
         )
