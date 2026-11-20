@@ -142,6 +142,7 @@ defmodule Meerkat.CljHover do
   defp span_at(spans, path, line, col) do
     spans
     |> Map.get({path, line}, [])
+    # muex:ignore equivalent: both checks are pure and every span has :col and :end_col, so order is moot
     |> Enum.find(&(&1.col <= col and col < &1.end_col))
   end
 
@@ -249,6 +250,7 @@ defmodule Meerkat.CljHover do
         where = where(location, root)
 
         # A jar, or a directory outside the repo, is a dependency's.
+        # muex:ignore equivalent: swapping the two pure checks joined by `and` changes nothing
         in_repo = elem(location, 0) == :dir and Path.type(where) == :relative
 
         root

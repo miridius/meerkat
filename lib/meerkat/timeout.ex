@@ -74,9 +74,15 @@ defmodule Meerkat.Timeout do
     raw = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "")
 
     case raw |> String.trim() |> String.downcase() do
-      value when value in ["1", "true", "yes"] -> :approve
-      value when value in ["", "0", "false", "no"] -> :wait
-      _ -> {:unrecognised, raw}
+      value when value in ["1", "true", "yes"] ->
+        :approve
+
+      # muex:ignore equivalent: callers only tell :approve and {:unrecognised, _} apart, never this atom's name
+      value when value in ["", "0", "false", "no"] ->
+        :wait
+
+      _ ->
+        {:unrecognised, raw}
     end
   end
 
@@ -95,8 +101,9 @@ defmodule Meerkat.Timeout do
     if disabled?(), do: nil, else: started_at_ms(repo_path, review_id, run) + limit_ms()
   end
 
-  @spec expired?(integer()) :: boolean()
-  def expired?(deadline_ms), do: System.system_time(:millisecond) >= deadline_ms
+  @spec expired?(integer(), integer()) :: boolean()
+  def expired?(deadline_ms, now_ms \\ System.system_time(:millisecond)),
+    do: now_ms >= deadline_ms
 
   @doc """
   Deletes `review_id`'s anchor for `run`, and that run's deadline

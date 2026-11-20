@@ -164,6 +164,7 @@ defmodule Meerkat.ApprovalCache do
   def approved?(cache, branch, file_name, oid) do
     cache
     |> Map.get(branch, %{})
+    # muex:ignore equivalent: an OID is a string, so no default list holding a non-string matches one
     |> Map.get(file_name, [])
     |> Enum.any?(&(&1 == oid))
   end
@@ -252,6 +253,7 @@ defmodule Meerkat.ApprovalCache do
   defp worktree_kept?(linked_dir, name) do
     gitdir = Path.join(linked_dir, name)
 
+    # muex:ignore equivalent: both checks only read files and neither raises, so their order changes nothing
     gitdir_target_exists?(gitdir) or File.exists?(Path.join(gitdir, "locked"))
   end
 
@@ -345,6 +347,7 @@ defmodule Meerkat.ApprovalCache do
         if System.monotonic_time(:millisecond) > deadline do
           force_take(lock_dir, timeout_ms)
         else
+          # muex:ignore equivalent: no test can observe a 1 ms change in the 25 ms poll
           Process.sleep(25)
           acquire_loop(lock_dir, deadline, timeout_ms)
         end

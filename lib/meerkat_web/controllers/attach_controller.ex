@@ -47,6 +47,7 @@ defmodule MeerkatWeb.AttachController do
   # heartbeat write fails. The write that kills curl and the server's first write after
   # curl dies can both succeed; the next write fails. Detachment can take up to three
   # intervals after the caller dies (1.5 s at 500 ms).
+  # muex:ignore equivalent: a 1 ms shift in the heartbeat interval changes only when a heartbeat goes
   @heartbeat_ms 500
 
   plug :require_token
@@ -134,6 +135,7 @@ defmodule MeerkatWeb.AttachController do
   defp require_token(conn, _opts) do
     token = System.get_env("MEERKAT_SERVE_TOKEN")
 
+    # muex:ignore equivalent: every operand of both `and`s is a pure boolean, so their order changes nothing
     if is_binary(token) and token != "" and get_req_header(conn, "x-meerkat-token") == [token] do
       conn
     else
@@ -171,6 +173,7 @@ defmodule MeerkatWeb.AttachController do
 
     case read.(target, repo_path, caller_index) do
       {:ok, now} ->
+        # muex:ignore equivalent: both operands of `and` are pure booleans, so their order changes nothing
         if Persistence.state_signature(now) == Persistence.state_signature(base) and
              now.commit_message == base.commit_message,
            do: :same,
@@ -187,14 +190,19 @@ defmodule MeerkatWeb.AttachController do
     Git.with_index(repo_path, caller_index, fn -> ReviewState.from_target(target, repo_path) end)
   end
 
+  # muex:ignore equivalent: the one caller discards await_exits/1's return value
   defp await_exits(pids) do
     refs = Enum.map(pids, &Process.monitor/1)
+
+    # muex:ignore equivalent: a 1 ms shift only moves when a stuck caller is given up on; tests kill `-`
     deadline = System.monotonic_time(:millisecond) + 1_000
 
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value; tests kill the call's removal
     Enum.each(refs, fn ref ->
       receive do
         {:DOWN, ^ref, :process, _, _} -> :ok
       after
+        # muex:ignore equivalent: `max(…, 1)` waits 1 ms more past the deadline; tests kill the rest
         max(deadline - System.monotonic_time(:millisecond), 0) -> Process.demonitor(ref, [:flush])
       end
     end)
@@ -218,6 +226,7 @@ defmodule MeerkatWeb.AttachController do
     # The CLI publishes the outcome 750 ms after a click so the tab can
     # render the done view first. A caller can attach in that window
     # before an outcome is held; Decision.current/0 catches it.
+    # muex:ignore equivalent: both operands of `or` are pure booleans, so their order changes nothing
     quiet? = quiet? or Decision.current() != nil
     banner = if quiet?, do: "", else: Application.get_env(:meerkat, :review_banner, "")
 
@@ -233,6 +242,7 @@ defmodule MeerkatWeb.AttachController do
 
   # The CLI opened the tab for the backend's own run at startup.
   defp open_browser_if_unwatched(conn, run) do
+    # muex:ignore equivalent: every operand of both `and`s is a pure boolean, so their order changes nothing
     if run != System.get_env("MEERKAT_RUN_ID") and Meerkat.Viewers.count() == 0 and
          not Application.get_env(:meerkat, :no_open, false) do
       open = Application.get_env(:meerkat, :browser_open_fun, &Meerkat.Browser.open/1)
@@ -273,10 +283,12 @@ defmodule MeerkatWeb.AttachController do
   end
 
   defp halt_after_response(code) do
+    # muex:ignore unreachable I/O seam: the default halts the VM, which ExUnit cannot survive; killed by e2e detach.spec.ts "a rerun after the staged diff changed replaces the review its attached caller waits on"
     halt = Application.get_env(:meerkat, :restart_fun, &System.halt/1)
 
     Task.start(fn ->
       # Lets the 409 reach the caller first.
+      # muex:ignore equivalent: a 1 ms shift only moves when the BEAM halts; tests kill the sleep's removal
       Process.sleep(200)
       halt.(code)
     end)

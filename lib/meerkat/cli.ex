@@ -49,9 +49,6 @@ defmodule Meerkat.CLI do
     Timeout
   }
 
-  # Compile-time env so release builds don't need `Mix` at runtime.
-  @env Mix.env()
-
   @type opts :: %{
           commit_msg_path: String.t() | nil,
           positional: String.t() | nil,
@@ -195,8 +192,9 @@ defmodule Meerkat.CLI do
     _, _ -> :ok
   end
 
-  defp run_live_review_safe(target, opts) do
-    run_live_review(target, opts)
+  # `run` runs the review; tests pass one that fails as a review can.
+  defp run_live_review_safe(target, opts, run \\ &run_live_review/2) do
+    run.(target, opts)
   rescue
     e in PortInUseError ->
       IO.puts(:stderr, Exception.message(e))
@@ -244,47 +242,58 @@ defmodule Meerkat.CLI do
         Application.put_env(:meerkat, :no_open, opts.no_open)
         # Set before the application starts, like the deadline: it tells
         # `Meerkat.Decision` which caller to watch.
-        # muex:ignore unreachable I/O seam (in-VM tests stop before a review server starts; cli_main_test's review runs are separate BEAMs cover cannot see): killed by detach.spec.ts "a review with no comments ends once its caller is killed…"
         Application.put_env(:meerkat, :serve_dir, serve_dir)
         start_endpoint!(opts.port, state, review_id, repo_path())
+        # In the test VM `review_url/0` raises the same error with this call
+        # or without it, before anything is announced.
+        # muex:ignore unreachable I/O seam: killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
         announce_url(target, serve_dir)
         # No in-VM test gets here: the test VM's endpoint already runs
-        # without a server, so `review_url/0` raises in `announce_url/2`.
+        # without a server, so `review_url/0` raises in `announce_url/4`.
         # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
 
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend"
-        {tag, payload} = decision = await_decision_or_reject()
+        decision = await_decision_or_reject()
 
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; settle/2 itself is tested in cli_test): killed by detach.spec.ts "a review with no comments ends once its caller is killed…", whose backend must keep its snapshot and exit
-        {delete_snapshot?, deliver_to} = settle(tag, serve_dir)
-        # Remove this review's snapshot before the delay or delivery: a held
-        # decision's server may be replaced and exit before `deliver/2` returns.
-        # ReviewServer runs the delete after any save in flight and saves
-        # nothing once a decision exists, so the snapshot stays deleted.
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a rerun after a message-only change replaces a held decision without its comments…" and "a review with no comments ends once its caller is killed…"
-        _ = if delete_snapshot?, do: ReviewServer.delete_snapshot(repo_path(), review_id)
-        # Give the LiveView a moment to flush the done-view
-        # assigns update to the browser before the BEAM dies.
-        Process.sleep(750)
-        _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
-        {code, text} = exit_code(decision, review_id, feedback_file_path(log))
-
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend" and "a review with no comments ends once its caller is killed…"
-        run = deliver({code, text}, deliver_to)
-
-        _ =
-          if run,
-            # muex:ignore unreachable I/O seam: only a served review has a caller's run, and ExUnit cannot serve; killed by e2e detach.spec.ts "a SIGTERM to the caller's whole process group stops the countdown and leaves the review, with comments typed meanwhile, for a rerun"
-            do: Timeout.clear(repo_path(), review_id, run),
-            else: Timeout.clear(repo_path(), review_id)
-
-        code
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; conclude_review/5 itself is tested in cli_live_review_test): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend"
+        conclude_review(decision, serve_dir, review_id, log)
 
       {:error, reason} ->
         IO.puts(:stderr, "meerkat: error resolving review target: #{reason}")
         64
     end
+  end
+
+  # Settles the decided review and returns its exit code. `pause` waits
+  # before the outcome is logged; tests pass one that only records it.
+  defp conclude_review(
+         {tag, payload} = decision,
+         serve_dir,
+         review_id,
+         log,
+         # muex:ignore unreachable I/O seam: only run_live_review/2, which no in-VM test gets past announce_url in, takes the default; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+         pause \\ &Process.sleep/1
+       ) do
+    {delete_snapshot?, deliver_to} = settle(tag, serve_dir)
+    # Remove this review's snapshot before the delay or delivery: a held
+    # decision's server may be replaced and exit before `deliver/2` returns.
+    # ReviewServer runs the delete after any save in flight and saves
+    # nothing once a decision exists, so the snapshot stays deleted.
+    _ = if delete_snapshot?, do: ReviewServer.delete_snapshot(repo_path(), review_id)
+    # Give the LiveView a moment to flush the done-view
+    # assigns update to the browser before the BEAM dies.
+    pause.(750)
+    _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
+    {code, text} = exit_code(decision, review_id, feedback_file_path(log))
+    run = deliver({code, text}, deliver_to)
+
+    _ =
+      if run,
+        do: Timeout.clear(repo_path(), review_id, run),
+        else: Timeout.clear(repo_path(), review_id)
+
+    code
   end
 
   # `Decision.await/0` raises an exit if the Decision GenServer
@@ -320,9 +329,10 @@ defmodule Meerkat.CLI do
 
   @spec parse_args([String.t()]) :: opts
   def parse_args(argv) do
-    {parsed, positional, invalid} =
-      OptionParser.parse(argv, strict: @switches, aliases: [])
+    # muex:ignore equivalent: OptionParser looks aliases up by key, and a bare atom in the list is no key
+    {parsed, positional, invalid} = OptionParser.parse(argv, strict: @switches, aliases: [])
 
+    # muex:ignore unreachable I/O seam: a rejected argv halts the VM, which ExUnit cannot survive; killed by e2e entry-points.spec.ts "an unrecognised option exits 64 and names the option"
     case args_error(parsed, positional, invalid) do
       nil ->
         %{
@@ -338,6 +348,8 @@ defmodule Meerkat.CLI do
       message ->
         # muex:ignore unreachable I/O seam: the clause halts the VM, which ExUnit cannot survive; killed by e2e entry-points.spec.ts "an unrecognised option exits 64 and names the option"
         IO.puts(:stderr, message)
+
+        # muex:ignore unreachable I/O seam: the clause halts the VM, which ExUnit cannot survive; killed by e2e entry-points.spec.ts "an unrecognised option exits 64 and names the option"
         System.halt(64)
     end
   end
@@ -355,14 +367,17 @@ defmodule Meerkat.CLI do
       length(positional) > 1 ->
         "meerkat: at most one positional ref-or-range argument; got: #{Enum.join(positional, " ")}"
 
-      Keyword.get(parsed, :answers, false) and
-          (positional != [] or Keyword.has_key?(parsed, :pr) or
-             Keyword.has_key?(parsed, :commit_msg)) ->
+      Keyword.get(parsed, :answers, false) and review_target?(parsed, positional) ->
         "meerkat: --answers takes no review target; drop the ref/range, --pr or --commit-msg"
 
       true ->
         nil
     end
+  end
+
+  defp review_target?(parsed, positional) do
+    # muex:ignore equivalent: each operand is a pure boolean of a parsed keyword list, so their order changes nothing
+    positional != [] or Keyword.has_key?(parsed, :pr) or Keyword.has_key?(parsed, :commit_msg)
   end
 
   ## Answers via stdin
@@ -440,6 +455,7 @@ defmodule Meerkat.CLI do
     # guard exists to prevent (common after the committing review
     # consumed the staged diff). So any pending answers force a live
     # review; the reviewer's terminal decision clears the file.
+    # muex:ignore equivalent: both operands are pure booleans, so their order changes nothing
     if served?(serve_dir) or PendingAnswers.load(repo_path) != nil do
       :live
     else
@@ -508,6 +524,7 @@ defmodule Meerkat.CLI do
       Enum.all?(verdicts, &(&1 == :generated)) ->
         {:auto, "meerkat: all #{total} staged file(s) are linguist-generated — auto-approving.\n"}
 
+      # muex:ignore equivalent: both operands are pure booleans of the verdict list, so their order changes nothing
       Enum.all?(verdicts, &(&1 in [:approved, :generated])) and
           Enum.any?(verdicts, &(&1 == :approved)) ->
         approved = Enum.count(verdicts, &(&1 == :approved))
@@ -570,6 +587,7 @@ defmodule Meerkat.CLI do
       generated?(generated_map, name) ->
         :generated
 
+      # muex:ignore equivalent: approved?/4 is pure and false for a nil branch, so the order changes nothing
       not is_nil(branch) and
           ApprovalCache.approved?(cache, branch, name, Map.get(oid_map, name, "")) ->
         :approved
@@ -605,6 +623,21 @@ defmodule Meerkat.CLI do
 
   @doc false
   def settle_for_test(tag, serve_dir), do: settle(tag, serve_dir)
+
+  @doc false
+  def run_live_review_safe_for_test(target, opts, run),
+    do: run_live_review_safe(target, opts, run)
+
+  @doc false
+  def await_decision_or_reject_for_test, do: await_decision_or_reject()
+
+  @doc false
+  def announce_url_for_test(target, serve_dir, url, server_info),
+    do: announce_url(target, serve_dir, url, server_info)
+
+  @doc false
+  def conclude_review_for_test(decision, serve_dir, review_id, log, pause),
+    do: conclude_review(decision, serve_dir, review_id, log, pause)
 
   @doc false
   def decide_from_verdicts_for_test(verdicts, total), do: decide_from_verdicts(verdicts, total)
@@ -683,6 +716,7 @@ defmodule Meerkat.CLI do
   # no-op today (staged auto-approve never runs while answers pend), but
   # keep it so any future auto-approve path can't silently inherit a
   # stale banner.
+  # muex:ignore equivalent: review/2 discards the result
   defp finalise_auto_approve(repo_path) do
     PendingAnswers.clear(repo_path)
     :ok
@@ -756,6 +790,7 @@ defmodule Meerkat.CLI do
   defp preferred_port_from_env(value) do
     port = preferred_port(value)
 
+    # muex:ignore equivalent: both operands are pure comparisons, so their order changes nothing
     if value != nil and port == nil do
       IO.puts(
         :stderr,
@@ -783,6 +818,8 @@ defmodule Meerkat.CLI do
       {:error, reason} ->
         if port_in_use?(reason) do
           start_app!(0, nil, start)
+          # In the test VM `review_url/0` raises before this prints.
+          # muex:ignore unreachable I/O seam: killed by e2e port.spec.ts "without --port, a review binds its stable port, or another port while another review holds it"
           IO.puts(:stderr, "meerkat: port #{preferred} is in use; serving on #{review_url()}")
         else
           raise "meerkat failed to start: #{inspect(reason)}"
@@ -809,7 +846,7 @@ defmodule Meerkat.CLI do
 
     case Application.ensure_all_started(:meerkat) do
       {:ok, _} -> :ok
-      # muex:ignore unreachable I/O seam: the test BEAM already runs the app, so starting it never fails under ExUnit; killed by e2e port.spec.ts "a review whose stable port is taken is served on another port"
+      # muex:ignore unreachable I/O seam: the test BEAM already runs the app, so starting it never fails under ExUnit; killed by e2e port.spec.ts "without --port, a review binds its stable port, or another port while another review holds it"
       {:error, reason} -> {:error, reason}
     end
   end
@@ -825,6 +862,7 @@ defmodule Meerkat.CLI do
   defp port_in_use?(_term), do: false
 
   defp preferred_port(value) do
+    # muex:ignore equivalent: any string standing in for an unset value parses to no port, as "" does
     case Integer.parse(value || "") do
       # muex:ignore equivalent: `in` admits the same integers from a range whichever end comes first
       {port, ""} when port in 1..65_535 -> port
@@ -845,6 +883,8 @@ defmodule Meerkat.CLI do
   # not silently degraded into "logs went nowhere".
   defp redirect_logs_to_file(meerkat_dir) do
     log_path = Path.join(meerkat_dir, "meerkat.log")
+
+    # muex:ignore equivalent: the one caller runs after ReviewLog.start/2 has made a directory inside meerkat_dir
     File.mkdir_p!(meerkat_dir)
     {:ok, %{formatter: formatter}} = :logger.get_handler_config(:default)
 
@@ -866,7 +906,8 @@ defmodule Meerkat.CLI do
 
     # Prod (mix release): override dev.exs's runtime checks with
     # one-shot CLI flags.
-    # Dev (`bin/meerkat-beam` + MIX_ENV=dev): keep dev.exs intact.
+    # Dev (`bin/meerkat-beam` + MIX_ENV=dev, whose dev.exs sets
+    # `:dev_endpoint`): keep dev.exs intact.
     prod_overrides = [
       code_reloader: false,
       debug_errors: false,
@@ -896,7 +937,7 @@ defmodule Meerkat.CLI do
       check_origin: {MeerkatWeb.Loopback, :origin?, []}
     ]
 
-    if @env == :dev do
+    if Application.get_env(:meerkat, :dev_endpoint, false) do
       Keyword.merge(base, always)
     else
       # muex:ignore equivalent: the two lists share no key, so either order merges the same settings
@@ -966,24 +1007,26 @@ defmodule Meerkat.CLI do
     """
   end
 
-  defp announce_url(target, serve_dir) do
+  # `url` and `server_info` read the bound server; tests, whose endpoint
+  # serves nothing, pass stand-ins.
+  defp announce_url(
+         target,
+         serve_dir,
+         # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a URL; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+         url \\ review_url(),
+         # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a stand-in; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+         server_info \\ &MeerkatWeb.Endpoint.server_info/1
+       ) do
     banner =
-      pause_banner(target, review_url()) <>
+      pause_banner(target, url) <>
         "debug logs at: #{Application.get_env(:meerkat, :log_path)}\n"
 
-    # Announcing a served review reads the bound HTTP port; tests run the
-    # endpoint with server: false, so only e2e reaches that branch.
-    # muex:ignore unreachable I/O seam: ExUnit cannot serve; killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
     if serve_dir do
-      # muex:ignore unreachable I/O seam: ExUnit cannot serve; the attached caller prints this banner, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
       Application.put_env(:meerkat, :review_banner, banner)
-      {:ok, {_ip, port}} = MeerkatWeb.Endpoint.server_info(:http)
-
-      # muex:ignore unreachable I/O seam: killed by restart.spec.ts
+      {:ok, {_ip, port}} = server_info.(:http)
       :ok = mark_served(serve_dir)
       # The caller attaches on the port, and kills this BEAM by pid if its
       # shepherd dies before a decision.
-      # muex:ignore unreachable I/O seam: ExUnit cannot serve; the caller attaches on this port, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
       :ok = Meerkat.AtomicFile.write(Path.join(serve_dir, "port"), "#{port} #{System.pid()}\n")
     else
       IO.write(:stderr, banner)
@@ -1010,7 +1053,6 @@ defmodule Meerkat.CLI do
     nil
   end
 
-  # muex:ignore unreachable I/O seam: only a served review delivers through Decision, and ExUnit cannot serve; killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
   defp deliver(outcome, _serve_dir) do
     :ok = Decision.publish(outcome)
     Decision.await_delivery()
@@ -1095,12 +1137,13 @@ defmodule Meerkat.CLI do
   # way to honour `--port 0` (OS-assigned). Raises when the endpoint
   # reports no bound port, as when it was already running without a
   # server: no other port serves this review, and the configured one
-  # may be 0. `run_live_review_safe/2` turns the raise into a REJECT
+  # may be 0. `run_live_review_safe/3` turns the raise into a REJECT
   # before any URL is announced or opened.
   defp review_url do
+    # muex:ignore unreachable I/O seam: the test VM's endpoint reports no port under any name; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
     case MeerkatWeb.Endpoint.server_info(:http) do
       {:ok, {_ip, port}} ->
-        # muex:ignore unreachable I/O seam: tests run the endpoint with server: false, so it reports no bound port; the e2e runner opens this URL, so killed by e2e decision.spec.ts "Send Feedback reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+        # muex:ignore unreachable I/O seam: tests run the endpoint with server: false, so it reports no bound port; the e2e runner opens this URL, so killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
         "http://127.0.0.1:#{port}/"
 
       other ->
@@ -1214,6 +1257,7 @@ defmodule Meerkat.CLI do
   defp outcome_phrase(:reject), do: "User rejected the commit"
 
   defp limit_phrase(ms) do
+    # muex:ignore equivalent: both checks are pure, and 59_999 ms leaves a remainder, so >= 59_999 admits no more
     if ms >= 60_000 and rem(ms, 60_000) == 0 do
       unit_phrase(div(ms, 60_000), "minute")
     else

@@ -643,8 +643,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     Application.put_env(:meerkat, :repo_path, repo)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
-    html = render_click(view, "decision.approve", %{})
-    assert html =~ "Approved"
+    render_click(view, "decision.approve", %{})
+    assert has_element?(view, "h1", ~r/^Approved$/)
 
     # Pending answers were cleared out of THIS repo, not the cwd's.
     refute PendingAnswers.load(repo)

@@ -30,6 +30,7 @@ defmodule Meerkat.VersionWatcher do
   `:current_link`, `:poll_ms`, `:pubsub`, `:name`.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
+  # muex:ignore equivalent: Keyword.get/3 skips a non-tuple element, so a default of [:mutated] reads every option as unset, as [] does
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end
@@ -89,6 +90,7 @@ defmodule Meerkat.VersionWatcher do
   # to halt with the decision's exit code and a restart (75) would preempt
   # and lose it.
   defp handle_update(state) do
+    # muex:ignore equivalent: both checks only read state and neither raises, so their order changes nothing
     if state.viewers.() == 0 and is_nil(Meerkat.Decision.current()) do
       Logger.info("Meerkat.VersionWatcher: no viewers connected; restarting onto new version")
       Meerkat.Restart.request()

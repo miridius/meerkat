@@ -28,6 +28,48 @@ defmodule Meerkat.SignalHandlerTest do
     assert SignalHandler in :gen_event.which_handlers(:erl_signal_server)
   end
 
+  test "other signals and calls get OTP's answers with this handler's state" do
+    assert SignalHandler.handle_event(:sighup, :state) == {:ok, :state}
+    assert SignalHandler.handle_call(:request, :state) == {:ok, :ok, :state}
+  end
+
+  test "before halting, a SIGTERM says the review is rejected and writes out the log file" do
+    path = Path.join(make_tmp_repo("meerkat-sigterm-log"), "meerkat.log")
+
+    :ok =
+      :logger.add_handler(:meerkat_file, :logger_std_h, %{
+        config: %{type: {:file, String.to_charlist(path)}},
+        formatter: {:logger_formatter, %{}}
+      })
+
+    on_exit(fn -> :logger.remove_handler(:meerkat_file) end)
+    handler = Process.whereis(:logger_std_h_meerkat_file)
+    :sys.suspend(handler)
+
+    announce =
+      Task.async(fn ->
+        ExUnit.CaptureIO.capture_io(:stderr, &SignalHandler.announce_sigterm/0)
+      end)
+
+    try do
+      assert eventually(fn ->
+               case Process.info(announce.pid, :current_stacktrace) do
+                 {:current_stacktrace, stack} ->
+                   Enum.any?(stack, &match?({Meerkat.CLI, :flush_logs, 0, _}, &1))
+
+                 nil ->
+                   false
+               end
+             end),
+             "the log file is written out before the VM halts"
+    after
+      :sys.resume(handler)
+    end
+
+    assert Task.await(announce) ==
+             "meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted).\n"
+  end
+
   test "a SIGTERM halts the VM with 143 and a REJECT message" do
     {output, code} =
       System.cmd(

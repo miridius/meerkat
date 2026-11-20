@@ -40,6 +40,12 @@ defmodule Meerkat.BrowserTest do
       assert Browser.open("http://x/") == {:error, "#{cmd} exited 3: no browser"}
     end
 
+    test "an error carries what the command wrote to stderr", %{bin: bin} do
+      cmd = fake_open(bin, "echo 'no display' >&2\nexit 3\n")
+
+      assert Browser.open("http://x/") == {:error, "#{cmd} exited 3: no display"}
+    end
+
     test "a missing open command is an error rather than a crash", %{bin: bin} do
       put_env("PATH", bin)
 

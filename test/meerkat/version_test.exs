@@ -67,7 +67,41 @@ defmodule Meerkat.VersionTest do
     assert log == "", "a dev tree expects no manifest, so its absence is not warned about"
     assert info.dev?
     assert info.changelog == []
-    assert String.starts_with?(info.label, "dev: ")
+    assert info.label == "dev: " <> Version.dev_branch(Version.source_root())
+  end
+
+  test "a dev build reports the source tree it runs from" do
+    assert Version.source_root() == File.cwd!()
+  end
+
+  describe "dev_branch/1" do
+    setup do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-ver-branch")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    test "is the checked-out branch", %{dir: dir} do
+      Meerkat.TestHelpers.git(dir, ["init", "-q", "-b", "feat/x"])
+      assert Version.dev_branch(dir) == "feat/x"
+    end
+
+    test "is unknown on a detached HEAD", %{dir: dir} do
+      Meerkat.TestHelpers.git(dir, ["init", "-q", "-b", "main"])
+      Meerkat.TestHelpers.commit(dir, "one")
+      Meerkat.TestHelpers.git(dir, ["checkout", "-q", "--detach"])
+      assert Version.dev_branch(dir) == "unknown"
+    end
+
+    test "is unknown outside a git repo", %{dir: dir} do
+      assert Version.dev_branch(dir) == "unknown"
+    end
+
+    test "is unknown when git cannot be run", %{dir: dir} do
+      Meerkat.TestHelpers.put_env("PATH", dir)
+      assert Version.dev_branch(dir) == "unknown"
+    end
   end
 
   test "warns and falls back to dev when a release manifest is unreadable" do
@@ -77,7 +111,7 @@ defmodule Meerkat.VersionTest do
     on_exit(fn -> File.rm_rf!(dir) end)
 
     log = capture_log(fn -> assert Version.info().dev? end)
-    assert log =~ "Meerkat.Version: unreadable version manifest ({:error, :enoent})"
+    assert log =~ ~r/Meerkat.Version: unreadable version manifest \(\{:error, :enoent\}\)\n/
   end
 
   test "a manifest written with CRLF line endings or trailing spaces still parses" do

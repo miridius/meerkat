@@ -40,6 +40,42 @@ defmodule Meerkat.VersionWatcherTest do
     assert :ignore == VersionWatcher.init(current_link: "/no/such/current/link")
   end
 
+  test "the update topic is meerkat:version" do
+    assert VersionWatcher.topic() == "meerkat:version"
+  end
+
+  test "init polls every 3 s on Meerkat.PubSub unless told otherwise", %{link: link} do
+    assert {:ok, %{link: ^link, poll_ms: 3_000, pubsub: Meerkat.PubSub, viewers: viewers}} =
+             VersionWatcher.init(current_link: link)
+
+    assert viewers == (&Meerkat.Viewers.count/0)
+
+    assert {:ok, %{poll_ms: 7, pubsub: :other_pubsub}} =
+             VersionWatcher.init(current_link: link, poll_ms: 7, pubsub: :other_pubsub)
+  end
+
+  test "a :current_link opt wins over MEERKAT_CURRENT_LINK", %{link: link} do
+    Meerkat.TestHelpers.put_env("MEERKAT_CURRENT_LINK", "/no/such/current/link")
+
+    assert {:ok, %{link: ^link}} = VersionWatcher.init(current_link: link)
+  end
+
+  test "start_link/0 starts nothing without a current link" do
+    Meerkat.TestHelpers.put_env("MEERKAT_CURRENT_LINK", nil)
+
+    assert VersionWatcher.start_link() == :ignore
+  end
+
+  test "registers under the :name it is given", %{link: link} do
+    pid =
+      start_supervised!(
+        {VersionWatcher,
+         current_link: link, poll_ms: 10, name: :vw_named, viewers_fun: fn -> 1 end}
+      )
+
+    assert Process.whereis(:vw_named) == pid
+  end
+
   test "falls back to MEERKAT_CURRENT_LINK when no :current_link opt is given",
        %{dir: dir, link: link} do
     prev = System.get_env("MEERKAT_CURRENT_LINK")
@@ -68,14 +104,23 @@ defmodule Meerkat.VersionWatcherTest do
     assert Path.basename(target) == "v2"
   end
 
-  test "restarts itself when no viewers are connected", %{dir: dir, link: link} do
+  test "restarts itself when no viewers are connected, and logs why", %{dir: dir, link: link} do
     test_pid = self()
     Application.put_env(:meerkat, :restart_fun, fn code -> send(test_pid, {:restart, code}) end)
+    level = Logger.level()
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: level) end)
 
-    start(link, viewers_fun: fn -> 0 end)
-    flip(link, Path.join(dir, "v2"))
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        start(link, viewers_fun: fn -> 0 end)
+        flip(link, Path.join(dir, "v2"))
 
-    assert_receive {:restart, 75}
+        assert_receive {:restart, 75}
+      end)
+
+    assert log =~
+             "Meerkat.VersionWatcher: no viewers connected; restarting onto new version\n"
   end
 
   test "does not restart while a viewer is connected", %{dir: dir, link: link} do
@@ -102,9 +147,11 @@ defmodule Meerkat.VersionWatcherTest do
 
   test "stays quiet while current still points at the version it booted", %{link: link} do
     Phoenix.PubSub.subscribe(Meerkat.PubSub, VersionWatcher.topic())
-    start(link, viewers_fun: fn -> 1 end)
+    pid = start(link, viewers_fun: fn -> 1 end)
 
-    refute_receive {:meerkat_version_available, _}, 100
+    send(pid, :poll)
+    :sys.get_state(pid)
+    refute_received {:meerkat_version_available, _}
   end
 
   test "keeps watching through a moment with no current link", %{dir: dir, link: link} do
@@ -135,7 +182,7 @@ defmodule Meerkat.VersionWatcherTest do
         for _ <- 1..3, do: assert_receive({:meerkat_version_available, _})
       end)
 
-    assert [_] = Regex.scan(~r/Meerkat\.VersionWatcher: new version live \(v2\)/, log)
+    assert [_] = Regex.scan(~r/Meerkat\.VersionWatcher: new version live \(v2\)\n/, log)
   end
 
   test "broadcasts the new target after a second flip", %{dir: dir, link: link} do

@@ -101,6 +101,7 @@ defmodule Meerkat.Intraline do
     orphan = orphan_dels ++ orphan_adds
 
     # A one-sided run has nothing to pair, so it stays in its hunk.
+    # muex:ignore equivalent: reordering the three pure checks joined by `or` changes nothing
     if dels == [] or adds == [] or orphan == [] do
       walk(rest, %{
         state
