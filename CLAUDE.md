@@ -198,7 +198,7 @@ their own BEAM they execute only the app-start lines every test file
 executes; leaving them out roughly halves the mutation gate.
 Put a test that calls `lib/` code directly, not through a subprocess,
 outside `test/scripts`.
-Every BEAM muex starts gets the test BEAMs' scheduler flags.
+muex, and every BEAM it starts, gets the test BEAMs' scheduler flags.
 A mutant on a line no test executes is skipped as `no_coverage`.
 For a line `:cover` has no entry for, such as a `def` header, muex
 falls back to dependency analysis and then to every test file it was given.

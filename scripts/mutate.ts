@@ -384,13 +384,12 @@ export function gated(run: Run, io: GatedIo): number {
 	const report = join(io.root, "_build", `mutate-${run.label}.json`);
 	io.removeReport(report);
 	const tests = testPaths(io.find("test", "_test.exs"));
-	// muex strips GIT_INDEX_FILE from the test runs it starts. Every BEAM muex
-	// starts, for the coverage run, compiles and each mutant's tests, inherits
-	// its environment, so they all get the test runs' scheduler flags.
+	// muex strips GIT_INDEX_FILE from the test runs it starts. muex, and every
+	// BEAM it starts, for the coverage run, compiles and each mutant's tests,
+	// inherits its environment, so they all get the test runs' scheduler flags.
 	const muexEnv = quietBeams(run.index === undefined ? env : { ...env, GIT_INDEX_FILE: run.index });
-	// muex runs as many test BEAMs at once as there are cores; like
-	// scripts/mix-test.ts, cap them at half (at least one) so a commit leaves
-	// the machine usable.
+	// Like scripts/mix-test.ts, cap muex's test BEAMs at half the cores (at
+	// least one) so a commit leaves the machine usable.
 	const status = io.run(muexArgs(run, tests, jobCount(io.cores), report), muexEnv);
 	if (status !== 0) return status;
 

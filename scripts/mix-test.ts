@@ -60,12 +60,12 @@ export function onlineCores(): number {
 }
 
 // Four schedulers, and no scheduler, dirty ones included, busy-waits. Timed file by file, `+S 4 +sbwt none` used a fifth
-// to a third less CPU in no more wall time. Each BEAM's dirty schedulers, 4 CPU and 10 IO, still spun: in the mutation
-// gate, the dirty flags cut its peak of runnable threads from about 100 to under 40.
+// to a third less CPU than the defaults in no more wall time. Each BEAM's dirty schedulers, 4 CPU and 10 IO, still spun:
+// in the mutation gate, the dirty flags cut its peak of runnable threads from about 100 to under 40.
 export const QUIET_BEAM = "+S 4 +sbwt none +sbwtdcpu none +sbwtdio none";
 
-// `env` with each BEAM started under it running as QUIET_BEAM says, ahead of any ELIXIR_ERL_OPTIONS already set, which
-// so wins.
+// `env` with each BEAM started under it running as QUIET_BEAM says, ahead of any ELIXIR_ERL_OPTIONS already set, so
+// those options win.
 export const quietBeams = (env: Record<string, string | undefined>) => ({
 	...env,
 	ELIXIR_ERL_OPTIONS: `${QUIET_BEAM} ${env.ELIXIR_ERL_OPTIONS ?? ""}`,

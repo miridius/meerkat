@@ -1,7 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Io, jobCount, LIMITS, parseLimits, parseMs, pool, type Run, runSuite, show } from "./mix-test";
+import {
+	type Io,
+	jobCount,
+	LIMITS,
+	parseLimits,
+	parseMs,
+	pool,
+	QUIET_BEAM,
+	quietBeams,
+	type Run,
+	runSuite,
+	show,
+} from "./mix-test";
 
 const root = join(import.meta.dir, "..");
 
@@ -238,6 +250,13 @@ test("show rounds up to a tenth of a second", () => {
 
 test("jobCount is half the cores, at least one", () => {
 	expect([1, 2, 3, 4, 18].map(jobCount)).toEqual([1, 1, 1, 2, 9]);
+});
+
+test("quietBeams puts its flags ahead of options already set, so those win", () => {
+	expect(quietBeams({ PATH: "/bin", ELIXIR_ERL_OPTIONS: "+S 2" })).toEqual({
+		PATH: "/bin",
+		ELIXIR_ERL_OPTIONS: `${QUIET_BEAM} +S 2`,
+	});
 });
 
 describe("pool", () => {
