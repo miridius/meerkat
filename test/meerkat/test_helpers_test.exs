@@ -7,6 +7,53 @@ defmodule Meerkat.TestHelpersTest do
     assert System.tmp_dir!() =~ ~r"/meerkat-exunit/#{System.pid()}-\d+$"
   end
 
+  describe "no_browser_path!/2" do
+    setup do
+      dir = TestHelpers.tmp_path("no-browser")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      bin = Path.join(dir, "bin")
+      File.mkdir_p!(bin)
+      # A PATH whose own open and xdg-open the stub must shadow.
+      for cmd <- ["open", "xdg-open"], do: exec(Path.join(bin, cmd))
+      %{stub: Path.join(dir, "stub"), bin: bin}
+    end
+
+    test "puts a stub that shadows open and xdg-open first", %{stub: stub, bin: bin} do
+      File.mkdir_p!(stub)
+      for cmd <- ["open", "xdg-open"], do: exec(Path.join(stub, cmd))
+      assert TestHelpers.no_browser_path!(stub, bin) == stub <> ":" <> bin
+    end
+
+    test "raises when the stub is missing, rather than leave the real opener on PATH",
+         %{stub: stub, bin: bin} do
+      assert_raise RuntimeError, ~r/open on the test PATH is #{bin}\/open, not the stub/, fn ->
+        TestHelpers.no_browser_path!(stub, bin)
+      end
+    end
+
+    test "raises when a stub has lost its exec bit", %{stub: stub, bin: bin} do
+      File.mkdir_p!(stub)
+      exec(Path.join(stub, "open"))
+      File.write!(Path.join(stub, "xdg-open"), "")
+
+      assert_raise RuntimeError, ~r/^xdg-open on the test PATH is #{bin}\/xdg-open/, fn ->
+        TestHelpers.no_browser_path!(stub, bin)
+      end
+    end
+
+    test "raises when neither the stub nor PATH has the opener", %{stub: stub} do
+      assert_raise RuntimeError, ~r/^open on the test PATH is missing/, fn ->
+        TestHelpers.no_browser_path!(stub, "/nonexistent")
+      end
+    end
+
+    defp exec(path) do
+      File.write!(path, "#!/bin/sh\n")
+      File.chmod!(path, 0o755)
+    end
+  end
+
   describe "reap_orphaned_tmp_dirs/1" do
     setup do
       parent = Path.join(System.tmp_dir!(), "reap-#{System.unique_integer([:positive])}")

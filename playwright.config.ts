@@ -1,5 +1,11 @@
+import { delimiter, join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { budget } from "./tests/e2e/lib/budget";
+
+// As in test/test_helper.exs: the runner and each worker load this file, so
+// whatever the suite starts finds an `open` and `xdg-open` that refuse to
+// run, and opens no browser on the user's screen, even without --no-open.
+process.env.PATH = [join(__dirname, "test/support/no-browser"), process.env.PATH].join(delimiter);
 
 // Each test spawns its own meerkat process against a tmp git fixture
 // (see tests/e2e/lib/runner.ts). There is no global webServer — meerkat

@@ -34,6 +34,7 @@ defmodule Meerkat.E2eInputsTest do
     tests/e2e/decision.spec.ts
     tests/e2e/lib/setup.ts
     test/support/test.gitconfig
+    test/support/no-browser/open
     .github/toolchain.env
     playwright.config.ts
     mix.exs
@@ -94,8 +95,9 @@ defmodule Meerkat.E2eInputsTest do
           uniq: true,
           do: file
 
-    # The scan finds the one path outside tests/e2e/ the fixture reads.
+    # The scan finds the paths outside tests/e2e/ the suite reads.
     assert "test/support/test.gitconfig" in named
+    assert "test/support/no-browser/open" in named
     assert run(Enum.join(named, "\n") <> "\n") == {Enum.join(named, "\n") <> "\n", 0}
   end
 

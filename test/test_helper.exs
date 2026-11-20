@@ -10,6 +10,7 @@ ExUnit.start(timeout: 180_000, assert_receive_timeout: 30_000)
 Meerkat.TestHelpers.isolate_tmp_dir()
 
 Meerkat.TestHelpers.put_git_config_env()
+Meerkat.TestHelpers.put_no_browser_path()
 
 # Controller / LiveView tests need the endpoint started so Phoenix's
 # `Phoenix.ConnTest.dispatch/5` can find its persistent_term config.
