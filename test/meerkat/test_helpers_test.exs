@@ -27,7 +27,7 @@ defmodule Meerkat.TestHelpersTest do
 
     test "raises when the stub is missing, rather than leave the real opener on PATH",
          %{stub: stub, bin: bin} do
-      assert_raise RuntimeError, ~r/open on the test PATH is #{bin}\/open, not the stub/, fn ->
+      assert_raise RuntimeError, ~r/^open on the test PATH is #{bin}\/open, not the stub/, fn ->
         TestHelpers.no_browser_path!(stub, bin)
       end
     end

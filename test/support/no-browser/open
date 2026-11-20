@@ -1,5 +1,5 @@
 #!/bin/sh
-# First on PATH, as open and xdg-open, in every ExUnit and e2e run, so
+# On PATH ahead of the real open and xdg-open in every ExUnit and e2e run, so
 # nothing a test starts can open a browser on the user's screen.
 echo "meerkat tests open no browser: $*" >&2
 exit 1

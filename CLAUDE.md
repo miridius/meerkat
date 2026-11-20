@@ -82,8 +82,8 @@ remove commits a merged PR still references). Before committing:
   launch with `--headless=new`, and pass `--no-open` to every meerkat
   they run themselves. A git hook's meerkat, which opens for the
   user's review, is exempt. ExUnit and Playwright runs, mutation runs
-  included, put `test/support/no-browser` first on PATH, whose `open`
-  and `xdg-open` refuse to run, since muex can mutate any guard in
+  included, put `test/support/no-browser` on PATH ahead of the real
+  `open` and `xdg-open`, whose stubs there refuse to run, since muex can mutate any guard in
   `lib/` away. An ExUnit run stops if they are not the ones PATH finds.
 
 ## Workflow
