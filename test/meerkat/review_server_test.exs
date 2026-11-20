@@ -85,6 +85,37 @@ defmodule Meerkat.ReviewServerTest do
       assert %ReviewState{} = ReviewServer.get_state(id)
     end
 
+    test "end_if_unused/1 keeps a review whose earlier server saved a comment in its repo",
+         %{review_id: id} do
+      repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-review-server-unused")
+      on_exit(fn -> File.rm_rf!(repo) end)
+
+      comment = %{
+        id: Comment.new_id(),
+        body: "kept",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false,
+        created_at: Comment.now()
+      }
+
+      for {key, value} <- [repo_path: repo, review_state: %ReviewState{}, meerkat_dir: nil] do
+        old = Application.fetch_env(:meerkat, key)
+        Application.put_env(:meerkat, key, value)
+
+        on_exit(fn ->
+          case old do
+            {:ok, v} -> Application.put_env(:meerkat, key, v)
+            :error -> Application.delete_env(:meerkat, key)
+          end
+        end)
+      end
+
+      :ok = Persistence.save(repo, id, %ReviewState{global_comments: [comment]})
+      assert ReviewServer.end_if_unused(id) == :kept
+      assert [%{body: "kept"}] = ReviewServer.get_state(id).global_comments
+    end
+
     test "starts from the snapshot an earlier server saved", %{repo: repo, review_id: id} do
       saved = %ReviewState{approved_file_names: MapSet.new(["a.ex"])}
       :ok = Persistence.save(repo, id, saved)

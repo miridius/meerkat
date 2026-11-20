@@ -70,6 +70,7 @@ defmodule Meerkat.Cljfmt do
   defp between(text, above, below) do
     size = byte_size(text) - byte_size(above) - byte_size(below)
 
+    # muex:ignore equivalent: swapping the two pure checks joined by `and` changes nothing
     if String.starts_with?(text, above) and String.ends_with?(text, below),
       do: {:ok, binary_part(text, byte_size(above), size)},
       else: :error
@@ -91,6 +92,7 @@ defmodule Meerkat.Cljfmt do
         {{line, seen, next}, next}
       end)
 
+    # muex:ignore equivalent: swapping the two pure comparisons joined by `and` changes nothing
     picked = Enum.filter(lines, fn {_, from, to} -> from < last and to > first end)
 
     with true <- strip(formatted) == strip(above <> code <> below),

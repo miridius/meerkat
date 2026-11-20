@@ -198,6 +198,15 @@ defmodule MeerkatWeb.ReviewLiveEventsCase do
   # The DOM id of the form keyed `form_key`, as `ReviewLive` renders it.
   def form_id(form_key), do: "CommentForm-" <> String.replace(form_key, ~r/[^A-Za-z0-9_-]/, "-")
 
+  # The error banner's message, as the reviewer reads it.
+  def flash_text(view) do
+    view
+    |> element("[data-test=flash-error] p")
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.text()
+  end
+
   def open_files_panel(view) do
     view |> element("button.toolbar-icon-btn", "Files") |> render_click()
   end

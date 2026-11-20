@@ -31,7 +31,7 @@ defmodule Meerkat.Version do
     end
   end
 
-  defp dev_info, do: %{label: "dev: #{dev_branch()}", dev?: true, changelog: []}
+  defp dev_info, do: %{label: "dev: #{dev_branch(source_root())}", dev?: true, changelog: []}
 
   # :dev when not a release (no manifest expected); {:ok, lines} or
   # {:error, reason} when RELEASE_ROOT is set, so info/0 can tell a genuine
@@ -70,16 +70,21 @@ defmodule Meerkat.Version do
 
   defp short(commit), do: String.slice(commit, 0, 7)
 
-  defp dev_branch do
-    root = Path.expand("../..", __DIR__)
+  @doc false
+  # Test seam: the source tree a dev build reports the branch of.
+  def source_root, do: Path.expand("../..", __DIR__)
 
-    case System.cmd("git", ["-C", root, "branch", "--show-current"], stderr_to_stdout: true) do
+  @doc false
+  # Test seam: the branch checked out at `root`, or "unknown".
+  def dev_branch(root) do
+    case System.cmd("git", ["-C", root, "branch", "--show-current"]) do
       {out, 0} ->
         case String.trim(out) do
           "" -> "unknown"
           branch -> branch
         end
 
+      # muex:ignore equivalent: without this clause the CaseClauseError is rescued below to the same "unknown"
       _ ->
         "unknown"
     end

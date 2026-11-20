@@ -36,11 +36,11 @@ defmodule Meerkat.AtomicFile do
     case File.rm(tmp) do
       :ok -> :ok
       {:error, :enoent} -> :ok
-      # muex:ignore pure observability: the arguments only shape the warning text
       {:error, reason} -> log_rm_failure(tmp, reason)
     end
   end
 
+  # muex:ignore equivalent: cleanup_tmp/1 returns this value, which write/2 discards
   defp log_rm_failure(path, reason) do
     IO.puts(:stderr, "meerkat: tmp cleanup at #{path} failed: #{inspect(reason)}")
   end

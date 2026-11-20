@@ -23,6 +23,9 @@ config :meerkat, MeerkatWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "6EItl5mF8sNaSSglxLlSruE7ke+EPHgJ9lxpHgbqWWXe/v/6CkUGTmXjiUyzdeD7"
 
+# `Meerkat.CLI` keeps the endpoint settings above rather than prod's.
+config :meerkat, dev_endpoint: true
+
 config :logger, :default_formatter, format: "[$level] $message\n"
 
 config :phoenix, :stacktrace_depth, 20

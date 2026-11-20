@@ -27,6 +27,7 @@ defmodule MeerkatWeb.LoopbackTest do
       out = %{conn | host: "evil.example.com"} |> Loopback.call(Loopback.init([]))
       assert out.halted
       assert out.status == 403
+      assert out.resp_body == "meerkat serves loopback clients only"
     end
   end
 

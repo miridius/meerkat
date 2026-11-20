@@ -200,6 +200,21 @@ defmodule Meerkat.GitIntegrationTest do
     assert Git.current_branch(rebases) == nil
   end
 
+  test "a rebase whose head-name names a branch with no name belongs to no branch", %{
+    rebases: rebases
+  } do
+    head_name = Meerkat.TestHelpers.tmp_path("meerkat-git-integration-empty-head-name")
+    on_exit(fn -> File.rm(head_name) end)
+    File.write!(head_name, "refs/heads/\n")
+
+    stub_git(fn
+      [_git, "symbolic-ref" | _] -> {"", 1}
+      [_git, "rev-parse" | _] -> {"#{head_name}\n", 0}
+    end)
+
+    assert Git.head_branch(rebases) == :detached
+  end
+
   test "an empty successful branch lookup is still unnamed", %{rebases: rebases} do
     stub_git("symbolic-ref", {"\n", 0})
     assert Git.current_branch(rebases) == nil
@@ -321,6 +336,16 @@ defmodule Meerkat.GitIntegrationTest do
     assert git(range, ["rev-parse", base_ref]) == git(range, ["rev-parse", "main"])
     assert {:error, reason} = Git.fetch_pr(range, 43, "main")
     assert reason =~ "refs/pull/43/head"
+  end
+
+  # Writes only `refs/meerkat-pr/42/*`, as the test above does.
+  test "fetch_pr reads the remote's own refs whatever namespace the environment names", %{
+    range: range
+  } do
+    Meerkat.TestHelpers.put_env("GIT_NAMESPACE", "elsewhere")
+
+    assert Git.fetch_pr(range, 42, "main") ==
+             {:ok, {"refs/meerkat-pr/42/head", "refs/meerkat-pr/42/base"}}
   end
 
   test "Git command failures remain explicit instead of empty results", %{staged: staged} do

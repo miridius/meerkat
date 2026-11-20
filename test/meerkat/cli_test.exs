@@ -256,6 +256,22 @@ defmodule Meerkat.CLITest do
              ) == :neither
     end
 
+    test "a file with no staged OID matches no recorded approval → :neither" do
+      for oid <- ["x", "oid1"] do
+        cache = ApprovalCache.approve(%{}, "main", "a.rs", oid)
+        gen = %{"a.rs" => {:generated, false}}
+
+        assert CLI.classify_for_auto_approve_for_test(
+                 %{file_name: "a.rs"},
+                 cache,
+                 "main",
+                 gen,
+                 %{}
+               ) ==
+                 :neither
+      end
+    end
+
     test "a failed or missing linguist lookup never counts as generated → :neither" do
       for gen <- [%{"a.rs" => {:error, "check-attr failed"}}, %{}] do
         assert CLI.classify_for_auto_approve_for_test(%{file_name: "a.rs"}, %{}, "main", gen, %{}) ==
@@ -293,6 +309,10 @@ defmodule Meerkat.CLITest do
       assert {:auto, msg} = CLI.decide_from_verdicts_for_test([:approved, :generated], 2)
       assert msg =~ "already approved (1)"
       assert msg =~ "linguist-generated (1)"
+
+      assert CLI.decide_from_verdicts_for_test([:approved, :approved, :generated], 3) ==
+               {:auto,
+                "meerkat: all 3 staged file(s) already approved (2) or linguist-generated (1) — auto-approving.\n"}
     end
 
     test "any file still :neither → live review, never auto-approve" do
@@ -355,10 +375,14 @@ defmodule Meerkat.CLITest do
 
     test "unrecognised options → rejection message" do
       assert CLI.args_error([], [], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
+
+      assert CLI.args_error([], [], [{"--bogus", nil}, {"--port", "x"}]) ==
+               "meerkat: unrecognised options: --bogus, --port"
     end
 
     test "more than one positional → rejection message" do
-      assert CLI.args_error([], ["a", "b"], []) =~ "at most one positional"
+      assert CLI.args_error([], ["a", "b"], []) ==
+               "meerkat: at most one positional ref-or-range argument; got: a b"
     end
 
     test "well-formed argv → nil" do
@@ -371,13 +395,18 @@ defmodule Meerkat.CLITest do
     end
 
     test "--answers with a review target → rejection message" do
-      assert CLI.args_error([answers: true], ["HEAD"], []) =~ "--answers takes no review target"
+      assert CLI.args_error([answers: true], ["HEAD"], []) ==
+               "meerkat: --answers takes no review target; drop the ref/range, --pr or --commit-msg"
 
       assert CLI.args_error([answers: true, pr: "1"], [], []) =~
                "--answers takes no review target"
 
       assert CLI.args_error([answers: true, commit_msg: "/tmp/m"], [], []) =~
                "--answers takes no review target"
+    end
+
+    test "a non-boolean :answers raises rather than passing as no conflict" do
+      assert_raise BadBooleanError, fn -> CLI.args_error([answers: "yes"], [], []) end
     end
 
     test "--answers false is not a conflict" do
@@ -398,8 +427,7 @@ defmodule Meerkat.CLITest do
       {:ok, device} = StringIO.open("x")
       StringIO.close(device)
 
-      assert {:error, message} = CLI.read_stdin_for_test(device)
-      assert message =~ "couldn't read stdin"
+      assert CLI.read_stdin_for_test(device) == {:error, "couldn't read stdin: :terminated"}
     end
 
     test "hands over the bytes as sent, not as the locale decodes them" do
@@ -466,7 +494,8 @@ defmodule Meerkat.CLITest do
         end)
 
       assert code == 64
-      assert stderr =~ ~r/\Ameerkat: --answers needs a git repository: .+\n\z/
+      {:error, :not_a_repo, message} = Meerkat.PendingAnswers.save(not_a_repo, input)
+      assert stderr == "meerkat: --answers needs a git repository: #{message}\n"
     end
 
     test "a refused write → exit 74, not the code for bad input", %{repo: repo} do
@@ -478,6 +507,11 @@ defmodule Meerkat.CLITest do
 
       assert code == 74
       assert stderr =~ "couldn't write"
+
+      {{:error, :write_failed, message}, _} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> Meerkat.PendingAnswers.save(repo, input) end)
+
+      assert String.ends_with?(stderr, "\nmeerkat: --answers failed: #{message}\n")
     end
 
     test "an unreadable stdin → exit 74, storing nothing", %{repo: repo} do
@@ -487,7 +521,7 @@ defmodule Meerkat.CLITest do
         end)
 
       assert code == 74
-      assert stderr =~ "couldn't read stdin"
+      assert stderr == "meerkat: --answers failed: couldn't read stdin: :ebadf\n"
       refute File.exists?(Meerkat.PendingAnswers.path_for(repo))
     end
   end
@@ -553,18 +587,28 @@ defmodule Meerkat.CLITest do
       assert String.starts_with?(banner, "\n")
       assert String.ends_with?(banner, "\n")
     end
+
+    test "joins the verdict, count and file clauses into one ruled line" do
+      assert CLI.feedback_banner_for_test(:approve_with_feedback, 2, {:ok, @path}) ==
+               "\n── User approved your commit — 2 comments — full feedback saved to #{@path} in case truncated ──\n"
+
+      assert CLI.feedback_banner_for_test(:timeout, nil, :error) ==
+               "\n── Review timed out, commit auto-approved unread — full feedback could not be written to disk ──\n"
+    end
   end
 
   describe "limit_phrase/1" do
     test "a whole number of minutes reads as minutes" do
       assert CLI.limit_phrase_for_test(30 * 60 * 1000) == "30 minutes"
       assert CLI.limit_phrase_for_test(60_000) == "1 minute"
+      assert CLI.limit_phrase_for_test(60_000 * 60_000) == "60000 minutes"
     end
 
     test "a limit that is not a whole number of minutes reads as seconds" do
       assert CLI.limit_phrase_for_test(90_000) == "90 seconds"
       assert CLI.limit_phrase_for_test(45_000) == "45 seconds"
       assert CLI.limit_phrase_for_test(1000) == "1 second"
+      assert CLI.limit_phrase_for_test(1_001_000) == "1001 seconds"
     end
   end
 
@@ -845,29 +889,35 @@ defmodule Meerkat.CLITest do
   end
 
   describe "reject_on_crash/1" do
+    defp reject_on_crash(review) do
+      ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.reject_on_crash(review) end)
+    end
+
     test "returns the review's exit code" do
-      assert CLI.reject_on_crash(fn -> 1 end) == 1
+      assert reject_on_crash(fn -> 1 end) == {1, ""}
     end
 
     test "a taken --port is a rejected argument, exit 64" do
-      stderr =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert CLI.reject_on_crash(fn -> raise Meerkat.PortInUseError, port: 4321 end) == 64
-        end)
-
-      assert stderr ==
-               "meerkat: port 4321 is in use (--port 4321); pick another port or omit --port\n"
+      assert reject_on_crash(fn -> raise Meerkat.PortInUseError, port: 4321 end) ==
+               {64,
+                "meerkat: port 4321 is in use (--port 4321); pick another port or omit --port\n"}
     end
 
-    test "a crash, throw or exit rejects with exit 2" do
-      for review <- [fn -> raise "boom" end, fn -> throw(:boom) end, fn -> exit(:boom) end] do
-        stderr =
-          ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert CLI.reject_on_crash(review) == 2
-          end)
+    test "any other exception rejects the commit with its stack trace" do
+      assert {2, stderr} = reject_on_crash(fn -> raise "boom" end)
 
-        assert stderr =~ "defaulting to REJECT (commit aborted)."
-      end
+      assert stderr =~
+               ~r/\Ameerkat: live-review crashed — defaulting to REJECT \(commit aborted\)\.\n\*\* \(RuntimeError\) boom\n    /
+    end
+
+    test "a throw or exit rejects the commit naming what was caught" do
+      assert reject_on_crash(fn -> throw(:gone) end) ==
+               {2,
+                "meerkat: live-review caught :throw :gone — defaulting to REJECT (commit aborted).\n"}
+
+      assert reject_on_crash(fn -> exit(:shutdown) end) ==
+               {2,
+                "meerkat: live-review caught :exit :shutdown — defaulting to REJECT (commit aborted).\n"}
     end
   end
 
@@ -982,7 +1032,9 @@ defmodule Meerkat.CLITest do
           end)
         end)
 
-      assert err =~ "couldn't auto-open browser (no opener here)"
+      assert err ==
+               "meerkat: couldn't auto-open browser (no opener here). Open #{@url} manually.\n"
+
       assert File.read!(marker) == ""
     end
 
@@ -1029,9 +1081,8 @@ defmodule Meerkat.CLITest do
     end
 
     test "approve exits 0 and says the commit proceeds", %{path: path} do
-      {code, err} = exit_code({:approve, ""}, path)
-      assert code == 0
-      assert err =~ "The user approved your commit. Proceeding."
+      assert exit_code({:approve, ""}, path) ==
+               {0, "The user approved your commit. Proceeding.\n"}
     end
 
     test "approve-with-feedback exits 0 and carries the comments", %{path: path} do
@@ -1045,7 +1096,7 @@ defmodule Meerkat.CLITest do
          %{path: path} do
       {code, err} = exit_code({:timeout, "PAYLOAD-BODY"}, path)
       assert code == 0
-      assert err =~ "Nobody read this diff."
+      assert err =~ ~r/\ANo review within .+ Nobody read this diff\.\n\n── /
       assert err =~ "Review timed out, commit auto-approved unread"
       assert err =~ "PAYLOAD-BODY"
     end
@@ -1068,9 +1119,8 @@ defmodule Meerkat.CLITest do
     end
 
     test "cancel exits 1 and says there is no feedback", %{path: path} do
-      {code, err} = exit_code({:cancel, ""}, path)
-      assert code == 1
-      assert err =~ "Review cancelled — commit aborted, no feedback to act on."
+      assert exit_code({:cancel, ""}, path) ==
+               {1, "Review cancelled — commit aborted, no feedback to act on.\n"}
     end
 
     test "an ended review exits 1 and says it ended", %{path: path} do
@@ -1142,6 +1192,7 @@ defmodule Meerkat.CLITest do
 
       assert File.read!(path) == "PAYLOAD-BODY"
       assert out =~ "PAYLOAD-BODY"
+      assert String.starts_with?(out, "\n── User rejected the commit")
       # Verdict + path appear top and bottom so they survive a head/tail truncation.
       assert length(Regex.scan(~r/User rejected the commit/, out)) == 2
       assert length(Regex.scan(~r/full feedback saved to/, out)) == 2
@@ -1161,6 +1212,15 @@ defmodule Meerkat.CLITest do
                  banner <> "PAYLOAD-BODY" <> banner
 
       assert banner =~ "full feedback could not be written to disk"
+    end
+
+    test "a path File.write/2 raises on is reported like an unwritable one" do
+      out = CLI.write_feedback_for_test(:reject, "PAYLOAD-BODY", "no-live-review", nil)
+
+      assert out =~
+               ~r/\Ameerkat: warning — couldn't save full feedback to  \(%FunctionClauseError\{.+\}\)\.\n/
+
+      assert out =~ "full feedback could not be written to disk"
     end
 
     test "a payload that is not a string is refused before any feedback file is written" do
@@ -1316,6 +1376,34 @@ defmodule Meerkat.CLITest do
 
       assert CLI.auto_approve_decision_for_test(dir) ==
                {:auto, "meerkat: all 1 staged file(s) are linguist-generated — auto-approving.\n"}
+    end
+
+    test "a staged file list git refuses warns and falls through to a live review", %{dir: dir} do
+      stub_git("--name-status", {"fatal: index broken\n", 128})
+
+      {decision, stderr} =
+        ExUnit.CaptureIO.with_io(:stderr, fn -> CLI.auto_approve_decision_for_test(dir) end)
+
+      assert decision == :live
+      {:error, reason} = Meerkat.Git.staged_files(dir)
+      assert reason =~ "index broken"
+
+      assert stderr ==
+               "meerkat: warning — couldn't list staged files for auto-approve check (#{reason}); " <>
+                 "falling through to live review.\n"
+    end
+
+    test "staged blob OIDs git refuses leave even an approved file to a live review", %{dir: dir} do
+      File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
+      git(dir, ["add", "a.rs"])
+      oid = git(dir, ["rev-parse", ":a.rs"])
+      path = ApprovalCache.path_for(dir)
+      {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
+      stub_git("ls-files", {"fatal: index broken\n", 128})
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert CLI.auto_approve_decision_for_test(dir) == :live
+      end)
     end
 
     test "empty staged diff + pending answers → live review, never auto-approve", %{dir: dir} do

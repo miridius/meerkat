@@ -15,6 +15,7 @@ defmodule Meerkat.Markdown do
   """
   @spec to_safe_html(String.t() | nil) :: String.t()
   def to_safe_html(nil), do: ""
+  # muex:ignore equivalent: the general clause renders "" to "" too
   def to_safe_html(""), do: ""
 
   def to_safe_html(body) do
@@ -93,6 +94,7 @@ defmodule Meerkat.Markdown do
     |> String.split("\n")
     |> group_lines()
     |> Enum.map(&String.trim_trailing/1)
+    # muex:ignore equivalent: every block group_lines/1 returns starts with a non-blank line, so none is blank
     |> Enum.reject(&(String.trim(&1) == ""))
   end
 
@@ -123,6 +125,7 @@ defmodule Meerkat.Markdown do
     end
   end
 
+  # muex:ignore equivalent: without it the empty block the general clause adds is "", which split_blocks/1 drops
   defp flush(blocks, []), do: blocks
   defp flush(blocks, current), do: [current |> Enum.reverse() |> Enum.join("\n") | blocks]
 
@@ -143,6 +146,7 @@ defmodule Meerkat.Markdown do
 
     case Regex.run(~r/^\s{0,3}([`~]{3,})\s*$/, line) do
       [_, marker] ->
+        # muex:ignore equivalent: swapping the two pure checks joined by `and` changes nothing
         String.first(marker) == char and String.length(marker) >= String.length(fence)
 
       _ ->

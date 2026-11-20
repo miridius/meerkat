@@ -34,6 +34,7 @@ defmodule Meerkat.OpenForms do
 
   defp anchor_suffix(%{file_index: idx}), do: ":#{idx}"
   defp anchor_suffix(%{start_line: f, end_line: t}), do: ":#{f}-#{t}"
+  # muex:ignore equivalent: key/1 interpolates the suffix, and nil interpolates as ""
   defp anchor_suffix(_), do: ""
 
   @doc """

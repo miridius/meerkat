@@ -83,11 +83,13 @@ defmodule Meerkat.PendingQuestions do
   end
 
   defp valid_question?(%{"location" => location, "question" => question}),
+    # muex:ignore equivalent: swapping the two pure checks joined by `and` changes nothing
     do: is_binary(location) and is_binary(question)
 
   defp valid_question?(_), do: false
 
   defp answers?(answer, question) do
+    # muex:ignore equivalent: the checks are pure and every entry has the keys they read, so order is moot
     answer.location == question.location and answer.question == question.question and
       is_binary(answer.answer) and String.trim(answer.answer) != ""
   end

@@ -370,6 +370,22 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "src/app/util.clj", :new, "helper")
   end
 
+  test "an old row of a renamed file answers from the file's old name", ctx do
+    file = %{
+      file_name: "src/app/renamed.clj",
+      old_file_name: "src/app/before.clj",
+      old_content: "(ns app.before)\n\n(defn gone \"Gone doc.\" [] 1)\n",
+      new_content: "(ns app.renamed)\n"
+    }
+
+    rid = "clj-hover-#{System.unique_integer([:positive])}"
+    {:ok, pid} = CljHover.ensure_started(rid, ctx.dir, [file])
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert %{name: "app.before/gone", where: "src/app/before.clj"} =
+             CljHover.hover(rid, 0, :old, 3, 7)
+  end
+
   test "locals, blank lines and vars off the classpath answer nothing", ctx do
     # The local y, clojure.core/defn (no Clojure jar on this classpath),
     # and the blank line before `(defn run`.

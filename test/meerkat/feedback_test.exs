@@ -146,6 +146,71 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "  2. Address 2 feedback comments below (2 issue).\n\n\n⚠"
     end
 
+    test "mixed — each kind of feedback comment is counted" do
+      state = %ReviewState{
+        global_comments: [
+          comment(body: "fix", finding_type: :issue),
+          comment(body: "maybe", finding_type: :suggestion),
+          comment(body: "why?", finding_type: :question)
+        ]
+      }
+
+      [_, kinds] =
+        Regex.run(
+          ~r/\n  2\. Address 2 feedback comments below \((.*)\)\.\n/,
+          Feedback.format(state, :rejection)
+        )
+
+      # A map holds the counts, so the kinds come in no fixed order.
+      assert kinds |> String.split(", ") |> Enum.sort() == ["1 issue", "1 suggestion"]
+    end
+
+    test "questions-only — names every question's surface, and each comment reminds it is a question" do
+      reminder =
+        "\n      ↳ question — answer with analysis only. Do NOT edit code for this comment.\n"
+
+      state = %ReviewState{
+        files: [%{file_name: "a.ex", old_content: "o1\no2\no3", new_content: "n1"}],
+        commit_message: "subject\n\nbody one\nbody two\nbody three",
+        comments: [
+          inline_comment(
+            side: :old,
+            start_line: 1,
+            end_line: 2,
+            body: "line?",
+            finding_type: :question
+          )
+        ],
+        file_comments: [comment(file_index: 0, body: "file?", finding_type: "question")],
+        global_comments: [comment(body: "global?", finding_type: :question)],
+        commit_message_comments: [
+          comment(start_line: 3, end_line: 4, body: "message?", finding_type: "question")
+        ]
+      }
+
+      out = Feedback.format(state, :auto)
+
+      assert String.starts_with?(
+               out,
+               "▶ ACTION: answer 4 questions — see the directive below. No code changes; " <>
+                 "the comments are inline file #0 old L1-2, file #0, global, commit-msg L3-4.\n\n\n⚠"
+             )
+
+      [_directive, sections] = String.split(out, "cannot silently discard them.\n\n", parts: 2)
+
+      assert sections ==
+               "\nLine-level comments:\n\n  a.ex:1-2 (old)\n    - o1\n    - o2\n" <>
+                 "    > **question:** line?" <>
+                 reminder <>
+                 "\nFile-level comments:\n\n  a.ex\n    > **question:** file?" <>
+                 reminder <>
+                 "\nGlobal comments:\n  > **question:** global?" <>
+                 reminder <>
+                 "\nCommit message comments:\n\n  commit-message:3-4\n" <>
+                 "    | body one\n    | body two\n    > **question:** message?" <>
+                 reminder <> "\n"
+    end
+
     test "pluralisation: 1 question vs N questions" do
       one = %ReviewState{
         global_comments: [comment(body: "q1", finding_type: :question)]
@@ -460,6 +525,106 @@ defmodule Meerkat.FeedbackTest do
       assert out =~ "rewrite subject"
       # The referenced commit-message line is quoted back under the tag.
       assert out =~ "| subject"
+    end
+
+    test "comments on one surface follow each other, a multi-line body indented under its first line" do
+      state = %ReviewState{
+        files: [%{file_name: "a.ex", new_content: "n1\nn2"}],
+        commit_message: "subject",
+        comments: [
+          inline_comment(body: "one\ntwo"),
+          inline_comment(start_line: 2, end_line: 2, body: "three")
+        ],
+        file_comments: [
+          comment(file_index: 0, body: "one\ntwo"),
+          comment(file_index: 0, body: "three")
+        ],
+        global_comments: [comment(body: "one\ntwo"), comment(body: "three")],
+        commit_message_comments: [
+          comment(start_line: 1, end_line: 1, body: "one\ntwo"),
+          comment(start_line: 1, end_line: 1, body: "three")
+        ]
+      }
+
+      assert Feedback.format(state, :auto) ==
+               "\nLine-level comments:\n" <>
+                 "\n  a.ex:1 (new)\n    + n1\n    > **issue:** one\n      two\n" <>
+                 "\n  a.ex:2 (new)\n    + n2\n    > **issue:** three\n" <>
+                 "\nFile-level comments:\n" <>
+                 "\n  a.ex\n    > **issue:** one\n      two\n" <>
+                 "\n  a.ex\n    > **issue:** three\n" <>
+                 "\nGlobal comments:\n" <>
+                 "  > **issue:** one\n    two\n" <>
+                 "  > **issue:** three\n" <>
+                 "\nCommit message comments:\n" <>
+                 "\n  commit-message:1\n    | subject\n    > **issue:** one\n      two\n" <>
+                 "\n  commit-message:1\n    | subject\n    > **issue:** three\n" <>
+                 "\n"
+    end
+
+    test "a missing body renders as empty, and a revert without one as restore from HEAD" do
+      state = %ReviewState{
+        global_comments: [
+          comment(body: nil, finding_type: :revert),
+          comment(body: nil, finding_type: nil),
+          comment(body: nil, finding_type: :issue)
+        ]
+      }
+
+      assert Feedback.format(state, :auto) ==
+               "\nGlobal comments:\n  > **restore from HEAD**\n  > \n  > **issue:** \n\n"
+    end
+
+    test "an inline comment quotes nothing from a side that is missing or empty" do
+      files = [
+        %{file_name: "no-old.ex", new_content: "n"},
+        %{file_name: "no-new.ex", old_content: "o"},
+        %{file_name: "nil.ex", new_content: nil},
+        %{file_name: "empty.ex", new_content: ""}
+      ]
+
+      state = %ReviewState{
+        files: files,
+        comments: [
+          inline_comment(file_index: 0, side: :old),
+          inline_comment(file_index: 1),
+          inline_comment(file_index: 2),
+          inline_comment(file_index: 3)
+        ]
+      }
+
+      assert Feedback.format(state, :auto) ==
+               "\nLine-level comments:\n" <>
+                 "\n  no-old.ex:1 (old)\n\n    > **issue:** x\n" <>
+                 "\n  no-new.ex:1 (new)\n\n    > **issue:** x\n" <>
+                 "\n  nil.ex:1 (new)\n\n    > **issue:** x\n" <>
+                 "\n  empty.ex:1 (new)\n\n    > **issue:** x\n\n"
+    end
+
+    test "a one-character source or commit message is quoted, and a range's trailing empty line is not" do
+      state = %ReviewState{
+        files: [%{file_name: "x.ex", new_content: "x"}, %{file_name: "t.ex", new_content: "a\n"}],
+        commit_message: "x",
+        comments: [inline_comment(file_index: 0), inline_comment(file_index: 1, end_line: 2)],
+        commit_message_comments: [comment(start_line: 1, end_line: 1)]
+      }
+
+      assert Feedback.format(state, :auto) ==
+               "\nLine-level comments:\n" <>
+                 "\n  x.ex:1 (new)\n    + x\n    > **issue:** x\n" <>
+                 "\n  t.ex:1-2 (new)\n    + a\n    > **issue:** x\n" <>
+                 "\nCommit message comments:\n" <>
+                 "\n  commit-message:1\n    | x\n    > **issue:** x\n\n"
+    end
+
+    test "an inline comment's side is named by its text, a nil side included" do
+      state = %ReviewState{
+        files: [%{file_name: "x.ex", new_content: "n"}],
+        comments: [inline_comment(side: nil, finding_type: :question)]
+      }
+
+      assert Feedback.questions(state) == [%{location: "x.ex:1 (nil)", question: "x"}]
+      assert Feedback.format(state, :auto) =~ "\n  x.ex:1 (nil)\n    + n\n"
     end
 
     test "inline comment carries file-index + line-range tag" do

@@ -53,6 +53,47 @@ defmodule Meerkat.CLIMainTest do
     assert Application.get_all_env(:meerkat) == env_before
   end
 
+  test "an auto-approved commit clears an answers file that holds no answers",
+       %{repo: repo, commit_msg: commit_msg} do
+    path = PendingAnswers.path_for(repo)
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(
+      path,
+      Jason.encode!(%{version: 1, createdAt: "2026-05-14T00:00:00Z", answers: []})
+    )
+
+    assert {0, _} = run_main(["--commit-msg", commit_msg, "--no-open"])
+    refute File.exists?(path)
+  end
+
+  # In this process, so the git stand-in reaches the review.
+  defp main_with_git(argv, git) do
+    ExUnit.CaptureIO.with_io(:stderr, fn ->
+      stub_git(git)
+      CLI.main(argv)
+    end)
+  end
+
+  test "an exception that escapes the review rejects the commit with its stack trace" do
+    {code, stderr} = main_with_git(["--no-open"], fn _argv -> raise "git exploded" end)
+
+    assert code == 2
+
+    assert stderr =~
+             ~r/\Ameerkat: unhandled exception in CLI main — defaulting to REJECT \(commit aborted\)\.\n\*\* \(RuntimeError\) git exploded\n    /
+  end
+
+  test "a throw or exit that escapes the review rejects the commit naming what was caught" do
+    assert main_with_git(["--no-open"], fn _argv -> throw(:git_gone) end) ==
+             {2,
+              "meerkat: caught :throw :git_gone in CLI main — defaulting to REJECT (commit aborted).\n"}
+
+    assert main_with_git(["--no-open"], fn _argv -> exit(:git_gone) end) ==
+             {2,
+              "meerkat: caught :exit :git_gone in CLI main — defaulting to REJECT (commit aborted).\n"}
+  end
+
   # Git names staged files from the root, and reads the paths it is given
   # from where it runs, so a review run from a subdirectory once looked up
   # none of its files' blobs and kept no approval.
@@ -265,8 +306,16 @@ defmodule Meerkat.CLIMainTest do
     {code, stderr} = run_main(["no-such-ref", "--no-open"])
 
     assert code == 64
+
+    {{:error, reason}, _} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Meerkat.ReviewState.from_target({:single_ref, "no-such-ref"}, repo)
+      end)
+
     # A whole line: a crash's stack trace can quote the same text.
-    assert stderr =~ ~r/^meerkat: error resolving review target: /m
+    assert stderr =~
+             ~r/^#{Regex.escape("meerkat: error resolving review target: #{reason}")}$/m
+
     assert Application.get_all_env(:meerkat) == env_before
   end
 

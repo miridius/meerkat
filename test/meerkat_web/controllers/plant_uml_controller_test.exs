@@ -3,10 +3,17 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
   use MeerkatWeb.ConnCase, async: false
 
   describe "GET /api/plantuml/svg" do
-    test "400 when src is missing", %{conn: conn} do
-      conn = get(conn, "/api/plantuml/svg")
-      assert conn.status == 400
-      assert conn.resp_body == "missing src"
+    test "400 when src is missing, naming the params it got on stderr", %{conn: conn} do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          conn = get(conn, "/api/plantuml/svg", other: "x")
+          assert conn.status == 400
+          assert conn.resp_body == "missing src"
+        end)
+
+      assert stderr ==
+               "meerkat: PlantUMLController.svg/2 — bad request, missing or non-binary src " <>
+                 ~s|(params keys: ["other"])\n|
     end
 
     # Over a real socket, with the HTTP options meerkat serves with: the
@@ -84,7 +91,11 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
 
         assert conn.status == 422
         assert conn.resp_body =~ "Syntax Error?"
-        assert ["text/plain;" <> _] = get_resp_header(conn, "content-type")
+        assert ["text/plain;" <> params] = get_resp_header(conn, "content-type")
+
+        assert params |> String.split(";") |> Enum.map(&String.trim/1) |> Enum.uniq() == [
+                 "charset=utf-8"
+               ]
       end)
     end
   end

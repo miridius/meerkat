@@ -34,7 +34,6 @@ defmodule Meerkat.ReviewLog do
   @spec start(String.t(), ReviewState.t()) :: t
   def start(repo_path, %ReviewState{} = state) do
     reviews_dir = reviews_dir(repo_path)
-    File.mkdir_p!(reviews_dir)
 
     {iso, fname_ts} = now_strings()
     slug = slugify_branch(state.head_branch)
@@ -130,6 +129,7 @@ defmodule Meerkat.ReviewLog do
 
     fname =
       [now.year, now.month, now.day, now.hour, now.minute, now.second]
+      # muex:ignore equivalent: each part pads at most one char, and padding "0x" supplies the same "0"
       |> Enum.map_join("", &(Integer.to_string(&1, 10) |> String.pad_leading(2, "0")))
 
     {iso, fname}
@@ -160,9 +160,11 @@ defmodule Meerkat.ReviewLog do
   defp file_record(file, _repo_path, approval_cache, approval_key) do
     oid = Map.get(file, :effective_oid) || ""
 
-    was_approved =
-      not is_nil(approval_key) and oid != "" and
-        ApprovalCache.approved?(approval_cache, approval_key, file.file_name, oid)
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    has_oid = not is_nil(approval_key) and oid != ""
+    cached = ApprovalCache.approved?(approval_cache, approval_key, file.file_name, oid)
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    was_approved = has_oid and cached
 
     %{
       file_name: file.file_name,

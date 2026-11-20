@@ -62,6 +62,26 @@ defmodule Meerkat.ReviewLogTest do
              ]
     end
 
+    test "writes a version 1 record under the repo's reviews dir, stamped with its start time",
+         %{repo: repo} do
+      pr = %{number: 7, title: "Fix it", url: "https://example.com/pull/7", body: "unlogged"}
+      log = ReviewLog.start(repo, %ReviewState{head_branch: "main", pr: pr})
+
+      assert Path.dirname(log.path) == Path.join(Meerkat.Git.meerkat_dir(repo), "reviews")
+      record = read_log(log)
+      assert record["version"] == 1
+
+      assert record["pr"] == %{
+               "number" => 7,
+               "title" => "Fix it",
+               "url" => "https://example.com/pull/7"
+             }
+
+      {:ok, started, 0} = DateTime.from_iso8601(record["started_at"])
+      stamp = Calendar.strftime(started, "%Y%m%d%H%M%S")
+      assert Path.basename(log.path) == "#{stamp}-main-empty.json"
+    end
+
     test "marks no file approved when the review has no branch", %{repo: repo} do
       :ok =
         ApprovalCache.save(%{"main" => %{"a.ex" => ["oid-a"]}}, ApprovalCache.path_for(repo))

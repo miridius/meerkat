@@ -102,7 +102,7 @@ defmodule Meerkat.TimeoutTest do
     end
 
     test "a limit that is not a whole number of seconds is ignored" do
-      for bogus <- ["", "abc", "-60", "12.5", "60s"] do
+      for bogus <- ["", "abc", "-60", "-1", "12.5", "60s"] do
         with_env(bogus, fn ->
           assert Timeout.limit_ms() == 90 * 60 * 1000,
                  "#{inspect(bogus)} should leave the default standing"
@@ -161,12 +161,23 @@ defmodule Meerkat.TimeoutTest do
     end
 
     test "a known value, or none, prints nothing" do
-      for value <- [nil, "", "true", "0"] do
+      for value <- [nil, "", "true", "0", "false", "no"] do
         with_action(value, fn ->
           assert capture_io(:stderr, fn -> :ok = Timeout.warn_if_unrecognised() end) == "",
                  "#{inspect(value)} should print no warning"
         end)
       end
+    end
+  end
+
+  describe "check_interval_ms/0" do
+    test "the deadline is checked every 15 seconds unless the app env sets another interval" do
+      assert Timeout.check_interval_ms() == 15_000
+
+      Application.put_env(:meerkat, :deadline_check_ms, 40)
+      on_exit(fn -> Application.delete_env(:meerkat, :deadline_check_ms) end)
+
+      assert Timeout.check_interval_ms() == 40
     end
   end
 
@@ -250,6 +261,12 @@ defmodule Meerkat.TimeoutTest do
       assert with_run_id("run-two", fn -> Timeout.deadline_ms(repo, "abc123") end) > first
     end
 
+    test "a blank run id anchors the review as an unkeyed run", %{repo: repo} do
+      with_run_id("  ", fn -> Timeout.deadline_ms(repo, "abc123") end)
+
+      assert File.exists?(anchor_path(repo, "abc123", "unkeyed"))
+    end
+
     test "a respawn within one run resumes the remaining time", %{repo: repo} do
       first = with_run_id("run-one", fn -> Timeout.deadline_ms(repo, "abc123") end)
       Process.sleep(20)
@@ -305,6 +322,19 @@ defmodule Meerkat.TimeoutTest do
       assert kept? == {:checked, true}
     end
 
+    test "a run a few seconds older than the limit plus two checks is pruned", %{repo: repo} do
+      Application.put_env(:meerkat, :deadline_check_ms, 60_000)
+      on_exit(fn -> Application.delete_env(:meerkat, :deadline_check_ms) end)
+      window_s = div(Timeout.limit_ms() + 2 * 60_000, 1000)
+
+      with_run_id("overdue", fn -> Timeout.deadline_ms(repo, "abc123") end)
+      :ok = File.touch!(run_dir(repo, "overdue"), System.system_time(:second) - window_s - 3)
+
+      with_run_id("current", fn -> :ok = Timeout.prune_stale(repo) end)
+
+      refute File.exists?(run_dir(repo, "overdue"))
+    end
+
     test "a repo that has never held an anchor is pruned without error", %{repo: repo} do
       repo |> run_dir("any") |> Path.dirname() |> File.rm_rf!()
 
@@ -337,6 +367,7 @@ defmodule Meerkat.TimeoutTest do
 
       refute File.exists?(run_dir(repo, "1-stale"))
       refute File.exists?(run_dir(repo, "2-stale"))
+      assert {:ok, _} = File.lstat(Path.join(deadlines, "0-vanished"))
     end
 
     test "a disabled deadline prunes nothing — a live run's anchor has no stale age", %{
@@ -358,6 +389,11 @@ defmodule Meerkat.TimeoutTest do
       assert Timeout.expired?(now - 1)
       refute Timeout.expired?(now + 60_000)
     end
+
+    test "a deadline expires on its own millisecond" do
+      assert Timeout.expired?(1_000, 1_000)
+      refute Timeout.expired?(1_001, 1_000)
+    end
   end
 
   describe "clear/2" do
@@ -367,6 +403,14 @@ defmodule Meerkat.TimeoutTest do
       :ok = Timeout.clear(repo, "abc123")
 
       assert Timeout.deadline_ms(repo, "abc123") > first
+    end
+
+    test "clearing a run's last anchor removes the run's deadline directory", %{repo: repo} do
+      _ = Timeout.deadline_ms(repo, "abc123")
+
+      :ok = Timeout.clear(repo, "abc123")
+
+      refute File.exists?(run_dir(repo, "unkeyed"))
     end
 
     test "clearing an anchor that was never written is not an error", %{repo: repo} do
@@ -515,10 +559,10 @@ defmodule Meerkat.TimeoutTest do
 
         assert_received {:decision, {:timeout, ""}}
 
-        assert warning =~ "couldn't read the comments saved for abc123",
+        assert warning =~
+                 ~r/\Ameerkat: warning — couldn't read the comments saved for abc123: :error [{%]\S.*\. Auto-approving without them\.\n\z/s,
                "the commit is told its comments were lost rather than losing them silently"
 
-        assert warning =~ "Auto-approving without them."
         assert {:ok, []} = PendingQuestions.unanswered(repo)
       end
     end

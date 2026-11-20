@@ -33,12 +33,12 @@ defmodule MeerkatWeb.ReviewLive do
   }
 
   @impl true
-  # muex:ignore equivalent: mount ignores both params and session, so swapping them changes nothing
   def mount(_params, _session, socket) do
     # phx-track-static only sends the page's asset URLs on join; LiveView
     # never reloads the page on a mismatch by itself.
     # Redirect a connected tab with outdated assets to "/" for a full page load
     # of the current build instead of leaving it running old JS/CSS.
+    # muex:ignore equivalent: static_changed?/1 is false unless connected?/1 holds, and reads only connect params
     if connected?(socket) and static_changed?(socket) do
       {:ok, redirect(socket, to: ~p"/")}
     else
@@ -153,8 +153,12 @@ defmodule MeerkatWeb.ReviewLive do
   defp start_clj_hover(files, review_id, repo_path) do
     clojure? = Enum.any?(files, &CljHover.clojure_file?(&1.file_name))
     kondo? = CljHover.Kondo.available?()
+
+    # muex:ignore equivalent: all three operands are booleans computed above, so their order changes nothing
     on? = clojure? and kondo? and review_id != "unbound"
     if on?, do: {:ok, _pid} = CljHover.ensure_started(review_id, repo_path, files)
+
+    # muex:ignore equivalent: both operands are booleans computed above, so their order changes nothing
     %{on: on?, kondo_missing: clojure? and not kondo?}
   end
 
@@ -192,6 +196,7 @@ defmodule MeerkatWeb.ReviewLive do
     # alive briefly after Decision.submit_review/4 to flush state before halting
     # with the decision's exit code (0/1), and a restart (75) here would
     # preempt that code and lose the reviewer's approve/reject.
+    # muex:ignore equivalent: these checks are pure (Decision.current/0 only reads), so their order changes nothing
     if socket.assigns[:update_pending] and socket.assigns.open_forms == [] and
          is_nil(Decision.current()) do
       Meerkat.Restart.request()
@@ -519,7 +524,6 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       form == nil ->
-        # muex:ignore pure observability: only reorders the stderr breadcrumb text
         IO.puts(:stderr, "meerkat: comment.submit ignored — form not open: #{inspect(key)}")
 
         {:reply,
@@ -871,6 +875,7 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply,
      socket
      |> assign(done: done_view(settled(submitted)), pending_answers: nil)
+     # muex:ignore equivalent: the decision broadcast wipes the same drafts (see decision.approve)
      |> wipe_drafts()}
   end
 
@@ -987,6 +992,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp persist_approval_cache_toggle(repo_path, file_name, approved?, branch, state) do
     with branch when is_binary(branch) <- branch,
          path when is_binary(path) <- ApprovalCache.path_for(repo_path) do
+      # muex:ignore equivalent: both operands are pure booleans, so their order changes nothing
       if approved? and missing_effective_oid?(state, file_name) do
         # Can't content-address the approval — log so a non-persisted
         # tick isn't invisible to the operator.
@@ -1073,6 +1079,7 @@ defmodule MeerkatWeb.ReviewLive do
   # `git ls-files -s` per file inside the cache lockdir.
   defp approve_staged_files(cache, branch, files) do
     Enum.reduce(files, cache, fn %{file_name: name, effective_oid: oid}, c ->
+      # muex:ignore equivalent: both operands are pure booleans, so their order changes nothing
       if is_binary(oid) and oid != "",
         do: ApprovalCache.approve(c, branch, name, oid),
         else: c
@@ -1270,7 +1277,9 @@ defmodule MeerkatWeb.ReviewLive do
   # form. `checked` carries the flag's new value, "true" or "false". It
   # can't be named `value`: LiveView's click payload replaces `value`
   # with the checkbox's own, and drops it once the box is unticked.
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :surface, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :comment, :map, required: true
 
   defp flag_toggles(assigns) do
@@ -1322,6 +1331,7 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :message, :string, required: true
 
   defp flash_error_banner(assigns) do
@@ -1333,6 +1343,7 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :pending_answers, :any, required: true
 
   defp pending_answers_banner(assigns) do
@@ -1356,6 +1367,7 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :version, :map, required: true
 
   defp version_chip(assigns) do
@@ -1411,10 +1423,15 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rendered_comments, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :open_forms, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :socket, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :review_id, :string, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
@@ -1494,10 +1511,15 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rendered_comments, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :open_forms, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :socket, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :review_id, :string, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
@@ -1562,23 +1584,37 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :file_order, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :socket, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :mode, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :wrap_lines, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :font_size_px, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :tab_size, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :open_forms, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :visible_indices, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :expanded_approved, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :collapsed_unapproved, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rendered_files, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rendered_html, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :plantuml_available, :boolean, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :clj_hover, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :review_id, :string, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_columns, :list, required: true
@@ -1762,7 +1798,9 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :sides, :map, required: true
+  # muex:ignore equivalent: the default never applies, as the one caller always passes read_errors
   attr :read_errors, :list, default: []
 
   # `@sides` HTML is server-sanitised by
@@ -1796,6 +1834,8 @@ defmodule MeerkatWeb.ReviewLive do
 
   defp markdown_file?(file) do
     ext = file.file_name |> Path.extname() |> String.downcase()
+
+    # muex:ignore equivalent: is_binary is boolean and both operands are pure, so their order changes nothing
     not Map.get(file, :is_binary, false) and ext in [".md", ".markdown"]
   end
 
@@ -1808,9 +1848,13 @@ defmodule MeerkatWeb.ReviewLive do
       Meerkat.PlantUML.available?()
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :filter_input, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :only_file_index, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :visible_indices, :any, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :collapsed_dirs, :any, required: true
@@ -2039,9 +2083,13 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :mode, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :wrap_lines, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :font_size_px, :integer, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :tab_size, :integer, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :rulers, :boolean, required: true
@@ -2049,9 +2097,13 @@ defmodule MeerkatWeb.ReviewLive do
   attr :ruler_input, :string, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :ruler_input_invalid, :boolean, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :repo_path, :string, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :open_forms, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :version, :map, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :clj_kondo_missing, :boolean, required: true
@@ -2288,6 +2340,7 @@ defmodule MeerkatWeb.ReviewLive do
   defp toolbar_title(%ReviewState{pr: %{title: t}}) when is_binary(t) and t != "", do: t
 
   defp toolbar_title(%ReviewState{commit_message: msg}) when is_binary(msg) and msg != "" do
+    # muex:ignore equivalent: a split's first part is the same for any parts limit above 1
     msg |> String.split("\n", parts: 2) |> List.first() |> String.trim()
   end
 
@@ -2339,9 +2392,13 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :open_forms, :list, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :deadline_ms, :any, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
   attr :timeout_action, :atom, required: true
 
   defp decision_footer(assigns) do
@@ -2468,7 +2525,6 @@ defmodule MeerkatWeb.ReviewLive do
   # Files matching the current substring filter — the set the bulk
   # Hide/Show buttons operate on. Empty input → every file.
   defp matched_file_names(state, input) do
-    # muex:ignore equivalent: filter_input is always a string, so the nil fallback never runs
     needle = String.downcase(input || "")
 
     state.files
@@ -2489,6 +2545,7 @@ defmodule MeerkatWeb.ReviewLive do
     state.files
     |> Enum.with_index()
     |> Enum.reduce(MapSet.new(), fn {file, idx}, acc ->
+      # muex:ignore equivalent: both operands are pure comparisons, so their order changes nothing
       in_only_file? = only_file_index == nil or only_file_index == idx
 
       if visible?(state, file, filter_input, in_only_file?),
@@ -2613,6 +2670,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     cond do
       ft_str == "" -> body || ""
+      # muex:ignore equivalent: both operands compare strings, so their order changes nothing
       body_trim == "" and ft_str == "revert" -> "**restore from HEAD**"
       true -> "**#{ft_str}:** #{body || ""}"
     end
@@ -2794,6 +2852,7 @@ defmodule MeerkatWeb.ReviewLive do
     state.files
     |> Enum.with_index()
     |> Enum.filter(fn {file, idx} ->
+      # muex:ignore equivalent: both operands are pure booleans, so their order changes nothing
       MapSet.member?(visible_indices, idx) and
         not file_section_collapsed?(
           state,
@@ -2857,6 +2916,7 @@ defmodule MeerkatWeb.ReviewLive do
   # some PR-ago state"; HEAD is staged-mode-precise and meerkat
   # only ships staged mode in practice.
   defp render_comment_body(body, finding_type) do
+    # muex:ignore equivalent: both operands are pure, and a body String.trim/1 rejects makes to_safe_html/1 raise too
     if to_string(finding_type) == "revert" and String.trim(body || "") == "" do
       "<p><strong>Restore from HEAD.</strong></p>"
     else
@@ -3157,6 +3217,7 @@ defmodule MeerkatWeb.ReviewLive do
   # "" if the file or content is missing.
   defp extract_snippet(file, from, to, side) do
     case side_content(file, side) do
+      # muex:ignore equivalent: without this clause, splitting "" and slicing it joins back to ""
       "" ->
         ""
 
@@ -3211,6 +3272,7 @@ defmodule MeerkatWeb.ReviewLive do
       created_at: Comment.now()
     }
 
+    # muex:ignore equivalent: the anchor's keys never overlap the base comment's, so merge order changes nothing
     comment = Map.merge(base, anchor_extras(surface, anchor))
     ReviewServer.add_comment(review_id, surface, comment)
   end

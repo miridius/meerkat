@@ -153,7 +153,10 @@ defmodule Meerkat.Git do
 
     with {:ok, output} <- run_git(repo_path, args),
          "refs/heads/" <> name <-
-           output |> String.split("\n", trim: true) |> Enum.find_value(&read_head_name/1),
+           output
+           # muex:ignore equivalent: a blank line names no file, so read_head_name/1 reads it as nil either way
+           |> String.split("\n", trim: true)
+           |> Enum.find_value(&read_head_name/1),
          true <- name != "" do
       {:rebasing, name}
     else
@@ -184,6 +187,7 @@ defmodule Meerkat.Git do
 
       {:ok, output} ->
         # Format: `<mode> <oid> <stage>\t<path>`
+        # muex:ignore equivalent: only the first two fields are read, which any `parts:` of 3 or more leaves the same
         case String.split(String.trim(output), [" ", "\t"], parts: 4) do
           [_mode, oid | _] -> {:ok, oid}
           _ -> {:error, "unexpected `git ls-files -s` output for #{path}: #{inspect(output)}"}
@@ -220,7 +224,6 @@ defmodule Meerkat.Git do
           {:ok, %{String.t() => String.t()}} | {:error, String.t()}
   def staged_blob_oids_many(_repo_path, []), do: {:ok, %{}}
 
-  # muex:ignore equivalent: a non-list `paths` raises FunctionClauseError either way, here or in System.cmd/3's check of the improper argument list, before git runs
   def staged_blob_oids_many(repo_path, paths) when is_list(paths) do
     # `core.quotePath=false` so a non-ASCII path comes back raw, matching
     # the `file_name` keys (which come from `--name-status -z`, never
@@ -243,7 +246,6 @@ defmodule Meerkat.Git do
           "couldn't compute batched staged-blob OIDs (#{reason}); approve guard may flag " <>
             "files as stale"
 
-        # muex:ignore pure observability: only reorders the warning text
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
     end
@@ -252,7 +254,6 @@ defmodule Meerkat.Git do
   defp put_staged_oid(line, acc) do
     # `<mode> <oid> <stage>\t<path>`
     case String.split(line, [" ", "\t"], parts: 4) do
-      # muex:ignore equivalent: only unmerged paths repeat, and callers' paths (staged_files/1) exclude them
       [_mode, oid, _stage, path] -> Map.put(acc, path, oid)
       _ -> acc
     end
@@ -266,7 +267,6 @@ defmodule Meerkat.Git do
           {:ok, %{String.t() => String.t()}} | {:error, String.t()}
   def head_blob_oids_many(_repo_path, []), do: {:ok, %{}}
 
-  # muex:ignore equivalent: a non-list `paths` raises FunctionClauseError either way, here or in System.cmd/3's check of the improper argument list, before git runs
   def head_blob_oids_many(repo_path, paths) when is_list(paths) do
     # `core.quotePath=false` for the same raw-path-matching reason as
     # `staged_blob_oids_many`.
@@ -286,7 +286,6 @@ defmodule Meerkat.Git do
         msg =
           "couldn't compute batched HEAD-blob OIDs (#{reason}); deletion approvals may not persist"
 
-        # muex:ignore pure observability: only reorders the warning text
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
     end
@@ -295,7 +294,6 @@ defmodule Meerkat.Git do
   defp put_head_oid(line, acc) do
     # `<mode> <type> <oid>\t<path>`
     case String.split(line, [" ", "\t"], parts: 4) do
-      # muex:ignore equivalent: a tree lists each path once, even when it is asked for twice
       [_mode, _type, oid, path] -> Map.put(acc, path, oid)
       _ -> acc
     end
@@ -323,7 +321,6 @@ defmodule Meerkat.Git do
           {:error, _} -> %{}
         end
 
-      # muex:ignore equivalent: entries come from one --name-status listing, so the maps never share a key
       {:ok, Map.merge(index_oids, head_oids)}
     end
   end
@@ -343,9 +340,9 @@ defmodule Meerkat.Git do
   @spec linguist_generated_many(String.t(), [String.t()]) :: %{
           String.t() => {:generated, boolean()} | {:error, String.t()}
         }
+  # muex:ignore equivalent: without this clause, [] reaches check_attrs/3's [] clause, which runs no git, and Map.new/2 of no paths is %{} too
   def linguist_generated_many(_repo_path, []), do: %{}
 
-  # muex:ignore equivalent: a non-list `paths` raises FunctionClauseError either way, here or in System.cmd/3's check of the improper argument list, before git runs
   def linguist_generated_many(repo_path, paths) when is_list(paths) do
     case check_attrs(repo_path, ["linguist-generated"], paths) do
       {:ok, answered} ->
@@ -356,7 +353,6 @@ defmodule Meerkat.Git do
           "couldn't read `linguist-generated` attribute (#{reason}). " <>
             "Check your `.gitattributes` syntax."
 
-        # muex:ignore pure observability: only reorders the warning text
         IO.puts(:stderr, "meerkat: WARNING — #{msg}")
         Map.new(paths, fn p -> {p, {:error, msg}} end)
     end
@@ -394,7 +390,6 @@ defmodule Meerkat.Git do
        # muex:ignore equivalent: swapping the two equal 3s changes nothing
        |> Enum.chunk_every(3, 3, :discard)
        |> Enum.reduce(%{}, fn [path, attr, value], acc ->
-         # muex:ignore equivalent: git's rows for one path and attribute agree, so put_new changes nothing
          Map.update(acc, path, %{attr => value}, &Map.put(&1, attr, value))
        end)}
     end
@@ -585,7 +580,6 @@ defmodule Meerkat.Git do
       {binary_paths, text_paths} =
         split_unset_diff_text(repo_path, entries, numstat_binary_paths, "HEAD", ":0")
 
-      # muex:ignore equivalent: the batched patch holds no hunks for a file it calls binary, so the keys never overlap
       hunks_map = Map.merge(hunks_map, staged_text_hunks(repo_path, entries, text_paths))
       global_read_errors = batched_hunks_error ++ batched_oids_error ++ binary_paths_error
 
@@ -656,7 +650,6 @@ defmodule Meerkat.Git do
         {paths, []}
 
       {:error, reason} ->
-        # muex:ignore pure observability: only changes the warning text; the reason itself is returned
         IO.puts(:stderr, "meerkat: warning — #{reason}")
         {MapSet.new(), [reason]}
     end
@@ -757,9 +750,10 @@ defmodule Meerkat.Git do
 
   defp text_blob?(nil), do: false
 
-  defp text_blob?(content),
-    do:
-      String.valid?(content) and not (content |> binary_slice(0, 8000) |> String.contains?(<<0>>))
+  defp text_blob?(content) do
+    # muex:ignore equivalent: both operands are booleans with no side effects, so their order changes nothing
+    String.valid?(content) and not (content |> binary_slice(0, 8000) |> String.contains?(<<0>>))
+  end
 
   # `%{object => content}` for each blob one `git cat-file --batch` reads.
   # `System.cmd` can't write to stdin, so `sh` feeds it the names, one
@@ -767,6 +761,7 @@ defmodule Meerkat.Git do
   # such a name is left out, and its file stays binary.
   # An object missing from the answer reads as no content.
   defp read_blobs(repo_path, objects) do
+    # muex:ignore equivalent: both tests are booleans with no side effects, so their order changes nothing
     case Enum.reject(objects, &(&1 =~ "\n" or String.ends_with?(&1, "\r"))) do
       [] ->
         %{}
@@ -774,7 +769,6 @@ defmodule Meerkat.Git do
       objects ->
         script = ~s(printf '%s\\n' "$0" "$@" | exec git cat-file --batch)
 
-        # muex:ignore equivalent: `-cx` only traces to stderr; other mutants here break every read
         sh_args = ["-c", script]
 
         case cmd("sh", sh_args ++ objects, cd: repo_path, env: git_env()) do
@@ -816,7 +810,6 @@ defmodule Meerkat.Git do
   defp split_object(rest, type, size) do
     case rest do
       <<
-        # muex:ignore equivalent: `binary-size` and `size-binary` name one segment type
         content::binary-size(^size),
         "\n",
         rest::binary
@@ -871,7 +864,6 @@ defmodule Meerkat.Git do
         msg =
           "couldn't compute batched staged diff (#{reason}); per-file content may render empty"
 
-        # muex:ignore pure observability: only reorders the warning text
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {:error, msg}
     end
@@ -883,6 +875,7 @@ defmodule Meerkat.Git do
   # inside `staged_hunks_many`.
   def parse_multi_file_diff_for_test(output), do: parse_multi_file_diff(output)
 
+  # muex:ignore equivalent: without this clause, "" splits into no blocks and the next clause gives {:ok, %{}} too
   defp parse_multi_file_diff(""), do: {:ok, %{}}
 
   defp parse_multi_file_diff(output) do
@@ -899,11 +892,15 @@ defmodule Meerkat.Git do
         :error ->
           # Attribution is unsafe when the header itself is malformed.
           # Propagate the error to every file rather than silently dropping it.
-          msg =
-            "couldn't parse staged-diff block (first line: " <>
-              "#{block |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)})"
+          first_line =
+            block
+            # muex:ignore equivalent: hd/1 takes the same first line however many parts follow it
+            |> String.split("\n", parts: 2)
+            |> hd()
+            |> String.slice(0, 200)
 
-          # muex:ignore pure observability: only reorders the warning text
+          msg = "couldn't parse staged-diff block (first line: #{first_line})"
+
           IO.puts(:stderr, "meerkat: warning — #{msg}")
           {acc, errors ++ [msg]}
       end
@@ -928,6 +925,7 @@ defmodule Meerkat.Git do
           Regex.match?(~r/^Binary files .* differ$/m, block) ->
             :no_hunks
 
+          # muex:ignore equivalent: both operands are booleans with no side effects, so their order changes nothing
           not Regex.match?(~r/^@@ /m, block) and
               Regex.match?(
                 ~r/^(rename from |old mode |new file mode |deleted file mode )/m,
@@ -942,6 +940,7 @@ defmodule Meerkat.Git do
       name ->
         hunks =
           block
+          # muex:ignore equivalent: the next stage keeps only pieces starting with @@, so the empty one goes too
           |> String.split(~r/^(?=@@ )/m, trim: true)
           |> Enum.filter(&String.starts_with?(&1, "@@"))
           |> Meerkat.Intraline.split()
@@ -958,10 +957,12 @@ defmodule Meerkat.Git do
   defp extract_marker_path(lines, marker, side) do
     Enum.find_value(lines, fn line ->
       case line do
+        # muex:ignore equivalent: side_path/2 maps a rest of "" or "x", with no side prefix, to nil too
         ^marker <> rest when rest != "" ->
           # Strip the optional `\t<timestamp/mode>` suffix git appends
           # in some configurations. A file name can contain a space but
           # not a tab, and a quoted one carries `\t` as two characters.
+          # muex:ignore equivalent: hd/1 takes the same text before the first tab however many parts follow it
           rest |> String.split("\t", parts: 2) |> hd() |> side_path(side)
 
         _ ->
@@ -988,8 +989,9 @@ defmodule Meerkat.Git do
   defp unescape_git_path(<<?", _rest::binary>>, acc), do: acc
 
   defp unescape_git_path(<<?\\, a, b, c, rest::binary>>, acc)
+       # muex:ignore equivalent: in a guard, ?7..?0 holds the same digits as ?0..?7
        when a in ?0..?7 and b in ?0..?7 and c in ?0..?7 do
-    # muex:ignore equivalent: `a + ?0` shifts byte by 96 * 64, a multiple of 256; `<<byte>>` keeps the low 8 bits
+    # muex:ignore equivalent: `+ ?0` on `a` or `b` adds 96 * 64 or 96 * 8, multiples of 256 `<<byte>>` drops
     byte = (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)
     unescape_git_path(rest, <<acc::binary, byte>>)
   end
@@ -1034,7 +1036,7 @@ defmodule Meerkat.Git do
         _, acc -> acc
       end)
 
-    # muex:ignore equivalent: no file map holds these keys yet, so merge order and put_new change nothing
+    # muex:ignore equivalent: no file map holds these keys yet, so merge order changes nothing
     Map.merge(file, %{additions: additions, deletions: deletions})
   end
 
@@ -1300,7 +1302,7 @@ defmodule Meerkat.Git do
   # Compares paths too: a new repository has no index file to stat.
   defp own_index?(_index, nil), do: false
 
-  # muex:ignore equivalent: both are absolute paths Path.expand leaves as they are (one from Path.expand, one from git's --path-format=absolute), and same_file?/2 is symmetric
+  # muex:ignore equivalent: both operands are booleans with no side effects, and same_file?/2 is symmetric
   defp own_index?(index, own), do: index == Path.expand(own) or same_file?(index, own)
 
   defp same_file?(path, other) do
@@ -1519,7 +1521,6 @@ defmodule Meerkat.Git do
       {:error, reason} ->
         IO.puts(
           :stderr,
-          # muex:ignore pure observability: only reorders the warning text
           "meerkat: warning — couldn't resolve merge-base for #{base}...#{head}: #{reason}. " <>
             "Falling back to two-dot diff against #{base}."
         )
@@ -1556,7 +1557,6 @@ defmodule Meerkat.Git do
 
       {:error, reason} ->
         msg = "couldn't read staged content for #{path}: #{reason}"
-        # muex:ignore pure observability: only reorders the warning text
         IO.puts(:stderr, "meerkat: warning — #{msg}")
         {"", [msg]}
     end
@@ -1568,6 +1568,7 @@ defmodule Meerkat.Git do
   # blocks within it; we pass them through verbatim.
   defp hunks_for_path(repo_path, diff_args) do
     case run_git(repo_path, diff_args) do
+      # muex:ignore equivalent: without it, "" or "x", having no @@ line, gets {[], []} from the next clause
       {:ok, ""} ->
         {[], []}
 
@@ -1579,6 +1580,7 @@ defmodule Meerkat.Git do
         # highlighting.
         hunks =
           output
+          # muex:ignore equivalent: the next stage keeps only pieces starting with @@, so the empty one goes too
           |> String.split(~r/^(?=@@ )/m, trim: true)
           |> Enum.filter(&String.starts_with?(&1, "@@"))
           |> Meerkat.Intraline.split()

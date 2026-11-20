@@ -130,19 +130,21 @@ defmodule Meerkat.GitHub do
         end
     end
   rescue
-    e in [ErlangError] ->
-      IO.puts(
-        :stderr,
-        "meerkat: warning — gh pr view: gh not on PATH (#{Exception.message(e)})"
-      )
-
-      nil
-
+    # Before ErlangError, which also catches these: they start as Erlang
+    # errors such as {:badkey, _} and :badarg.
     e in [KeyError, ArgumentError, FunctionClauseError] ->
       IO.puts(
         :stderr,
         "meerkat: warning — gh pr view returned an unexpected JSON shape: " <>
           "#{Exception.message(e)}"
+      )
+
+      nil
+
+    e in [ErlangError] ->
+      IO.puts(
+        :stderr,
+        "meerkat: warning — gh pr view: gh not on PATH (#{Exception.message(e)})"
       )
 
       nil

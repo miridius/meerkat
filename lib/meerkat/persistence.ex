@@ -246,6 +246,7 @@ defmodule Meerkat.Persistence do
       # mismatch.
       msg = Exception.message(e)
 
+      # muex:ignore equivalent: this decode's only ArgumentError is to_existing_atom's, naming an atom
       if msg =~ "atom" do
         {:error, "unknown key (atom not yet defined; file likely from a different version)"}
       else
@@ -264,6 +265,7 @@ defmodule Meerkat.Persistence do
 
   defp persistable_map(state) do
     state
+    # muex:ignore equivalent: Map.put and Map.take treat the struct as this map, and the take drops :__struct__
     |> Map.from_struct()
     |> Map.put(:state_signature, current_signature(state))
     |> Map.take(@persistable_keys)
@@ -305,6 +307,7 @@ defmodule Meerkat.Persistence do
     }
   end
 
+  # muex:ignore equivalent: without it the next clause passes the map on, and Jason writes the same keys
   defp stringify_keys(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
@@ -356,7 +359,9 @@ defmodule Meerkat.Persistence do
     Map.new(map, fn
       {k, "show"} -> {to_string(k), :show}
       {k, "hide"} -> {to_string(k), :hide}
+      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
       {k, :show} -> {to_string(k), :show}
+      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
       {k, :hide} -> {to_string(k), :hide}
       kv -> kv
     end)
@@ -367,8 +372,12 @@ defmodule Meerkat.Persistence do
 
   defp deserialise(_, value), do: value
 
+  # load decodes with `keys: :atoms!`, so every key in `form`, and in its
+  # anchor, is an atom.
   defp deserialise_form(form) do
+    # muex:ignore equivalent: form's keys are atoms, so the string-key lookup always misses
     surface = surface_atom(Map.get(form, "surface") || Map.get(form, :surface))
+    # muex:ignore equivalent: form's keys are atoms, so the string-key lookup always misses
     anchor = atomise_anchor(Map.get(form, "anchor") || Map.get(form, :anchor) || %{})
 
     base = %{
@@ -383,7 +392,9 @@ defmodule Meerkat.Persistence do
       {:initial_correct_instructions, "initial_correct_instructions"},
       {:initial_lint_rule, "initial_lint_rule"}
     ]
+    # muex:ignore equivalent: form's keys are atoms, so no string key above is ever found
     |> Enum.reduce(base, fn {atom, str}, acc ->
+      # muex:ignore equivalent: form's keys are atoms, so the string-key lookup always misses
       case Map.get(form, str) || Map.get(form, atom) do
         nil -> acc
         # muex:ignore equivalent: acc holds only :surface and :anchor, so put_new never finds the key
@@ -397,6 +408,7 @@ defmodule Meerkat.Persistence do
 
   # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
   defp migrate_finding_type(%{finding_type: :thought} = c),
+    # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
     do: Map.put(c, :finding_type, :follow_up)
 
   defp migrate_finding_type(c), do: c
@@ -415,10 +427,16 @@ defmodule Meerkat.Persistence do
     Map.new(map, fn {k, v} -> {anchor_key(k), v} end)
   end
 
+  # muex:ignore equivalent: anchor keys are atoms, so no string key reaches this clause
   defp anchor_key("file_index"), do: :file_index
+  # muex:ignore equivalent: anchor keys are atoms, so no string key reaches this clause
   defp anchor_key("start_line"), do: :start_line
+  # muex:ignore equivalent: anchor keys are atoms, so no string key reaches this clause
   defp anchor_key("end_line"), do: :end_line
+  # muex:ignore equivalent: anchor keys are atoms, so no string key reaches this clause
   defp anchor_key("side"), do: :side
+  # muex:ignore equivalent: the catch-all clause below also returns the key
   defp anchor_key(k) when is_atom(k), do: k
+  # muex:ignore equivalent: anchor keys are atoms, so the clause above takes every one
   defp anchor_key(other), do: other
 end

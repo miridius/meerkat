@@ -771,4 +771,145 @@ defmodule MeerkatWeb.ReviewLiveHelpersTest do
       assert ReviewLive.missing_effective_oid_for_test(absent, "a.ex")
     end
   end
+
+  describe "edge inputs" do
+    test "a one-letter head branch is a title" do
+      assert ReviewLive.toolbar_title_for_test(%ReviewState{head_branch: "x"}) == "x"
+    end
+
+    test "commit-message comments count too" do
+      state = %ReviewState{comments: [%{}], commit_message_comments: [%{}, %{}]}
+      assert ReviewLive.comment_count_for_test(state) == 3
+    end
+
+    test "a comment on the first surface decides without reading the others" do
+      assert ReviewLive.comments_for_test(%{comments: [%{}]})
+    end
+
+    test "a seed anchored before line 1 is empty, even when its end reaches the last line" do
+      assert ReviewLive.commit_msg_seed_code_for_test("a\nb", %{start_line: 0, end_line: 2}) ==
+               ""
+    end
+
+    test "a one-letter side content is sliced like any other" do
+      assert ReviewLive.extract_snippet_for_test(%{new_content: "x"}, 1, 1, "new") == "x"
+      assert ReviewLive.extract_snippet_for_test(%{new_content: ""}, 1, 1, "new") == ""
+    end
+
+    test "the dropdown filter matches base names only, and \"x\" is a filter like any other" do
+      files = [%{file_name: "src/widget.rs"}, %{file_name: "box.rs"}]
+
+      assert ReviewLive.filter_sidebar_entries_for_test(files, "x") == [
+               {%{file_name: "box.rs"}, 1}
+             ]
+
+      assert ReviewLive.filter_sidebar_entries_for_test(files, "src") == []
+    end
+
+    test "an empty dropdown filter lists every file without reading its name" do
+      assert ReviewLive.filter_sidebar_entries_for_test([%{file_name: nil}], "") == [
+               {%{file_name: nil}, 0}
+             ]
+    end
+
+    test "bulk hide/show matches base names case-insensitively, and \"x\" is a filter" do
+      assert ReviewLive.matched_file_names_for_test(@rs, "x") == []
+      assert ReviewLive.matched_file_names_for_test(@rs, "README") == ["README.md"]
+      assert ReviewLive.matched_file_names_for_test(@rs, "vendor") == []
+    end
+
+    test "a missing bulk filter matches every file" do
+      assert ReviewLive.matched_file_names_for_test(@rs, nil) ==
+               ReviewLive.matched_file_names_for_test(@rs, "")
+    end
+
+    test "an empty bulk filter takes every file without reading its name" do
+      state = %ReviewState{files: [%{file_name: nil}]}
+      assert ReviewLive.matched_file_names_for_test(state, "") == [nil]
+    end
+
+    test "the main list's filter matches base names, and \"x\" is a filter" do
+      state = %ReviewState{files: [%{file_name: "src/a.rs"}, %{file_name: "box.rs"}]}
+      # A file without an is_generated flag is not generated.
+      assert ReviewLive.visible_indices_for_test(state, "", nil) == MapSet.new([0, 1])
+      assert ReviewLive.visible_indices_for_test(state, "x", nil) == MapSet.new([1])
+      assert ReviewLive.visible_indices_for_test(state, "src", nil) == MapSet.new()
+    end
+
+    test "a file outside show-only is dropped before its name or filter is read" do
+      state = %ReviewState{files: [%{file_name: nil}]}
+      assert ReviewLive.visible_indices_for_test(state, nil, 1) == MapSet.new()
+    end
+
+    test "an empty filter passes a shown file without reading its name" do
+      state = %ReviewState{files: [%{file_name: nil}], file_overrides: %{nil => :show}}
+      assert ReviewLive.visible_indices_for_test(state, "", nil) == MapSet.new([0])
+    end
+
+    test "with generated files shown, a file's generated flag is not read" do
+      state = %ReviewState{files: [%{file_name: "a.rs", is_generated: nil}], show_generated: true}
+      assert ReviewLive.visible_indices_for_test(state, "", nil) == MapSet.new([0])
+    end
+
+    test "an unknown finding type labels the body; a missing body is empty" do
+      assert ReviewLive.label_for_github_for_test("x", "b") == "**x:** b"
+      assert ReviewLive.label_for_github_for_test(:issue, nil) == "**issue:** "
+    end
+
+    test "a comment with neither a finding type nor a body labels as empty" do
+      assert ReviewLive.label_for_github_for_test(nil, nil) == ""
+    end
+
+    test "a section with nothing to say leaves no empty --- section" do
+      state = %ReviewState{
+        global_comments: [
+          %{id: "g1", finding_type: "", body: ""},
+          %{id: "g2", finding_type: :issue, body: "note"}
+        ]
+      }
+
+      assert ReviewLive.github_payload_for_test(state).body == "**issue:** note"
+    end
+
+    test "a stale body_html is replaced with the body's" do
+      grouped =
+        ReviewLive.group_file_by_file_with_html_for_test([
+          %{id: "f1", file_index: 0, body: "**bold**", finding_type: :issue, body_html: "stale"}
+        ])
+
+      assert [%{body_html: "<p><strong>bold</strong></p>" <> _}] = grouped[0]
+    end
+
+    test "surface atoms map to themselves" do
+      for s <- [:global, :file, :commit_msg, :inline],
+          do: assert(ReviewLive.surface_atom_for_test(s) == s)
+    end
+
+    test "the countdown titles in full" do
+      assert ReviewLive.countdown_title_for_test(:approve) ==
+               "Time left before the review times out and the commit is auto-approved unread"
+
+      assert ReviewLive.countdown_title_for_test(:wait) ==
+               "Time left before the review times out. The review stays open after that."
+    end
+
+    test "an approve with a blank effective oid says why, in full" do
+      assert ReviewLive.stale_oid_check_for_test(
+               "/repo",
+               %{file_name: "f.ex", effective_oid: ""},
+               true
+             ) ==
+               {:stale,
+                "Couldn't verify f.ex's staged blob OID — refresh the review before approving."}
+    end
+
+    test "filter.set_input from a payload that is not a map clears the filter" do
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: %{}, filter_input: "widget", filter_collapsed_dirs: MapSet.new()}
+      }
+
+      assert {:noreply, socket} = ReviewLive.handle_event("filter.set_input", "widget", socket)
+      assert socket.assigns.filter_input == ""
+    end
+  end
 end
