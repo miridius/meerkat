@@ -37,7 +37,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { type Env, type Git, git, holds, type Records, records, withoutGitLocals } from "./checked-trees";
-import { jobCount, onlineCores } from "./mix-test";
+import { jobCount, onlineCores, quietBeams } from "./mix-test";
 
 const NAME = "scripts/mutate.ts";
 
@@ -384,11 +384,12 @@ export function gated(run: Run, io: GatedIo): number {
 	const report = join(io.root, "_build", `mutate-${run.label}.json`);
 	io.removeReport(report);
 	const tests = testPaths(io.find("test", "_test.exs"));
-	// muex strips GIT_INDEX_FILE from the test runs it starts.
-	const muexEnv = run.index === undefined ? env : { ...env, GIT_INDEX_FILE: run.index };
-	// muex runs as many test BEAMs at once as there are cores; like
-	// scripts/mix-test.ts, cap them at half (at least one) so a commit leaves
-	// the machine usable.
+	// muex strips GIT_INDEX_FILE from the test runs it starts. muex, and every
+	// BEAM it starts, for the coverage run, compiles and each mutant's tests,
+	// inherits its environment, so they all get the test runs' scheduler flags.
+	const muexEnv = quietBeams(run.index === undefined ? env : { ...env, GIT_INDEX_FILE: run.index });
+	// Like scripts/mix-test.ts, cap muex's test BEAMs at half the cores (at
+	// least one) so a commit leaves the machine usable.
 	const status = io.run(muexArgs(run, tests, jobCount(io.cores), report), muexEnv);
 	if (status !== 0) return status;
 
