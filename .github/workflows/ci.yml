@@ -44,8 +44,8 @@ jobs:
         with:
           cache: true
 
-      # bin/meerkat-attach opens a named fd (`exec {fd}<`), which the
-      # image's bash 3.2 lacks.
+      # scripts/gate-lock.sh times its tickets with EPOCHREALTIME, which
+      # the image's bash 3.2 lacks.
       - id: gnu-bash
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -150,7 +150,7 @@ jobs:
 
       - run: bun test tests/e2e/lib
 
-      - run: bun test scripts
+      - run: bun test scripts bin/
 
       # The browser is cached per Playwright version.
       - name: Read the Playwright version

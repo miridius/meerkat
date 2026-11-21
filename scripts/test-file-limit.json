@@ -3,7 +3,7 @@
   "cpu_limit_seconds": 10,
   "exempt": {
     "test/scripts/shepherd_test.exs": {
-      "reason": "Took 58-88 s: it drives the real launcher against a fake BEAM, and two tests of its missing-pid wait take about 10 s each. Its waits are load-tolerant, not shorter; shorten those tests, then drop this entry."
+      "reason": "Took about 30 s on an idle machine: it drives the real launcher against a fake BEAM, and a test of its missing-pid wait takes about 10 s. Its waits are load-tolerant, not shorter; shorten that test, then drop this entry."
     }
   }
 }

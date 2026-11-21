@@ -1,6 +1,6 @@
 defmodule MeerkatWeb.AttachController do
   @moduledoc """
-  Endpoints for the caller in `bin/meerkat-attach`. Each requires the
+  Endpoints for the caller in `bin/lib/attach.ts`. Each requires the
   backend's serve token and returns 400 when the run id contains anything
   other than letters, digits, and hyphens.
 
@@ -44,8 +44,8 @@ defmodule MeerkatWeb.AttachController do
   alias Meerkat.{Decision, Feedback, Git, PendingQuestions, Persistence, ReviewState}
 
   # The deadline runs only while a caller is attached. A dead caller is detached when a
-  # heartbeat write fails. The write that kills curl and the server's first write after
-  # curl dies can both succeed; the next write fails. Detachment can take up to three
+  # heartbeat write fails. The first write after the caller's connection closes can
+  # succeed; the next write fails. Detachment can take up to three
   # intervals after the caller dies (1.5 s at 500 ms).
   @heartbeat_ms 500
 

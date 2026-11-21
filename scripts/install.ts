@@ -36,6 +36,7 @@ import {
 } from "node:fs";
 import { constants as osConstants, homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { CLI_HALT, decisionCode } from "../bin/lib/serve.ts";
 
 // How many version dirs to retain for rollback/history. A version a
 // running review is still pinned to is always kept, even past this.
@@ -407,18 +408,16 @@ function install(args: string[]): void {
 	writeFileSync(join(smoke, "MSG"), "msg\n");
 	// Invoke the new version's release exactly as the shepherd does, but
 	// against the new dir directly, since `current` isn't pointed at it yet.
-	run(
-		[
-			"bash",
-			"-c",
-			'source "$1"; meerkat_run_once "$2" eval "$MEERKAT_CLI_HALT" --commit-msg MSG --no-open',
-			"smoke",
-			join(process.cwd(), "bin/meerkat-attach"),
-			join(finalDir, "bin/meerkat"),
-		],
-		{ ...smokeEnv, MEERKAT_PWD: smoke },
-		smoke,
+	const smokeCode = decisionCode(
+		status(
+			Bun.spawnSync([join(finalDir, "bin/meerkat"), "eval", CLI_HALT, "--commit-msg", "MSG", "--no-open"], {
+				env: { ...smokeEnv, MEERKAT_PWD: smoke },
+				cwd: smoke,
+				stdio: ["inherit", "inherit", "inherit"],
+			}),
+		),
 	);
+	if (smokeCode !== 0) process.exit(smokeCode);
 
 	// Flip `current` at the smoke-tested version. A rename replaces the
 	// `current` symlink itself rather than following it. Absolute target so

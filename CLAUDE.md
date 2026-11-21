@@ -133,7 +133,7 @@ meerkat's own steps for a bug report or feature request:
 9. `bun scripts/mix-test.ts`
 10. `bun test` in `assets/`
 11. `bun test tests/e2e/lib` from the repo root
-12. `bun test scripts` from the repo root
+12. `bun test scripts bin/` from the repo root
 13. `bun run build` in `assets/`
 14. `bunx playwright install --only-shell chromium`
 15. `bun run test:e2e`
@@ -148,7 +148,7 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 **Pre-push:** `.lefthook/pre-push/pre-push.ts` runs `scripts/no-private-refs.ts` and `scripts/outdated.ts` for pushes that include updates. A push that only deletes refs skips these checks. The script runs both checks so each can report its findings; if either fails, the push is blocked. If both pass, it runs `scripts/verified-push.ts`. `verified-push.ts` first refuses the push if it brings any merge commit that no remote-tracking ref holds; branches take in `main` by rebasing. It then requires `check.ts` and the mutation gate to have recorded each pushed tip's contents: a rebase or cherry-pick makes commits without the pre-commit hook, and a push is the last point git can refuse them. For each record a tip lacks, it runs `check.ts --head`, then `mutate.ts changed` against `origin/main`, stopping at the first failure. It runs them on an unrecorded HEAD when the worktree holds exactly HEAD, with no untracked file. It refuses the push if that run fails or records nothing. It refuses any other unrecorded HEAD. It runs them on an unrecorded tip other than HEAD in a temporary worktree of that tip. It refuses the push if the run fails or records nothing. It refuses any tip git cannot read. `no-private-refs.ts` reads private patterns, one extended regex per line, from the untracked `info/private-refs` in the git common dir and refuses the push if that file is missing or any pattern fails its self-test. It scans commits not already held by the target remote, plus every pushed tip’s full tree, pushed annotated tags, and pushed ref names, rejecting private-pattern matches, Claude Code session URLs, local absolute paths, and all email addresses except placeholder and no-reply addresses. It refuses the push if the remote cannot be queried.
 
-**CI:** Every PR installs the pinned toolchain: Bun, Erlang and Elixir from `.tool-versions`; pnpm from `package.json`'s `packageManager`; and Hex, rebar3, clj-kondo, PlantUML's native binary, and GNU bash and Graphviz built by `scripts/build-tool.ts`, from `.github/toolchain.env`, checking rebar3, clj-kondo, PlantUML, GNU bash and Graphviz against their pinned SHA-256s. Every tool but pnpm, and Playwright's Chromium shell, is cached per pin, so a run whose pins are all cached downloads none of them. It then runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm audit`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bun scripts/mix-test.ts`, `bun test` in `assets/`, `bun test tests/e2e/lib` and `bun test scripts` from the repo root, `bunx playwright install --only-shell chromium` when its cache misses, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
+**CI:** Every PR installs the pinned toolchain: Bun, Erlang and Elixir from `.tool-versions`; pnpm from `package.json`'s `packageManager`; and Hex, rebar3, clj-kondo, PlantUML's native binary, and GNU bash and Graphviz built by `scripts/build-tool.ts`, from `.github/toolchain.env`, checking rebar3, clj-kondo, PlantUML, GNU bash and Graphviz against their pinned SHA-256s. Every tool but pnpm, and Playwright's Chromium shell, is cached per pin, so a run whose pins are all cached downloads none of them. It then runs, in order, `mix deps.get`, `bun scripts/hex-audit.ts`, `pnpm audit`, `pnpm install --frozen-lockfile --ignore-scripts`, `mix compile --warnings-as-errors`, `mix format --check-formatted`, `mix credo --strict`, `bunx biome lint --error-on-warnings`, `bun scripts/mix-test.ts`, `bun test` in `assets/`, `bun test tests/e2e/lib` and `bun test scripts bin/` from the repo root, `bunx playwright install --only-shell chromium` when its cache misses, and `bun run test:e2e`. The Playwright suite's global setup (`tests/e2e/lib/setup.ts`) builds the assets by running `bin/meerkat-beam` with `MEERKAT_BUILD_ONLY=1`. CI runs these checks even when the local hooks skip them.
 
 `scripts/hex-audit.ts` runs `mix hex.audit` and also fails when Hex could not fetch a package's record from hex.pm, since Hex then audits its cache, or nothing, and passes. `pnpm audit` audits every JS dependency, dev ones included, skips the advisories `pnpm-workspace.yaml`'s `auditConfig.ignoreGhsas` lists, and fails when it cannot reach the npm registry. `check.ts` runs both audits as CI does, so it fails a commit when either registry is out of reach.
 
@@ -156,12 +156,13 @@ Biome is configured by `biome.json` and lints JS, TS, CSS, and Svelte files, inc
 
 `scripts/mix-test.ts` runs each test file in its own BEAM, at most half the online cores' worth at once across all test runs in all worktrees of the repo. Each test BEAM gets `+S 4 +sbwt none +sbwtdcpu none +sbwtdio none` (four schedulers, none of them busy-waiting, dirty ones included) ahead of any `ELIXIR_ERL_OPTIONS` already set. When every file passes, each one over the limit in `scripts/test-file-limit.json` without an entry there giving a non-empty `reason` is run again, one at a time, and fails the run if it is still over or then fails; a missing or malformed limits file, or an entry without a reason, fails it too. Locally the limit is 10 s of CPU time, which leaves out programs the test BEAM starts; in CI (`CI=true`), 60 s of wall time.
 
-`bun run test` runs `scripts/mix-test.ts`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` and `bun test scripts` from the repo root, then `bun run test:e2e`.
+`bun run test` runs `scripts/mix-test.ts`, then `bun test` in `assets/`, then `bun test tests/e2e/lib` and `bun test scripts bin/` from the repo root, then `bun run test:e2e`.
 
 When behaviour changes, always use the smallest test that works:
 - Test each piece's logic in a unit test: ExUnit
-  (`test/**/*_test.exs`, including LiveViewTest), asset `bun test`
-  or a repo script's `scripts/<name>.test.ts`,
+  (`test/**/*_test.exs`, including LiveViewTest), asset `bun test`,
+  a repo script's `scripts/<name>.test.ts` or a launcher module's
+  `bin/lib/<name>.test.ts`,
   given literal inputs or stand-ins for the pieces it uses, such as git.
 - Add only the integration and e2e tests needed to show the pieces fit
   together, for example one integration test per seam, such as CLI to
