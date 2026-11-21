@@ -1,7 +1,7 @@
 defmodule Meerkat.Markdown.Scrubber do
   @moduledoc """
-  html_sanitize_ex's `MarkdownHTML` scrubber, plus every link it keeps
-  opening in a new tab, so a click never navigates away from the
+  html_sanitize_ex's `MarkdownHTML` scrubber, except that every link it
+  keeps opens in a new tab, so a click never navigates away from the
   review page. `HtmlSanitizeEx.Scrubber.scrub/2` calls only
   `before_scrub/1` and `scrub/1`.
   """
