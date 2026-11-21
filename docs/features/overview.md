@@ -179,6 +179,10 @@ it has connected, a lost connection still leaves its text selectable,
 searchable and scrollable, and neither losing nor regaining the
 connection moves focus or the caret.
 
+Every link in rendered Markdown, such as the commit message, a
+comment, an answer or a Markdown file's rendered view, opens in a new
+browser tab, leaving the review page in place.
+
 ## Line counts
 
 Like GitHub, the toolbar and each file header show `+x -y`: the

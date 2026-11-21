@@ -178,6 +178,27 @@ defmodule Meerkat.MarkdownTest do
     end
   end
 
+  describe "links open in a new tab" do
+    test "a markdown link" do
+      assert Markdown.to_safe_html("[docs](https://example.com/)") ==
+               ~s(<p><a href="https://example.com/" target="_blank" rel="noopener noreferrer">docs</a></p>)
+    end
+
+    test "a bare URL" do
+      assert Markdown.to_safe_html("see https://example.com/") ==
+               ~s(<p>see <a href="https://example.com/" target="_blank" rel="noopener noreferrer">https://example.com/</a></p>)
+    end
+
+    test "a raw <a> in a file replaces its own target and rel" do
+      assert render_file(~s(<a href="https://example.com/" target="_blank" rel="noopener">x</a>)) =~
+               ~s(<p><a href="https://example.com/" target="_blank" rel="noopener noreferrer">x</a></p>)
+    end
+
+    test "other tags gain no target" do
+      refute Markdown.to_safe_html("**bold** `code`") =~ "target"
+    end
+  end
+
   describe "to_safe_html/1 — unclosed code fence" do
     test "the code runs to the end of the comment" do
       html = Markdown.to_safe_html("before\n\n```elixir\nx = 1\n\nafter\n")

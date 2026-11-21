@@ -4,7 +4,8 @@ defmodule Meerkat.Markdown do
   rendered view, whole `.md` files as a side-by-side Old/New diff.
 
   Pipeline: MDEx parses GFM, html_sanitize_ex strips `<script>` /
-  event handlers / `javascript:` URLs / other XSS vectors.
+  event handlers / `javascript:` URLs / other XSS vectors, and
+  `Meerkat.Markdown.Scrubber` makes every link open in a new tab.
   """
 
   @doc """
@@ -79,7 +80,7 @@ defmodule Meerkat.Markdown do
       extension: [table: true, strikethrough: true, autolink: true],
       render: render
     )
-    |> HtmlSanitizeEx.markdown_html()
+    |> HtmlSanitizeEx.Scrubber.scrub(Meerkat.Markdown.Scrubber)
   end
 
   # Split markdown source into top-level blocks on blank lines, but
