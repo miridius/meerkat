@@ -230,9 +230,9 @@ describe("install.sh and install.ts", () => {
 			GIT_CONFIG_GLOBAL: join(import.meta.dir, "../test/support/test.gitconfig"),
 			GIT_CONFIG_NOSYSTEM: "1",
 		};
-		for (const name of ["install.sh", "install.ts"]) {
-			mkdirSync(join(repo, "scripts"), { recursive: true });
-			copyFileSync(join(import.meta.dir, name), join(repo, "scripts", name));
+		for (const name of ["scripts/install.sh", "scripts/install.ts", "bin/lib/serve.ts", "bin/lib/attach.ts"]) {
+			mkdirSync(dirname(join(repo, name)), { recursive: true });
+			copyFileSync(join(import.meta.dir, "..", name), join(repo, name));
 		}
 		git(base, "init", "-q", "--template=", repo);
 		git(repo, "add", ".");

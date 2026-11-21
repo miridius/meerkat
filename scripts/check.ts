@@ -57,7 +57,7 @@ export function steps(root: string, e2e: boolean): Step[] {
 		{ cmd: ["bun", "scripts/mix-test.ts"] },
 		{ cmd: ["bun", "test"], dir: assets },
 		{ cmd: ["bun", "test", "tests/e2e/lib"] },
-		{ cmd: ["bun", "test", "scripts"] },
+		{ cmd: ["bun", "test", "scripts", "bin/"] },
 		...(e2e
 			? [
 					{ cmd: ["bun", "run", "build"], dir: assets, env: { MIX_BUILD_PATH: join(root, "_build/dev") } },
