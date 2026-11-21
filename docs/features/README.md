@@ -41,7 +41,7 @@ bridges the two by exercising the docs against the running app.
 - [file-filter.md](file-filter.md) — `☰ Files` dropdown folder tree, jump to a file, hide-extension, only-this-file, substring filter, generated-file toggle.
 - [clojure-hover.md](clojure-hover.md) — hover a symbol in a Clojure diff for its docs and source, via clj-kondo.
 - [approved-collapse.md](approved-collapse.md) — approved files collapse; click header to re-expand.
-- [pending-answers.md](pending-answers.md) — pinned banner, schema, lifecycle.
+- [pending-answers.md](pending-answers.md) — answers page, pinned banner, schema, lifecycle.
 - [multi-tab.md](multi-tab.md) — PubSub state convergence, tab close behavior.
 
 ## Pending / not-yet-written

@@ -32,9 +32,10 @@ see [pending-answers.md](pending-answers.md).
 ## Flags
 
 - `--answers` — no review. Read the agent's answers to a prior
-  review's question comments as UTF-8 JSON on stdin, whatever the
-  locale, validate them, store them as the pending-answers file (see
-  [pending-answers.md](pending-answers.md)) and exit: `0` stored, `1`
+  review's comments as UTF-8 JSON on stdin, whatever the
+  locale, validate them, store them as the pending-answers file, open
+  the [answers page](pending-answers.md#answers-page) for them, and
+  exit without waiting for the reviewer: `0` stored, `1`
   rejected with the reason on stderr. Rejected alongside a ref/range,
   `--pr` or `--commit-msg`. The launcher runs this invocation once,
   outside its restart loop, with its own stdin, so the answers reach
