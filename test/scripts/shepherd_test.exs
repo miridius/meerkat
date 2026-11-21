@@ -330,11 +330,15 @@ defmodule Meerkat.ShepherdTest do
         esac
         """ <> @attach_to_decision
 
+      # The bash System.cmd starts leads its own process group; it forks the
+      # caller, as git commit runs its hook, so the caller has an ancestor
+      # to check.
       {output, 1} =
         System.cmd("bash", [
           "-c",
+          ~S|bash -c "$1" orphan "$2" "$3" "$4"; exit $?|,
+          "leader",
           script,
-          "orphan",
           Path.expand("bin/meerkat-attach"),
           dir,
           unquote(ancestor)
