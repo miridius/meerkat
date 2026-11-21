@@ -53,12 +53,13 @@ their row has focus.
 
 ## Folder tree
 
-Like GitHub's file tree:
+Like GitHub's file tree, except that a folder's files come before its
+subfolders:
 
 - Rows show only names: a folder row shows the folder's name, a file
   row the file's base name. Each row's tooltip gives the full path.
   Rows are indented by depth.
-- In each folder, subfolders come first, then files, each in
+- In each folder, its own files come first, then subfolders, each in
   alphabetical order. The diff below keeps git's order.
 - A folder whose only child is a single folder shares its row with
   it, named with both: `lib/meerkat_web/live`.

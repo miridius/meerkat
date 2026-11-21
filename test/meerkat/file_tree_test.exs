@@ -13,14 +13,14 @@ defmodule Meerkat.FileTreeTest do
     end)
   end
 
-  test "lists subfolders before files, each sorted by name ignoring case" do
+  test "lists files before subfolders, each sorted by name ignoring case" do
     tree = FileTree.build(entries(["b.ex", "a/z.ex", "A.md", "B/y.ex", "a/c.ex"]))
 
     assert shape(tree) == [
-             {"a", [{"c.ex", 4}, {"z.ex", 1}]},
-             {"B", [{"y.ex", 3}]},
              {"A.md", 2},
-             {"b.ex", 0}
+             {"b.ex", 0},
+             {"a", [{"c.ex", 4}, {"z.ex", 1}]},
+             {"B", [{"y.ex", 3}]}
            ]
   end
 
@@ -32,7 +32,7 @@ defmodule Meerkat.FileTreeTest do
   test "a folder whose only child is a folder shares its row with it" do
     tree = FileTree.build(entries(["lib/web/live/review.ex", "lib/web/live/other.ex", "README"]))
 
-    assert [%{dir: "lib/web/live", name: "lib/web/live", children: kids}, %{name: "README"}] =
+    assert [%{name: "README"}, %{dir: "lib/web/live", name: "lib/web/live", children: kids}] =
              tree
 
     assert shape(kids) == [{"other.ex", 1}, {"review.ex", 0}]
@@ -41,7 +41,7 @@ defmodule Meerkat.FileTreeTest do
   test "a folder holding a file and a folder keeps its own row, and paths stay full" do
     tree = FileTree.build(entries(["lib/a/b/x.ex", "lib/y.ex"]))
 
-    assert [%{dir: "lib", name: "lib", children: [sub, file]}] = tree
+    assert [%{dir: "lib", name: "lib", children: [file, sub]}] = tree
     assert %{dir: "lib/a/b", name: "a/b"} = sub
     assert %{name: "y.ex", file: {%{file_name: "lib/y.ex"}, 1}} = file
   end
