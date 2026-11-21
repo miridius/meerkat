@@ -12,6 +12,184 @@ index 368df7e98981f48500211cb3be15cfadf622bf83..2d8156b71fde4b03774354ae04567c93
  		<DiffSyntax
  			operator={isAdded ? 'add' : isDelete ? 'del' : undefined}
  			rawLine={props.rawLine}
+diff --git a/dist/components/DiffSplitContentLineNormal.svelte b/dist/components/DiffSplitContentLineNormal.svelte
+index a338f163722b9dcc1cbbf3cd22d2dfa2b739ffd5..3901c2557ed402128a8ed17dd09e707e9af52948 100644
+--- a/dist/components/DiffSplitContentLineNormal.svelte
++++ b/dist/components/DiffSplitContentLineNormal.svelte
+@@ -63,9 +63,9 @@
+ 			? props.diffFile.getOldPlainLine(currentLine?.lineNumber || 0)
+ 			: props.diffFile.getNewPlainLine(currentLine?.lineNumber || 0);
+ 
+-	let currentSyntaxLine = $state(getCurrentSyntaxLine());
++	let currentSyntaxLine = $state.raw(getCurrentSyntaxLine());
+ 
+-	let currentPlainLine = $state(getCurrentPlainLine());
++	let currentPlainLine = $state.raw(getCurrentPlainLine());
+ 
+ 	const init = () => {
+ 		currentSyntaxLine = getCurrentSyntaxLine();
+diff --git a/dist/components/DiffSplitContentLineWrap.svelte b/dist/components/DiffSplitContentLineWrap.svelte
+index 2b4b130074593ec8e222485414944e524f2a54c4..3d5795af1c394075ea7cb2b74c922d7da857dbc0 100644
+--- a/dist/components/DiffSplitContentLineWrap.svelte
++++ b/dist/components/DiffSplitContentLineWrap.svelte
+@@ -49,13 +49,13 @@
+ 
+ 	const getNewPlainLine = () => props.diffFile.getNewPlainLine(newLine?.lineNumber || 0);
+ 
+-	let oldSyntaxLine = $state(getOldSyntaxLine());
++	let oldSyntaxLine = $state.raw(getOldSyntaxLine());
+ 
+-	let newSyntaxLine = $state(getNewSyntaxLine());
++	let newSyntaxLine = $state.raw(getNewSyntaxLine());
+ 
+-	let oldPlainLine = $state(getOldPlainLine());
++	let oldPlainLine = $state.raw(getOldPlainLine());
+ 
+-	let newPlainLine = $state(getNewPlainLine());
++	let newPlainLine = $state.raw(getNewPlainLine());
+ 
+ 	const hasDiff = $derived.by(() => !!oldLine?.diff || !!newLine?.diff);
+ 
+diff --git a/dist/components/DiffSplitViewNormalTable.svelte b/dist/components/DiffSplitViewNormalTable.svelte
+index 39c3f1184769f621dc56ed816bfba34cb16b6124..039b40e9c13bd8ab8c3f8ce800e3026dea113a0f 100644
+--- a/dist/components/DiffSplitViewNormalTable.svelte
++++ b/dist/components/DiffSplitViewNormalTable.svelte
+@@ -1,12 +1,13 @@
+ <script lang="ts">
+ 	import { getSplitContentLines, SplitSide, type DiffFile } from '@git-diff-view/core';
+ 	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
++	import { sameRows } from '../utils/utils.js';
+ 
+ 	import DiffSplitContentLine from './DiffSplitContentLineNormal.svelte';
+ 	import DiffSplitExtendLine from './DiffSplitExtendLineNormal.svelte';
+ 	import DiffSplitHunkLine from './DiffSplitHunkLineNormal.svelte';
+ 	import DiffSplitWidgetLine from './DiffSplitWidgetLineNormal.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		side: SplitSide;
+@@ -23,7 +24,7 @@
+ 
+ 	const getAllLines = () => getSplitContentLines(props.diffFile);
+ 
+-	let lines = $state(getAllLines());
++	let lines = $state.raw(getAllLines());
+ 
+ 	const unSubscribe = { current: () => {} };
+ 
+@@ -32,7 +33,10 @@
+ 	$effect(() => {
+ 		unSubscribe.current();
+ 
+-		const init = () => (lines = getAllLines());
++		const init = () => {
++			const next = getAllLines();
++			if (!sameRows(next, untrack(() => lines))) lines = next;
++		};
+ 
+ 		init();
+ 
+diff --git a/dist/components/DiffSplitViewWrap.svelte b/dist/components/DiffSplitViewWrap.svelte
+index bcb8b190c790f72e18fbe29438bdf113825839f0..222b9237d2472974e204935115cb38275779c2f9 100644
+--- a/dist/components/DiffSplitViewWrap.svelte
++++ b/dist/components/DiffSplitViewWrap.svelte
+@@ -4,12 +4,13 @@
+ 	import { getSplitContentLines, SplitSide, type DiffFile } from '@git-diff-view/core';
+ 	import { diffAsideWidthName, diffFontSizeName } from '../utils/size.js';
+ 	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
++	import { sameRows } from '../utils/utils.js';
+ 
+ 	import DiffSplitContentLine from './DiffSplitContentLineWrap.svelte';
+ 	import DiffSplitExtendLine from './DiffSplitExtendLineWrap.svelte';
+ 	import DiffSplitHunkLine from './DiffSplitHunkLineWrap.svelte';
+ 	import DiffSplitWidgetLine from './DiffSplitWidgetLineWrap.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		diffFile: DiffFile;
+@@ -19,7 +20,7 @@
+ 
+ 	const getAllLines = () => getSplitContentLines(props.diffFile);
+ 
+-	let lines = $state(getAllLines());
++	let lines = $state.raw(getAllLines());
+ 
+ 	const selectState = { current: undefined as SplitSide | undefined };
+ 
+@@ -41,7 +42,10 @@
+ 	$effect(() => {
+ 		unSubscribe.current();
+ 
+-		const init = () => (lines = getAllLines());
++		const init = () => {
++			const next = getAllLines();
++			if (!sameRows(next, untrack(() => lines))) lines = next;
++		};
+ 
+ 		init();
+ 
+diff --git a/dist/components/DiffUnifiedContentLine.svelte b/dist/components/DiffUnifiedContentLine.svelte
+index bd40f00678475b051b81c9e097f40b4ce3f46195..671404ffbe459fdb3239fbfba02a0fc2e991a880 100644
+--- a/dist/components/DiffUnifiedContentLine.svelte
++++ b/dist/components/DiffUnifiedContentLine.svelte
+@@ -58,7 +58,7 @@
+ 				? props.diffFile.getOldSyntaxLine(unifiedItem?.oldLineNumber || 0)
+ 				: undefined;
+ 
+-	let currentSyntaxLine = $state(getCurrentSyntaxLine());
++	let currentSyntaxLine = $state.raw(getCurrentSyntaxLine());
+ 
+ 	const getCurrentPlainLine = () =>
+ 		unifiedItem?.newLineNumber
+@@ -67,7 +67,7 @@
+ 				? props.diffFile.getOldPlainLine(unifiedItem?.oldLineNumber || 0)
+ 				: undefined;
+ 
+-	let currentPlainLine = $state(getCurrentPlainLine());
++	let currentPlainLine = $state.raw(getCurrentPlainLine());
+ 
+ 	let unSubscribe = { current: () => {} };
+ 
+diff --git a/dist/components/DiffUnifiedView.svelte b/dist/components/DiffUnifiedView.svelte
+index f579b16aa458a1dd88de759f08cd8dc504ab719b..f59ce61d0d578eb59bcd01642bfa1de06b52e12f 100644
+--- a/dist/components/DiffUnifiedView.svelte
++++ b/dist/components/DiffUnifiedView.svelte
+@@ -5,12 +5,13 @@
+ 	import { getUnifiedContentLine, type DiffFile } from '@git-diff-view/core';
+ 	import { diffAsideWidthName, diffFontSizeName } from '../utils/size.js';
+ 	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
++	import { sameRows } from '../utils/utils.js';
+ 
+ 	import DiffUnifiedContentLine from './DiffUnifiedContentLine.svelte';
+ 	import DiffUnifiedExtendLine from './DiffUnifiedExtendLine.svelte';
+ 	import DiffUnifiedHunkLine from './DiffUnifiedHunkLine.svelte';
+ 	import DiffUnifiedWidgetLine from './DiffUnifiedWidgetLine.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		diffFile: DiffFile;
+@@ -18,7 +19,7 @@
+ 
+ 	const props: Props = $props();
+ 
+-	let lines = $state(getUnifiedContentLine(props.diffFile));
++	let lines = $state.raw(getUnifiedContentLine(props.diffFile));
+ 
+ 	let maxText = $state(props.diffFile.unifiedLineLength.toString());
+ 
+@@ -34,7 +35,8 @@
+ 
+ 	const init = () => {
+ 		const diffFile = props.diffFile;
+-		lines = getUnifiedContentLine(diffFile);
++		const next = getUnifiedContentLine(diffFile);
++		if (!sameRows(next, untrack(() => lines))) lines = next;
+ 		maxText = diffFile.unifiedLineLength.toString();
+ 	};
+ 
 diff --git a/dist/hooks/useSyncHeight.svelte.js b/dist/hooks/useSyncHeight.svelte.js
 index a5902d94be7edb5dfd0640799c911b197b9914eb..330676a560ee96afc55f41b9e8215571a2339aea 100644
 --- a/dist/hooks/useSyncHeight.svelte.js
@@ -108,3 +286,22 @@ index a5902d94be7edb5dfd0640799c911b197b9914eb..330676a560ee96afc55f41b9e8215571
                  typedTarget.__observeInstance = observer;
                  observer.observe(target);
                  target.setAttribute('data-observe', 'height');
+diff --git a/dist/utils/utils.d.ts b/dist/utils/utils.d.ts
+index 25ed86a456254d76965a46b72fedb86010b4aa5f..c8ea0e1267f9a773b532f2c33a96ff3f0c45a3dc 100644
+--- a/dist/utils/utils.d.ts
++++ b/dist/utils/utils.d.ts
+@@ -1 +1,2 @@
+ export declare const memoFunc: <T extends Function>(func: T) => T;
++export declare const sameRows: (a: { index: number }[], b: { index: number }[]) => boolean;
+diff --git a/dist/utils/utils.js b/dist/utils/utils.js
+index c08db0f0eced4cefb18ea36d8842a2de640d7731..abe2f305b710ead532ce6d3916eb2bb1b98b4608 100644
+--- a/dist/utils/utils.js
++++ b/dist/utils/utils.js
+@@ -10,3 +10,7 @@ export const memoFunc = (func) => {
+         return result;
+     });
+ };
++// Whether two row lists render the same rows: the views pass each row
++// only its index and line number, and core sets the line number to
++// index + 1.
++export const sameRows = (a, b) => a.length === b.length && a.every((row, i) => row.index === b[i].index);
