@@ -297,10 +297,11 @@ diff --git a/dist/utils/utils.js b/dist/utils/utils.js
 index c08db0f0eced4cefb18ea36d8842a2de640d7731..abe2f305b710ead532ce6d3916eb2bb1b98b4608 100644
 --- a/dist/utils/utils.js
 +++ b/dist/utils/utils.js
-@@ -10,3 +10,6 @@ export const memoFunc = (func) => {
+@@ -10,3 +10,7 @@ export const memoFunc = (func) => {
          return result;
      });
  };
 +// Whether two row lists render the same rows: the views pass each row
-+// only its index and line number.
++// only its index and line number, and core sets the line number to
++// index + 1.
 +export const sameRows = (a, b) => a.length === b.length && a.every((row, i) => row.index === b[i].index);
