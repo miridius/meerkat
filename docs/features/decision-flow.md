@@ -267,7 +267,7 @@ and waits on it, so a process above that exiting, as when Claude Code
 restarts, leaves the decision to the still-running `git commit`. With
 no `git` above it, it checks up to the leader of its process group,
 or only its parent when it leads the group itself, or else every
-process above it.
+process above it but pid 1.
 Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
 and takes delivery. Until the decision arrives, it starts no process
 beyond its connection to the server. A decision clicked while no invocation is
