@@ -98,8 +98,8 @@
   </header>
   <!-- body_html is server-rendered via Meerkat.Markdown.to_safe_html
        in review_live.ex (with_body_html/1). Suggestion-mode fences
-       become <pre><code class="language-xxx"> blocks, which the effect
-       above highlights. -->
+       become <pre><code class="language-xxx"> blocks, which onMount above
+       highlights. -->
   <div class="comment-body markdown" bind:this={body}>{@html comment.body_html ?? comment.body}</div>
 </li>
 

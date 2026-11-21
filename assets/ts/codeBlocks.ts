@@ -11,8 +11,9 @@ type Highlighter = Pick<DiffHighlighter, "getAST" | "hasRegisteredCurrentLang">;
 type Hast = Parameters<typeof hastToHtml>[0];
 
 /** The highlighted inner HTML for a fenced block's `<code>`, from the
- *  engine the diff would pick: shiki when it has `lang` loaded, else
- *  lowlight. Null when the engine returns no tree. */
+ *  engine the diff would pick: shiki when it has the fence's language
+ *  loaded, whatever its case, else lowlight. Null when the engine
+ *  returns no tree. */
 export function highlightedCode(
 	code: string,
 	fenceLang: string,
@@ -57,5 +58,6 @@ export function highlightCodeBlocks(root: HTMLElement, shiki: Highlighter | null
 
 /** `highlightCodeBlocks` with the diff's highlighter, once it's ready. */
 export function highlightCodeBlocksWhenReady(root: HTMLElement): void {
-	sharedHighlighter.then((h) => highlightCodeBlocks(root, h));
+	// A comment remounted before shiki was ready has left the page.
+	sharedHighlighter.then((h) => root.isConnected && highlightCodeBlocks(root, h));
 }

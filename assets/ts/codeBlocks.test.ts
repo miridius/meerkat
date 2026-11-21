@@ -10,22 +10,24 @@ const span = (cls: string, text: string) => ({
 
 // What shiki's getAST returns: the lines inside a <pre><code>. Like
 // shiki, it throws for a language it hasn't loaded.
-const shiki = (registered: string[]) => ({
-	hasRegisteredCurrentLang: (lang: string) => {
+const shiki = (registered: string[]) => {
+	const has = (lang: string) => {
 		if (!registered.includes(lang)) throw new Error(`Language \`${lang}\` not found`);
 		return true;
-	},
-	getAST: (code: string) => ({
-		type: "root",
-		children: [
-			{
-				type: "element",
-				tagName: "pre",
-				properties: {},
-				children: [{ type: "element", tagName: "code", properties: {}, children: [span("line", code)] }],
-			},
-		],
-	}),
+	};
+	return { hasRegisteredCurrentLang: has, getAST: (code: string, _: unknown, lang: string) => has(lang) && ast(code) };
+};
+
+const ast = (code: string) => ({
+	type: "root",
+	children: [
+		{
+			type: "element",
+			tagName: "pre",
+			properties: {},
+			children: [{ type: "element", tagName: "code", properties: {}, children: [span("line", code)] }],
+		},
+	],
 });
 
 // What lowlight's getAST returns: bare spans.
@@ -68,5 +70,4 @@ describe("highlightedCode", () => {
 
 	test("lowlight, the default fallback, colours a language shiki doesn't preload", () => {
 		expect(highlightedCode("<?php echo 1;", "php", null)).toContain('class="hljs-keyword"');
-	});
-});
+	});});
