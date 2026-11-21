@@ -302,7 +302,7 @@ defmodule Meerkat.CLIMainTest do
   # The review binds a real port only outside the test VM, whose endpoint
   # already runs without a server.
   @tag :own_repo
-  test "a review opens the browser at the port it bound",
+  test "a review whose preferred port is taken serves on another and opens the browser at it",
        %{repo: repo, commit_msg: commit_msg} do
     stage(repo, "a.txt", "a\n")
     branch = git(repo, ["branch", "--show-current"])
@@ -320,17 +320,24 @@ defmodule Meerkat.CLIMainTest do
     manifest = Path.join(repo, "manifest.json")
     File.write!(manifest, ~s({"js/app.js": {"file": "assets/app.js", "isEntry": true}}))
 
+    {:ok, taken} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    {:ok, preferred} = :inet.port(taken)
+
     {output, code, opened} =
       run_review_with_stub_opener(
         repo,
         "Application.put_env(:meerkat, :vite_manifest_path, #{inspect(manifest)}); ",
-        ["--commit-msg", commit_msg, "--port", "0"]
+        ["--commit-msg", commit_msg],
+        [{"MEERKAT_PREFERRED_PORT", to_string(preferred)}]
       )
+
+    :gen_tcp.close(taken)
 
     assert [_, url, port] =
              Regex.run(~r{Paused for human review at (http://127\.0\.0\.1:(\d+)/)}, output)
 
-    assert String.to_integer(port) > 0
+    assert String.to_integer(port) not in [0, preferred]
+    assert output =~ "meerkat: port #{preferred} is in use; serving on #{url}\n"
     assert {:ok, record} = opened
     assert String.split(record) == [url, "200"]
     assert code == 143
@@ -366,7 +373,7 @@ defmodule Meerkat.CLIMainTest do
   # review with a SIGTERM. A review that waited would halt with 124 after
   # 150 s, below the 180 s test timeout. Returns the output, exit code and
   # the `File.read/1` of the record.
-  defp run_review_with_stub_opener(repo, setup, argv) do
+  defp run_review_with_stub_opener(repo, setup, argv, env \\ []) do
     opened = Path.join(repo, "opened")
     bin = Path.join(repo, "open-stub")
     File.mkdir_p!(bin)
@@ -399,12 +406,13 @@ defmodule Meerkat.CLIMainTest do
             setup <> "System.halt(Meerkat.CLI.main(System.argv()))",
           "--" | argv
         ],
-        env: [
-          {"MIX_ENV", to_string(Mix.env())},
-          {"PATH", bin <> ":" <> System.fetch_env!("PATH")},
-          {"MEERKAT_OPEN_MARKER", nil},
-          {"MEERKAT_PREFERRED_PORT", nil}
-        ],
+        env:
+          [
+            {"MIX_ENV", to_string(Mix.env())},
+            {"PATH", bin <> ":" <> System.fetch_env!("PATH")},
+            {"MEERKAT_OPEN_MARKER", nil},
+            {"MEERKAT_PREFERRED_PORT", nil}
+          ] ++ env,
         stderr_to_stdout: true
       )
 

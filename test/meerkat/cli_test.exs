@@ -6,7 +6,7 @@ defmodule Meerkat.CLITest do
   # fixed or documented; muex runs ExUnit only, so it cannot see the
   # e2e suite's coverage of the glue ExUnit cannot reach):
   #
-  # - `main/1`'s answers/review branch, auto/live dispatch, invert +
+  # - `main/1`'s answers/review branch, auto/live dispatch and
   #   case-clause deletions — a live review boots the endpoint and
   #   `--answers` reads stdin, unrunnable under ExUnit. The auto clause
   #   and a live dispatch that stops at target resolution are covered by
@@ -15,7 +15,7 @@ defmodule Meerkat.CLITest do
   #   reach the next page" (true branch) and decision.spec.ts "feedback
   #   typed in plain and Suggestion forms and sent by its shortcut
   #   reaches the caller as exit 1 with the comments bracketed, saved to
-  #   a file, and no server logs" (live clause).
+  #   a file, and no server logs…" (live clause).
   # - `flush_logs/0`'s handler-absent `_ -> :ok` clause — equivalent:
   #   flush_logs' own `rescue _ -> :ok catch _, _ -> :ok` swallows the
   #   CaseClauseError the deletion raises, so no input distinguishes the
@@ -24,7 +24,7 @@ defmodule Meerkat.CLITest do
   #   `{:ok, _}` clause boots the live review UI; covered e2e by
   #   decision.spec.ts "feedback typed in plain and Suggestion forms and
   #   sent by its shortcut reaches the caller as exit 1 with the comments
-  #   bracketed, saved to a file, and no server logs". The
+  #   bracketed, saved to a file, and no server logs…". The
   #   `{:error, _}` clause is covered by cli_main_test.exs.
   # - `run_live_review/2`'s deadline setup (swap the put_env arguments,
   #   invert `is_nil(serve_dir)`) — equivalent under a launcher:
@@ -113,7 +113,18 @@ defmodule Meerkat.CLITest do
         flush = Task.async(&CLI.flush_logs/0)
 
         try do
-          assert Task.yield(flush, 200) == nil, "flush_logs waits on the log file handler"
+          # Its call sits unanswered in the suspended handler's mailbox.
+          assert Meerkat.TestHelpers.eventually(fn ->
+                   {:messages, messages} = Process.info(handler, :messages)
+
+                   Enum.any?(
+                     messages,
+                     &match?({:"$gen_call", {pid, _}, _} when pid == flush.pid, &1)
+                   )
+                 end),
+                 "flush_logs waits on the log file handler"
+
+          assert Task.yield(flush, 0) == nil
         after
           :sys.resume(handler)
         end
@@ -1381,6 +1392,15 @@ defmodule Meerkat.CLITest do
     test "a snapshot holding a comment keeps the rerun live", %{dir: dir} do
       save_snapshot(dir, comments: [@comment])
       assert CLI.auto_approve_decision_for_test(dir) == :live
+    end
+
+    test "a snapshot of other staged content still auto-approves", %{dir: dir} do
+      stage(dir, "a.rs", "fn earlier() {}\n")
+      save_snapshot(dir, global_comments: [@comment])
+      stage(dir, "a.rs", "fn a() {}\n")
+
+      assert CLI.auto_approve_decision_for_test(dir) ==
+               {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
     end
 
     # The review leaves whitespace-only changes out of its files and so out

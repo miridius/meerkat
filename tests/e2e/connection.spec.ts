@@ -207,7 +207,7 @@ test("the page takes no input until LiveView connects or while its connection is
 			await expect(forms).toHaveCount(0);
 		});
 
-		await test.step("the Send Feedback shortcut does nothing while disconnected", async () => {
+		await test.step("the Send Feedback shortcut, and the keys that act on a focused control, do nothing while disconnected", async () => {
 			// The global comment posted above lets the review send feedback.
 			const sendFeedback = page.locator("#send-feedback-btn");
 			await expect(sendFeedback).toBeEnabled();
@@ -225,6 +225,13 @@ test("the page takes no input until LiveView connects or while its connection is
 			await drop();
 			await page.keyboard.press("Control+Shift+Enter");
 			await expect(sendFeedback).toHaveAttribute("data-clicks", "0");
+			await sendFeedback.focus();
+			await page.keyboard.press("Enter");
+			await page.keyboard.press(" ");
+			await expect(sendFeedback).toHaveAttribute("data-clicks", "0");
+			await approved.focus();
+			await page.keyboard.press(" ");
+			await expect(approved).not.toBeChecked();
 
 			await restore();
 			await page.keyboard.press("Control+Shift+Enter");

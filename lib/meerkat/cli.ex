@@ -295,8 +295,8 @@ defmodule Meerkat.CLI do
   end
 
   # `Decision.await/0` raises an exit if the Decision GenServer
-  # dies mid-call; that propagates out and the surrounding
-  # try/catch in `run_live_review_safe` converts it to exit 2.
+  # dies mid-call; that propagates out and the `catch` in
+  # `reject_on_crash/1` converts it to exit 2.
   # The up-front `Process.whereis/1` check turns the "Decision was
   # never started" failure mode into a clear REJECT instead of a
   # cryptic stack trace.
@@ -557,8 +557,8 @@ defmodule Meerkat.CLI do
     end)
   end
 
-  # Keeps an auto-approval `:live` when `held?` finds comments held, and
-  # asks it nothing for a decision already `:live`.
+  # Turns an auto-approval into `:live` when `held?` finds comments held,
+  # and asks it nothing for a decision already `:live`.
   @doc false
   def hold_for_comments(:live, _held?), do: :live
   def hold_for_comments(auto, held?), do: if(held?.(), do: :live, else: auto)
@@ -733,7 +733,7 @@ defmodule Meerkat.CLI do
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
     # ExUnit runs no live review in its own VM, where a regression would
     # wait on a human forever.
-    # muex:ignore unreachable I/O seam: killed by decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+    # muex:ignore unreachable I/O seam: killed by decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
     meerkat_dir = cache_review_paths(repo_path)
 
     # Application env carries the derived target + initial state into

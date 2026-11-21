@@ -155,12 +155,14 @@ test.describe("a review outlives the process that invoked it", () => {
 
 	// Which reviews end, and when, is covered by test/meerkat/decision_test.exs;
 	// here the caller's death reaches the server, the tabs and the backend.
-	test("a review with no comments ends once its caller is stopped: the caller says to rerun, a tab with one history entry closes itself, another shows the Review ended notice, and the backend exits, keeping its Approved ticks", async ({
+	// A caller killed outright cannot say it is leaving, as a SIGTERM's trap
+	// does above: the backend learns of it from its attach stream.
+	test("a review with no comments ends once its caller is stopped by SIGKILL: a tab with one history entry closes itself, another shows the Review ended notice, and the backend exits, keeping its Approved ticks", async ({
 		page,
 		context,
 	}) => {
 		const fixture = makeFixture();
-		const meerkat = await startMeerkat({ fixture, keepFixture: true, ownGroup: true });
+		const meerkat = await startMeerkat({ fixture, keepFixture: true });
 		const backend = backendPid(meerkat);
 		try {
 			// Like the tab `open <url>` gives meerkat: created at the URL, so
@@ -193,10 +195,7 @@ test.describe("a review outlives the process that invoked it", () => {
 				.toBe(1);
 
 			const closed = fresh.waitForEvent("close");
-			meerkat.signalGroup("SIGTERM");
-			expect(await meerkat.awaitClose(), "the caller says to rerun").toContain(
-				"meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n",
-			);
+			await meerkat.killCaller();
 
 			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
 			await expect(page.locator("main.review.done")).toContainText(
