@@ -11,7 +11,8 @@ import { expect, test } from "./lib/test";
 // lines for indenting, and CommentForm.svelte sends the suggestion as it
 // looks in the editor, with its language, for the server's formatter hook.
 // The commands and the macOS-only binding are covered by
-// assets/ts/paredit.test.ts, syntaxEdit.test.ts and editorKeys.test.ts; the
+// assets/ts/paredit.test.ts, syntaxEdit.test.ts and editorKeys.test.ts, and
+// the editor off macOS by clj-hover.spec.ts; the
 // indent rules by cmIndent.test.ts and clojureIndent.test.ts; the
 // formatting by test/meerkat_web/live/review_live_comments_test.exs.
 

@@ -103,18 +103,24 @@ defmodule Meerkat.CLITest do
       # The handler also writes out on its own once idle, so it is held
       # suspended: only a flush that waits on it can still be running.
       handler = Process.whereis(:logger_std_h_meerkat_file)
-      :sys.suspend(handler)
       line = "meerkat-cli-flush-#{System.unique_integer([:positive])}"
-      ExUnit.CaptureLog.capture_log(fn -> Logger.error(line) end)
-      flush = Task.async(&CLI.flush_logs/0)
 
-      try do
-        assert Task.yield(flush, 200) == nil, "flush_logs waits on the log file handler"
-      after
-        :sys.resume(handler)
-      end
+      # Capturing starts and ends with the handler running: setting the
+      # capture up or down while it is suspended waits out a 5 s call.
+      ExUnit.CaptureLog.capture_log(fn ->
+        :sys.suspend(handler)
+        Logger.error(line)
+        flush = Task.async(&CLI.flush_logs/0)
 
-      assert Task.await(flush) == :ok
+        try do
+          assert Task.yield(flush, 200) == nil, "flush_logs waits on the log file handler"
+        after
+          :sys.resume(handler)
+        end
+
+        assert Task.await(flush) == :ok
+      end)
+
       assert File.read!(path) =~ line
     end
   end

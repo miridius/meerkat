@@ -185,6 +185,25 @@ test("resting on a symbol shows its docs and source for that row's side, and a l
 		expect(after?.height).toBeGreaterThan(before.height + 100);
 		expect(after?.width).toBeGreaterThan(before.width + 40);
 		await expect(popup).toBeVisible();
+
+		// Off macOS, a Clojure suggestion keeps CodeMirror's bindings and shows
+		// no Keys link; suggestion-editor.spec.ts covers macOS. The page reads
+		// the platform before its scripts load.
+		await page.addInitScript(() => {
+			Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" });
+		});
+		await page.reload();
+		const core = page.locator(".file-section").filter({ hasText: "src/app/core.clj" });
+		await core.locator('td.diff-line-num span[data-line-new-num="5"]').click();
+		const form = core.locator('tr.meerkat-form-row[data-meerkat-form-anchor="5"] .comment-form');
+		await form.getByRole("button", { name: /^Suggestion$/ }).click();
+		const content = form.locator(".code-host .cm-content");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("  (inc (u/helper y) (u/big y)))");
+		await expect(form.getByRole("button", { name: "Keys" })).toHaveCount(0);
+		// CodeMirror's Ctrl+Shift+K deletes the line, rather than slurping.
+		await form.locator(".code-host .cm-line").click();
+		await page.keyboard.press("Control+Shift+K");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("");
 	} finally {
 		await meerkat.kill();
 	}
