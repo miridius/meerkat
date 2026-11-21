@@ -19,8 +19,9 @@
 const notInputs: RegExp[] = [
 	/\.md$/,
 	// ExUnit tests; the e2e suite lives under tests/, but its fixture reads
-	// test/support/test.gitconfig.
-	/^test\/(?!support\/test\.gitconfig$)/,
+	// test/support/test.gitconfig and its config puts test/support/no-browser
+	// on PATH.
+	/^test\/(?!support\/(test\.gitconfig$|no-browser\/))/,
 	// No script here runs in the e2e suite, but check.ts runs the e2e steps
 	// and sets their build environment, with checked-trees.ts's
 	// withoutGitLocals, and this file decides when they may be skipped.

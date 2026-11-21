@@ -32,6 +32,41 @@ defmodule Meerkat.TestHelpers do
   """
   def put_git_config_env, do: Enum.each(@git_config_env, &put_env/1)
 
+  @doc """
+  Puts `no-browser`, whose `open` and `xdg-open` refuse to run, first
+  on the test BEAM's PATH, and so on that of every program it starts.
+  No guard in `lib/` stops a test opening a browser, since muex can
+  mutate it away. A test that stubs the opener puts its own before it.
+  test_helper.exs calls it once.
+  """
+  def put_no_browser_path do
+    System.put_env(
+      "PATH",
+      no_browser_path!(Path.expand("no-browser", __DIR__), System.fetch_env!("PATH"))
+    )
+  end
+
+  @doc """
+  `path` with `stub_dir` first. Raises unless `open` and `xdg-open` then
+  resolve to executables in `stub_dir`, so a missing stub, or one that
+  lost its exec bit, stops the run rather than letting the real opener
+  through.
+  """
+  @spec no_browser_path!(String.t(), String.t()) :: String.t()
+  def no_browser_path!(stub_dir, path) do
+    path = stub_dir <> ":" <> path
+
+    for cmd <- ["open", "xdg-open"] do
+      found = :os.find_executable(String.to_charlist(cmd), String.to_charlist(path))
+
+      if found != String.to_charlist(Path.join(stub_dir, cmd)) do
+        raise "#{cmd} on the test PATH is #{found || "missing"}, not the stub in #{stub_dir}"
+      end
+    end
+
+    path
+  end
+
   # `Meerkat.CLI.main/1` installs `Meerkat.SignalHandler` VM-wide; put
   # OTP's handler back so a SIGTERM to the test VM stops it as usual.
   def restore_signal_handler_on_exit do

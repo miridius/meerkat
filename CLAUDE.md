@@ -81,7 +81,10 @@ remove commits a merged PR still references). Before committing:
   window on the user's screen: run Playwright headless, any Chrome they
   launch with `--headless=new`, and pass `--no-open` to every meerkat
   they run themselves. A git hook's meerkat, which opens for the
-  user's review, is exempt.
+  user's review, is exempt. ExUnit and Playwright runs, mutation runs
+  included, put `test/support/no-browser` on PATH ahead of the real
+  `open` and `xdg-open`, whose stubs there refuse to run, since muex can mutate any guard in
+  `lib/` away. An ExUnit run stops if they are not the ones PATH finds.
 
 ## Workflow
 
@@ -135,7 +138,7 @@ meerkat's own steps for a bug report or feature request:
 14. `bunx playwright install --only-shell chromium`
 15. `bun run test:e2e`
 
-`check.ts` skips steps 13-15 when no staged path is an e2e input. `scripts/e2e-inputs.ts` holds an allowlist of paths nothing in the e2e run reads or executes, leaving out itself, such as `test/` other than `test/support/test.gitconfig`, `scripts/` other than `check.ts`, `checked-trees.ts` and `e2e-inputs.ts`, `.github/` other than `toolchain.env`, and `.claude/`; every other path, new ones included, is an e2e input. A test fails if a repo path that a quoted string containing `/` in `playwright.config.ts` or `tests/e2e/` names lands on the allowlist.
+`check.ts` skips steps 13-15 when no staged path is an e2e input. `scripts/e2e-inputs.ts` holds an allowlist of paths nothing in the e2e run reads or executes, leaving out itself, such as `test/` other than `test/support/test.gitconfig` and `test/support/no-browser/`, `scripts/` other than `check.ts`, `checked-trees.ts` and `e2e-inputs.ts`, `.github/` other than `toolchain.env`, and `.claude/`; every other path, new ones included, is an e2e input. A test fails if a repo path that a quoted string containing `/` in `playwright.config.ts` or `tests/e2e/` names lands on the allowlist.
 
 `check.ts` records the checked contents, ignoring Markdown, through `scripts/checked-trees.ts` when every step passes and the worktree held exactly those contents, with no untracked file, before and after the steps. When steps 13-15 ran, it also records the contents' e2e inputs, in `checked-trees.ts`'s e2e record. When it skipped them, it records the contents as checked only if their e2e inputs were recorded that way, as they are when HEAD's contents passed every step here and were recorded; otherwise the pre-push check runs every step on a pushed tip that holds them. `check.ts --head` checks HEAD's contents without either skip.
 
