@@ -40,14 +40,15 @@ describe("setup", () => {
 	const io = (): Io => ({
 		git: fakeGit(gitAnswers).g,
 		run: (cmd, cwd, env) => {
-			const line = cmd.join(" ");
-			if (line === "mise env --json") return { status: 0, out: '{"MISE":"1"}' };
-			calls.push(`${line}${env.MISE ? " (mise env)" : ""}`);
+			calls.push(`${cmd.join(" ")}${env.MISE ? " (mise env)" : ""}`);
 			expect(cwd).toBe(checkout);
 			const code = status[cmd[0]] ?? 0;
 			return { status: code, out: Array.from({ length: 25 }, (_, i) => `${cmd[0]} line ${i + 1}`).join("\n") };
 		},
-		has: (tool) => tool === "mise" && mise,
+		miseEnv: (cwd) => {
+			expect(cwd).toBe(checkout);
+			return mise ? { MISE: "1" } : null;
+		},
 		lock: (path) => calls.push(`lock ${path}`),
 	});
 	const hook = (cwd = checkout) => setup(JSON.stringify({ hook_event_name: "SubagentStart", cwd }), io(), {});

@@ -35,8 +35,9 @@ export type Io = {
 	// Runs a command in a directory, in env, giving its status and its
 	// stdout and stderr together.
 	run: (cmd: string[], cwd: string, env: Env) => { status: number; out: string };
-	// Whether a tool is on env's PATH.
-	has: (tool: string, env: Env) => boolean;
+	// The variables `mise env` sets in cwd, or null without mise or when it
+	// fails.
+	miseEnv: (cwd: string, env: Env) => Env | null;
 	// Returns once this process holds the lock on the file at path.
 	lock: (path: string) => void;
 };
@@ -105,10 +106,8 @@ export function setup(input: string, io: Io, env: Env): string {
 	};
 
 	if (isFile(join(cwd, "scripts/setup-toolchain.ts"))) run("bun", "scripts/setup-toolchain.ts");
-	if (isFile(join(cwd, ".tool-versions")) && io.has("mise", env)) {
-		const r = io.run(["mise", "env", "--json"], cwd, env);
-		if (r.status === 0) runEnv = { ...env, ...JSON.parse(r.out) };
-	}
+	const mise = isFile(join(cwd, ".tool-versions")) ? io.miseEnv(cwd, env) : null;
+	if (mise !== null) runEnv = { ...env, ...mise };
 	const deps = join(cwd, "deps");
 	const mixLock = readFileSync(join(cwd, "mix.lock"), "utf8");
 	if (!isDir(deps) || gitDeps(mixLock).some((name) => !stat(join(deps, name, ".git")))) {
@@ -174,7 +173,16 @@ if (import.meta.main) {
 	const io: Io = {
 		git,
 		run: runCommand,
-		has: (tool, env) => Bun.which(tool, { PATH: env.PATH ?? "" }) !== null,
+		miseEnv: (cwd, env) => {
+			if (Bun.which("mise", { PATH: env.PATH ?? "" }) === null) return null;
+			// stdout alone: mise warns on stderr, as about a pin not installed.
+			const r = Bun.spawnSync(["mise", "env", "--json"], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+			try {
+				return r.exitCode === 0 ? JSON.parse(r.stdout.toString()) : null;
+			} catch {
+				return null;
+			}
+		},
 		lock: lockFile,
 	};
 	process.stdout.write(setup(await Bun.stdin.text(), io, process.env));
