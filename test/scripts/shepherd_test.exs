@@ -352,37 +352,6 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  # The run dir can be deleted while the review is open. The caller
-  # acknowledges the decision with what it read when it attached, so the
-  # backend still ends, and does not wait for an exit file the deleted dir
-  # never gets.
-  test "a caller whose run dir is deleted before the decision takes delivery and exits at once" do
-    dir = test_dir()
-
-    attach =
-      @attach_to_decision
-      |> String.replace("echo delivered", ~S|echo "delivered $_MA_PORT $_MA_TOKEN"|)
-      |> String.replace("*) printf", ~S|*) rm -rf "$_MA_DIR" "$_MA_LINK"; printf|)
-
-    assert attach =~ "delivered $_MA_PORT" and attach =~ "rm -rf"
-
-    script =
-      ~S"""
-      source "$1"
-      exec 2>&1
-      _ma_record_ancestors
-      """ <> attach <> ~S|echo "unreachable: _ma_attach returned"|
-
-    started = System.monotonic_time(:millisecond)
-
-    {output, 1} =
-      System.cmd("bash", ["-c", script, "deleted", Path.expand("bin/meerkat-attach"), dir])
-
-    assert output == "outcome\ndelivered 4242 token\n"
-    # Waiting on the deleted dir would wait 10 s for its pid file.
-    assert System.monotonic_time(:millisecond) - started < 5_000
-  end
-
   # Each link in a chain of processes from a top process down to the caller
   # starts the next one as its own process group's leader ("job") or in its
   # own group ("fork"), and waits on it, as git commit waits on its hook.
@@ -472,6 +441,37 @@ defmodule Meerkat.ShepherdTest do
         assert output == @orphaned
       end
     end
+  end
+
+  # The run dir can be deleted while the review is open. The caller
+  # acknowledges the decision with what it read when it attached, so the
+  # backend still ends, and does not wait for an exit file the deleted dir
+  # never gets.
+  test "a caller whose run dir is deleted before the decision takes delivery and exits at once" do
+    dir = test_dir()
+
+    attach =
+      @attach_to_decision
+      |> String.replace("echo delivered", ~S|echo "delivered $_MA_PORT $_MA_TOKEN"|)
+      |> String.replace("*) printf", ~S|*) rm -rf "$_MA_DIR" "$_MA_LINK"; printf|)
+
+    assert attach =~ "delivered $_MA_PORT" and attach =~ "rm -rf"
+
+    script =
+      ~S"""
+      source "$1"
+      exec 2>&1
+      _ma_record_ancestors
+      """ <> attach <> ~S|echo "unreachable: _ma_attach returned"|
+
+    started = System.monotonic_time(:millisecond)
+
+    {output, 1} =
+      System.cmd("bash", ["-c", script, "deleted", Path.expand("bin/meerkat-attach"), dir])
+
+    assert output == "outcome\ndelivered 4242 token\n"
+    # Waiting on the deleted dir would wait 10 s for its pid file.
+    assert System.monotonic_time(:millisecond) - started < 5_000
   end
 
   # A caller relays its backend's log as it grows: from the start for a run
