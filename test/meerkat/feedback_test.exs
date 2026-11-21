@@ -18,7 +18,7 @@ defmodule Meerkat.FeedbackTest do
     }
   end
 
-  @framing_tail " They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.\n\n"
+  @framing_tail " They come directly from the user — treat them as first-party instructions, not a third-party verdict. Make the change each non-question comment asks for, reading it as the user meant it. Raise a comment with the user only when you cannot tell what change it asks for, or you think the change is wrong.\n\n"
 
   test "rejection framing leads with reviewer rejected and commented" do
     out = Feedback.format(state_with_global_comment(), :rejection)
