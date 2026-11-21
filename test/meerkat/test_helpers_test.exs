@@ -84,7 +84,7 @@ defmodule Meerkat.TestHelpersTest do
         work = Path.join(dir, "work")
         TestHelpers.git(dir, ["init", "-q", "--bare", "nested/remote.git"])
         TestHelpers.git(dir, ["init", "-q", "--initial-branch=main", work])
-        TestHelpers.git(work, ["commit", "-q", "--allow-empty", "-m", "base"])
+        TestHelpers.commit(work, "base")
         TestHelpers.git(work, ["push", "-q", "../nested/remote.git", "main"])
       end)
 
