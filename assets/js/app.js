@@ -563,16 +563,18 @@ window.addEventListener("phx:focus", (e) => {
 });
 
 // Calls `find` each frame until it returns something, then `act` with
-// that, giving up after 3s. The server has just expanded / unhidden a
-// file, so what it named may take a few frames to mount (DiffViewer
-// renders its rows a frame or two after mounting).
+// that, giving up after 180 frames (3s at 60 fps). The server has just
+// expanded / unhidden a file, so what it named may take a few frames to
+// mount (DiffViewer renders its rows a frame or two after mounting).
+// The limit counts frames, not time, so a loaded machine, whose frames
+// come slowly, gets as many tries.
 function whenRendered(find, act, missing) {
-  const deadline = performance.now() + 3000;
+  let frames = 180;
   const tick = () => {
     const found = find();
     if (found) {
       act(found);
-    } else if (performance.now() < deadline) {
+    } else if (frames-- > 0) {
       requestAnimationFrame(tick);
     } else {
       console.warn(...missing);

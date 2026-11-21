@@ -42,7 +42,11 @@ patchedDependencies:
   # upstream drops. And it drops the space upstream renders between a
   # line's +/- marker and its code, which put the code a column right
   # of the rulers, made a leading tab a column narrow, and was copied
-  # with the code.
+  # with the code. Upstream also writes each row's line and each view's
+  # row list to state again as they mount, which costs Svelte time that
+  # grows with the square of the rows: a 2500-line file took 12 s of
+  # page script to open. The patch keeps those as raw state and writes
+  # a row list only when its rows change.
   "@git-diff-view/svelte": patches/@git-diff-view__svelte.patch
   # GHSA-gcqx-w48m-w2h4: merge() lets a `__proto__` key set the
   # prototype of the object it returns when the target has a null
