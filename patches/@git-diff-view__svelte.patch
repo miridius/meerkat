@@ -51,10 +51,10 @@ index 2b4b130074593ec8e222485414944e524f2a54c4..3d5795af1c394075ea7cb2b74c922d7d
  	const hasDiff = $derived.by(() => !!oldLine?.diff || !!newLine?.diff);
  
 diff --git a/dist/components/DiffSplitViewNormalTable.svelte b/dist/components/DiffSplitViewNormalTable.svelte
-index 39c3f1184769f621dc56ed816bfba34cb16b6124..556fab46fc79d972f960c1470d2fa46b1cb687e4 100644
+index 39c3f1184769f621dc56ed816bfba34cb16b6124..039b40e9c13bd8ab8c3f8ce800e3026dea113a0f 100644
 --- a/dist/components/DiffSplitViewNormalTable.svelte
 +++ b/dist/components/DiffSplitViewNormalTable.svelte
-@@ -1,6 +1,7 @@
+@@ -1,12 +1,13 @@
  <script lang="ts">
  	import { getSplitContentLines, SplitSide, type DiffFile } from '@git-diff-view/core';
  	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
@@ -62,6 +62,13 @@ index 39c3f1184769f621dc56ed816bfba34cb16b6124..556fab46fc79d972f960c1470d2fa46b
  
  	import DiffSplitContentLine from './DiffSplitContentLineNormal.svelte';
  	import DiffSplitExtendLine from './DiffSplitExtendLineNormal.svelte';
+ 	import DiffSplitHunkLine from './DiffSplitHunkLineNormal.svelte';
+ 	import DiffSplitWidgetLine from './DiffSplitWidgetLineNormal.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		side: SplitSide;
 @@ -23,7 +24,7 @@
  
  	const getAllLines = () => getSplitContentLines(props.diffFile);
@@ -78,16 +85,16 @@ index 39c3f1184769f621dc56ed816bfba34cb16b6124..556fab46fc79d972f960c1470d2fa46b
 -		const init = () => (lines = getAllLines());
 +		const init = () => {
 +			const next = getAllLines();
-+			if (!sameRows(next, lines)) lines = next;
++			if (!sameRows(next, untrack(() => lines))) lines = next;
 +		};
  
  		init();
  
 diff --git a/dist/components/DiffSplitViewWrap.svelte b/dist/components/DiffSplitViewWrap.svelte
-index bcb8b190c790f72e18fbe29438bdf113825839f0..61acc81fdcfdfabc57b3d9d61030529d95a2a4a7 100644
+index bcb8b190c790f72e18fbe29438bdf113825839f0..222b9237d2472974e204935115cb38275779c2f9 100644
 --- a/dist/components/DiffSplitViewWrap.svelte
 +++ b/dist/components/DiffSplitViewWrap.svelte
-@@ -4,6 +4,7 @@
+@@ -4,12 +4,13 @@
  	import { getSplitContentLines, SplitSide, type DiffFile } from '@git-diff-view/core';
  	import { diffAsideWidthName, diffFontSizeName } from '../utils/size.js';
  	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
@@ -95,6 +102,13 @@ index bcb8b190c790f72e18fbe29438bdf113825839f0..61acc81fdcfdfabc57b3d9d61030529d
  
  	import DiffSplitContentLine from './DiffSplitContentLineWrap.svelte';
  	import DiffSplitExtendLine from './DiffSplitExtendLineWrap.svelte';
+ 	import DiffSplitHunkLine from './DiffSplitHunkLineWrap.svelte';
+ 	import DiffSplitWidgetLine from './DiffSplitWidgetLineWrap.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		diffFile: DiffFile;
 @@ -19,7 +20,7 @@
  
  	const getAllLines = () => getSplitContentLines(props.diffFile);
@@ -111,7 +125,7 @@ index bcb8b190c790f72e18fbe29438bdf113825839f0..61acc81fdcfdfabc57b3d9d61030529d
 -		const init = () => (lines = getAllLines());
 +		const init = () => {
 +			const next = getAllLines();
-+			if (!sameRows(next, lines)) lines = next;
++			if (!sameRows(next, untrack(() => lines))) lines = next;
 +		};
  
  		init();
@@ -139,10 +153,10 @@ index bd40f00678475b051b81c9e097f40b4ce3f46195..671404ffbe459fdb3239fbfba02a0fc2
  	let unSubscribe = { current: () => {} };
  
 diff --git a/dist/components/DiffUnifiedView.svelte b/dist/components/DiffUnifiedView.svelte
-index f579b16aa458a1dd88de759f08cd8dc504ab719b..97bb2092e0c02fb9c11d13d1d54ce7d54f1ab2df 100644
+index f579b16aa458a1dd88de759f08cd8dc504ab719b..f59ce61d0d578eb59bcd01642bfa1de06b52e12f 100644
 --- a/dist/components/DiffUnifiedView.svelte
 +++ b/dist/components/DiffUnifiedView.svelte
-@@ -5,6 +5,7 @@
+@@ -5,12 +5,13 @@
  	import { getUnifiedContentLine, type DiffFile } from '@git-diff-view/core';
  	import { diffAsideWidthName, diffFontSizeName } from '../utils/size.js';
  	import { getDiffIdFromElement, removeAllSelection } from '../utils/dom.js';
@@ -150,6 +164,13 @@ index f579b16aa458a1dd88de759f08cd8dc504ab719b..97bb2092e0c02fb9c11d13d1d54ce7d5
  
  	import DiffUnifiedContentLine from './DiffUnifiedContentLine.svelte';
  	import DiffUnifiedExtendLine from './DiffUnifiedExtendLine.svelte';
+ 	import DiffUnifiedHunkLine from './DiffUnifiedHunkLine.svelte';
+ 	import DiffUnifiedWidgetLine from './DiffUnifiedWidgetLine.svelte';
+-	import { onDestroy } from 'svelte';
++	import { onDestroy, untrack } from 'svelte';
+ 
+ 	interface Props {
+ 		diffFile: DiffFile;
 @@ -18,7 +19,7 @@
  
  	const props: Props = $props();
@@ -165,7 +186,7 @@ index f579b16aa458a1dd88de759f08cd8dc504ab719b..97bb2092e0c02fb9c11d13d1d54ce7d5
  		const diffFile = props.diffFile;
 -		lines = getUnifiedContentLine(diffFile);
 +		const next = getUnifiedContentLine(diffFile);
-+		if (!sameRows(next, lines)) lines = next;
++		if (!sameRows(next, untrack(() => lines))) lines = next;
  		maxText = diffFile.unifiedLineLength.toString();
  	};
  
