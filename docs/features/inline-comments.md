@@ -277,8 +277,11 @@ Each rendered comment shows:
   list; the row removes itself when it has no remaining children.
 - Body, rendered through `Meerkat.Markdown.to_safe_html/1` (the
   same server-side renderer the file/global/commit-msg comments
-  use). Suggestion fenced blocks become syntax-highlighted
-  `<pre><code>` blocks.
+  use). A fenced block naming a language, as a suggestion's does,
+  is highlighted in the page with the diff's own highlighter and
+  theme, so its colours match the diff's: shiki when it has the
+  language loaded, otherwise the diff's lowlight fallback. Until
+  the highlighter is ready, the block shows as plain text.
 
 ## Visual line marker
 
