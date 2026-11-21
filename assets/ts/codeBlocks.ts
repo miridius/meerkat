@@ -3,9 +3,9 @@ import type { DiffHighlighter } from "@git-diff-view/shiki";
 import { hastToHtml } from "shiki";
 import { DIFF_THEME, sharedHighlighter } from "./diffHighlighter";
 
-/** Highlights a comment body's fenced code blocks, such as a
- *  suggestion's, the way the diff highlights code
- *  (docs/features/inline-comments.md). */
+// Highlights a comment body's fenced code blocks, such as a
+// suggestion's, the way the diff highlights code
+// (docs/features/inline-comments.md).
 
 type Highlighter = Pick<DiffHighlighter, "getAST" | "hasRegisteredCurrentLang">;
 type Hast = Parameters<typeof hastToHtml>[0];
@@ -15,10 +15,12 @@ type Hast = Parameters<typeof hastToHtml>[0];
  *  lowlight. Null when the engine returns no tree. */
 export function highlightedCode(
 	code: string,
-	lang: string,
+	fenceLang: string,
 	shiki: Highlighter | null,
 	fallback: Highlighter = lowlight,
 ): string | null {
+	// shiki's language names are lower case and case-sensitive.
+	const lang = fenceLang.toLowerCase();
 	if (shikiHas(shiki, lang)) {
 		// shiki wraps the lines in a <pre><code> the block already has.
 		const lines = (shiki.getAST(code, undefined, lang) as Hast | undefined)?.children[0]?.children[0]?.children;

@@ -5,7 +5,7 @@ import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
 // A Clojure file comfortably over @git-diff-view's default 2000-line
-// syntax cap. The DiffViewer raises that cap (MAX_SYNTAX_LINES); before
+// syntax cap. diffHighlighter.ts raises that cap (MAX_SYNTAX_LINES); before
 // the fix, files this long rendered with no highlighting at all while
 // their shorter siblings were colourful. Clojure also exercises the
 // linguist-backed `languageFor` resolution (`.clj` → `clojure`).

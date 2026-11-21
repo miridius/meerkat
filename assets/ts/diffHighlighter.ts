@@ -5,7 +5,7 @@ import { getDiffViewHighlighter, highlighterReady } from "@git-diff-view/shiki";
 // hit in a typical review. shiki warns at 10 instances, so the diff
 // and the comment code blocks share this module-level singleton.
 // Languages outside this list (or shiki bundles like `puml`) fall back
-// to lowlight automatically.
+// to lowlight, in the diff and in codeBlocks.ts alike.
 const PRELOAD_LANGS = [
 	"typescript",
 	"tsx",
@@ -61,14 +61,14 @@ export const sharedHighlighter: Promise<DiffHighlighter | null> = Promise.all([
 			h.setMaxLineToIgnoreSyntax(MAX_SYNTAX_LINES);
 		} catch (e) {
 			console.warn(
-				"DiffViewer: setMaxLineToIgnoreSyntax failed; files over the library's 2000-line default will render unhighlighted",
+				"diffHighlighter: setMaxLineToIgnoreSyntax failed; files over the library's 2000-line default will render unhighlighted",
 				e,
 			);
 		}
 		return h as DiffHighlighter;
 	})
 	.catch((e) => {
-		console.warn("DiffViewer: shiki highlighter init failed; falling back to lowlight", e);
+		console.warn("diffHighlighter: shiki highlighter init failed; falling back to lowlight", e);
 		return null;
 	});
 

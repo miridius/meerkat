@@ -3,6 +3,7 @@
   // body, and Edit / Remove affordances that pushEvent back into
   // the LiveView for the GenServer-side mutation. The suggestion-
   // mode CodeMirror editor lives in the page-level form, not here.
+  import { onMount } from "svelte";
   import { highlightCodeBlocksWhenReady } from "../ts/codeBlocks";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
@@ -48,12 +49,10 @@
       : `L${comment.start_line}–${comment.end_line}`,
   );
 
-  // Re-runs whenever {@html} replaces the body.
+  // DiffViewer remounts a comment rather than updating its props, so
+  // the body is highlighted once, at mount.
   let body: HTMLDivElement;
-  $effect(() => {
-    void comment.body_html;
-    highlightCodeBlocksWhenReady(body);
-  });
+  onMount(() => highlightCodeBlocksWhenReady(body));
 
   function edit() {
     live.pushEvent("comment_form.edit", { surface: "inline", id: comment.id });

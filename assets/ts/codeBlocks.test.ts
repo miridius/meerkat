@@ -43,6 +43,12 @@ describe("highlightedCode", () => {
 		);
 	});
 
+	test("finds shiki's language whatever the fence's case", () => {
+		expect(highlightedCode("(inc 1)", "Clojure", shiki(["clojure"]) as never, fallback as never)).toBe(
+			'<span class="line">(inc 1)</span>',
+		);
+	});
+
 	test("falls back to lowlight when shiki lacks the language or isn't ready", () => {
 		const out = '<span class="hljs-keyword">echo 1;</span>';
 		expect(highlightedCode("echo 1;", "php", shiki(["clojure"]) as never, fallback as never)).toBe(out);
@@ -56,7 +62,7 @@ describe("highlightedCode", () => {
 	});
 
 	test("is null when the engine returns no tree", () => {
-		expect(highlightedCode("x", "clojure", { ...none, hasRegisteredCurrentLang: () => true } as never)).toBeNull();
+		expect(highlightedCode("x", "clojure", none as never)).toBeNull();
 		expect(highlightedCode("x", "php", null, none as never)).toBeNull();
 	});
 
