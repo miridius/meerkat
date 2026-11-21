@@ -176,18 +176,25 @@ _ma_record_ancestors() {
   read -ra _MA_ANCESTORS <<<"$(_ma_ancestors)"
 }
 
-# Print the pids above the caller, from its parent up to but not including
-# pid 1. Read the parent from ps, not $PPID, which bash fixes at startup.
-# Use ps, not kill -0, which takes live root-owned processes such as a
-# terminal's login process for dead.
+# Print the pids above the caller, from its parent up to the nearest git,
+# which waits on a hook, so an exit above it, such as the app that ran git
+# commit restarting, leaves git commit waiting on the decision. With no git
+# above it, stop at the caller's process group leader, or at its parent when
+# the caller leads its group, or else just below pid 1. Read the parent from
+# ps, not $PPID, which bash fixes at startup. Use ps, not kill -0, which
+# takes live root-owned processes such as a terminal's login process for
+# dead.
 _ma_ancestors() {
-  local pid chain=""
-  pid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')
+  local pid pgid next comm chain="" upto=""
+  read -r pid pgid <<<"$(ps -o ppid=,pgid= -p $$ 2>/dev/null)"
   while [[ -n "$pid" ]] && ((pid > 1)); do
     chain+="${chain:+ }$pid"
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [[ -z "$upto" ]] && ((pid == pgid || pgid == $$)) && upto=$chain
+    read -r next comm <<<"$(ps -o ppid=,comm= -p "$pid" 2>/dev/null)"
+    [[ "${comm##*/}" == git ]] && upto=$chain && break
+    pid=$next
   done
-  echo "$chain"
+  echo "${upto:-$chain}"
 }
 
 # A killed git commit can leave its hook (and this caller) running and attached.

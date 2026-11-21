@@ -330,11 +330,15 @@ defmodule Meerkat.ShepherdTest do
         esac
         """ <> @attach_to_decision
 
+      # The bash System.cmd starts leads its own process group; it forks the
+      # caller, as git commit runs its hook, so the caller has an ancestor
+      # to check.
       {output, 1} =
         System.cmd("bash", [
           "-c",
+          ~S|bash -c "$1" orphan "$2" "$3" "$4"; exit $?|,
+          "leader",
           script,
-          "orphan",
           Path.expand("bin/meerkat-attach"),
           dir,
           unquote(ancestor)
@@ -348,48 +352,95 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
-  # The caller's parent really exits, as a killed git commit does, so the
-  # caller is reparented and the chain above it changes.
-  test "a caller given the decision after its parent exited leaves the decision held" do
-    dir = test_dir()
-
-    caller =
-      ~S"""
-      source "$1"
-      exec 2>&1
-      _ma_record_ancestors
-      parent=$PPID
-      touch "$2/recorded"
-      while [[ "$(ps -o ppid= -p $$ | tr -d ' ')" == "$parent" ]]; do
-        ((SECONDS < 60)) || { echo "the parent never exited"; exit 1; }
-        sleep 0.05
-      done
-      """ <> @attach_to_decision
-
-    # The parent starts the caller, waits for it to record its ancestors,
-    # and exits. System.cmd still collects the caller's output: it waits for
-    # EOF on the stdout the caller inherited.
-    parent = ~S"""
-    bash -c "$1" caller "$2" "$3" &
-    c=$!
-    until [[ -f "$3/recorded" ]] || ! kill -0 "$c" 2>/dev/null; do
+  # Each link in a chain of processes from a top process down to the caller
+  # starts the next one as its own process group's leader ("job") or in its
+  # own group ("fork"), and waits on it, as git commit waits on its hook.
+  # The top exits once the caller has recorded its ancestors.
+  @link ~S"""
+  [[ -n "$MK_TOP" ]] || export MK_TOP=$$
+  [[ "$1" == job ]] && set -m
+  # Each starts the next in the background, so bash forks it rather than
+  # exec it.
+  if (($# > 1)); then
+    "$2" -c "$MK_LINK" link "${@:3}" &
+  else
+    bash -c "$MK_CALLER" caller &
+  fi
+  next=$!
+  if [[ "$MK_TOP" == $$ ]]; then
+    until [[ -f "$MK_DIR/recorded" ]] || ! kill -0 "$next" 2>/dev/null; do
       ((SECONDS < 60)) || exit 1
       sleep 0.05
     done
-    [[ -f "$3/recorded" ]] || { echo "the caller died before recording"; exit 1; }
-    """
+    [[ -f "$MK_DIR/recorded" ]] || { echo "the caller died before recording"; exit 1; }
+  else
+    wait "$next"
+  fi
+  """
 
-    {output, 0} =
-      System.cmd("bash", [
-        "-c",
-        parent,
-        "parent",
-        caller,
-        Path.expand("bin/meerkat-attach"),
-        dir
-      ])
+  # The caller records its ancestors and waits for the top to exit. With
+  # MK_HIDE set it hides every git from the ancestor walk, so a real git
+  # above the test run, as in a git hook, does not end the walk.
+  @await_top ~S"""
+  set -- "$MK_ATTACH" "$MK_DIR"
+  source "$1"
+  exec 2>&1
+  [[ -z "$MK_HIDE" ]] || ps() { command ps "$@" | sed 's/git$/tig/'; }
+  _ma_record_ancestors
+  touch "$2/recorded"
+  under_top() {
+    local p=$$
+    while ((p > 1)); do
+      p=$(command ps -o ppid= -p "$p" | tr -d ' ')
+      [[ "$p" == "$MK_TOP" ]] && return 0
+    done
+    return 1
+  }
+  while under_top; do
+    ((SECONDS < 60)) || { echo "the top process never exited"; exit 1; }
+    sleep 0.05
+  done
+  """
 
-    assert output == @orphaned
+  # A killed git commit, the top, leaves the decision held, whether it
+  # leads the hook's group or a hook runner below it leads a group of its
+  # own, as lefthook does. An app above git commit, or above the caller's
+  # group leader with no git above, restarting leaves it to the caller. A
+  # caller leading its own group checks only its parent. A fake git, a link
+  # to bash, stands in for git commit; rows without one hide every git.
+  for {name, top, chain, outcome} <- [
+        {"its group leader exited while its hook lives", "bash", ~w(fork bash fork), :held},
+        {"git above its hook runner's group exited", "git", ~w(job bash fork), :held},
+        {"an app above its git group leader exited", "bash", ~w(job git fork), :delivered},
+        {"a process above its group leader exited", "bash", ~w(job bash fork), :delivered},
+        {"its parent exited while it leads its group", "bash", ~w(job), :held},
+        {"its grandparent exited while it leads its group", "bash", ~w(fork bash job), :delivered}
+      ] do
+    test "a caller given the decision after #{name}: #{outcome}" do
+      dir = test_dir()
+      git = Path.join(dir, "git")
+      File.ln_s!(System.find_executable("bash"), git)
+
+      [top | chain] =
+        Enum.map([unquote(top) | unquote(chain)], &if(&1 == "git", do: git, else: &1))
+
+      {output, 0} =
+        System.cmd(top, ["-c", @link, "top" | chain],
+          env: [
+            {"MK_LINK", @link},
+            {"MK_CALLER", @await_top <> @attach_to_decision},
+            {"MK_ATTACH", Path.expand("bin/meerkat-attach")},
+            {"MK_DIR", dir},
+            {"MK_HIDE", if(git in [top | chain], do: "", else: "1")}
+          ]
+        )
+
+      if unquote(outcome) == :delivered do
+        assert output == "outcome\ndelivered\n"
+      else
+        assert output == @orphaned
+      end
+    end
   end
 
   # A caller relays its backend's log as it grows: from the start for a run

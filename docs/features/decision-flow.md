@@ -262,7 +262,13 @@ since been reused. If one has, it prints the still-open
 line with `the process that ran meerkat exited` in place of
 `stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
 the next invocation. A rerun before then takes the review over from
-it. Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
+it. It checks up to the nearest `git` above it, which runs the hook
+and waits on it, so a process above that exiting, as when Claude Code
+restarts, leaves the decision to the still-running `git commit`. With
+no `git` above it, it checks up to the leader of its process group,
+or only its parent when it leads the group itself, or else every
+process above it but pid 1.
+Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
 and takes delivery. Until the decision arrives, it starts no process
 beyond its connection to the server. A decision clicked while no invocation is
 attached stays held for the next invocation.
