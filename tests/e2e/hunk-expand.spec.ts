@@ -5,21 +5,28 @@ import { afterNextFrame, expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
 import { makeFixture } from "./lib/fixture";
 
-// The 80-line fixture edits lines 20 and 60, leaving hidden lines
-// above the first hunk, in the 33-line gap between hunks, and below
-// the second, so every hunk row has an expand button.
-function twoHunkFixture() {
-	const lines = (edit: boolean) =>
-		Array.from({ length: 80 }, (_, i) => {
+// The 80-line a.txt edits lines 20 and 60, leaving hidden lines above
+// the first hunk, in the 33-line gap between hunks, and below the second,
+// so every hunk row has an expand button. The 1200-line many.txt changes
+// a line every 30 lines, so its diff has 40 hunks.
+function hunkFixture() {
+	const twoHunks = (edit: boolean) =>
+		`${Array.from({ length: 80 }, (_, i) => {
 			const n = i + 1;
 			if (edit && n === 20) return "line twenty";
 			if (edit && n === 60) return "line sixty";
 			return `line ${n}`;
-		}).join("\n") + "\n";
-	const fixture = makeFixture({ files: { "a.txt": lines(false) } });
+		}).join("\n")}\n`;
+	const manyHunks = (edit: boolean) =>
+		`${Array.from({ length: 1200 }, (_, i) => {
+			const n = i + 1;
+			return edit && n % 30 === 0 ? `changed line ${n}` : `line ${n}`;
+		}).join("\n")}\n`;
+	const fixture = makeFixture({ files: { "a.txt": twoHunks(false), "many.txt": manyHunks(false) } });
 	fixture.git("commit", "-q", "-m", "base");
-	writeFileSync(join(fixture.dir, "a.txt"), lines(true));
-	fixture.git("add", "a.txt");
+	writeFileSync(join(fixture.dir, "a.txt"), twoHunks(true));
+	writeFileSync(join(fixture.dir, "many.txt"), manyHunks(true));
+	fixture.git("add", "a.txt", "many.txt");
 	return fixture;
 }
 
@@ -79,10 +86,32 @@ async function checkSplit(file: Locator, clickSide: "old" | "new"): Promise<void
 	await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();
 }
 
-test("hunk expand buttons stay in the single unified gutter, and in split mode, wrapped or not, sit in both gutters and expand the hidden lines", async ({
+// With Wrap off, Split view draws each side in its own table. Lists the
+// rows, by `data-line`, whose top differs from the other side's row, or a
+// single entry giving the row counts when a side has none or they differ.
+function misalignedRows(file: Locator): Promise<string[]> {
+	return file.evaluate((section) => {
+		const tops = (side: string) =>
+			new Map(
+				Array.from(section.querySelectorAll<HTMLElement>(`table.${side}-diff-table > tbody > tr[data-line]`), (tr) => [
+					tr.dataset.line,
+					tr.getBoundingClientRect().top,
+				]),
+			);
+		const oldTops = tops("old");
+		const newTops = tops("new");
+		if (oldTops.size === 0 || oldTops.size !== newTops.size) return [`old ${oldTops.size} rows, new ${newTops.size}`];
+		return Array.from(oldTops).flatMap(([line, top]) => {
+			const other = newTops.get(line);
+			return other !== undefined && Math.abs(other - top) < 0.5 ? [] : [`${line}: ${top} vs ${other}`];
+		});
+	});
+}
+
+test("hunk expand buttons stay in the single unified gutter, and in split mode, wrapped or not, sit in both gutters and expand the hidden lines, laying out a diff of many hunks a few times with its sides level", async ({
 	page,
 }) => {
-	const meerkat = await startMeerkat({ fixture: twoHunkFixture() });
+	const meerkat = await startMeerkat({ fixture: hunkFixture() });
 	try {
 		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "a.txt" });
@@ -116,89 +145,42 @@ test("hunk expand buttons stay in the single unified gutter, and in split mode, 
 		// data-side, before measuring anything in it.
 		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
 		await checkSplit(file, "new");
-	} finally {
-		await meerkat.kill();
-	}
-});
 
-// A 1200-line file with a line changed every 30 lines, so the diff has 40
-// hunks.
-function manyHunkFixture() {
-	const lines = (edit: boolean) =>
-		`${Array.from({ length: 1200 }, (_, i) => {
-			const n = i + 1;
-			return edit && n % 30 === 0 ? `changed line ${n}` : `line ${n}`;
-		}).join("\n")}\n`;
-	const fixture = makeFixture({ files: { "many.txt": lines(false) } });
-	fixture.git("commit", "-q", "-m", "base");
-	writeFileSync(join(fixture.dir, "many.txt"), lines(true));
-	fixture.git("add", "many.txt");
-	return fixture;
-}
+		await test.step("in Split view with Wrap off, an expand lays the diff out a few times, not once per hunk, and the two sides' rows stay level", async () => {
+			const many = page.locator(".file-section").filter({ hasText: "many.txt" });
+			await expect(many.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
+			await afterNextFrame(page);
+			expect(await misalignedRows(many)).toEqual([]);
 
-// With Wrap off, Split view draws each side in its own table. Lists the
-// rows, by `data-line`, whose top differs from the other side's row, or a
-// single entry giving the row counts when a side has none or they differ.
-function misalignedRows(file: Locator): Promise<string[]> {
-	return file.evaluate((section) => {
-		const tops = (side: string) =>
-			new Map(
-				Array.from(section.querySelectorAll<HTMLElement>(`table.${side}-diff-table > tbody > tr[data-line]`), (tr) => [
-					tr.dataset.line,
-					tr.getBoundingClientRect().top,
-				]),
-			);
-		const oldTops = tops("old");
-		const newTops = tops("new");
-		if (oldTops.size === 0 || oldTops.size !== newTops.size) return [`old ${oldTops.size} rows, new ${newTops.size}`];
-		return Array.from(oldTops).flatMap(([line, top]) => {
-			const other = newTops.get(line);
-			return other !== undefined && Math.abs(other - top) < 0.5 ? [] : [`${line}: ${top} vs ${other}`];
+			// The rows after the expanded lines each hold a hunk whose height
+			// @git-diff-view syncs across the two tables. Done row by row as
+			// Svelte re-renders the rows, each sync laid out both tables again.
+			const cdp = await page.context().newCDPSession(page);
+			const events: { name: string; ph: string }[] = [];
+			cdp.on("Tracing.dataCollected", (data) => events.push(...(data.value as { name: string; ph: string }[])));
+			const traced = new Promise((resolve) => cdp.once("Tracing.tracingComplete", resolve));
+			await cdp.send("Tracing.start", { categories: "devtools.timeline", transferMode: "ReportEvents" });
+			await expandButtons(many).nth(1).click();
+			await expect(many.getByText("line 40", { exact: true }).first()).toBeVisible();
+			await afterNextFrame(page);
+			await cdp.send("Tracing.end");
+			await traced;
+			const layouts = events.filter((e) => e.name === "Layout" && e.ph === "X").length;
+			// 3-4 with the fix, about 90 without it.
+			expect(layouts).toBeGreaterThan(0);
+			expect(layouts).toBeLessThan(8);
+			expect(await misalignedRows(many)).toEqual([]);
+
+			// A font size change resizes every row in place, without a
+			// re-render. Both sides' rows here are the same natural height, so
+			// this guards against a sync writing a wrong height.
+			await page.locator(".toolbar-settings > summary").click();
+			await page.getByLabel("Increase font size").click();
+			await page.getByLabel("Increase font size").click();
+			await expect(page.locator(".toolbar-settings .toolbar-value").first()).toHaveText("15px");
+			await afterNextFrame(page);
+			await expect.poll(() => misalignedRows(many)).toEqual([]);
 		});
-	});
-}
-
-test("in Split view with Wrap off, an expand lays the diff out a few times, not once per hunk, and the two sides' rows stay level", async ({
-	page,
-}) => {
-	const meerkat = await startMeerkat({ fixture: manyHunkFixture() });
-	try {
-		await page.goto(meerkat.url);
-		const file = page.locator(".file-section").filter({ hasText: "many.txt" });
-		await page.getByRole("button", { name: /^Split$/ }).click();
-		await page.getByRole("checkbox", { name: "Wrap" }).uncheck();
-		await expect(file.locator('tr.diff-line-hunk[data-side="new"]').first()).toBeAttached();
-		await afterNextFrame(page);
-		expect(await misalignedRows(file)).toEqual([]);
-
-		// The rows after the expanded lines each hold a hunk whose height
-		// @git-diff-view syncs across the two tables. Done row by row as
-		// Svelte re-renders the rows, each sync laid out both tables again.
-		const cdp = await page.context().newCDPSession(page);
-		const events: { name: string; ph: string }[] = [];
-		cdp.on("Tracing.dataCollected", (data) => events.push(...(data.value as { name: string; ph: string }[])));
-		const traced = new Promise((resolve) => cdp.once("Tracing.tracingComplete", resolve));
-		await cdp.send("Tracing.start", { categories: "devtools.timeline", transferMode: "ReportEvents" });
-		await expandButtons(file).nth(1).click();
-		await expect(file.getByText("line 40", { exact: true }).first()).toBeVisible();
-		await afterNextFrame(page);
-		await cdp.send("Tracing.end");
-		await traced;
-		const layouts = events.filter((e) => e.name === "Layout" && e.ph === "X").length;
-		// 3-4 with the fix, about 90 without it.
-		expect(layouts).toBeGreaterThan(0);
-		expect(layouts).toBeLessThan(8);
-		expect(await misalignedRows(file)).toEqual([]);
-
-		// A font size change resizes every row in place, without a
-		// re-render. Both sides' rows here are the same natural height, so
-		// this guards against a sync writing a wrong height.
-		await page.locator(".toolbar-settings > summary").click();
-		await page.getByLabel("Increase font size").click();
-		await page.getByLabel("Increase font size").click();
-		await expect(page.locator(".toolbar-settings .toolbar-value").first()).toHaveText("15px");
-		await afterNextFrame(page);
-		await expect.poll(() => misalignedRows(file)).toEqual([]);
 	} finally {
 		await meerkat.kill();
 	}

@@ -78,10 +78,18 @@ async function restOn(page: Page, side: "old" | "new", word: string) {
 	return point;
 }
 
-test("resting on a symbol shows its docs and source for that row's side", async ({ page }) => {
+test("resting on a symbol shows its docs and source for that row's side, and a long source scrolls in a popup the reviewer can resize", async ({
+	page,
+}) => {
+	// `big`'s source is too long for the popup to show at once.
+	const long = Array.from({ length: 80 }, (_, i) => `(+ x ${i})`).join("\n  ");
+	const big = `\n(defn big\n  "Doc."\n  [x]\n  ${long})\n`;
 	const fixture = stagedReview(
-		{ "src/app/util.clj": util("Old doc."), "src/app/core.clj": core("(u/helper y)") },
-		{ "src/app/util.clj": util("New doc."), "src/app/core.clj": core("(inc (u/helper y))") },
+		{ "src/app/util.clj": util("Old doc.") + big, "src/app/core.clj": core("(u/helper y)") },
+		{
+			"src/app/util.clj": util("New doc.") + big,
+			"src/app/core.clj": core("(inc (u/helper y) (u/big y))"),
+		},
 	);
 	const meerkat = await startMeerkat({ fixture });
 	try {
@@ -146,27 +154,12 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 		// Leaving the diff closes it.
 		await page.mouse.move(5, 5);
 		await expect(popup).toHaveCount(0);
-	} finally {
-		await meerkat.kill();
-	}
-});
 
-test("a long source scrolls in a popup the reviewer can resize, in unified view", async ({
-	page,
-}) => {
-	const long = Array.from({ length: 80 }, (_, i) => `(+ x ${i})`).join("\n  ");
-	const fixture = stagedReview(
-		{ "src/app/util.clj": util("Doc.", long), "src/app/core.clj": core("(u/helper y)") },
-		{ "src/app/core.clj": core("(inc (u/helper y))") },
-	);
-	const meerkat = await startMeerkat({ fixture });
-	try {
-		await page.goto(meerkat.url);
+		// In unified view, a long source scrolls within the popup.
 		await page.getByRole("button", { name: "Unified", exact: true }).click();
 		await expect(page.locator("td.diff-line-content").first()).toBeVisible();
-		const popup = page.locator('[data-test="clj-hover"]');
 
-		await restOn(page, "new", "u/helper");
+		await restOn(page, "new", "u/big");
 		const panel = popup.getByRole("tabpanel");
 		const last = panel.getByText("(+ x 79)");
 		await expect(last).toBeAttached();
@@ -192,6 +185,25 @@ test("a long source scrolls in a popup the reviewer can resize, in unified view"
 		expect(after?.height).toBeGreaterThan(before.height + 100);
 		expect(after?.width).toBeGreaterThan(before.width + 40);
 		await expect(popup).toBeVisible();
+
+		// Off macOS, a Clojure suggestion keeps CodeMirror's bindings and shows
+		// no Keys link; suggestion-editor.spec.ts covers macOS. The page reads
+		// the platform before its scripts load.
+		await page.addInitScript(() => {
+			Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" });
+		});
+		await page.reload();
+		const core = page.locator(".file-section").filter({ hasText: "src/app/core.clj" });
+		await core.locator('td.diff-line-num span[data-line-new-num="5"]').click();
+		const form = core.locator('tr.meerkat-form-row[data-meerkat-form-anchor="5"] .comment-form');
+		await form.getByRole("button", { name: /^Suggestion$/ }).click();
+		const content = form.locator(".code-host .cm-content");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("  (inc (u/helper y) (u/big y)))");
+		await expect(form.getByRole("button", { name: "Keys" })).toHaveCount(0);
+		// CodeMirror's Ctrl+Shift+K deletes the line, rather than slurping.
+		await form.locator(".code-host .cm-line").click();
+		await page.keyboard.press("Control+Shift+K");
+		await expect.poll(() => content.evaluate((el) => el.textContent)).toBe("");
 	} finally {
 		await meerkat.kill();
 	}

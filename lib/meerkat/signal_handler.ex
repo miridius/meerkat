@@ -52,7 +52,7 @@ defmodule Meerkat.SignalHandler do
   after
     # Halt even if printing raised: gen_event would drop a crashed handler,
     # leaving no handler to act on any later SIGTERM.
-    # muex:ignore unreachable I/O seam: halting ends the test VM, so ExUnit cannot run this line; e2e "a SIGTERM to the BEAM ends the review at once and the caller exits 143" in tests/e2e/detach.spec.ts kills these mutants
+    # muex:ignore unreachable I/O seam: halting ends the test VM, so ExUnit cannot run this line; killed by detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…"
     System.halt(@exit_code)
   end
 

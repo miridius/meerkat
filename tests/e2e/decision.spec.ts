@@ -1,16 +1,25 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./lib/test";
 import { startMeerkat } from "./lib/runner";
+
+// The draft keys a page holds in localStorage, which its origin's pages share.
+const draftKeys = (page: Page) =>
+	page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("meerkat:draft:")));
 
 // The seam from a decision sent in the browser, through the CLI and the
 // launcher's attach stream, to what the calling agent reads: stderr and the
 // exit code. How each decision maps to its code and text is covered by
-// test/meerkat/cli_test.exs; the view's handlers by the LiveView tests; the
-// shortcut's key test by assets/ts/sendFeedbackShortcut.test.ts.
+// test/meerkat/cli_test.exs; the view's handlers, button gating on a dirty
+// form and the Approve relabel by the LiveView tests; the shortcut's key
+// test by assets/ts/sendFeedbackShortcut.test.ts. Drafts are localStorage
+// keys scoped to the URL's origin and keyed by review_id: a reload re-reads
+// a draft, submitting clears it, and a decision wipes the review's drafts.
 test.describe("decision flow", () => {
-	test("feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs", async ({
+	test("feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs, and drafts last until submitted or decided", async ({
 		page,
+		context,
 	}) => {
 		// The agent commonly head/tail's the feedback stream and sees only
 		// a few comments. The banner (top and bottom, so either truncation
@@ -18,23 +27,34 @@ test.describe("decision flow", () => {
 		// so the agent can recover everything it missed. keepFixture so the
 		// log and feedback files survive meerkat's exit for inspection.
 		const meerkat = await startMeerkat({ keepFixture: true });
-		const logPath = join(meerkat.fixture.dir, ".git", "meerkat-precommit", "meerkat.log");
+		const meerkatDir = join(meerkat.fixture.dir, ".git", "meerkat-precommit");
+		const logPath = join(meerkatDir, "meerkat.log");
 		try {
 			await page.goto(meerkat.url);
 			await expect(page).toHaveTitle("meerkat commit review");
 			// Desktop Chrome emulation sends a Windows user agent, so the page
 			// detects a non-Mac platform even on a macOS runner.
 			const mod = "Control";
+			const approve = page.getByRole("button", { name: /^Approve$/ });
 			const sendFeedback = page.getByRole("button", { name: /^Send Feedback$/ });
 			const hint = sendFeedback.locator(".shortcut-hint");
 			await expect(hint).toHaveText("Ctrl+Shift+Enter");
 
-			// Inside an open comment form the send shortcut neither submits
-			// the form nor sends the feedback; the submit shortcut does submit.
+			// Typed text gates the decision and survives a reload: the form
+			// is reopened from the server, its text from localStorage.
 			await page.getByRole("button", { name: /^\+ Add global comment$/ }).click();
 			const form = page.locator(".comment-form");
 			const textarea = form.locator("textarea");
 			await textarea.fill("unsent draft");
+			await expect(approve, "unsaved text disables Approve").toBeDisabled();
+			await expect(sendFeedback, "unsaved text disables Send Feedback").toBeDisabled();
+			await expect.poll(() => draftKeys(page)).toHaveLength(1);
+			const [draftKey] = await draftKeys(page);
+			await page.reload();
+			await expect(textarea).toHaveValue("unsent draft");
+
+			// Inside an open comment form the send shortcut neither submits
+			// the form nor sends the feedback; the submit shortcut does submit.
 			await textarea.press(`${mod}+Shift+Enter`);
 			await expect(textarea).toHaveValue("unsent draft");
 
@@ -44,6 +64,16 @@ test.describe("decision flow", () => {
 			await expect(page.locator(".comment-count")).toHaveText("1 comment");
 			await expect(sendFeedback).toBeEnabled();
 			await expect(hint).toHaveText("Ctrl+Shift+Enter");
+
+			await page.reload();
+			await expect(form, "a submitted form does not reopen on reload").toBeHidden();
+			await page.getByRole("button", { name: /^\+ Add another$/ }).click();
+			await expect(textarea, "submitting cleared the draft").toHaveValue("");
+			await textarea.fill("discarded");
+			await expect(sendFeedback, "unsaved text disables sending").toBeDisabled();
+			await form.getByRole("button", { name: /^Cancel$/ }).click();
+			await expect(form).toBeHidden();
+			await expect(sendFeedback, "discarding the form re-enables sending").toBeEnabled();
 
 			// Suggestion swaps the textarea for a CodeMirror editor whose
 			// contents land in a fence tagged with the file's language: the
@@ -79,9 +109,16 @@ test.describe("decision flow", () => {
 				"the suggestion is coloured as the diff colours Rust",
 			).toHaveCSS("color", "rgb(249, 117, 131)");
 
+			// A draft another tab of the review left behind. The decision's
+			// page closes its own tab, so read the shared storage from another.
+			const other = await context.newPage();
+			await other.goto(meerkat.url);
+			await other.evaluate((key) => localStorage.setItem(key, "left in another tab"), draftKey);
+
 			await page.keyboard.press(`${mod}+Shift+Enter`);
 			const { code: exit, stderr } = await meerkat.awaitExit();
 			expect(exit).toBe(1);
+			expect(await draftKeys(other), "the decision wiped the review's drafts").toEqual([]);
 
 			// The outcome is stated in the output, not left to the exit code:
 			// the banner states the verdict and the true count, bracketed top
@@ -103,6 +140,9 @@ test.describe("decision flow", () => {
 			const saved = readFileSync(feedbackPath, "utf8");
 			expect(saved).toContain("first finding here");
 			expect(saved).toContain("second finding here");
+
+			// A decided review leaves no snapshot to resume.
+			expect(readdirSync(join(meerkatDir, "in-progress"))).toEqual([]);
 
 			// The Phoenix/Bandit endpoint banner is the canonical noise line.
 			// It must NOT reach the agent-facing stream...
