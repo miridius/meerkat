@@ -270,6 +270,18 @@ defmodule Meerkat.CljHoverTest do
              hover_on(ctx, "web/app/ui.cljs", :new, "p/now")
   end
 
+  test "a var names the diff file defining it on its side, and no file outside the diff", ctx do
+    index = &Enum.find_index(ctx.files, fn f -> f.file_name == &1 end)
+    util = index.("src/app/util.clj")
+
+    assert %{file_index: ^util} = hover_on(ctx, "src/app/core.clj", :new, "u/helper")
+    assert %{file_index: ^util} = hover_on(ctx, "src/app/core.clj", :old, "u/helper")
+    plat = index.("web/app/plat.cljs")
+    assert %{file_index: ^plat} = hover_on(ctx, "web/app/ui.cljs", :new, "p/now")
+    assert %{file_index: nil} = hover_on(ctx, "src/app/core.clj", :new, "o/thing")
+    assert %{file_index: nil} = hover_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
+  end
+
   test "a .cljc file's :cljs branch answers as ClojureScript", ctx do
     assert %{doc: "Dep doc."} = hover_on(ctx, "shared/app/both.cljc", :new, "lib/dep-fn")
 

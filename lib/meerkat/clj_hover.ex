@@ -25,6 +25,7 @@ defmodule Meerkat.CljHover do
           macro: boolean(),
           where: String.t(),
           in_repo: boolean(),
+          file_index: non_neg_integer() | nil,
           line: pos_integer(),
           arglists: [String.t()],
           doc: String.t() | nil,
@@ -118,7 +119,7 @@ defmodule Meerkat.CljHover do
          path = side_path(file, side),
          %{} = span <- span_at(state.sides[side].spans, path, line, col),
          {d, state} when d != nil <- definition(state, side, span, path) do
-      {:reply, render(d), state}
+      {:reply, render(d, diff_index(state.files, side, d)), state}
     else
       {nil, state} -> {:reply, nil, state}
       _ -> {:reply, nil, state}
@@ -269,12 +270,17 @@ defmodule Meerkat.CljHover do
   defp where({:jar, jar, rel}, _root), do: "#{Path.basename(jar)}:#{rel}"
   defp where({:dir, dir, rel}, root), do: Path.relative_to(Path.join(dir, rel), root)
 
-  defp render(d) do
+  # The index of the diff file holding `d` on `side`, or nil for a
+  # file outside the diff, which never shares a diff file's path.
+  defp diff_index(files, side, d), do: Enum.find_index(files, &(side_path(&1, side) == d.file))
+
+  defp render(d, file_index) do
     %{
       name: "#{d.ns}/#{d.name}",
       macro: d.macro,
       where: d.file,
       in_repo: d.in_repo,
+      file_index: file_index,
       line: d.row,
       arglists: d.arglists,
       doc: d.doc,
