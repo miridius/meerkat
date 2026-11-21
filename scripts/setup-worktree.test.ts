@@ -176,10 +176,10 @@ describe("setup", () => {
 	});
 });
 
-// The real script, three at once in one
-// throwaway checkout, with stub `mix` and `pnpm` that log each run: the
-// lock lets only the first fetch the Mix deps, and the stub pnpm's failure
-// reaches each run's output.
+// The real hook, three at once in one throwaway checkout, with stub `mix`
+// and `pnpm` that log each run: the lock lets only the first fetch the Mix
+// deps, and the stub pnpm's failure, stdout and stderr, reaches each run's
+// output.
 test("hooks starting at once in one checkout take turns", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-setup-"));
 	try {
@@ -203,18 +203,18 @@ test("hooks starting at once in one checkout take turns", async () => {
 			chmodSync(join(bin, name), 0o755);
 		};
 		stub("mix", "sleep 1; mkdir -p deps/muex/.git");
-		stub("pnpm", "echo 'pnpm says no' >&2; exit 1");
+		stub("pnpm", "echo 'pnpm tried'; echo 'pnpm says no' >&2; exit 1");
 
 		const input = JSON.stringify({ hook_event_name: "SessionStart", cwd: checkout });
 		const runs = [1, 2, 3].map(async () => {
-			const p = Bun.spawn([process.execPath, join(import.meta.dir, "setup-worktree.ts")], {
+			const p = Bun.spawn([join(import.meta.dir, "../.claude/hooks/setup-worktree.sh")], {
 				env,
 				stdin: new Blob([input]),
 				stdout: "pipe",
 			});
 			return { status: await p.exited, out: await new Response(p.stdout).text() };
 		});
-		const context = `Dependency setup failed. \`pnpm install --frozen-lockfile --prefer-offline\` failed in ${checkout}:\npnpm says no\n`;
+		const context = `Dependency setup failed. \`pnpm install --frozen-lockfile --prefer-offline\` failed in ${checkout}:\npnpm tried\npnpm says no\n`;
 		const expected = { status: 0, out: `${JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } })}\n` };
 		expect(await Promise.all(runs)).toEqual([expected, expected, expected]);
 		expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([

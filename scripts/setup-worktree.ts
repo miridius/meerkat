@@ -22,7 +22,7 @@
 // priv/ link only when it recompiles that dep.
 // Parallel subagents can start in one checkout at once, so each run holds
 // a per-checkout lock; the kernel drops it if the hook is killed.
-// Nothing is printed when nothing is missing. A failed step is reported
+// Nothing is printed when nothing is missing. A failed step here is reported
 // to Claude as additional context, never blocking the session.
 
 import { closeSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync } from "node:fs";
