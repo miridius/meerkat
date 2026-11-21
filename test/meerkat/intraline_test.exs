@@ -145,6 +145,35 @@ defmodule Meerkat.IntralineTest do
            ]
   end
 
+  test "a split keeps each sub-hunk's lines in diff order, deletions before additions" do
+    hunk = "@@ -1,3 +1,2 @@\n ctx\n-a\n-b\n+x\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,3 +1,2 @@\n ctx\n-a\n+x\n",
+             "@@ -3,1 +3,0 @@\n-b\n"
+           ]
+  end
+
+  test "a no-newline trailer after an orphan run follows the orphan lines" do
+    hunk = "@@ -1,1 +1,2 @@\n-a\n+x\n+y\n\\ No newline at end of file\n"
+
+    assert Intraline.split([hunk]) == [
+             "@@ -1,1 +1,2 @@\n-a\n+x\n",
+             "@@ -2,0 +2,1 @@\n+y\n\\ No newline at end of file\n"
+           ]
+  end
+
+  test "a hunk whose text does not end in a newline is split the same way" do
+    assert Intraline.split(["@@ -1,2 +1,1 @@\n-a\n-b\n+x"]) == [
+             "@@ -1,2 +1,1 @@\n-a\n+x\n",
+             "@@ -2,1 +2,0 @@\n-b\n"
+           ]
+  end
+
+  test "a header with no body is passed through unchanged" do
+    assert Intraline.split(["@@ -1,0 +1,0 @@"]) == ["@@ -1,0 +1,0 @@"]
+  end
+
   test "malformed hunk passed through unchanged" do
     hunk = "not-a-hunk\nrandom\n"
     assert Intraline.split([hunk]) == [hunk]

@@ -643,8 +643,8 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     Application.put_env(:meerkat, :repo_path, repo)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
-    html = render_click(view, "decision.approve", %{})
-    assert html =~ "Approved"
+    render_click(view, "decision.approve", %{})
+    assert has_element?(view, "h1", ~r/^Approved$/)
 
     # Pending answers were cleared out of THIS repo, not the cwd's.
     refute PendingAnswers.load(repo)
@@ -663,8 +663,11 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
 
     {view, _rid} = mount_bound(conn, state, repo)
 
+    # The click's own reply, rendered before the decision broadcast
+    # reaches this view, is already the done view.
     html = render_click(view, "decision.approve", %{})
     assert html =~ "Approved"
+    refute html =~ "approve-btn"
     assert_push_event(view, "drafts:wipe", %{})
 
     cache = ApprovalCache.load_for(repo)

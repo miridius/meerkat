@@ -17,6 +17,7 @@ defmodule MeerkatWeb.Loopback do
   @behaviour Plug
 
   @impl Plug
+  # muex:ignore equivalent: call/2 ignores its options
   def init(opts), do: opts
 
   @impl Plug

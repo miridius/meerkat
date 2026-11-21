@@ -238,19 +238,10 @@ defmodule Meerkat.Persistence do
       {:error, %Jason.DecodeError{} = err} -> {:error, Exception.message(err)}
     end
   rescue
-    e in ArgumentError ->
-      # `:atoms!` raises ArgumentError when an atom isn't already in
-      # the table — that's the dominant cause and points at a
-      # different-version writer. Surface the raw message too so a
-      # genuinely-corrupt file doesn't get misdiagnosed as a version
-      # mismatch.
-      msg = Exception.message(e)
-
-      if msg =~ "atom" do
-        {:error, "unknown key (atom not yet defined; file likely from a different version)"}
-      else
-        {:error, msg}
-      end
+    # Jason reports malformed JSON as a DecodeError, so an ArgumentError
+    # is `:atoms!` meeting a key with no atom: a different-version writer.
+    ArgumentError ->
+      {:error, "unknown key (atom not yet defined; file likely from a different version)"}
   end
 
   defp quarantine(path, reason) do
@@ -264,6 +255,7 @@ defmodule Meerkat.Persistence do
 
   defp persistable_map(state) do
     state
+    # muex:ignore equivalent: Map.put and Map.take treat the struct as this map, and the take drops :__struct__
     |> Map.from_struct()
     |> Map.put(:state_signature, current_signature(state))
     |> Map.take(@persistable_keys)
@@ -296,7 +288,7 @@ defmodule Meerkat.Persistence do
   defp normalise_form(form) do
     %{
       "surface" => to_string(form.surface),
-      "anchor" => stringify_keys(Map.get(form, :anchor, %{})),
+      "anchor" => Map.get(form, :anchor, %{}),
       "edit_id" => Map.get(form, :edit_id),
       "initial_body" => Map.get(form, :initial_body),
       "initial_finding_type" => Map.get(form, :initial_finding_type),
@@ -304,12 +296,6 @@ defmodule Meerkat.Persistence do
       "initial_lint_rule" => Map.get(form, :initial_lint_rule)
     }
   end
-
-  defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} -> {to_string(k), v} end)
-  end
-
-  defp stringify_keys(other), do: other
 
   defp merge(state, decoded) do
     # `:state_signature` is a freshness check we serialise / read in
@@ -356,7 +342,9 @@ defmodule Meerkat.Persistence do
     Map.new(map, fn
       {k, "show"} -> {to_string(k), :show}
       {k, "hide"} -> {to_string(k), :hide}
+      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
       {k, :show} -> {to_string(k), :show}
+      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
       {k, :hide} -> {to_string(k), :hide}
       kv -> kv
     end)
@@ -367,55 +355,36 @@ defmodule Meerkat.Persistence do
 
   defp deserialise(_, value), do: value
 
+  # load decodes with `keys: :atoms!`, so every key in `form`, and in its
+  # anchor, is an atom.
   defp deserialise_form(form) do
-    surface = surface_atom(Map.get(form, "surface") || Map.get(form, :surface))
-    anchor = atomise_anchor(Map.get(form, "anchor") || Map.get(form, :anchor) || %{})
+    base = %{surface: surface_atom(form[:surface]), anchor: form[:anchor] || %{}}
 
-    base = %{
-      surface: surface,
-      anchor: anchor
-    }
-
-    [
-      {:edit_id, "edit_id"},
-      {:initial_body, "initial_body"},
-      {:initial_finding_type, "initial_finding_type"},
-      {:initial_correct_instructions, "initial_correct_instructions"},
-      {:initial_lint_rule, "initial_lint_rule"}
-    ]
-    |> Enum.reduce(base, fn {atom, str}, acc ->
-      case Map.get(form, str) || Map.get(form, atom) do
-        nil -> acc
-        v -> Map.put(acc, atom, v)
-      end
-    end)
+    form
+    |> Map.take([
+      :edit_id,
+      :initial_body,
+      :initial_finding_type,
+      :initial_correct_instructions,
+      :initial_lint_rule
+    ])
+    |> Enum.reject(fn {_, v} -> is_nil(v) end)
+    |> Enum.into(base)
   end
 
   defp migrate_finding_type(%{finding_type: "thought"} = c),
     do: Map.put(c, :finding_type, "follow_up")
 
+  # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
   defp migrate_finding_type(%{finding_type: :thought} = c),
+    # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
     do: Map.put(c, :finding_type, :follow_up)
 
   defp migrate_finding_type(c), do: c
 
-  defp surface_atom("inline"), do: :inline
   defp surface_atom("file"), do: :file
   defp surface_atom("global"), do: :global
   defp surface_atom("commit_msg"), do: :commit_msg
   defp surface_atom(atom) when is_atom(atom), do: atom
   defp surface_atom(_), do: :inline
-
-  # Anchor keys are `:file_index`, `:start_line`, `:end_line`, `:side`.
-  # All are well-known and pre-existing as atoms in the LV module.
-  defp atomise_anchor(map) when is_map(map) do
-    Map.new(map, fn {k, v} -> {anchor_key(k), v} end)
-  end
-
-  defp anchor_key("file_index"), do: :file_index
-  defp anchor_key("start_line"), do: :start_line
-  defp anchor_key("end_line"), do: :end_line
-  defp anchor_key("side"), do: :side
-  defp anchor_key(k) when is_atom(k), do: k
-  defp anchor_key(other), do: other
 end

@@ -2,6 +2,8 @@ defmodule Meerkat.PlantUMLTest do
   # Swaps PATH and the BEAM-wide cached answer.
   use Meerkat.Case, async: false
 
+  import ExUnit.CaptureIO
+
   alias Meerkat.PlantUML
 
   setup do

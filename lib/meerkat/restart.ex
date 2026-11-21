@@ -17,6 +17,7 @@ defmodule Meerkat.Restart do
   @doc "Request a live restart onto the current version."
   @spec request() :: no_return() | any()
   def request do
+    # muex:ignore unreachable I/O seam: the default halts the VM, so ExUnit always sets :restart_fun; killed by e2e restart.spec.ts "resumes with its ticks and comments, and waits for a click even with every file ticked Approved"
     fun = Application.get_env(:meerkat, :restart_fun, &System.halt/1)
     fun.(@restart_exit_code)
   end

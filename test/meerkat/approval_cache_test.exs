@@ -2,6 +2,8 @@ defmodule Meerkat.ApprovalCacheTest do
   # Not async: a path_for/1 test sets the global :approval_cache_path.
   use Meerkat.Case, async: false
 
+  import ExUnit.CaptureIO, only: [with_io: 2]
+
   alias Meerkat.ApprovalCache
 
   describe "approve / approved? / unapprove" do
@@ -318,24 +320,87 @@ defmodule Meerkat.ApprovalCacheTest do
       assert ApprovalCache.approved?(loaded, "feature", "x.rs", "111")
     end
 
-    test "missing file loads as empty", %{dir: dir} do
-      assert ApprovalCache.load(Path.join(dir, "nope.json")) == %{}
+    test "saves indented JSON a person can read", %{dir: dir} do
+      path = Path.join(dir, "approved.json")
+      :ok = ApprovalCache.save(ApprovalCache.approve(%{}, "main", "a.rs", "1"), path)
+
+      assert File.read!(path) =~ ~s(\n  "version": 2)
     end
 
-    test "wrong version loads as empty", %{dir: dir} do
+    test "a failed save returns the error and warns", %{dir: dir} do
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "file"), "")
+      path = Path.join([dir, "file", "approved.json"])
+
+      {result, stderr} = with_io(:stderr, fn -> ApprovalCache.save(%{}, path) end)
+
+      assert {:error, :enotdir} = result
+
+      assert stderr =~
+               "meerkat: warning — couldn't save approval cache to #{path}: :enotdir"
+    end
+
+    test "missing file loads as empty without a warning", %{dir: dir} do
+      path = Path.join(dir, "nope.json")
+
+      {result, stderr} = with_io(:stderr, fn -> ApprovalCache.load(path) end)
+
+      assert result == %{}
+      refute stderr =~ path
+    end
+
+    test "an unreadable file loads as empty and warns", %{dir: dir} do
+      File.mkdir_p!(dir)
+
+      {result, stderr} = with_io(:stderr, fn -> ApprovalCache.load(dir) end)
+
+      assert result == %{}
+      assert stderr =~ "meerkat: warning — couldn't read approval cache at #{dir}: :eisdir"
+    end
+
+    for {label, body, reason} <- [
+          {"wrong version", ~s({"version":1,"branches":{"main":{"x":["1"]}}}),
+           "schema version mismatch (got 1, want 2)"},
+          {"no version key", ~s({"branches":{}}), "missing version/branches keys"}
+        ] do
+      test "a file with #{label} loads as empty and is quarantined", %{dir: dir} do
+        path = Path.join(dir, "approved.json")
+        File.mkdir_p!(dir)
+        File.write!(path, unquote(body))
+
+        {result, stderr} = with_io(:stderr, fn -> ApprovalCache.load(path) end)
+
+        assert result == %{}
+        assert_quarantined(path)
+
+        assert stderr =~
+                 ~r/approval cache at #{Regex.escape(path)} unusable \(#{Regex.escape(unquote(reason))}\); moved to \S+\. Starting from an empty cache\.\n\z/
+      end
+    end
+
+    test "a file whose branches are not an object loads as empty and is quarantined",
+         %{dir: dir} do
       path = Path.join(dir, "approved.json")
       File.mkdir_p!(dir)
-      File.write!(path, ~s({"version":1,"branches":{"main":{"x":["1"]}}}))
+      File.write!(path, ~s({"version":2,"branches":["main"]}))
 
-      assert ApprovalCache.load(path) == %{}
+      {result, _stderr} = with_io(:stderr, fn -> ApprovalCache.load(path) end)
+
+      assert result == %{}
+      assert_quarantined(path)
     end
 
-    test "malformed JSON loads as empty", %{dir: dir} do
+    test "malformed JSON loads as empty and is quarantined", %{dir: dir} do
       path = Path.join(dir, "approved.json")
       File.mkdir_p!(dir)
       File.write!(path, "not json at all")
+      {:error, err} = Jason.decode("not json at all")
 
-      assert ApprovalCache.load(path) == %{}
+      {result, stderr} = with_io(:stderr, fn -> ApprovalCache.load(path) end)
+
+      assert result == %{}
+      assert_quarantined(path)
+      assert stderr =~ "unusable (JSON parse failed: #{Exception.message(err)}); moved to"
     end
   end
 
@@ -355,5 +420,169 @@ defmodule Meerkat.ApprovalCacheTest do
       assert ApprovalCache.approved?(cache, "main", "f.rs", "1")
       assert ApprovalCache.approved?(ApprovalCache.load(path), "main", "f.rs", "1")
     end
+
+    test "rejects a mutator that does not take the cache, touching nothing", %{path: path} do
+      assert_raise FunctionClauseError, fn -> ApprovalCache.modify(path, fn -> %{} end) end
+      refute File.exists?(Path.dirname(path))
+    end
+
+    test "waits for a lock another writer releases, without forcing it", %{path: path} do
+      lock_dir = path <> ".lock.d"
+      File.mkdir_p!(lock_dir)
+
+      releaser =
+        Task.async(fn ->
+          Process.sleep(100)
+          File.rmdir!(lock_dir)
+        end)
+
+      {result, stderr} =
+        with_io(:stderr, fn ->
+          ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "f.rs", "1"), 5_000)
+        end)
+
+      Task.await(releaser)
+      assert {:ok, %{"main" => %{"f.rs" => ["1"]}}} = result
+      refute stderr =~ lock_dir
+      refute File.exists?(lock_dir)
+    end
+
+    test "force-takes a lock held past the wait and still writes", %{path: path} do
+      lock_dir = path <> ".lock.d"
+      File.mkdir_p!(lock_dir)
+
+      {result, stderr} =
+        with_io(:stderr, fn ->
+          ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "f.rs", "1"), 50)
+        end)
+
+      assert {:ok, _} = result
+      assert ApprovalCache.approved?(ApprovalCache.load(path), "main", "f.rs", "1")
+
+      assert stderr ==
+               "meerkat: warning — approval-cache lock at #{lock_dir} held for >50 ms. " <>
+                 "Likely stale (killed meerkat). Forcing take.\n"
+
+      refute File.exists?(lock_dir)
+    end
+
+    test "gives up when a lock it force-takes cannot be removed", %{path: path} do
+      lock_dir = path <> ".lock.d"
+      File.mkdir_p!(lock_dir)
+      File.write!(Path.join(lock_dir, "stray"), "")
+
+      {result, _stderr} =
+        with_io(:stderr, fn ->
+          ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "f.rs", "1"), 50)
+        end)
+
+      assert result == {:error, {:lock_failed, :eexist}}
+      refute File.exists?(path)
+    end
+
+    test "sleeps between tries while it waits for a lock", %{path: path} do
+      lock_dir = path <> ".lock.d"
+      File.mkdir_p!(lock_dir)
+      on_exit(fn -> File.rm_rf(lock_dir) end)
+
+      waiter =
+        Task.async(fn ->
+          with_io(:stderr, fn ->
+            ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "f.rs", "1"), 5_000)
+          end)
+        end)
+
+      assert Meerkat.TestHelpers.eventually(fn ->
+               Process.info(waiter.pid, :current_function) ==
+                 {:current_function, {Process, :sleep, 1}}
+             end)
+
+      File.rmdir!(lock_dir)
+      assert {{:ok, _}, ""} = Task.await(waiter, 10_000)
+    end
+
+    test "skips the write when the lock cannot be created", %{path: path} do
+      dir = Path.dirname(path)
+      lock_dir = path <> ".lock.d"
+      File.mkdir_p!(dir)
+      File.chmod!(dir, 0o555)
+      on_exit(fn -> File.chmod(dir, 0o755) end)
+
+      {result, stderr} =
+        with_io(:stderr, fn -> ApprovalCache.modify(path, &Map.put(&1, "main", %{})) end)
+
+      assert result == {:error, {:lock_failed, :eacces}}
+
+      assert stderr ==
+               "meerkat: warning — couldn't acquire approval-cache lock at #{lock_dir}: " <>
+                 ":eacces. Skipping cache write to avoid clobbering concurrent worktrees.\n"
+
+      refute File.exists?(path)
+    end
+
+    test "returns the error when the cache directory cannot be created", %{path: path} do
+      File.mkdir_p!(Path.dirname(Path.dirname(path)))
+      File.write!(Path.dirname(path), "a file, not a directory")
+
+      {result, stderr} =
+        with_io(:stderr, fn -> ApprovalCache.modify(path, &Map.put(&1, "main", %{})) end)
+
+      assert result == {:error, :enotdir}
+
+      assert stderr ==
+               "meerkat: warning — couldn't create approval-cache directory at " <>
+                 "#{Path.dirname(path)}: :enotdir. Approval ticks won't persist this session.\n"
+    end
+
+    test "returns a failed save's error and releases the lock", %{path: path} do
+      File.mkdir_p!(path)
+
+      {result, _stderr} =
+        with_io(:stderr, fn -> ApprovalCache.modify(path, &Map.put(&1, "main", %{})) end)
+
+      assert {:error, _} = result
+      refute File.exists?(path <> ".lock.d")
+    end
+
+    test "a lock another writer already removed is released without a warning",
+         %{path: path} do
+      lock_dir = path <> ".lock.d"
+
+      {result, stderr} =
+        with_io(:stderr, fn ->
+          ApprovalCache.modify(path, fn cache ->
+            File.rmdir!(lock_dir)
+            cache
+          end)
+        end)
+
+      assert {:ok, %{}} = result
+      refute stderr =~ lock_dir
+    end
+
+    test "warns when the lock cannot be released", %{path: path} do
+      lock_dir = path <> ".lock.d"
+
+      {result, stderr} =
+        with_io(:stderr, fn ->
+          ApprovalCache.modify(path, fn cache ->
+            File.write!(Path.join(lock_dir, "stray"), "")
+            cache
+          end)
+        end)
+
+      assert {:ok, %{}} = result
+
+      assert stderr =~
+               ~r/meerkat: warning — couldn't release approval-cache lock at #{Regex.escape(lock_dir)}: :\w+\. Next concurrent writer will force-take after 10s\.\n\z/
+
+      assert File.dir?(lock_dir)
+    end
+  end
+
+  defp assert_quarantined(path) do
+    refute File.exists?(path)
+    base = Path.basename(path) <> ".corrupt."
+    assert path |> Path.dirname() |> File.ls!() |> Enum.any?(&String.starts_with?(&1, base))
   end
 end

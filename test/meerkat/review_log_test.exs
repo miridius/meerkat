@@ -1,9 +1,146 @@
 defmodule Meerkat.ReviewLogTest do
   use ExUnit.Case, async: true
 
-  alias Meerkat.ReviewLog
+  import ExUnit.CaptureIO
+  import Meerkat.TestHelpers, only: [git: 2, tmp_path: 1]
+
+  alias Meerkat.{ApprovalCache, ReviewLog, ReviewState}
+
+  setup do
+    repo = tmp_path("meerkat-review-log")
+    File.mkdir_p!(repo)
+    on_exit(fn -> File.rm_rf!(repo) end)
+    git(repo, ["init", "-q"])
+    %{repo: repo}
+  end
+
+  defp read_log(%ReviewLog{path: path}), do: path |> File.read!() |> Jason.decode!()
 
   describe "start/2" do
+    test "records each file's OID and whether the approval cache already approved it", %{
+      repo: repo
+    } do
+      # Starting a log prunes the approvals of a branch that does not exist.
+      git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"])
+      Meerkat.TestHelpers.commit(repo, "seed")
+
+      :ok =
+        ApprovalCache.save(
+          %{"main" => %{"approved.ex" => ["oid-a"]}},
+          ApprovalCache.path_for(repo)
+        )
+
+      state = %ReviewState{
+        head_branch: "main",
+        approval_key: "main",
+        files: [
+          %{file_name: "approved.ex", effective_oid: "oid-a"},
+          %{file_name: "changed.ex", effective_oid: "oid-b"},
+          %{file_name: "unstaged.ex"}
+        ]
+      }
+
+      log = ReviewLog.start(repo, state)
+
+      assert Path.basename(log.path) =~ ~r/^\d{14}-main-files3\.json$/
+
+      assert %{"decision" => "in-progress", "finished_at" => nil, "files" => files} =
+               read_log(log)
+
+      assert files == [
+               %{
+                 "file_name" => "approved.ex",
+                 "effective_oid" => "oid-a",
+                 "was_approved" => true
+               },
+               %{
+                 "file_name" => "changed.ex",
+                 "effective_oid" => "oid-b",
+                 "was_approved" => false
+               },
+               %{"file_name" => "unstaged.ex", "effective_oid" => "", "was_approved" => false}
+             ]
+    end
+
+    test "writes a version 1 record under the repo's reviews dir, stamped with its start time",
+         %{repo: repo} do
+      pr = %{number: 7, title: "Fix it", url: "https://example.com/pull/7", body: "unlogged"}
+      log = ReviewLog.start(repo, %ReviewState{head_branch: "main", pr: pr})
+
+      assert Path.dirname(log.path) == Path.join(Meerkat.Git.meerkat_dir(repo), "reviews")
+      record = read_log(log)
+      assert record["version"] == 1
+
+      assert record["pr"] == %{
+               "number" => 7,
+               "title" => "Fix it",
+               "url" => "https://example.com/pull/7"
+             }
+
+      {:ok, started, 0} = DateTime.from_iso8601(record["started_at"])
+      stamp = Calendar.strftime(started, "%Y%m%d%H%M%S")
+      assert Path.basename(log.path) == "#{stamp}-main-empty.json"
+    end
+
+    test "marks no file approved when the review has no branch", %{repo: repo} do
+      :ok =
+        ApprovalCache.save(%{"main" => %{"a.ex" => ["oid-a"]}}, ApprovalCache.path_for(repo))
+
+      log =
+        ReviewLog.start(repo, %ReviewState{files: [%{file_name: "a.ex", effective_oid: "oid-a"}]})
+
+      assert [%{"was_approved" => false}] = read_log(log)["files"]
+    end
+
+    test "warns and still returns the log when the record cannot be encoded", %{repo: repo} do
+      state = %ReviewState{commit_message: <<0xFF>>}
+
+      stderr = capture_io(:stderr, fn -> send(self(), {:log, ReviewLog.start(repo, state)}) end)
+
+      assert_received {:log, %ReviewLog{} = log}
+      refute File.exists?(log.path)
+      assert stderr =~ ~r/\Ameerkat: warning — couldn't encode review log: %Jason\.EncodeError/
+    end
+  end
+
+  describe "finalize/3" do
+    test "rewrites the log with the decision, finish time and feedback", %{repo: repo} do
+      log = ReviewLog.start(repo, %ReviewState{head_branch: "main"})
+
+      updated = ReviewLog.finalize(log, :rejected, "fix the tests")
+
+      assert updated.path == log.path
+      assert updated.record.decision == "rejected"
+      on_disk = read_log(updated)
+      assert on_disk["decision"] == "rejected"
+      assert on_disk["rendered_feedback"] == "fix the tests"
+      assert {:ok, _, 0} = DateTime.from_iso8601(on_disk["finished_at"])
+      assert on_disk["started_at"] == log.record.started_at
+    end
+
+    test "records empty feedback as null", %{repo: repo} do
+      log = ReviewLog.start(repo, %ReviewState{})
+
+      assert %{"decision" => "approved", "rendered_feedback" => nil} =
+               log |> ReviewLog.finalize(:approved, "") |> read_log()
+    end
+
+    test "warns and returns the updated log when the file cannot be written", %{repo: repo} do
+      blocker = Path.join(repo, "not-a-dir")
+      File.write!(blocker, "")
+      log = %ReviewLog{path: Path.join(blocker, "review.json"), record: %{}}
+
+      stderr =
+        capture_io(:stderr, fn -> send(self(), {:log, ReviewLog.finalize(log, :approved, "")}) end)
+
+      assert_received {:log, %ReviewLog{record: %{decision: "approved"}}}
+
+      warning = "meerkat: warning — couldn't write review log to #{log.path}: :enotdir"
+      assert warning in String.split(stderr, "\n")
+    end
+  end
+
+  describe "start/2 and the approval cache" do
     test "a detached HEAD logs no branch but reads approvals under its key" do
       dir = Meerkat.TestHelpers.make_git_repo("meerkat-review-log")
       on_exit(fn -> File.rm_rf!(dir) end)

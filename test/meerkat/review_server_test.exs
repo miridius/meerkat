@@ -42,6 +42,20 @@ defmodule Meerkat.ReviewServerTest do
       assert pid1 == pid2
     end
 
+    test "the server is registered under the id it was started for", %{
+      repo: repo,
+      review_id: id
+    } do
+      {:ok, pid} =
+        ReviewServer.ensure_started(id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{},
+          review_id: "a-stale-id"
+        })
+
+      assert [{^pid, _}] = Registry.lookup(Meerkat.ReviewRegistry, id)
+    end
+
     test "different review_ids → different pids", %{repo: repo} do
       {:ok, pid_a} =
         ReviewServer.ensure_started("rs_a_#{System.unique_integer([:positive])}", %{
@@ -69,6 +83,37 @@ defmodule Meerkat.ReviewServerTest do
 
       assert [{^pid, _}] = Registry.lookup(Meerkat.ReviewRegistry, id)
       assert %ReviewState{} = ReviewServer.get_state(id)
+    end
+
+    test "end_if_unused/1 keeps a review whose earlier server saved a comment in its repo",
+         %{review_id: id} do
+      repo = Meerkat.TestHelpers.make_tmp_repo("meerkat-review-server-unused")
+      on_exit(fn -> File.rm_rf!(repo) end)
+
+      comment = %{
+        id: Comment.new_id(),
+        body: "kept",
+        finding_type: :issue,
+        correct_instructions: false,
+        lint_rule: false,
+        created_at: Comment.now()
+      }
+
+      for {key, value} <- [repo_path: repo, review_state: %ReviewState{}, meerkat_dir: nil] do
+        old = Application.fetch_env(:meerkat, key)
+        Application.put_env(:meerkat, key, value)
+
+        on_exit(fn ->
+          case old do
+            {:ok, v} -> Application.put_env(:meerkat, key, v)
+            :error -> Application.delete_env(:meerkat, key)
+          end
+        end)
+      end
+
+      :ok = Persistence.save(repo, id, %ReviewState{global_comments: [comment]})
+      assert ReviewServer.end_if_unused(id) == :kept
+      assert [%{body: "kept"}] = ReviewServer.get_state(id).global_comments
     end
 
     test "starts from the snapshot an earlier server saved", %{repo: repo, review_id: id} do
@@ -278,6 +323,23 @@ defmodule Meerkat.ReviewServerTest do
         assert {{:function_clause, _}, _} =
                  catch_exit(GenServer.call(pid, {:set_file_override, "a.ex", :bogus}))
       end)
+    end
+
+    test "reject a non-binary review id and an unknown file override",
+         %{repo: repo, review_id: id} do
+      non_binary_review_id = Process.get(:non_binary_review_id, :review)
+      unknown_override = Process.get(:unknown_override, :bogus)
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.ensure_started(non_binary_review_id, %{
+          repo_path: repo,
+          initial_state: %ReviewState{}
+        })
+      end
+
+      assert_raise FunctionClauseError, fn ->
+        ReviewServer.set_file_override(id, "a.ex", unknown_override)
+      end
     end
   end
 

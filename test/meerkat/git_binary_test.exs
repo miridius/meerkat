@@ -519,7 +519,7 @@ defmodule Meerkat.GitBinaryTest do
     stderr =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         file = staged_by_name(staged)["bazel/query.clj"]
-        assert Enum.join(file.read_errors) =~ "couldn't parse binary file statistics"
+        assert file.read_errors == ["couldn't parse binary file statistics"]
       end)
 
     assert stderr =~ "couldn't parse binary file statistics"
@@ -631,8 +631,8 @@ defmodule Meerkat.GitBinaryTest do
         else: :real
     end)
 
-    assert {:error, reason} = staged_in(unborn, "text")
-    assert reason =~ "staged files changed while loading"
+    assert staged_in(unborn, "text") ==
+             {:error, "staged files changed while loading; reload the review"}
   end
 
   defp staged_by_name(staged) do

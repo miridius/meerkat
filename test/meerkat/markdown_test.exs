@@ -14,18 +14,15 @@ defmodule Meerkat.MarkdownTest do
     end
   end
 
-  # Both non-binary-side mutants muex reported here are provably equivalent:
-  # flipping the guard's `and` to `or` (or deleting the empty-string fast-path
-  # clause) cannot change any observable outcome — a non-binary side always
-  # raises FunctionClauseError whether from the guard or from String.split,
-  # and an empty body renders to zero bytes through the full pipeline.
-  # These tests pin the documented contract, not the mutant kills.
   describe "render_diff_sides/3 — guard contract" do
-    property "a non-binary side is rejected" do
+    property "a non-binary side is rejected at the call" do
       check all(side <- filter(term(), &(not is_binary(&1)))) do
-        assert_raise FunctionClauseError, fn ->
-          Markdown.render_diff_sides(side, "# New", :modified)
-        end
+        error =
+          assert_raise FunctionClauseError, fn ->
+            Markdown.render_diff_sides(side, "# New", :modified)
+          end
+
+        assert error.module == Markdown
       end
     end
   end
@@ -49,6 +46,18 @@ defmodule Meerkat.MarkdownTest do
       # The e2e suite selects rendered suggestions by this class.
       html = Markdown.to_safe_html("```rust\nfn x() {}\n```")
       assert html =~ ~s(<code class="language-rust">)
+    end
+
+    test "a body of one character renders as a paragraph" do
+      assert Markdown.to_safe_html("x") == "<p>x</p>"
+    end
+
+    test "renders GFM tables, strikethrough and bare-URL links" do
+      html = Markdown.to_safe_html("| a |\n| - |\n| b |\n\n~~gone~~ https://example.com")
+
+      assert html =~ "<table>"
+      assert html =~ "<del>gone</del>"
+      assert html =~ ~s(<a href="https://example.com">)
     end
 
     test "renders list" do
@@ -277,6 +286,58 @@ defmodule Meerkat.MarkdownTest do
       assert Regex.scan(~r/<pre>/, n) |> length() == 1
       assert n =~ "before"
       assert n =~ "after"
+    end
+
+    test "a closed fence ends its block, so only the paragraph after it is tinted" do
+      # The closing fence is longer than the opener, which CommonMark allows.
+      fence = "```elixir\ncode\n````\n\n"
+
+      %{old_html: old, new_html: new} =
+        Markdown.render_diff_sides(fence <> "old para", fence <> "new para", :modified)
+
+      pre = ~s(<pre><code class="language-elixir">code\n</code></pre>)
+      assert old == pre <> ~s(\n<div class="md-del"><p>old para</p></div>)
+      assert new == pre <> ~s(\n<div class="md-ins"><p>new para</p></div>)
+    end
+
+    test "a fence closed by a marker as long as the opener ends its block" do
+      fence = "```\na\n\nb\n```\n\n"
+
+      %{new_html: new} =
+        Markdown.render_diff_sides(fence <> "old tail", fence <> "new tail", :modified)
+
+      assert new =~ ~r/\A<pre>/
+      assert String.ends_with?(new, ~s(\n<div class="md-ins"><p>new tail</p></div>))
+    end
+
+    test "a shorter marker inside a fence does not close it" do
+      fence = "````\na\n```\n\nb\n````\n\n"
+
+      %{new_html: new} =
+        Markdown.render_diff_sides(fence <> "old tail", fence <> "new tail", :modified)
+
+      assert new =~ ~r/\A<pre>/
+      assert String.ends_with?(new, ~s(\n<div class="md-ins"><p>new tail</p></div>))
+    end
+
+    test "trailing whitespace alone does not mark a block changed" do
+      %{old_html: old, new_html: new} =
+        Markdown.render_diff_sides("para  \n", "para\n", :modified)
+
+      assert old == "<p>para</p>"
+      assert new == "<p>para</p>"
+    end
+
+    test "a one-character paragraph is kept" do
+      assert %{new_html: "<p>x</p>"} = Markdown.render_diff_sides("x", "x", :modified)
+    end
+
+    test "raw HTML in an unchanged block renders on both sides" do
+      %{old_html: old, new_html: new} =
+        Markdown.render_diff_sides("a <em>hi</em>\n\nold", "a <em>hi</em>\n\nnew", :modified)
+
+      assert String.starts_with?(old, "<p>a <em>hi</em></p>\n")
+      assert String.starts_with?(new, "<p>a <em>hi</em></p>\n")
     end
 
     test "renders a raw HTML block" do

@@ -192,8 +192,6 @@ defmodule Meerkat.ReviewState do
   Lines are 1-indexed.
   """
   @spec blocks(String.t()) :: [block]
-  def blocks(""), do: []
-
   def blocks(message) do
     indexed = message |> String.split("\n") |> Enum.with_index(1)
 
@@ -224,6 +222,7 @@ defmodule Meerkat.ReviewState do
   defp split_off_fenced_code([], prose_acc, out) do
     finalise =
       case Enum.reverse(prose_acc) do
+        # muex:ignore equivalent: chunk_paragraphs/1 turns the {:prose, []} it adds into no blocks
         [] -> out
         lines -> [{:prose, lines} | out]
       end
@@ -235,6 +234,7 @@ defmodule Meerkat.ReviewState do
     if fence?(text) do
       out2 =
         case Enum.reverse(prose_acc) do
+          # muex:ignore equivalent: chunk_paragraphs/1 turns the {:prose, []} it adds into no blocks
           [] -> out
           prose -> [{:prose, prose} | out]
         end
@@ -256,6 +256,7 @@ defmodule Meerkat.ReviewState do
 
   defp fence?(text) do
     trimmed = String.trim_leading(text)
+    # muex:ignore equivalent: swapping the two pure checks joined by `or` changes nothing
     String.starts_with?(trimmed, "```") or String.starts_with?(trimmed, "~~~")
   end
 
@@ -263,12 +264,11 @@ defmodule Meerkat.ReviewState do
   # paragraphs, each a non-empty list of `{text, line_no}`.
   defp chunk_paragraphs(indexed_lines) do
     indexed_lines
-    |> Enum.chunk_by(fn {text, _} -> String.trim(text) == "" end)
-    |> Enum.reject(fn chunk ->
-      match?([{<<>>, _} | _], chunk) or
-        Enum.all?(chunk, fn {text, _} -> String.trim(text) == "" end)
-    end)
+    |> Enum.chunk_by(&blank_line?/1)
+    |> Enum.reject(fn [first | _] -> blank_line?(first) end)
   end
+
+  defp blank_line?({text, _}), do: String.trim(text) == ""
 
   # If every line of the paragraph looks like a list item, each
   # becomes its own block; otherwise the paragraph stays as one block.
@@ -283,9 +283,10 @@ defmodule Meerkat.ReviewState do
   defp list_item?(text) do
     text = String.trim_leading(text)
 
-    String.starts_with?(text, "- ") or
-      String.starts_with?(text, "* ") or
-      Regex.match?(~r/^\d+[.)] /, text)
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    bullet = String.starts_with?(text, "- ") or String.starts_with?(text, "* ")
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    bullet or Regex.match?(~r/^\d+[.)] /, text)
   end
 
   ## Internals
@@ -342,6 +343,7 @@ defmodule Meerkat.ReviewState do
   # If a file's current staged blob OID matches one this branch (or, on
   # a detached HEAD, this worktree) already approved, tick it on mount
   # so the reviewer doesn't have to re-tick on every round.
+  # muex:ignore equivalent: the general clause finds nothing under a nil key either; cache keys are strings
   defp hydrate_approved_from_cache(_repo_path, nil, _files), do: MapSet.new()
 
   defp hydrate_approved_from_cache(repo_path, branch, files) do
@@ -357,12 +359,17 @@ defmodule Meerkat.ReviewState do
   defp approved_from_cache(cache, branch, files) do
     files
     |> Enum.filter(fn %{file_name: name, effective_oid: oid} ->
+      # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
       is_binary(oid) and oid != "" and
         Meerkat.ApprovalCache.approved?(cache, branch, name, oid)
     end)
     |> Enum.map(& &1.file_name)
     |> MapSet.new()
   end
+
+  @doc false
+  def hydrate_approved_from_cache_for_test(repo_path, branch, files),
+    do: hydrate_approved_from_cache(repo_path, branch, files)
 
   @doc false
   def approved_from_cache_for_test(cache, branch, files),

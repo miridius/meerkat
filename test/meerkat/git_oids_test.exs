@@ -20,12 +20,13 @@ defmodule Meerkat.GitOidsTest do
   }
 
   # The index deletes gone.rs, a.rs, b.rs and wëird.rs, edits mod.rs and
-  # adds two files.
+  # adds three files.
   @index %{
     "kept.rs" => "fn kept() {}\n",
     "mod.rs" => "fn mod() -> i32 { 2 }\n",
     "staged.rs" => "fn s() {}\n",
-    ":x.rs" => "fn colon() {}\n"
+    ":x.rs" => "fn colon() {}\n",
+    "-dash.rs" => "fn dash() {}\n"
   }
 
   setup_all do
@@ -57,6 +58,10 @@ defmodule Meerkat.GitOidsTest do
 
     test "a staged path git would read as pathspec magic yields its blob OID", %{dir: dir} do
       assert Git.fetch_staged_blob_oid(dir, ":x.rs") == {:ok, blob_oid(@index[":x.rs"])}
+    end
+
+    test "a staged path git would read as an option yields its blob OID", %{dir: dir} do
+      assert Git.fetch_staged_blob_oid(dir, "-dash.rs") == {:ok, blob_oid(@index["-dash.rs"])}
     end
   end
 
@@ -92,14 +97,16 @@ defmodule Meerkat.GitOidsTest do
       # git's answer in a repo with no commit.
       stub_git("ls-tree", {"fatal: Not a valid object name HEAD\n", 128})
 
-      {result, _stderr} =
+      {result, stderr} =
         ExUnit.CaptureIO.with_io(:stderr, fn -> Git.head_blob_oids_many(dir, ["a.rs"]) end)
 
-      assert result ==
-               {:error,
-                "couldn't compute batched HEAD-blob OIDs (git --literal-pathspecs -c " <>
-                  "core.quotePath=false ls-tree HEAD -- a.rs exited 128: fatal: Not a valid " <>
-                  "object name HEAD); deletion approvals may not persist"}
+      message =
+        "couldn't compute batched HEAD-blob OIDs (git --literal-pathspecs -c " <>
+          "core.quotePath=false ls-tree HEAD -- a.rs exited 128: fatal: Not a valid " <>
+          "object name HEAD); deletion approvals may not persist"
+
+      assert result == {:error, message}
+      assert stderr == "meerkat: warning — #{message}\n"
     end
   end
 
@@ -122,6 +129,10 @@ defmodule Meerkat.GitOidsTest do
     test "non-ASCII deletion round-trips its pre-image OID", %{dir: dir} do
       assert Git.effective_oids_many(dir, [entry("wëird.rs", :deleted)]) ==
                {:ok, %{"wëird.rs" => blob_oid(@head["wëird.rs"])}}
+    end
+
+    test "entries that are not a list are refused rather than read as no changes", %{dir: dir} do
+      assert_raise FunctionClauseError, fn -> Git.effective_oids_many(dir, %{}) end
     end
   end
 

@@ -208,8 +208,10 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     Application.put_env(:meerkat, :repo_path, repo)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
-    html = render_hook(view, "file.toggle_approved", %{"file_name" => "f.ex"})
-    assert html =~ "changed since you opened the review"
+    render_hook(view, "file.toggle_approved", %{"file_name" => "f.ex"})
+
+    assert flash_text(view) ==
+             "f.ex changed since you opened the review — refresh to see the new content before approving."
   end
 
   test "approving with the live oid matches proceeds without a flash", %{
@@ -251,6 +253,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
 
     # A map without the "value" key falls through to empty (everything visible).
     render_hook(view, "filter.set_input", %{})
+    assert has_element?(view, ".file-list .file-name", "src/widget.rs")
     assert has_element?(view, ".file-list .file-name", "other.ex")
   end
 
@@ -713,8 +716,10 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     Application.put_env(:meerkat, :repo_path, repo)
     {:ok, view, _html} = live_isolated(conn, ReviewLive)
 
-    html = render_hook(view, "file.toggle_approved", %{"file_name" => "unstaged.ex"})
-    assert html =~ "no longer staged"
+    render_hook(view, "file.toggle_approved", %{"file_name" => "unstaged.ex"})
+
+    assert flash_text(view) ==
+             "unstaged.ex is no longer staged — refresh the review (or stage it again) before approving."
   end
 
   test "un-approving does not push the scroll nudge; approving scrolls to the next file", %{

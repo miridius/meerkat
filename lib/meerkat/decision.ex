@@ -75,13 +75,16 @@ defmodule Meerkat.Decision do
   @typedoc "The exit code a caller exits with, and the text it prints to stderr."
   @type outcome :: {non_neg_integer(), String.t()}
 
+  # muex:ignore equivalent: every subscriber and broadcast takes the topic from this attribute
   @deadline_topic "meerkat:deadline"
+  # muex:ignore equivalent: every subscriber and broadcast takes the topic from this attribute
   @decision_topic "meerkat:decision"
   @taken_over "meerkat: a later invocation of this review took it over — aborting."
   @caller_check_ms 1_000
 
   ## Public API
 
+  # muex:ignore equivalent: start_link ignores its argument, so its default changes nothing
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, :no_decision, name: __MODULE__)
   end
@@ -309,6 +312,7 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call(:reset, _from, %{callers: callers, deadline_tick: tick}) do
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value; tests kill the call's removal
     Enum.each(Map.keys(callers), &Process.demonitor(&1, [:flush]))
     if tick, do: Process.cancel_timer(tick)
     {:reply, :ok, fresh_state()}
@@ -330,6 +334,7 @@ defmodule Meerkat.Decision do
     displace(displaced, @taken_over)
     ref = Process.monitor(pid)
     state = if is_nil(state.decision), do: arm_deadline(state, run_id), else: state
+    # muex:ignore equivalent: a fresh monitor ref is never already a key, so put and put_new agree
     callers = kept |> Map.new() |> Map.put(ref, {pid, run_id})
     # The attached caller is watched from here on, not the recorded one.
     {:reply, {:ok, state.outcome}, %{state | callers: callers, caller_check: nil}}
@@ -375,6 +380,7 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call({:publish, outcome}, _from, state) do
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value
     Enum.each(Map.values(state.callers), fn {pid, _run} ->
       send(pid, {:meerkat_outcome, outcome})
     end)
@@ -387,6 +393,7 @@ defmodule Meerkat.Decision do
   end
 
   def handle_call({:delivered, run_id}, _from, state) do
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value
     Enum.each(state.delivery_waiters, &GenServer.reply(&1, run_id))
     {:reply, :ok, %{state | delivered_to: run_id, delivery_waiters: []}}
   end
@@ -404,6 +411,7 @@ defmodule Meerkat.Decision do
     state = %{state | deadline_tick: nil}
     deadline = Application.get_env(:meerkat, :review_deadline_ms)
 
+    # muex:ignore equivalent: the deadline is an integer or nil, and expired?/1 of nil is false
     if is_integer(deadline) and Meerkat.Timeout.expired?(deadline) do
       expire(state, Meerkat.Timeout.action())
     else
@@ -440,6 +448,7 @@ defmodule Meerkat.Decision do
   ## Internals
 
   defp put_decision(%{waiters: waiters} = state, decision) do
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value
     Enum.each(waiters, &GenServer.reply(&1, decision))
     Phoenix.PubSub.broadcast(Meerkat.PubSub, @decision_topic, {:meerkat_decision, decision})
     %{state | decision: decision, waiters: []}
@@ -543,6 +552,7 @@ defmodule Meerkat.Decision do
   end
 
   defp displace(callers, text) do
+    # muex:ignore equivalent: Enum.map differs from Enum.each only in the discarded return value
     Enum.each(callers, fn {ref, {pid, _run}} ->
       Process.demonitor(ref, [:flush])
       send(pid, {:meerkat_displaced, text})

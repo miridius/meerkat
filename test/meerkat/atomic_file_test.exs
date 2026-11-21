@@ -38,6 +38,29 @@ defmodule Meerkat.AtomicFileTest do
       assert File.read!(path) =~ "writer-"
     end
 
+    test "a write that cannot land leaves no tmp file behind", %{dir: dir} do
+      path = Path.join(dir, "taken")
+      File.mkdir_p!(Path.join(path, "inside"))
+
+      assert {:error, _} = AtomicFile.write(path, "body")
+
+      assert dir |> File.ls!() |> Enum.sort() == [".git", "taken"]
+    end
+
+    test "a tmp file it cannot clean up is named on stderr", %{dir: dir} do
+      blocker = Path.join(dir, "blocker")
+      File.write!(blocker, "")
+      path = Path.join(blocker, "out.txt")
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:error, _} = AtomicFile.write(path, "fail")
+        end)
+
+      assert stderr =~
+               ~r/\Ameerkat: tmp cleanup at #{Regex.escape(path)}\.tmp\.\d+ failed: :enotdir\n\z/
+    end
+
     test "returns {:error, _} when parent path is unwritable", %{dir: dir} do
       # mkdir a read-only dir, then attempt to write a file under it.
       ro_dir = Path.join(dir, "readonly")
@@ -45,7 +68,14 @@ defmodule Meerkat.AtomicFileTest do
       File.chmod!(ro_dir, 0o555)
 
       try do
-        assert {:error, _} = AtomicFile.write(Path.join(ro_dir, "x.txt"), "fail")
+        # The tmp file was never created, so there is nothing to clean
+        # up and no cleanup failure to warn about.
+        stderr =
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert {:error, _} = AtomicFile.write(Path.join(ro_dir, "x.txt"), "fail")
+          end)
+
+        assert stderr == ""
       after
         File.chmod!(ro_dir, 0o755)
       end
