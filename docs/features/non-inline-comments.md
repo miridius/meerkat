@@ -21,7 +21,9 @@ that inline comments use:
 - Five finding-type chips: Issue / Suggestion / Question /
   Follow-up / Revert.
 - Body rendered through `Meerkat.Markdown.to_safe_html/1` —
-  fenced code blocks, headings, bullets, inline code all work.
+  fenced code blocks, headings, bullets, inline code all work. A
+  fenced block naming a language, such as a suggestion, is
+  highlighted as in [inline comments](inline-comments.md).
 - Cmd/Ctrl+Enter submits, Escape cancels; Cmd/Ctrl+Shift+Enter neither submits nor sends feedback.
 - Several forms can be open at once, across surfaces and files;
   opening one never closes another. Submit and cancel send that

@@ -674,6 +674,13 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
     submit_comment(view, "file:0", "file-level concern", "question")
     assert has_element?(view, body, ~r/^\s*file-level concern\s*$/)
     assert [%{file_index: 0, id: id}] = ReviewServer.get_state(rid).file_comments
+    # The page highlights its code blocks, so patches must leave it be.
+    assert has_element?(
+             view,
+             ~s(#comment-body-#{id}[phx-hook="HighlightCode"][phx-update="ignore"]),
+             "file-level concern"
+           )
+
     edit_key = "file:0:edit:#{id}"
 
     html = view |> element("#file-0 .note.file-note button", "Edit") |> render_click()

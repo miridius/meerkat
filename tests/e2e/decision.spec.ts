@@ -74,6 +74,10 @@ test.describe("decision flow", () => {
 			const code = card.locator("pre code.language-rust");
 			await expect(code).toContainText("fn renamed() {}");
 			await expect(code, "the prose stays outside the fence").not.toContainText("second finding here");
+			await expect(
+				code.locator("span", { hasText: /^fn$/ }),
+				"the suggestion is coloured as the diff colours Rust",
+			).toHaveCSS("color", "rgb(249, 117, 131)");
 
 			await page.keyboard.press(`${mod}+Shift+Enter`);
 			const { code: exit, stderr } = await meerkat.awaitExit();

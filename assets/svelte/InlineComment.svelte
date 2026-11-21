@@ -3,6 +3,7 @@
   // body, and Edit / Remove affordances that pushEvent back into
   // the LiveView for the GenServer-side mutation. The suggestion-
   // mode CodeMirror editor lives in the page-level form, not here.
+  import { highlightCodeBlocksWhenReady } from "../ts/codeBlocks";
 
   type FindingType = "issue" | "suggestion" | "question" | "follow_up" | "revert";
 
@@ -46,6 +47,13 @@
       ? `L${comment.start_line}`
       : `L${comment.start_line}–${comment.end_line}`,
   );
+
+  // Re-runs whenever {@html} replaces the body.
+  let body: HTMLDivElement;
+  $effect(() => {
+    void comment.body_html;
+    highlightCodeBlocksWhenReady(body);
+  });
 
   function edit() {
     live.pushEvent("comment_form.edit", { surface: "inline", id: comment.id });
@@ -91,8 +99,9 @@
   </header>
   <!-- body_html is server-rendered via Meerkat.Markdown.to_safe_html
        in review_live.ex (with_body_html/1). Suggestion-mode fences
-       become syntax-highlighted <pre><code class="language-xxx"> blocks. -->
-  <div class="comment-body markdown">{@html comment.body_html ?? comment.body}</div>
+       become <pre><code class="language-xxx"> blocks, which the effect
+       above highlights. -->
+  <div class="comment-body markdown" bind:this={body}>{@html comment.body_html ?? comment.body}</div>
 </li>
 
 <style>

@@ -9,6 +9,7 @@ import { Socket } from "phoenix";
 import { LiveSocket } from "phoenix_live_view";
 import { getHooks } from "live_svelte";
 import Components from "virtual:live-svelte-components";
+import { highlightCodeBlocksWhenReady } from "../ts/codeBlocks";
 import { GATED_EVENTS, gateVerdict } from "../ts/connectionGate";
 import { countdownView } from "../ts/countdown";
 import { isMacPlatform, isSendFeedbackShortcut, sendFeedbackHint } from "../ts/sendFeedbackShortcut";
@@ -33,6 +34,15 @@ const hooks = {
           /* Blocked; leave the done view up */
         }
       }, 500);
+    },
+  },
+  // A file, global or commit-message comment's body: highlights its
+  // fenced code blocks as the diff highlights code. The body sits under
+  // phx-update="ignore", so a patch never undoes that; an edited
+  // comment gets a new id, so a new body mounts afresh.
+  HighlightCode: {
+    mounted() {
+      highlightCodeBlocksWhenReady(this.el);
     },
   },
   // Ticks in the browser from an absolute deadline rather than from a

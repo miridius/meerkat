@@ -110,6 +110,10 @@ fi
 			await expect
 				.poll(() => fileSection.locator(".inline-comment pre").first().evaluate((el) => el.textContent))
 				.toBe("  (if-let [x (:x req)\n           y 2\n    (when (pos?   x)\n");
+			await expect(
+				fileSection.locator(".inline-comment pre code span", { hasText: /^when$/ }),
+				"the suggestion is coloured as the diff colours Clojure",
+			).toHaveCSS("color", "rgb(249, 117, 131)");
 		} finally {
 			await meerkat.kill();
 		}

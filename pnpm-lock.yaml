@@ -250,6 +250,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.15
         version: 6.43.15
+      '@git-diff-view/lowlight':
+        specifier: ^0.1.8
+        version: 0.1.8
       '@git-diff-view/shiki':
         specifier: ^0.1.8
         version: 0.1.8

@@ -1284,6 +1284,26 @@ defmodule MeerkatWeb.ReviewLive do
     """
   end
 
+  # A comment's server-rendered body. The `HighlightCode` hook
+  # highlights its fenced code blocks in the page; `phx-update="ignore"`
+  # keeps patches from undoing that, which is safe because a body never
+  # changes under one id: an edit replaces the comment.
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :comment, :map, required: true
+
+  defp comment_body(assigns) do
+    ~H"""
+    <div
+      class="comment-body"
+      id={"comment-body-#{@comment.id}"}
+      phx-hook="HighlightCode"
+      phx-update="ignore"
+    >
+      {Phoenix.HTML.raw(@comment.body_html)}
+    </div>
+    """
+  end
+
   attr :message, :string, required: true
 
   defp flash_error_banner(assigns) do
@@ -1431,9 +1451,7 @@ defmodule MeerkatWeb.ReviewLive do
               Remove
             </button>
           </header>
-          <div class="comment-body">
-            {Phoenix.HTML.raw(comment.body_html)}
-          </div>
+          <.comment_body comment={comment} />
         </li>
       </ul>
       <%!-- Every open commit-message form sits here, below the list,
@@ -1495,9 +1513,7 @@ defmodule MeerkatWeb.ReviewLive do
               Remove
             </button>
           </header>
-          <div class="comment-body">
-            {Phoenix.HTML.raw(comment.body_html)}
-          </div>
+          <.comment_body comment={comment} />
         </li>
       </ul>
       <button
@@ -1700,9 +1716,7 @@ defmodule MeerkatWeb.ReviewLive do
                 Remove
               </button>
             </header>
-            <div class="comment-body">
-              {Phoenix.HTML.raw(comment.body_html)}
-            </div>
+            <.comment_body comment={comment} />
           </li>
         </ul>
         <button

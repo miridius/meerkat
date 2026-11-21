@@ -25,6 +25,7 @@
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
+    "@git-diff-view/lowlight": "^0.1.8",
     "@git-diff-view/shiki": "^0.1.8",
     "@git-diff-view/svelte": "^0.1.8",
     "@lezer/highlight": "^1.2.5",
