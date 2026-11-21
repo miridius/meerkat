@@ -257,11 +257,15 @@ after the banner with no outcome line.
 If the process that ran meerkat is killed instead—for example,
 `git commit` is killed by SIGTERM or SIGKILL—its hook can keep
 running, still attached. When the decision arrives, meerkat checks
-whether a process above it has exited, even one whose process ID has
-since been reused. If one has, it prints the still-open
+whether a process above it, up to the leader of its process group,
+has exited, even one whose process ID has since been reused. If one
+has, it prints the still-open
 line with `the process that ran meerkat exited` in place of
 `stopped waiting (SIGTERM)`, exits 1, and leaves the decision held for
-the next invocation. A rerun before then takes the review over from
+the next invocation. A hook shares the process group of whatever ran
+`git commit`, such as a terminal's job or Claude Code's shell, so a
+process above that exiting, as when Claude Code restarts, leaves the
+decision to the still-running `git commit`. A rerun before then takes the review over from
 it. Where `ps` is denied, as in Claude Code's sandbox, it cannot tell
 and takes delivery. Until the decision arrives, it starts no process
 beyond its connection to the server. A decision clicked while no invocation is

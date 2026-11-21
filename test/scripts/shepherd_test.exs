@@ -392,6 +392,53 @@ defmodule Meerkat.ShepherdTest do
     assert output == @orphaned
   end
 
+  # The process above the caller's process group leader exits, as the app
+  # that ran git commit can restart while git commit, the leader, still
+  # waits, so the caller takes delivery.
+  test "a caller given the decision after a process above its group leader exited takes delivery" do
+    dir = test_dir()
+
+    caller =
+      ~S"""
+      source "$1"
+      exec 2>&1
+      _ma_record_ancestors
+      top=$(ps -o ppid= -p $PPID | tr -d ' ')
+      touch "$2/recorded"
+      while [[ "$(ps -o ppid= -p $PPID | tr -d ' ')" == "$top" ]]; do
+        ((SECONDS < 60)) || { echo "the top process never exited"; exit 1; }
+        sleep 0.05
+      done
+      """ <> @attach_to_decision
+
+    # Job control puts the leader in its own process group; it runs the
+    # caller and waits on it, as git commit waits on its hook. The top
+    # process exits once the caller has recorded its ancestors.
+    top = ~S"""
+    set -m
+    # Two commands, so bash forks the caller rather than exec it.
+    bash -c 'bash -c "$1" caller "$2" "$3"; exit $?' leader "$1" "$2" "$3" &
+    l=$!
+    until [[ -f "$3/recorded" ]] || ! kill -0 "$l" 2>/dev/null; do
+      ((SECONDS < 60)) || exit 1
+      sleep 0.05
+    done
+    [[ -f "$3/recorded" ]] || { echo "the caller died before recording"; exit 1; }
+    """
+
+    {output, 0} =
+      System.cmd("bash", [
+        "-c",
+        top,
+        "top",
+        caller,
+        Path.expand("bin/meerkat-attach"),
+        dir
+      ])
+
+    assert output == "outcome\ndelivered\n"
+  end
+
   # A caller relays its backend's log as it grows: from the start for a run
   # it started, even one with no log yet, and from the end on reattach.
   test "a caller relays each part of its backend's log once" do
