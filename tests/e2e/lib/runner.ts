@@ -48,8 +48,6 @@ export type Runner = {
 	awaitExit: () => Promise<{ code: number | null; stderr: string }>;
 	// Stops the detached backends in `runsDir` as well as the caller.
 	kill: () => Promise<void>;
-	// SIGKILLs the caller alone; its backend keeps serving the review.
-	killCaller: () => Promise<void>;
 	// SIGKILLs the `sh` running meerkat under `underParent`, leaving meerkat running.
 	killParent: () => Promise<void>;
 	// Signals meerkat's whole process group (requires `ownGroup`), as the caller's parent app does when signaling its process tree.
@@ -224,10 +222,6 @@ export async function startMeerkat(opts: RunnerOpts = {}): Promise<Runner> {
 				rmSync(runsDir, { recursive: true, force: true });
 				rmSync(configHome(runsDir), { recursive: true, force: true });
 			}
-		},
-		killCaller: async () => {
-			proc.kill("SIGKILL");
-			await exitPromise;
 		},
 		killParent: async () => {
 			if (!opts.underParent) throw new Error("killParent: start the runner with underParent");

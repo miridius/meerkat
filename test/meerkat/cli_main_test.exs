@@ -247,6 +247,14 @@ defmodule Meerkat.CLIMainTest do
     end
   end
 
+  test "an unrecognised option exits 64 and names the option" do
+    {code, stderr} = run_main(["--bogus"])
+
+    assert code == 64
+    # A whole line: a crash's stack trace can quote the same text.
+    assert stderr =~ ~r/^meerkat: unrecognised options: --bogus$/m
+  end
+
   test "a ref that does not resolve exits 64 and says the target could not be resolved",
        %{repo: repo} do
     # `gh` answers the current-branch PR lookup the way it does for a

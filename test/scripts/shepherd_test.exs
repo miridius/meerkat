@@ -352,6 +352,36 @@ defmodule Meerkat.ShepherdTest do
     end
   end
 
+  # The run dir can be deleted while the review is open. The caller
+  # acknowledges the decision with what it read when it attached, so the
+  # backend still ends, and does not wait for an exit file the deleted dir
+  # never gets.
+  test "a caller whose run dir is deleted before the decision takes delivery and exits at once" do
+    dir = test_dir()
+
+    script =
+      ~S"""
+      source "$1"
+      exec 2>&1
+      _ma_record_ancestors
+      """ <>
+        String.replace(
+          @attach_to_decision,
+          "*) printf",
+          ~S|*) rm -rf "$_MA_DIR" "$_MA_LINK"; printf|
+        ) <> ~S|echo "unreachable: _ma_attach returned"|
+
+    started = System.monotonic_time(:millisecond)
+
+    {output, 1} =
+      System.cmd("bash", ["-c", script, "deleted", Path.expand("bin/meerkat-attach"), dir])
+
+    assert output == "outcome\ndelivered\n"
+    # Waiting for the exit file would take 150 naps.
+    assert System.monotonic_time(:millisecond) - started < 5_000
+    refute File.exists?(Path.join(dir, "run.1"))
+  end
+
   # Each link in a chain of processes from a top process down to the caller
   # starts the next one as its own process group's leader ("job") or in its
   # own group ("fork"), and waits on it, as git commit waits on its hook.

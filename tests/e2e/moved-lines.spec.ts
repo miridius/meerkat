@@ -18,20 +18,26 @@ const helper = (n: number) =>
 }
 `;
 
-// helper2 moves to the end of the file, leaving collapsed context above
-// and between the hunks. It and its blank line are lines 6-10, and land
-// on lines 55-59 with the blank first. helper8's second line, old line
-// 37 and new line 32, changes in place.
-// `wide` ends helper1's first line in a comment wider than any window.
-function movedBlockFixture({ wide = false } = {}) {
+// In util.ts, helper2 moves to the end of the file, leaving collapsed
+// context above and between the hunks. It and its blank line are lines
+// 6-10, and land on lines 55-59 with the blank first. helper8's second
+// line, old line 37 and new line 32, changes in place. helper1's first
+// line ends in a comment wider than any window, so each side's pane
+// scrolls with Wrap off. helper22 moves from v1.ts to the end of v2.ts,
+// as old lines 6-10 and new lines 5-9 with the blank first.
+function movedBlockFixture() {
 	const helpers = Array.from({ length: 12 }, (_, i) => helper(i + 1));
-	if (wide) helpers[0] = helpers[0].replace("{\n", `{ // ${"wide ".repeat(100)}\n`);
-	const fixture = makeFixture({ files: { "util.ts": helpers.join("\n") } });
+	helpers[0] = helpers[0].replace("{\n", `{ // ${"wide ".repeat(100)}\n`);
+	const fixture = makeFixture({
+		files: { "util.ts": helpers.join("\n"), "v1.ts": [21, 22, 23].map(helper).join("\n"), "v2.ts": helper(24) },
+	});
 	fixture.git("commit", "-q", "-m", "base");
 	helpers[7] = helpers[7].replace(".trim()", ".trimEnd()");
 	const [moved] = helpers.splice(1, 1);
 	writeFileSync(join(fixture.dir, "util.ts"), [...helpers, moved].join("\n"));
-	fixture.git("add", "util.ts");
+	writeFileSync(join(fixture.dir, "v1.ts"), [21, 23].map(helper).join("\n"));
+	writeFileSync(join(fixture.dir, "v2.ts"), [24, 22].map(helper).join("\n"));
+	fixture.git("add", "util.ts", "v1.ts", "v2.ts");
 	return fixture;
 }
 
@@ -159,165 +165,149 @@ function misplacedArrows(file: Locator) {
 	});
 }
 
-test("moved lines keep their tint and arrows when a collapsed section expands or the view changes, and an arrow flashes its counterpart", async ({
+test("every moved line's arrow is a button over its +/− mark, clear of code, that says where the code went and jumps to it by mouse or keyboard, opening its file if collapsed, and the tint and arrows survive expands and view changes", async ({
 	page,
 }) => {
 	const meerkat = await startMeerkat({ fixture: movedBlockFixture() });
 	try {
-		await page.goto(meerkat.url);
 		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+		const v1 = page.locator(".file-section").filter({ hasText: "v1.ts" });
+		const v2 = page.locator(".file-section").filter({ hasText: "v2.ts" });
 
-		expect(await flashOnClick(file)).toContain(FLASH);
-
-		// Expanding inserts rows above the moved ones; @git-diff-view reuses
-		// the existing row elements for the lines that shift into them.
-		const expand = file.locator('td.diff-line-hunk-action button[title^="Expand"]').filter({ visible: true });
-		await expand.first().click();
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-
-		// Each toggle round-trips through the server before the table is
-		// replaced, so wait for the new table, or the poll reads the old one.
-		// Split view without wrap is two tables of rows, replacing the one.
-		await page.getByRole("checkbox", { name: "Wrap" }).click();
-		await expect(file.locator(".split-diff-view-normal")).toBeVisible();
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-		// Expanding reuses the flashing cells for other lines, so it ends
-		// the flash rather than leave it there.
-		expect(await expandDuringFlash(file)).toEqual([]);
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-
-		await page.getByRole("button", { name: /^Unified$/ }).click();
-		await expect(file.locator(".unified-diff-view")).toBeVisible();
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-		await expand.first().click();
-		await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-		expect(await flashOnClick(file)).toContain(FLASH);
-
-		// A counterpart already on the page needs no round trip to the server.
-		const flashing = () =>
-			file.evaluate((root) => Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0));
-		await expect.poll(flashing).toBe(false);
-		// The page takes no clicks while disconnected, so hold its pushes
-		// back instead, well past the flash's wait.
-		await page.evaluate(() =>
-			(window as unknown as { liveSocket: { enableLatencySim(ms: number): void } }).liveSocket.enableLatencySim(
-				600_000,
-			),
-		);
-		expect(await flashOnClick(file)).toContain(FLASH);
-	} finally {
-		await meerkat.kill();
-	}
-});
-
-test("each moved line's arrow sits in the +/− column on screen, clear of code, with Wrap on or off in both views", async ({
-	page,
-}) => {
-	// A line wider than any window makes each side's pane scroll with Wrap off.
-	const meerkat = await startMeerkat({ fixture: movedBlockFixture({ wide: true }) });
-	try {
-		await page.setViewportSize({ width: 1000, height: 800 });
-		await page.goto(meerkat.url);
-		const file = page.locator(".file-section").filter({ hasText: "util.ts" });
-		for (const wrap of [true, false]) {
-			if (!wrap) {
-				const wrapBox = page.getByRole("checkbox", { name: "Wrap" });
-				await wrapBox.click();
-				await expect(wrapBox).not.toBeChecked();
-			}
-			for (const view of ["Split", "Unified"]) {
-				await page.getByRole("button", { name: new RegExp(`^${view}$`) }).click();
-				const table = file.locator(`.${view.toLowerCase()}-diff-view`);
-				await expect(table).toHaveCount(1);
-				// A fresh load draws the table in this view from the start.
-				await page.reload();
-				await expect(table).toHaveCount(1);
-				const message = `${view}, Wrap ${wrap ? "on" : "off"}`;
-				await expect.poll(() => movedState(file), { message }).toEqual(EXPECTED);
-				expect(await misplacedArrows(file), message).toEqual([]);
-			}
-		}
-	} finally {
-		await meerkat.kill();
-	}
-});
-
-test("every moved line's arrow is a button that says where the code went and jumps to it by mouse or keyboard, opening its file if collapsed", async ({
-	page,
-}) => {
-	// helper2 moves from a.ts to the end of b.ts, as old lines 6-10 and
-	// new lines 5-9 with the blank first.
-	const fixture = makeFixture({ files: { "a.ts": [1, 2, 3].map(helper).join("\n"), "b.ts": helper(4) } });
-	fixture.git("commit", "-q", "-m", "base");
-	writeFileSync(join(fixture.dir, "a.ts"), [1, 3].map(helper).join("\n"));
-	writeFileSync(join(fixture.dir, "b.ts"), [4, 2].map(helper).join("\n"));
-	fixture.git("add", "a.ts", "b.ts");
-	const meerkat = await startMeerkat({ fixture });
-	try {
-		// Short: the counterpart starts out of view.
-		await page.setViewportSize({ width: 1000, height: 400 });
-		await page.goto(meerkat.url);
-		const file = page.locator(".file-section").filter({ hasText: "a.ts" });
-		const target = page.locator(".file-section").filter({ hasText: "b.ts" });
-		const oldArrows = file.getByRole("button", { name: "Moved to b.ts lines 5-9", exact: true });
-		await expect(oldArrows).toHaveCount(5);
-		await expect(oldArrows).toHaveText(Array(5).fill("←"));
-		await expect(oldArrows.nth(2)).toHaveAttribute("title", "Moved to b.ts lines 5-9");
-		await expect(target.getByRole("button", { name: "Moved from a.ts lines 6-10", exact: true })).toHaveText(
-			Array(5).fill("→"),
-		);
-		await oldArrows.nth(2).hover();
-		await expect(oldArrows.nth(2)).toHaveCSS("background-color", "rgb(48, 54, 61)");
-
-		const counterpart = target.locator("td.diff-line-new-num:has(span[data-line-num='5'])");
-		const scrollToTop = () => page.evaluate(() => window.scrollTo(0, 0));
-		await expect(counterpart).not.toBeInViewport();
-		await oldArrows.last().click();
-		await expect(counterpart).toBeInViewport();
-		await expect(file.locator("tr.meerkat-form-row")).toHaveCount(0);
-
-		// Tab moves from one arrow to the next, which shows the focus ring,
-		// and Enter jumps.
-		await scrollToTop();
-		await oldArrows.first().focus();
-		await page.keyboard.press("Tab");
-		await expect(oldArrows.nth(1)).toBeFocused();
-		await expect(oldArrows.nth(1)).toHaveCSS("box-shadow", /rgba\(88, 166, 255, 0\.5\)/);
-		await expect(counterpart).not.toBeInViewport();
-		await page.keyboard.press("Enter");
-		await expect(counterpart).toBeInViewport();
-
-		// Code copied across the moved lines leaves the arrows out.
-		const codeOn = (line: number) =>
-			file.locator(`tr.diff-line:has(td.diff-line-old-num span[data-line-num='${line}']) td.diff-line-old-content`);
-		await codeOn(5).scrollIntoViewIfNeeded();
-		const from = await codeOn(5).boundingBox();
-		const to = await codeOn(7).boundingBox();
-		if (!from || !to) throw new Error("code cells have no box");
-		await page.mouse.move(from.x + 40, from.y + from.height / 2);
-		await page.mouse.down();
-		await page.mouse.move(to.x + to.width - 20, to.y + to.height / 2, { steps: 5 });
-		await page.mouse.up();
-		const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
-		expect(copied).toContain("helper2(input");
-		expect(copied).not.toMatch(/[←→]/);
-
-		// A collapsed counterpart's file opens, and all its lines flash.
-		await target.locator("button.file-row").click();
-		await expect(counterpart).toHaveCount(0);
-		await oldArrows.nth(2).click();
-		await expect(counterpart).toBeInViewport();
-		const flashingRows = () =>
-			target.evaluate(
-				(root) =>
-					new Set(
-						Array.from(root.querySelectorAll("td"))
-							.filter((td) => td.getAnimations().length > 0)
-							.map((td) => td.closest("tr")),
-					).size,
+		await test.step("an arrow says where the code went and jumps to it by mouse or keyboard, opening its file if collapsed", async () => {
+			// Short: the counterpart starts out of view.
+			await page.setViewportSize({ width: 1000, height: 400 });
+			await page.goto(meerkat.url);
+			const oldArrows = v1.getByRole("button", { name: "Moved to v2.ts lines 5-9", exact: true });
+			await expect(oldArrows).toHaveCount(5);
+			await expect(oldArrows).toHaveText(Array(5).fill("←"));
+			await expect(oldArrows.nth(2)).toHaveAttribute("title", "Moved to v2.ts lines 5-9");
+			await expect(v2.getByRole("button", { name: "Moved from v1.ts lines 6-10", exact: true })).toHaveText(
+				Array(5).fill("→"),
 			);
-		await expect.poll(flashingRows).toBe(5);
+			await oldArrows.nth(2).hover();
+			await expect(oldArrows.nth(2)).toHaveCSS("background-color", "rgb(48, 54, 61)");
+
+			const counterpart = v2.locator("td.diff-line-new-num:has(span[data-line-num='5'])");
+			const scrollToTop = () => page.evaluate(() => window.scrollTo(0, 0));
+			await expect(counterpart).not.toBeInViewport();
+			await oldArrows.last().click();
+			await expect(counterpart).toBeInViewport();
+			await expect(v1.locator("tr.meerkat-form-row")).toHaveCount(0);
+
+			// Tab moves from one arrow to the next, which shows the focus ring,
+			// and Enter jumps.
+			await scrollToTop();
+			await oldArrows.first().focus();
+			await page.keyboard.press("Tab");
+			await expect(oldArrows.nth(1)).toBeFocused();
+			await expect(oldArrows.nth(1)).toHaveCSS("box-shadow", /rgba\(88, 166, 255, 0\.5\)/);
+			await expect(counterpart).not.toBeInViewport();
+			await page.keyboard.press("Enter");
+			await expect(counterpart).toBeInViewport();
+
+			// Code copied across the moved lines leaves the arrows out.
+			const codeOn = (line: number) =>
+				v1.locator(`tr.diff-line:has(td.diff-line-old-num span[data-line-num='${line}']) td.diff-line-old-content`);
+			await codeOn(5).scrollIntoViewIfNeeded();
+			const from = await codeOn(5).boundingBox();
+			const to = await codeOn(7).boundingBox();
+			if (!from || !to) throw new Error("code cells have no box");
+			await page.mouse.move(from.x + 40, from.y + from.height / 2);
+			await page.mouse.down();
+			await page.mouse.move(to.x + to.width - 20, to.y + to.height / 2, { steps: 5 });
+			await page.mouse.up();
+			const copied = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+			expect(copied).toContain("helper22(input");
+			expect(copied).not.toMatch(/[←→]/);
+
+			// A collapsed counterpart's file opens, and all its lines flash.
+			await v2.locator("button.file-row").click();
+			await expect(counterpart).toHaveCount(0);
+			await oldArrows.nth(2).click();
+			await expect(counterpart).toBeInViewport();
+			const flashingRows = () =>
+				v2.evaluate(
+					(root) =>
+						new Set(
+							Array.from(root.querySelectorAll("td"))
+								.filter((td) => td.getAnimations().length > 0)
+								.map((td) => td.closest("tr")),
+						).size,
+				);
+			await expect.poll(flashingRows).toBe(5);
+		});
+
+		await test.step("each arrow sits in the +/− column on screen, clear of code, with Wrap on or off in both views", async () => {
+			await page.setViewportSize({ width: 1000, height: 800 });
+			for (const wrap of [true, false]) {
+				if (!wrap) {
+					const wrapBox = page.getByRole("checkbox", { name: "Wrap" });
+					await wrapBox.click();
+					await expect(wrapBox).not.toBeChecked();
+				}
+				for (const view of ["Split", "Unified"]) {
+					await page.getByRole("button", { name: new RegExp(`^${view}$`) }).click();
+					const table = file.locator(`.${view.toLowerCase()}-diff-view`);
+					await expect(table).toHaveCount(1);
+					// A fresh load draws the table in this view from the start.
+					await page.reload();
+					await expect(table).toHaveCount(1);
+					const message = `${view}, Wrap ${wrap ? "on" : "off"}`;
+					await expect.poll(() => movedState(file), { message }).toEqual(EXPECTED);
+					expect(await misplacedArrows(file), message).toEqual([]);
+				}
+			}
+
+			// Back to the default views.
+			await page.getByRole("checkbox", { name: "Wrap" }).click();
+			await page.getByRole("button", { name: /^Split$/ }).click();
+			await page.reload();
+			await expect(file.locator(".split-diff-view")).toHaveCount(1);
+		});
+
+		await test.step("the tint and arrows survive a collapsed section expanding and the view changing, and an arrow flashes its counterpart", async () => {
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+
+			expect(await flashOnClick(file)).toContain(FLASH);
+
+			// Expanding inserts rows above the moved ones; @git-diff-view reuses
+			// the existing row elements for the lines that shift into them.
+			const expand = file.locator('td.diff-line-hunk-action button[title^="Expand"]').filter({ visible: true });
+			await expand.first().click();
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+
+			// Each toggle round-trips through the server before the table is
+			// replaced, so wait for the new table, or the poll reads the old one.
+			// Split view without wrap is two tables of rows, replacing the one.
+			await page.getByRole("checkbox", { name: "Wrap" }).click();
+			await expect(file.locator(".split-diff-view-normal")).toBeVisible();
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+			// Expanding reuses the flashing cells for other lines, so it ends
+			// the flash rather than leave it there.
+			expect(await expandDuringFlash(file)).toEqual([]);
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+
+			await page.getByRole("button", { name: /^Unified$/ }).click();
+			await expect(file.locator(".unified-diff-view")).toBeVisible();
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+			await expand.first().click();
+			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
+			expect(await flashOnClick(file)).toContain(FLASH);
+
+			// A counterpart already on the page needs no round trip to the server.
+			const flashing = () =>
+				file.evaluate((root) => Array.from(root.querySelectorAll("td")).some((td) => td.getAnimations().length > 0));
+			await expect.poll(flashing).toBe(false);
+			// The page takes no clicks while disconnected, so hold its pushes
+			// back instead, well past the flash's wait.
+			await page.evaluate(() =>
+				(window as unknown as { liveSocket: { enableLatencySim(ms: number): void } }).liveSocket.enableLatencySim(
+					600_000,
+				),
+			);
+			expect(await flashOnClick(file)).toContain(FLASH);
+		});
 	} finally {
 		await meerkat.kill();
 	}

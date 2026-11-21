@@ -78,10 +78,18 @@ async function restOn(page: Page, side: "old" | "new", word: string) {
 	return point;
 }
 
-test("resting on a symbol shows its docs and source for that row's side", async ({ page }) => {
+test("resting on a symbol shows its docs and source for that row's side, and a long source scrolls in a popup the reviewer can resize", async ({
+	page,
+}) => {
+	// `big`'s source is too long for the popup to show at once.
+	const long = Array.from({ length: 80 }, (_, i) => `(+ x ${i})`).join("\n  ");
+	const big = `\n(defn big\n  "Doc."\n  [x]\n  ${long})\n`;
 	const fixture = stagedReview(
-		{ "src/app/util.clj": util("Old doc."), "src/app/core.clj": core("(u/helper y)") },
-		{ "src/app/util.clj": util("New doc."), "src/app/core.clj": core("(inc (u/helper y))") },
+		{ "src/app/util.clj": util("Old doc.") + big, "src/app/core.clj": core("(u/helper y)") },
+		{
+			"src/app/util.clj": util("New doc.") + big,
+			"src/app/core.clj": core("(inc (u/helper y) (u/big y))"),
+		},
 	);
 	const meerkat = await startMeerkat({ fixture });
 	try {
@@ -146,27 +154,12 @@ test("resting on a symbol shows its docs and source for that row's side", async 
 		// Leaving the diff closes it.
 		await page.mouse.move(5, 5);
 		await expect(popup).toHaveCount(0);
-	} finally {
-		await meerkat.kill();
-	}
-});
 
-test("a long source scrolls in a popup the reviewer can resize, in unified view", async ({
-	page,
-}) => {
-	const long = Array.from({ length: 80 }, (_, i) => `(+ x ${i})`).join("\n  ");
-	const fixture = stagedReview(
-		{ "src/app/util.clj": util("Doc.", long), "src/app/core.clj": core("(u/helper y)") },
-		{ "src/app/core.clj": core("(inc (u/helper y))") },
-	);
-	const meerkat = await startMeerkat({ fixture });
-	try {
-		await page.goto(meerkat.url);
+		// In unified view, a long source scrolls within the popup.
 		await page.getByRole("button", { name: "Unified", exact: true }).click();
 		await expect(page.locator("td.diff-line-content").first()).toBeVisible();
-		const popup = page.locator('[data-test="clj-hover"]');
 
-		await restOn(page, "new", "u/helper");
+		await restOn(page, "new", "u/big");
 		const panel = popup.getByRole("tabpanel");
 		const last = panel.getByText("(+ x 79)");
 		await expect(last).toBeAttached();

@@ -16,8 +16,7 @@ defmodule Meerkat.CLI do
 
   Most CLI behavior is covered by ExUnit tests in `test/meerkat/cli_test.exs`.
   Playwright specs in `tests/e2e/` cover `main/1` booting the endpoint and
-  reading stdin, the live review UI, and `System.halt` exit paths, alongside
-  some coverage that overlaps with ExUnit.
+  reading stdin, and the live review UI.
   Staged-diff auto-approve prints a message to stderr and exits 0 without
   starting the review server or opening the UI when there are no staged files,
   or when every staged file is approved on the current branch by content or
@@ -88,12 +87,17 @@ defmodule Meerkat.CLI do
     # Before any slow step: OTP's own SIGTERM handling calls
     # `init:stop/0`, which exits 0 without saying why.
     :ok = Meerkat.SignalHandler.install()
-    opts = parse_args(argv)
 
-    if opts.answers do
-      save_answers(repo_path(), read_stdin())
-    else
-      review_if_answered(opts)
+    case parse_args(argv) do
+      {:ok, %{answers: true}} ->
+        save_answers(repo_path(), read_stdin())
+
+      {:ok, opts} ->
+        review_if_answered(opts)
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        64
     end
   rescue
     e ->
@@ -194,8 +198,13 @@ defmodule Meerkat.CLI do
     _, _ -> :ok
   end
 
-  defp run_live_review_safe(target, opts) do
-    run_live_review(target, opts)
+  defp run_live_review_safe(target, opts),
+    do: reject_on_crash(fn -> run_live_review(target, opts) end)
+
+  # Runs `review`, returning its exit code, or the code for how it failed.
+  @doc false
+  def reject_on_crash(review) do
+    review.()
   rescue
     e in PortInUseError ->
       IO.puts(:stderr, Exception.message(e))
@@ -243,7 +252,7 @@ defmodule Meerkat.CLI do
         Application.put_env(:meerkat, :no_open, opts.no_open)
         # Set before the application starts, like the deadline: it tells
         # `Meerkat.Decision` which caller to watch.
-        # muex:ignore unreachable I/O seam (in-VM tests stop before a review server starts; cli_main_test's review runs are separate BEAMs cover cannot see): killed by detach.spec.ts "a review with no comments ends once its caller is killed…"
+        # muex:ignore unreachable I/O seam (in-VM tests stop before a review server starts; cli_main_test's review runs are separate BEAMs cover cannot see): killed by detach.spec.ts "a review with no comments ends once its caller is stopped…"
         Application.put_env(:meerkat, :serve_dir, serve_dir)
         start_endpoint!(opts.port, state, review_id, repo_path())
         announce_url(target, serve_dir)
@@ -252,16 +261,16 @@ defmodule Meerkat.CLI do
         # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
 
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend"
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…"
         {tag, payload} = decision = await_decision_or_reject()
 
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; settle/2 itself is tested in cli_test): killed by detach.spec.ts "a review with no comments ends once its caller is killed…", whose backend must keep its snapshot and exit
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url; settle/2 itself is tested in cli_test): killed by detach.spec.ts "a review with no comments ends once its caller is stopped…", whose backend must keep its snapshot and exit
         {delete_snapshot?, deliver_to} = settle(tag, serve_dir)
         # Remove this review's snapshot before the delay or delivery: a held
         # decision's server may be replaced and exit before `deliver/2` returns.
         # ReviewServer runs the delete after any save in flight and saves
         # nothing once a decision exists, so the snapshot stays deleted.
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a rerun after a message-only change replaces a held decision without its comments…" and "a review with no comments ends once its caller is killed…"
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…", whose snapshot must go, and detach.spec.ts "a review with no comments ends once its caller is stopped…", whose snapshot must stay
         _ = if delete_snapshot?, do: ReviewServer.delete_snapshot(repo_path(), review_id)
         # Give the LiveView a moment to flush the done-view
         # assigns update to the browser before the BEAM dies.
@@ -269,7 +278,7 @@ defmodule Meerkat.CLI do
         _ = ReviewLog.finalize(log, decision_atom(tag), to_string(payload))
         {code, text} = exit_code(decision, review_id, feedback_file_path(log))
 
-        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by detach.spec.ts "a decision made after the runs dir is deleted still reaches the caller and ends the backend" and "a review with no comments ends once its caller is killed…"
+        # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…" and detach.spec.ts "a review with no comments ends once its caller is stopped…"
         run = deliver({code, text}, deliver_to)
 
         _ =
@@ -316,31 +325,30 @@ defmodule Meerkat.CLI do
     port: :integer
   ]
 
-  @spec parse_args([String.t()]) :: opts
+  @spec parse_args([String.t()]) :: {:ok, opts} | {:error, String.t()}
   def parse_args(argv) do
     {parsed, positional, invalid} =
       OptionParser.parse(argv, strict: @switches, aliases: [])
 
     case args_error(parsed, positional, invalid) do
       nil ->
-        %{
-          commit_msg_path: Keyword.get(parsed, :commit_msg),
-          positional: List.first(positional),
-          pr: Keyword.get(parsed, :pr),
-          answers: Keyword.get(parsed, :answers, false),
-          no_open: Keyword.get(parsed, :no_open, false),
-          port: Keyword.get(parsed, :port, 0)
-        }
+        {:ok,
+         %{
+           commit_msg_path: Keyword.get(parsed, :commit_msg),
+           positional: List.first(positional),
+           pr: Keyword.get(parsed, :pr),
+           answers: Keyword.get(parsed, :answers, false),
+           no_open: Keyword.get(parsed, :no_open, false),
+           port: Keyword.get(parsed, :port, 0)
+         }}
 
       message ->
-        IO.puts(:stderr, message)
-        System.halt(64)
+        {:error, message}
     end
   end
 
   # `nil` when the parsed argv is well-formed; otherwise the stderr
-  # message explaining the rejection. Pure, so the rejection rules are
-  # unit-testable without `parse_args/1`'s `System.halt/1`.
+  # message explaining the rejection.
   @doc false
   def args_error(parsed, positional, invalid) do
     cond do
@@ -436,15 +444,21 @@ defmodule Meerkat.CLI do
     # guard exists to prevent (common after the committing review
     # consumed the staged diff). So any pending answers force a live
     # review; the reviewer's terminal decision clears the file.
-    if served?(serve_dir) or PendingAnswers.load(repo_path) != nil do
-      :live
-    else
-      auto_approve_staged(repo_path, ReviewId.derive(repo_path, target))
-    end
+    gate_auto_approve(
+      served?(serve_dir),
+      fn -> PendingAnswers.load(repo_path) != nil end,
+      fn -> auto_approve_staged(repo_path, ReviewId.derive(repo_path, target)) end
+    )
   end
 
   # muex:ignore equivalent: swapping ignored arguments changes nothing
   defp auto_approve_decision(_target, _repo_path, _serve_dir), do: :live
+
+  # `:live` for a served review, else for one with answers pending, asking
+  # `pending?` only for an unserved one; otherwise what `decide` returns.
+  @doc false
+  def gate_auto_approve(true, _pending?, _decide), do: :live
+  def gate_auto_approve(false, pending?, decide), do: if(pending?.(), do: :live, else: decide.())
 
   # The staged-diff auto-approve fast path. Unreachable while pending
   # answers are present (see `auto_approve_decision/3`), so it can never
@@ -531,18 +545,23 @@ defmodule Meerkat.CLI do
   # leaves out whitespace-only changes, so only a snapshot it would restore
   # keeps the rerun live. A load failure keeps it live too: the review
   # reports it.
-  # muex:ignore equivalent: without this clause the next one also returns :live, after reading the snapshot
-  defp unless_comments_held(:live, _repo_path, _review_id), do: :live
-
-  defp unless_comments_held(auto, repo_path, review_id) do
+  defp unless_comments_held(decision, repo_path, review_id) do
     signature = fn ->
       with {:ok, files} <- Git.staged_file_diffs(repo_path) do
         {:ok, Persistence.state_signature(%ReviewState{files: files})}
       end
     end
 
-    if Persistence.held_comments?(repo_path, review_id, signature), do: :live, else: auto
+    hold_for_comments(decision, fn ->
+      Persistence.held_comments?(repo_path, review_id, signature)
+    end)
   end
+
+  # Keeps an auto-approval `:live` when `held?` finds comments held, and
+  # asks it nothing for a decision already `:live`.
+  @doc false
+  def hold_for_comments(:live, _held?), do: :live
+  def hold_for_comments(auto, held?), do: if(held?.(), do: :live, else: auto)
 
   # `:approved` | `:generated` | `:neither`. `generated_map` is the
   # batched output of `Git.linguist_generated_many/2` — one git
@@ -598,6 +617,9 @@ defmodule Meerkat.CLI do
 
   @doc false
   def mark_served_for_test(serve_dir), do: mark_served(serve_dir)
+
+  @doc false
+  def served_for_test(serve_dir), do: served?(serve_dir)
 
   @doc false
   def settle_for_test(tag, serve_dir), do: settle(tag, serve_dir)
@@ -728,7 +750,12 @@ defmodule Meerkat.CLI do
     # inside `ensure_all_started` — so the agent-facing stream carries
     # only the URL + verdict, not 40+ lines of server log.
     Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
-    start_app!(requested_port, preferred_port_from_env(System.get_env("MEERKAT_PREFERRED_PORT")))
+
+    # muex:ignore unreachable I/O seam: no in-VM test boots the endpoint; killed by review-page.spec.ts's MEERKAT_PORT check
+    preferred = preferred_port_from_env(System.get_env("MEERKAT_PREFERRED_PORT"))
+
+    # muex:ignore unreachable I/O seam: no in-VM test boots the endpoint; killed by review-page.spec.ts's MEERKAT_PORT check
+    start_app!(requested_port, preferred, &start_app/1, &review_url/0)
   end
 
   # Resolving `meerkat_dir` and the approval cache path shells out to
@@ -763,24 +790,26 @@ defmodule Meerkat.CLI do
   # updates it from the previous BEAM's port file after each exit so a
   # respawn can reconnect the open browser tab. If the port is occupied,
   # warn and bind an OS-assigned port; explicit nonzero --port binds
-  # exactly that port and raises PortInUseError if occupied.
-  defp start_app!(0, preferred) when is_integer(preferred) do
-    case start_app(preferred) do
+  # exactly that port and raises PortInUseError if occupied. `start` starts
+  # the app on a port, and `url` gives the URL it serves on.
+  @doc false
+  def start_app!(0, preferred, start, url) when is_integer(preferred) do
+    case start.(preferred) do
       :ok ->
         :ok
 
       {:error, reason} ->
         if port_in_use?(reason) do
-          start_app!(0, nil)
-          IO.puts(:stderr, "meerkat: port #{preferred} is in use; serving on #{review_url()}")
+          start_app!(0, nil, start, url)
+          IO.puts(:stderr, "meerkat: port #{preferred} is in use; serving on #{url.()}")
         else
           raise "meerkat failed to start: #{inspect(reason)}"
         end
     end
   end
 
-  defp start_app!(requested_port, _preferred) do
-    case start_app(requested_port) do
+  def start_app!(requested_port, _preferred, start, _url) do
+    case start.(requested_port) do
       :ok ->
         :ok
 

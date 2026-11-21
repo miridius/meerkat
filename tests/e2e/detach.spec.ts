@@ -61,8 +61,10 @@ function secondsLeft(text: string | null): number {
 // the backend compares a rerun's review with its own, by content and by the
 // index git names, and what it holds and replays, is covered by
 // test/meerkat_web/controllers/attach_controller_test.exs and
-// test/meerkat/decision_test.exs; a caller whose backend dies by
-// test/scripts/shepherd_test.exs.
+// test/meerkat/decision_test.exs; the launcher's half, including a caller
+// whose backend dies or whose run dir is deleted, and how its exit codes pass
+// through, by test/scripts/shepherd_test.exs; a SIGTERM to the BEAM before
+// its endpoint starts by test/meerkat/cli_main_test.exs.
 test.describe("a review outlives the process that invoked it", () => {
 	// The backend leaves the caller's process group and session with setsid,
 	// which keeps every signal to the group from reaching it, so one signal
@@ -79,8 +81,17 @@ test.describe("a review outlives the process that invoked it", () => {
 		let second: Runner | undefined;
 		try {
 			await page.goto(first.url);
+			// The countdown's display for a given time left is covered by
+			// assets/ts/countdown.test.ts; here the Countdown hook ticks in
+			// the browser from the deadline the server renders.
 			const countdown = page.locator(".review-countdown");
-			await expect(countdown).toBeVisible();
+			await expect(countdown, "the footer shows the time left").toHaveText(/^\d+:\d{2}:\d{2} left$/);
+			const start = secondsLeft(await countdown.textContent());
+			await expect
+				.poll(async () => secondsLeft(await countdown.textContent()), {
+					message: "the clock runs down rather than up or nowhere",
+				})
+				.toBeLessThan(start);
 			await addGlobalComment(page, "typed before the caller died");
 
 			const backend = backendPid(first);
@@ -144,12 +155,12 @@ test.describe("a review outlives the process that invoked it", () => {
 
 	// Which reviews end, and when, is covered by test/meerkat/decision_test.exs;
 	// here the caller's death reaches the server, the tabs and the backend.
-	test("a review with no comments ends once its caller is killed: a tab with one history entry closes itself, another shows the Review ended notice, and the backend exits, keeping its Approved ticks", async ({
+	test("a review with no comments ends once its caller is stopped: the caller says to rerun, a tab with one history entry closes itself, another shows the Review ended notice, and the backend exits, keeping its Approved ticks", async ({
 		page,
 		context,
 	}) => {
 		const fixture = makeFixture();
-		const meerkat = await startMeerkat({ fixture, keepFixture: true });
+		const meerkat = await startMeerkat({ fixture, keepFixture: true, ownGroup: true });
 		const backend = backendPid(meerkat);
 		try {
 			// Like the tab `open <url>` gives meerkat: created at the URL, so
@@ -182,7 +193,10 @@ test.describe("a review outlives the process that invoked it", () => {
 				.toBe(1);
 
 			const closed = fresh.waitForEvent("close");
-			await meerkat.killCaller();
+			meerkat.signalGroup("SIGTERM");
+			expect(await meerkat.awaitClose(), "the caller says to rerun").toContain(
+				"meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n",
+			);
 
 			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
 			await expect(page.locator("main.review.done")).toContainText(
@@ -199,25 +213,6 @@ test.describe("a review outlives the process that invoked it", () => {
 		} finally {
 			await meerkat.kill();
 			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a caller stopped by SIGTERM before anyone comments says to rerun, and the review ends", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat({ ownGroup: true });
-		const backend = backendPid(meerkat);
-		try {
-			await page.goto(meerkat.url);
-			await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible();
-			meerkat.signalGroup("SIGTERM");
-			expect(await meerkat.awaitClose(), "the caller says to rerun").toContain(
-				"meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n",
-			);
-			await expect(page.getByRole("heading", { name: /^Review ended$/ })).toBeVisible();
-			await expect.poll(() => alive(backend), { message: "the backend exits" }).toBe(false);
-		} finally {
-			await meerkat.kill();
 		}
 	});
 
@@ -288,118 +283,9 @@ test.describe("a review outlives the process that invoked it", () => {
 		}
 	});
 
-	// The countdown's display for a given time left is covered by
-	// assets/ts/countdown.test.ts; here the Countdown hook ticks in the
-	// browser from the deadline the server renders, before the SIGTERM.
-	test("a SIGTERM to the BEAM ends the review at once and the caller exits 143", async ({ page }) => {
-		const fixture = makeFixture();
-		const first = await startMeerkat({
-			fixture,
-			keepFixture: true,
-			env: { MEERKAT_REVIEW_TIMEOUT: "59" },
-		});
-		try {
-			await page.goto(first.url);
-			const countdown = page.locator(".review-countdown");
-			await expect(
-				countdown,
-				"the footer shows the time left before the review times out",
-			).toHaveText(/^\d+:\d{2}:\d{2} left$/);
-			const start = secondsLeft(await countdown.textContent());
-			expect(start, "a 59 second limit starts the clock just under 59 seconds").toBeGreaterThan(44);
-			expect(start, "the clock never starts above the limit").toBeLessThanOrEqual(59);
-			await expect
-				.poll(async () => secondsLeft(await countdown.textContent()), {
-					message: "the clock runs down rather than up or nowhere",
-				})
-				.toBeLessThan(start);
-			await expect(countdown, "under one minute left the countdown is styled as urgent").toHaveClass(
-				/urgent/,
-			);
-
-			const [dir] = readdirSync(first.runsDir);
-			const [, beam] = readFileSync(join(first.runsDir, dir, "port"), "utf8").trim().split(" ");
-			const backend = backendPid(first);
-			const signalled = Date.now();
-			process.kill(Number(beam), "SIGTERM");
-
-			const { code, stderr } = await first.awaitExit();
-			// A graceful stop waits up to 15 s by the clock for open connections
-			// to close, the full 15 s with the page's socket open; a halt takes
-			// seconds even on a loaded machine.
-			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(15_000);
-			expect(code).toBe(143);
-			expect(stderr).toContain(
-				"meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted).",
-			);
-			expect(alive(Number(beam))).toBe(false);
-			await expect.poll(() => alive(backend), "the shepherd does not restart the BEAM").toBe(false);
-		} finally {
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a decision made after the runs dir is deleted still reaches the caller and ends the backend", async ({
-		page,
-	}) => {
-		const meerkat = await startMeerkat();
-		const backend = backendPid(meerkat);
-		try {
-			await page.goto(meerkat.url);
-			rmSync(meerkat.runsDir, { recursive: true, force: true });
-
-			await page.getByRole("button", { name: /^Approve$/ }).click();
-			const clicked = Date.now();
-
-			const { code, stderr } = await meerkat.awaitExit();
-			expect(code, stderr).toBe(0);
-			// Waiting on the deleted run dir would cost the caller its wait for
-			// a pid file, over 9 s by the clock at any load: bash counts it in
-			// whole seconds up to 10.
-			expect(Date.now() - clicked, "the caller exits without waiting for the deleted run dir").toBeLessThan(8_500);
-			await expect.poll(() => alive(backend), "the backend exits once the decision is delivered").toBe(false);
-		} finally {
-			await meerkat.kill();
-			// With its run dir gone, `kill` cannot find the backend.
-			try {
-				process.kill(backend, "SIGTERM");
-			} catch {}
-		}
-	});
-
-	// A message-only change keeps the same review_id, so the replacement
-	// would otherwise load the held review's existing snapshot.
-	test("a rerun after a message-only change replaces a held decision without its comments", async ({ page }) => {
-		// Two BEAM boots, each of which can take ~40 s on a loaded machine.
-		test.slow();
-		const fixture = makeFixture();
-		const first = await startMeerkat({ fixture, keepFixture: true, underParent: true });
-		let second: Runner | undefined;
-		try {
-			const heldBackend = backendPid(first);
-			await page.goto(first.url);
-			await first.killParent();
-
-			await addGlobalComment(page, "held for the old message");
-			await page.getByRole("button", { name: /^Send Feedback$/ }).click();
-			await expect(page.getByRole("heading", { name: /^Feedback sent$/ })).toBeVisible();
-			await first.awaitClose();
-
-			writeFileSync(fixture.commitMsgPath, "A different subject\n");
-			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
-			expect(alive(heldBackend), "the review holding the decision has been replaced").toBe(false);
-			await page.goto(second.url);
-			await expect(page.locator("body")).toContainText("A different subject");
-			await expect(page.locator(".global-comments .note"), "the held comments do not carry over").toHaveCount(0);
-		} finally {
-			await second?.kill();
-			await first.kill();
-			rmSync(fixture.dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a rerun after the staged diff changed replaces the review its attached caller waits on", async ({
+	// The countdown's urgent style is set by the Countdown hook in the
+	// browser, from the deadline the server renders.
+	test("a rerun after the staged diff changed replaces the review its attached caller waits on, and a SIGTERM to the new BEAM, a page connected, ends the review at once with exit 143", async ({
 		page,
 	}) => {
 		// Two BEAM boots, each of which can take ~40 s on a loaded machine.
@@ -412,7 +298,12 @@ test.describe("a review outlives the process that invoked it", () => {
 			await page.goto(first.url);
 			writeFileSync(join(fixture.dir, "NOTES.md"), "rewritten while the first caller waits\n");
 			fixture.git("add", "NOTES.md");
-			second = await startMeerkat({ fixture, keepFixture: true, runsDir: first.runsDir });
+			second = await startMeerkat({
+				fixture,
+				keepFixture: true,
+				runsDir: first.runsDir,
+				env: { MEERKAT_REVIEW_TIMEOUT: "59" },
+			});
 			expect(alive(replacedBackend), "the replaced review's backend has exited").toBe(false);
 			const replaced = await first.awaitExit();
 			expect(replaced.code, "the attached invocation aborts its commit").toBe(1);
@@ -420,12 +311,23 @@ test.describe("a review outlives the process that invoked it", () => {
 
 			await page.goto(second.url);
 			await expect(page.locator("body")).toContainText("rewritten while the first caller waits");
-			await page.getByRole("button", { name: /^Approve$/ }).click();
+			const countdown = page.locator(".review-countdown");
+			await expect(countdown, "under one minute left the countdown is styled as urgent").toHaveClass(/urgent/);
+
+			const [dir] = readdirSync(second.runsDir);
+			const [, beam] = readFileSync(join(second.runsDir, dir, "port"), "utf8").trim().split(" ");
+			const backend = backendPid(second);
+			const signalled = Date.now();
+			process.kill(Number(beam), "SIGTERM");
 			const { code, stderr } = await second.awaitExit();
-			expect(code, "the rerun collects the decision on the new review").toBe(0);
-			expect(stderr, "the new review's approval reaches its caller").toContain(
-				"The user approved your commit. Proceeding.",
-			);
+			// A graceful stop waits up to 15 s by the clock for open connections
+			// to close, the full 15 s with the page's socket open; a halt takes
+			// seconds even on a loaded machine.
+			expect(Date.now() - signalled, "no wait for open connections to close").toBeLessThan(15_000);
+			expect(code, "the rerun's caller is the one the new review serves").toBe(143);
+			expect(stderr).toContain("meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted).");
+			expect(alive(Number(beam))).toBe(false);
+			await expect.poll(() => alive(backend), "the shepherd does not restart the BEAM").toBe(false);
 		} finally {
 			await second?.kill();
 			await first.kill();

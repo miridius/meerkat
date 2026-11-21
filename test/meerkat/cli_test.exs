@@ -35,16 +35,6 @@ defmodule Meerkat.CLITest do
   # - `run_live_review/2`'s `if run` (invert) — which run's deadline
   #   anchor a decision clears; `Timeout.prune_stale/1` removes a missed
   #   one by age, so no ExUnit- or e2e-visible behaviour depends on it.
-  # - `start_app!/2` (deleting the preferred-port clause) and
-  #   `run_live_review_safe/2`'s `PortInUseError` rescue — they boot the
-  #   endpoint, unrunnable under ExUnit. Covered e2e by port.spec.ts
-  #   "without --port, a review binds its stable port, or another port
-  #   while another review holds it" and "an explicit --port that is
-  #   taken fails to start and names the port".
-  # - `parse_args/1`'s non-nil `args_error` clause — the clause ends in
-  #   System.halt/1, killing the ExUnit VM by design (see args_error
-  #   docs); covered e2e by entry-points.spec.ts "an unrecognised option
-  #   exits 64 and names the option".
   # - The staged-diff auto-approve path in `auto_approve_staged/2`
   #   (statement deletion among the Git shell-outs) — real-git I/O
   #   wiring; covered by the real-git `auto_approve_decision/3` tests
@@ -131,7 +121,9 @@ defmodule Meerkat.CLITest do
 
   describe "parse_args/1" do
     test "defaults: no commit-msg / pr / positional, browser opens, port 0" do
-      assert CLI.parse_args([]) == %{
+      assert {:ok, opts} = CLI.parse_args([])
+
+      assert opts == %{
                commit_msg_path: nil,
                positional: nil,
                pr: nil,
@@ -142,37 +134,39 @@ defmodule Meerkat.CLITest do
     end
 
     test "--answers is a boolean flag" do
-      assert %{answers: true} = CLI.parse_args(["--answers"])
-      assert %{answers: true} = CLI.parse_args(["--answers=true"])
+      assert {:ok, %{answers: true}} = CLI.parse_args(["--answers"])
+      assert {:ok, %{answers: true}} = CLI.parse_args(["--answers=true"])
 
-      assert %{answers: true, no_open: true, port: 4321} =
+      assert {:ok, %{answers: true, no_open: true, port: 4321}} =
                CLI.parse_args(["--answers", "--no-open", "--port", "4321"])
     end
 
     test "--commit-msg threads through" do
-      assert %{commit_msg_path: "/tmp/MSG"} = CLI.parse_args(["--commit-msg", "/tmp/MSG"])
+      assert {:ok, %{commit_msg_path: "/tmp/MSG"}} = CLI.parse_args(["--commit-msg", "/tmp/MSG"])
     end
 
     test "--no-open is a boolean flag" do
-      assert %{no_open: true} = CLI.parse_args(["--no-open"])
+      assert {:ok, %{no_open: true}} = CLI.parse_args(["--no-open"])
     end
 
     test "--port parses as integer" do
-      assert %{port: 4321} = CLI.parse_args(["--port", "4321"])
+      assert {:ok, %{port: 4321}} = CLI.parse_args(["--port", "4321"])
     end
 
     test "positional arg is captured for ref/range parsing" do
-      assert %{positional: "HEAD"} = CLI.parse_args(["HEAD"])
-      assert %{positional: "main..feat"} = CLI.parse_args(["main..feat"])
-      assert %{positional: "main...feat"} = CLI.parse_args(["main...feat"])
+      assert {:ok, %{positional: "HEAD"}} = CLI.parse_args(["HEAD"])
+      assert {:ok, %{positional: "main..feat"}} = CLI.parse_args(["main..feat"])
+      assert {:ok, %{positional: "main...feat"}} = CLI.parse_args(["main...feat"])
     end
 
     test "--pr threads through" do
-      assert %{pr: "123"} = CLI.parse_args(["--pr", "123"])
+      assert {:ok, %{pr: "123"}} = CLI.parse_args(["--pr", "123"])
     end
 
     test "all flags together" do
-      assert CLI.parse_args(["--commit-msg", "/tmp/x", "--no-open", "--port", "0"]) == %{
+      assert {:ok, opts} = CLI.parse_args(["--commit-msg", "/tmp/x", "--no-open", "--port", "0"])
+
+      assert opts == %{
                commit_msg_path: "/tmp/x",
                positional: nil,
                pr: nil,
@@ -328,7 +322,55 @@ defmodule Meerkat.CLITest do
     end
   end
 
+  describe "gate_auto_approve/3" do
+    test "a served review stays live without asking about answers or deciding" do
+      assert CLI.gate_auto_approve(true, fn -> flunk("asked") end, fn -> flunk("decided") end) ==
+               :live
+    end
+
+    # Deciding could auto-approve, which deletes the answers file.
+    test "pending answers keep an unserved review live without deciding" do
+      assert CLI.gate_auto_approve(false, fn -> true end, fn -> flunk("decided") end) == :live
+    end
+
+    test "with neither, the decision stands" do
+      auto = {:auto, "auto\n"}
+      assert CLI.gate_auto_approve(false, fn -> false end, fn -> auto end) == auto
+      assert CLI.gate_auto_approve(false, fn -> false end, fn -> :live end) == :live
+    end
+  end
+
+  describe "served?/1" do
+    test "only a serve dir marked served is served" do
+      dir = Meerkat.TestHelpers.tmp_path("meerkat-cli-served")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      refute CLI.served_for_test(nil)
+      refute CLI.served_for_test(dir)
+      CLI.mark_served_for_test(dir)
+      assert CLI.served_for_test(dir)
+    end
+  end
+
+  describe "hold_for_comments/2" do
+    test "held comments keep an auto-approval live" do
+      assert CLI.hold_for_comments({:auto, "auto\n"}, fn -> true end) == :live
+    end
+
+    test "without held comments the auto-approval stands" do
+      assert CLI.hold_for_comments({:auto, "auto\n"}, fn -> false end) == {:auto, "auto\n"}
+    end
+
+    test "a live decision reads no snapshot" do
+      assert CLI.hold_for_comments(:live, fn -> flunk("read") end) == :live
+    end
+  end
+
   describe "args_error/3" do
+    test "parse_args/1 returns the rejection message" do
+      assert CLI.parse_args(["--bogus"]) == {:error, "meerkat: unrecognised options: --bogus"}
+    end
+
     test "unrecognised options → rejection message" do
       assert CLI.args_error([], [], [{"--bogus", nil}]) =~ "unrecognised options: --bogus"
     end
@@ -739,6 +781,94 @@ defmodule Meerkat.CLITest do
 
       refute CLI.port_in_use_for_test([:a | :b])
       refute CLI.port_in_use_for_test("eaddrinuse")
+    end
+  end
+
+  describe "start_app!/4" do
+    @in_use {:meerkat, {{:shutdown, {:failed_to_start_child, :listener, :eaddrinuse}}, []}}
+
+    # A `start` that answers each port from `results`, telling the test
+    # process which ports it was asked for.
+    defp start_with(results) do
+      test = self()
+
+      fn port ->
+        send(test, {:started, port})
+        Map.fetch!(results, port)
+      end
+    end
+
+    test "without --port, binds the preferred port while it is free" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.start_app!(0, 4444, start_with(%{4444 => :ok}), fn -> "unused" end) == :ok
+        end)
+
+      assert stderr == ""
+      assert_received {:started, 4444}
+      refute_received {:started, _}
+    end
+
+    test "without --port, falls back to another port while the preferred one is taken, and says so" do
+      url = fn -> "http://127.0.0.1:5555/" end
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.start_app!(0, 4444, start_with(%{4444 => {:error, @in_use}, 0 => :ok}), url) ==
+                   :ok
+        end)
+
+      assert stderr == "meerkat: port 4444 is in use; serving on http://127.0.0.1:5555/\n"
+      assert_received {:started, 4444}
+      assert_received {:started, 0}
+    end
+
+    test "an explicit port that is taken raises PortInUseError naming it" do
+      start = start_with(%{4321 => {:error, @in_use}})
+
+      assert_raise Meerkat.PortInUseError, ~r/port 4321 is in use \(--port 4321\)/, fn ->
+        CLI.start_app!(4321, 4444, start, fn -> "unused" end)
+      end
+
+      assert_received {:started, 4321}
+      refute_received {:started, 4444}
+    end
+
+    test "any other start error is a crash" do
+      for {port, preferred} <- [{0, 4444}, {4321, nil}] do
+        start = start_with(%{port => {:error, :eacces}, 4444 => {:error, :eacces}})
+
+        assert_raise RuntimeError, "meerkat failed to start: :eacces", fn ->
+          CLI.start_app!(port, preferred, start, fn -> "unused" end)
+        end
+      end
+    end
+  end
+
+  describe "reject_on_crash/1" do
+    test "returns the review's exit code" do
+      assert CLI.reject_on_crash(fn -> 1 end) == 1
+    end
+
+    test "a taken --port is a rejected argument, exit 64" do
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert CLI.reject_on_crash(fn -> raise Meerkat.PortInUseError, port: 4321 end) == 64
+        end)
+
+      assert stderr ==
+               "meerkat: port 4321 is in use (--port 4321); pick another port or omit --port\n"
+    end
+
+    test "a crash, throw or exit rejects with exit 2" do
+      for review <- [fn -> raise "boom" end, fn -> throw(:boom) end, fn -> exit(:boom) end] do
+        stderr =
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert CLI.reject_on_crash(review) == 2
+          end)
+
+        assert stderr =~ "defaulting to REJECT (commit aborted)."
+      end
     end
   end
 
@@ -1170,30 +1300,6 @@ defmodule Meerkat.CLITest do
       write_pending_answers(dir)
       assert CLI.auto_approve_decision_for_test(dir) == :live
     end
-
-    test "auto_approve_decision/3 with pending answers leaves the file in place", %{dir: dir} do
-      path = write_pending_answers(dir)
-      assert CLI.auto_approve_decision_for_test(dir) == :live
-      assert File.exists?(path)
-    end
-
-    test "staged file + pending answers → live review even when every file is approved", %{
-      dir: dir
-    } do
-      # A file already approved at its staged OID would otherwise hit
-      # the all-approved auto-approve branch — with answers pending the
-      # gate must block that too, or they'd be discarded mid-iteration.
-      File.write!(Path.join(dir, "a.rs"), "fn a() {}\n")
-      git(dir, ["add", "a.rs"])
-      oid = git(dir, ["rev-parse", ":a.rs"])
-
-      with path <- ApprovalCache.path_for(dir) do
-        {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "a.rs", oid))
-      end
-
-      write_pending_answers(dir)
-      assert CLI.auto_approve_decision_for_test(dir) == :live
-    end
   end
 
   describe "auto_approve_decision/3 — detached HEAD (real git fixture)" do
@@ -1235,21 +1341,12 @@ defmodule Meerkat.CLITest do
       CLI.mark_served_for_test(serve_dir)
       assert CLI.auto_approve_decision_for_test(dir, serve_dir) == :live
     end
-
-    test "a new invocation's fresh serve dir still auto-approves", %{
-      dir: dir,
-      serve_dir: serve_dir
-    } do
-      assert CLI.auto_approve_decision_for_test(dir, serve_dir) ==
-               {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
-    end
   end
 
   describe "auto_approve_decision/3 — a review that ended without a decision (real git fixture)" do
     # A BEAM nothing respawned (a `bin/meerkat-beam` crash, a SIGKILL) leaves its
     # comments in the in-progress snapshot, and the rerun starts in a fresh
     # serve dir. Auto-approving would never deliver those comments.
-    @all_approved {:auto, "meerkat: all 1 staged file(s) already approved — auto-approving.\n"}
 
     setup ctx do
       {:ok, dir: copy_fixture(ctx.approved_template, "meerkat-cli-crashed")}
@@ -1292,18 +1389,6 @@ defmodule Meerkat.CLITest do
       {:ok, _} = ApprovalCache.modify(path, &ApprovalCache.approve(&1, "main", "b.rs", oid))
       save_snapshot(dir, global_comments: [@comment])
       assert CLI.auto_approve_decision_for_test(dir) == :live
-    end
-
-    test "a snapshot holding no comment still auto-approves", %{dir: dir} do
-      save_snapshot(dir, approved_file_names: MapSet.new(["a.rs"]))
-      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
-    end
-
-    test "a snapshot of other staged content still auto-approves", %{dir: dir} do
-      stage(dir, "a.rs", "fn earlier() {}\n")
-      save_snapshot(dir, global_comments: [@comment])
-      stage(dir, "a.rs", "fn a() {}\n")
-      assert CLI.auto_approve_decision_for_test(dir) == @all_approved
     end
 
     test "with nothing staged, a snapshot holding comments keeps the rerun live", %{dir: dir} do

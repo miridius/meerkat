@@ -9,7 +9,8 @@ import { afterNextFrame, expect, test } from "./lib/test";
 // side's code width to choose which rulers to draw, or with Wrap on,
 // where its rows break to place each on its row, and the
 // suggestion editor redraws its rulers when the setting changes. Parsing
-// and persisting the setting are covered by the LiveView tests.
+// and persisting the setting are covered by the LiveView tests, and
+// sharing it with other tabs by review-page.spec.ts.
 
 const LONG = `${"x".repeat(130)}\n`;
 
@@ -210,8 +211,8 @@ test("with Wrap off, diff rulers show only where the code column fits them and f
 		await expect.poll(() => movedCell.locator(".diff-line-content-item").evaluate(gradients)).toBe(2);
 
 		// Split view's halves are equally wide, so at every width each
-		// draws the same rulers; 10px steps cross each ruler's threshold.
-		for (let width = 1300; width <= 2000; width += 10) {
+		// draws the same rulers; 30px steps cross each ruler's threshold.
+		for (let width = 1300; width <= 2000; width += 30) {
 			await page.setViewportSize({ width, height: 800 });
 			const sides = await twelve.evaluate(async (section) => {
 				await window.rulerProbe.nextFrame();
@@ -319,6 +320,21 @@ test("with Wrap off, diff rulers show only where the code column fits them and f
 		await expect(dragged).toHaveCSS("background-color", "rgba(31, 111, 235, 0.32)");
 		await expect(dragged.locator(".diff-line-content-item")).toHaveCSS("background-image", /linear-gradient/);
 		await page.mouse.up();
+
+		// The drag opened a form, whose suggestion editor redraws its
+		// rulers when the setting changes.
+		const form = file.locator('tr.meerkat-form-row[data-meerkat-form-anchor="3"] .comment-form');
+		await form.getByRole("button", { name: /^Suggestion$/ }).click();
+		const content = form.locator(".code-host .cm-content");
+		await expect(content).toBeVisible();
+		const editorRulers = () =>
+			content.evaluate((el) => getComputedStyle(el).backgroundImage.split("linear-gradient").length - 1);
+		await expect.poll(editorRulers).toBe(2);
+		await openSettings(page);
+		await page.getByLabel("Ruler columns").fill("72");
+		await expect.poll(editorRulers).toBe(1);
+		await page.getByLabel("Rulers", { exact: true }).click();
+		await expect.poll(editorRulers).toBe(0);
 	} finally {
 		await meerkat.kill();
 	}
@@ -415,56 +431,6 @@ test("with Wrap on, each diff ruler shows only on the row its column falls on, a
 		expect(tabbed.column).toBeCloseTo(tabbed.tabSize, 1);
 		expect(tabbed.copied).toBe("\tx");
 		expect(tabbed.rows).toBeCloseTo(1, 1);
-	} finally {
-		await meerkat.kill();
-	}
-});
-
-test("two tabs changing different settings keep both", async ({ page, context }) => {
-	const meerkat = await startMeerkat({ fixture: wideFixture() });
-	try {
-		await page.goto(meerkat.url);
-		const other = await context.newPage();
-		await other.goto(meerkat.url);
-
-		await openSettings(page);
-		await page.getByLabel("Ruler columns").fill("72");
-		await expect(page.getByLabel("Ruler columns")).toHaveAttribute("value", "72");
-		await openSettings(other);
-		await other.getByRole("button", { name: /^8$/ }).click();
-		await expect(other.getByRole("button", { name: /^8$/ })).toHaveClass(/active/);
-
-		for (const tab of [page, other]) {
-			await tab.bringToFront();
-			await tab.reload();
-			await openSettings(tab);
-			await expect(tab.getByLabel("Ruler columns")).toHaveValue("72");
-			await expect(tab.getByRole("button", { name: /^8$/ })).toHaveClass(/active/);
-		}
-	} finally {
-		await meerkat.kill();
-	}
-});
-
-test("an open suggestion editor redraws its rulers when the setting changes", async ({ page }) => {
-	const meerkat = await startMeerkat({ fixture: wideFixture() });
-	try {
-		await page.goto(meerkat.url);
-		const file = page.locator(".file-section").filter({ hasText: "wide.txt" });
-		await file.locator('td.diff-line-new-num:has(span[data-line-num="2"])').click();
-		const form = file.locator("tr.meerkat-form-row .comment-form");
-		await form.getByRole("button", { name: /^Suggestion$/ }).click();
-		const content = form.locator(".code-host .cm-content");
-		await expect(content).toBeVisible();
-		const gradients = () =>
-			content.evaluate((el) => getComputedStyle(el).backgroundImage.split("linear-gradient").length - 1);
-		await expect.poll(gradients).toBe(2);
-
-		await openSettings(page);
-		await page.getByLabel("Ruler columns").fill("72");
-		await expect.poll(gradients).toBe(1);
-		await page.getByLabel("Rulers", { exact: true }).click();
-		await expect.poll(gradients).toBe(0);
 	} finally {
 		await meerkat.kill();
 	}

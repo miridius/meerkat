@@ -1,13 +1,14 @@
 import { rmSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { SQUEEZE_STEPS } from "../../assets/ts/toolbarSqueeze";
-import { makeFixture, makePrFixture, manifestRoot } from "./lib/fixture";
+import { makePrFixture, manifestRoot } from "./lib/fixture";
 import { startMeerkat } from "./lib/runner";
 import { afterNextFrame, expect, test } from "./lib/test";
 
 // The browser seam of the toolbar's squeeze steps: the Toolbar hook
 // measuring the rendered toolbar and the CSS each step drives. Which steps,
-// in which order, is unit-tested in assets/ts/toolbarSqueeze.test.ts.
+// in which order, is unit-tested in assets/ts/toolbarSqueeze.test.ts; the
+// version chip's step, by review-page.spec.ts.
 
 // The steps the toolbar has taken, whether anything in it runs out of its
 // box (past the toolbar, or past its item into the next), and whether it
@@ -53,16 +54,6 @@ async function trackPageErrors(page: Page) {
 	return errors;
 }
 
-// The texts of the version chip's parts on screen; the ones a step takes
-// off it are kept 1px wide for screen readers.
-function chipOnScreen(page: Page) {
-	return page
-		.locator(".version-chip-btn")
-		.evaluate((el) =>
-			[...el.children].filter((c) => c.getBoundingClientRect().width > 1).map((c) => c.textContent?.trim()),
-		);
-}
-
 test("narrowing the window takes the squeeze steps in order, one row until the last, and the ⚙ popover then holds Split / Unified and Wrap", async ({
 	page,
 }) => {
@@ -94,7 +85,8 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 
 		const seen: string[] = [];
 		let taken = 0;
-		for (let width = 2400; width >= 280; width -= 20) {
+		// The order is unit-tested; 40px steps visit every squeeze step.
+		for (let width = 2400; width >= 280; width -= 40) {
 			const state = await at(page, width);
 			expect(state.steps, `at ${width}px the steps are the first few, in order`).toEqual(
 				SQUEEZE_STEPS.slice(0, state.steps.length),
@@ -199,127 +191,6 @@ test("narrowing the window takes the squeeze steps in order, one row until the l
 	}
 });
 
-test("at its step the version chip shows only its count of updates, and its drop-down names the version", async ({
-	page,
-}) => {
-	// Eleven updates after #10: a count of two digits, which must not
-	// narrow the chip as it drops to none.
-	const releaseRoot = manifestRoot([
-		...MANIFEST,
-		...Array.from({ length: 12 }, (_, i) => `Change ${21 - i} (#${21 - i})`),
-	]);
-	const meerkat = await startMeerkat({
-		fixture: makeFixture({ commitMsg: "Retire local review tooling\n", files: { "a.txt": "one\n" } }),
-		env: { RELEASE_ROOT: releaseRoot },
-	});
-	try {
-		const errors = await trackPageErrors(page);
-		await page.setViewportSize({ width: 2400, height: 800 });
-		await page.goto(meerkat.url);
-		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
-		await page.reload();
-		const wrap = page.locator(".version-chip-wrap");
-		const chip = page.locator(".version-chip-btn");
-		const popover = page.locator(".version-popover");
-		const named = popover.locator(".version-popover-version");
-		await expect(chip.locator(".version-badge")).toHaveText("11");
-
-		// With only its own step taken, the chip without its badge would fit
-		// in full; while the drop-down is open it keeps its step all the same.
-		let width = 2400;
-		while ((await at(page, width)).steps.length === 0) width -= 40;
-		while ((await at(page, width)).steps.length > 0) width += 1;
-		width -= 1;
-		expect((await at(page, width)).steps).toEqual(["version"]);
-		await chip.click();
-		await expect(popover).toBeVisible();
-		await afterNextFrame(page);
-		expect((await toolbarState(page)).steps).toEqual(["version"]);
-		await expect(chip).toHaveCSS("opacity", "0");
-		await chip.click();
-		await expect(popover).toBeHidden();
-		// Closed, it gives the step back.
-		await expect.poll(async () => (await toolbarState(page)).steps).toEqual([]);
-		expect(await chipOnScreen(page), "the chip shows the version again").toEqual(["ver", "abc1234"]);
-		await expect(chip, "focus stays on the chip that came back").toBeFocused();
-
-		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
-		await page.reload();
-		await expect(chip.locator(".version-badge")).toHaveText("11");
-		// Past the version step, so the chip losing its badge cannot give it back.
-		while (!(await at(page, width)).steps.includes("conn")) width -= 20;
-		expect(await chipOnScreen(page)).toEqual(["11"]);
-		await expect(chip, "the version stays in the chip's name").toHaveAccessibleName(/abc1234/);
-
-		// Opening it marks the updates seen, so the chip goes, keeping its box
-		// so the drop-down stays where it opened.
-		const box = await wrap.boundingBox();
-		await chip.click();
-		await expect(popover).toBeVisible();
-		await expect(named).toHaveText(/^\s*meerkat\s+abc1234\s*$/);
-		await expect(chip).toHaveCSS("opacity", "0");
-		expect(await wrap.boundingBox()).toEqual(box);
-		await expect(chip, "the count it keeps for its width is not read out").not.toHaveAccessibleName(/11/);
-		// Clicking it again closes the drop-down, and the chip goes.
-		await chip.click();
-		await expect(popover).toBeHidden();
-		await expect(wrap).toBeHidden();
-
-		// Wrapped, the chip can sit near the window's left edge; the
-		// drop-down still opens within the window.
-		await page.evaluate(() => localStorage.setItem("meerkat:lastSeenPr", "10"));
-		await page.setViewportSize({ width: 300, height: 800 });
-		await page.reload();
-		await expect(chip.locator(".version-badge")).toHaveText("11");
-		// Opened from the keyboard, it keeps focus.
-		await chip.focus();
-		await page.keyboard.press("Enter");
-		await expect(named).toBeVisible();
-		await expect(chip).toBeFocused();
-		const drop = await popover.evaluate((el) => el.getBoundingClientRect().toJSON());
-		expect(drop.left).toBeGreaterThanOrEqual(0);
-		expect(drop.right).toBeLessThanOrEqual(300);
-		// Esc closes it too, and focus moves on from the chip as it goes.
-		await page.keyboard.press("Escape");
-		await expect(wrap).toBeHidden();
-		// The view controls are in the ⚙ popover at this width, so ⚙ is next.
-		await expect(page.locator(".toolbar-settings > summary")).toBeFocused();
-
-		await at(page, 2400);
-		expect(await chipOnScreen(page), "the chip shows the version again").toEqual(["ver", "abc1234"]);
-		await chip.click();
-		await expect(popover).toBeVisible();
-		await expect(named, "with room, the chip itself names the version").toBeHidden();
-		// Back under the chip, after the shift that kept it in the window.
-		const [chipRight, dropRight] = await Promise.all(
-			[wrap, popover].map((el) => el.evaluate((e) => e.getBoundingClientRect().right)),
-		);
-		expect(dropRight).toBeCloseTo(chipRight, 0);
-		// Esc from one of its links gives focus back to the chip.
-		await chip.focus();
-		await page.keyboard.press("Tab");
-		await expect(popover.getByRole("link").first()).toBeFocused();
-		await page.keyboard.press("Escape");
-		await expect(popover).toBeHidden();
-		await expect(chip).toBeFocused();
-		await chip.click();
-		await expect(popover).toBeVisible();
-		// A click elsewhere closes it, leaving focus where the click put it:
-		// the files dropdown it opens takes focus to its filter box.
-		const files = page.getByRole("button", { name: "Toggle file list" });
-		await files.click();
-		await expect(popover).toBeHidden();
-		await afterNextFrame(page);
-		await expect(page.getByRole("textbox", { name: "Filter files" })).toBeFocused();
-		await files.click();
-		await afterNextFrame(page);
-		expect(errors, "no page errors").toEqual([]);
-	} finally {
-		await meerkat.kill();
-		rmSync(releaseRoot, { recursive: true, force: true });
-	}
-});
-
 test("the steps follow the toolbar's content at a fixed width, and a branch name shorter than the truncation floor keeps its own width", async ({
 	page,
 }) => {
@@ -349,6 +220,7 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 
 		// The narrowest width that still takes no step.
 		let width = 2400;
+		while ((await at(page, width - 80)).steps.length === 0) width -= 80;
 		while ((await at(page, width - 10)).steps.length === 0) width -= 10;
 		await at(page, width);
 
@@ -361,7 +233,7 @@ test("the steps follow the toolbar's content at a fixed width, and a branch name
 		const counts = page.locator(".toolbar-line-counts");
 		await expect(counts.locator(".counts-showing")).toBeVisible();
 		let narrower = width;
-		while (!(await at(page, narrower)).steps.includes("counts")) narrower -= 10;
+		while (!(await at(page, narrower)).steps.includes("counts")) narrower -= 20;
 		await expect(counts.locator(".counts-showing")).toBeHidden();
 		await expect(counts.locator(".counts-of")).toBeHidden();
 		await expect(counts.locator(".counts-slash")).toBeVisible();
