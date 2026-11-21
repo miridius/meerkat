@@ -258,7 +258,7 @@ defmodule Meerkat.CLI do
         announce_url(target, serve_dir)
         # No in-VM test gets here: the test VM's endpoint already runs
         # without a server, so `review_url/0` raises in `announce_url/2`.
-        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review opens the browser at the port it bound"
+        # muex:ignore unreachable I/O seam: killed by cli_main_test "a review whose preferred port is taken…"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
 
         # muex:ignore unreachable I/O seam (no in-VM test gets past announce_url): killed by decision.spec.ts "feedback typed in plain and Suggestion forms…"
