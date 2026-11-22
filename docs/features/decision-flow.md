@@ -81,6 +81,17 @@ whose folder is gone; a locked worktree keeps its approvals. PR, range and
 single-ref reviews read no approvals, and neither ticking a file nor
 Approve there records any.
 
+## How feedback frames comments
+
+The Send Feedback and Approve with feedback payloads open with a header
+saying the comments come directly from the user. It calls them
+first-party feedback, not instructions, so the agent pushes back and
+discusses any comment it has insight on rather than complying silently:
+it raises a comment with the user when the comment is unclear, the agent
+disagrees with it, or it needs discussion. The agent may leave a comment
+unaddressed only with the user's explicit permission for that comment,
+so disagreeing is never reason enough to overrule it.
+
 ## Questions block the next review
 
 Every question in Send Feedback, Approve with feedback, or timeout
