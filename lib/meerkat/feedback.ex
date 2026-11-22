@@ -61,7 +61,9 @@ defmodule Meerkat.Feedback do
     end
   end
 
-  @first_party_tail "They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly. Never leave a comment unaddressed, even one you disagree with, unless the user explicitly lets you skip that comment."
+  @skip_rule "Never leave a comment unaddressed, even one you disagree with, unless the user explicitly lets you skip that comment."
+
+  @first_party_tail "They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly. #{@skip_rule}"
 
   defp framing_header(:rejection) do
     """
@@ -79,7 +81,7 @@ defmodule Meerkat.Feedback do
 
   defp framing_header(:timeout) do
     """
-    Nobody reviewed this commit. It was auto-approved when the review timed out, and the comments below are what the user had saved before that.
+    Nobody reviewed this commit. It was auto-approved when the review timed out, and the comments below are what the user had saved before that. #{@skip_rule}
 
     """
   end

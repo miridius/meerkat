@@ -90,7 +90,9 @@ discusses any comment it has insight on rather than complying silently:
 it raises a comment with the user when the comment is unclear, the agent
 disagrees with it, or it needs discussion. The agent may leave a comment
 unaddressed only with the user's explicit permission for that comment,
-so disagreeing is never reason enough to overrule it.
+so disagreeing is never reason enough to overrule it. The timeout
+payload's header, for the comments the user had saved before an
+auto-approved timeout, ends with the same rule.
 
 ## Questions block the next review
 

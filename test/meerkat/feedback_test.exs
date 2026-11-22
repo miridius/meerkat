@@ -36,6 +36,14 @@ defmodule Meerkat.FeedbackTest do
                @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
+  test "timeout framing says nobody reviewed and forbids skipping a saved comment unasked" do
+    out = Feedback.format(state_with_global_comment(), :timeout)
+
+    assert out ==
+             "Nobody reviewed this commit. It was auto-approved when the review timed out, and the comments below are what the user had saved before that. Never leave a comment unaddressed, even one you disagree with, unless the user explicitly lets you skip that comment.\n\n" <>
+               "\nGlobal comments:\n  > **issue:** needs work\n\n"
+  end
+
   test "approval-with-feedback with no comments returns empty" do
     assert Feedback.format(%ReviewState{}, :approval_with_feedback) == ""
   end
