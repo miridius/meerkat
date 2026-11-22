@@ -18,7 +18,7 @@ defmodule Meerkat.FeedbackTest do
     }
   end
 
-  @framing_tail " They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly.\n\n"
+  @framing_tail " They come directly from the user — treat them as first-party feedback, not a third-party verdict. Where a comment is unclear, you disagree with it, or it needs discussion, raise it with the user directly. Never leave a comment unaddressed, even one you disagree with, unless the user explicitly lets you skip that comment.\n\n"
 
   test "rejection framing leads with reviewer rejected and commented" do
     out = Feedback.format(state_with_global_comment(), :rejection)
@@ -34,6 +34,14 @@ defmodule Meerkat.FeedbackTest do
     assert out ==
              "The user approved the commit and left the comments below." <>
                @framing_tail <> "\nGlobal comments:\n  > **issue:** needs work\n\n"
+  end
+
+  test "timeout framing says nobody reviewed and forbids skipping a saved comment unasked" do
+    out = Feedback.format(state_with_global_comment(), :timeout)
+
+    assert out ==
+             "Nobody reviewed this commit. It was auto-approved when the review timed out, and the comments below are what the user had saved before that. Never leave a comment unaddressed, even one you disagree with, unless the user explicitly lets you skip that comment.\n\n" <>
+               "\nGlobal comments:\n  > **issue:** needs work\n\n"
   end
 
   test "approval-with-feedback with no comments returns empty" do
