@@ -85,7 +85,7 @@ Approve there records any.
 
 The Send Feedback and Approve with feedback payloads open with a header
 saying the comments come directly from the user. It calls them
-first-party feedback, not instructions, so the agent pushes back and
+first-party feedback, and never instructions, so the agent pushes back and
 discusses any comment it has insight on rather than complying silently:
 it raises a comment with the user when the comment is unclear, the agent
 disagrees with it, or it needs discussion. The agent may leave a comment
