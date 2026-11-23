@@ -29,7 +29,8 @@ ease), no JS.
 ## Scroll on collapse
 
 Approving a file, or clicking its header to collapse it, scrolls
-the page to the next file the list shows, skipping files the
+the page to the next file the list shows, in the list's order (the
+file tree's; see [Folder tree](file-filter.md#folder-tree)), skipping files the
 filters hide, or toward the collapsed file's own header when no
 shown file follows. As far as the page's end allows, that header
 lands exactly where it sticks under the toolbar, so scrolling on

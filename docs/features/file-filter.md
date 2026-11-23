@@ -60,7 +60,8 @@ subfolders:
   row the file's base name. Each row's tooltip gives the full path.
   Rows are indented by depth.
 - In each folder, its own files come first, then subfolders, each in
-  alphabetical order. The diff below keeps git's order.
+  alphabetical order. The diff below lists its files in the same
+  order.
 - A folder whose only child is a single folder shares its row with
   it, named with both: `lib/meerkat_web/live`.
 - Clicking a folder row (`files.toggle_dir`) collapses or expands it;
