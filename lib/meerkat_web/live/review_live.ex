@@ -88,9 +88,10 @@ defmodule MeerkatWeb.ReviewLive do
      assign(socket,
        page_title: page_title(state),
        state: state,
-       # `{file, index}` for each file in the file tree's order, which
-       # the main file list follows; indices keep git's order.
-       ordered_files: state.files |> Enum.with_index() |> FileTree.order(),
+       # Each file's index in `state.files`, which DOM ids and the
+       # filters key on, in the file tree's order, which the main file
+       # list follows. Computed once: `state.files` is frozen after mount.
+       file_order: state.files |> Enum.with_index() |> FileTree.order() |> Enum.map(&elem(&1, 1)),
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
@@ -1021,24 +1022,25 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
-  # Scrolls to the next shown file after `file_name` in the list's
-  # order, whose section has just collapsed, or to `file_name`'s own
-  # when none follows.
+  # Scrolls past `file_name`, whose section has just collapsed, to the
+  # next shown file in the list's order, or to its own section when
+  # none follows.
   defp scroll_past_file(socket, file_name) do
     %{
       state: state,
-      ordered_files: ordered_files,
+      file_order: file_order,
       filter_input: filter_input,
       only_file_index: only_file_index
     } = socket.assigns
 
-    case Enum.drop_while(ordered_files, fn {file, _} -> file.file_name != file_name end) do
-      [] ->
+    case Enum.find_index(state.files, &(&1.file_name == file_name)) do
+      nil ->
         socket
 
-      [{_file, idx} | rest] ->
+      idx ->
         shown = visible_indices(state, filter_input, only_file_index)
-        target = Enum.find_value(rest, idx, fn {_, i} -> MapSet.member?(shown, i) && i end)
+        [^idx | rest] = Enum.drop_while(file_order, &(&1 != idx))
+        target = Enum.find(rest, idx, &MapSet.member?(shown, &1))
 
         push_event(socket, "scroll-into-view", %{id: "file-#{target}"})
     end
@@ -1223,7 +1225,7 @@ defmodule MeerkatWeb.ReviewLive do
       <div class="review-body">
         <.file_list
           state={@state}
-          ordered_files={@ordered_files}
+          file_order={@file_order}
           socket={@socket}
           mode={@diff_mode}
           wrap_lines={@wrap_lines}
@@ -1553,7 +1555,7 @@ defmodule MeerkatWeb.ReviewLive do
 
   attr :state, ReviewState, required: true
   # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
-  attr :ordered_files, :list, required: true
+  attr :file_order, :list, required: true
   attr :socket, :any, required: true
   attr :mode, :string, required: true
   attr :wrap_lines, :boolean, required: true
@@ -1584,7 +1586,7 @@ defmodule MeerkatWeb.ReviewLive do
           %{file: file, idx: idx} = entry <-
             file_entries(
               @state,
-              @ordered_files,
+              @file_order,
               @expanded_approved,
               @collapsed_unapproved,
               @rendered_files,
@@ -2739,11 +2741,11 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # One entry per file in the review, in `ordered_files`' order, holding
-  # the per-file values its section renders.
+  # One entry per file in the review, in `file_order`, holding the
+  # per-file values its section renders.
   defp file_entries(
          state,
-         ordered_files,
+         file_order,
          expanded_approved,
          collapsed_unapproved,
          rendered,
@@ -2754,7 +2756,10 @@ defmodule MeerkatWeb.ReviewLive do
     inline_comments = group_inline_by_file(state.comments)
     file_comments = group_file_by_file_with_html(state.file_comments)
 
-    Enum.map(ordered_files, fn {file, idx} ->
+    files = List.to_tuple(state.files)
+
+    Enum.map(file_order, fn idx ->
+      file = elem(files, idx)
       name = file.file_name
 
       %{

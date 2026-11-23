@@ -737,6 +737,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     state = %ReviewState{
       files: [
         %{@plain_file | effective_oid: nil},
+        # Sorts after src/widget.rs, so it is the next file in the list.
         %{@plain_file | file_name: "src/x_next.rs", effective_oid: nil}
       ],
       head_branch: "main"
