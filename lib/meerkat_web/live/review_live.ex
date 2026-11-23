@@ -88,6 +88,9 @@ defmodule MeerkatWeb.ReviewLive do
      assign(socket,
        page_title: page_title(state),
        state: state,
+       # `{file, index}` for each file in the file tree's order, which
+       # the main file list follows; indices keep git's order.
+       ordered_files: state.files |> Enum.with_index() |> FileTree.order(),
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
@@ -1018,21 +1021,24 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
-  # Scrolls to the next shown file after `file_name`, whose section has
-  # just collapsed, or to `file_name`'s own when none follows.
+  # Scrolls to the next shown file after `file_name` in the list's
+  # order, whose section has just collapsed, or to `file_name`'s own
+  # when none follows.
   defp scroll_past_file(socket, file_name) do
-    %{state: state, filter_input: filter_input, only_file_index: only_file_index} =
-      socket.assigns
+    %{
+      state: state,
+      ordered_files: ordered_files,
+      filter_input: filter_input,
+      only_file_index: only_file_index
+    } = socket.assigns
 
-    case Enum.find_index(state.files, &(&1.file_name == file_name)) do
-      nil ->
+    case Enum.drop_while(ordered_files, fn {file, _} -> file.file_name != file_name end) do
+      [] ->
         socket
 
-      idx ->
-        target =
-          visible_indices(state, filter_input, only_file_index)
-          |> Enum.filter(&(&1 > idx))
-          |> Enum.min(fn -> idx end)
+      [{_file, idx} | rest] ->
+        shown = visible_indices(state, filter_input, only_file_index)
+        target = Enum.find_value(rest, idx, fn {_, i} -> MapSet.member?(shown, i) && i end)
 
         push_event(socket, "scroll-into-view", %{id: "file-#{target}"})
     end
@@ -1217,6 +1223,7 @@ defmodule MeerkatWeb.ReviewLive do
       <div class="review-body">
         <.file_list
           state={@state}
+          ordered_files={@ordered_files}
           socket={@socket}
           mode={@diff_mode}
           wrap_lines={@wrap_lines}
@@ -1545,6 +1552,8 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :ordered_files, :list, required: true
   attr :socket, :any, required: true
   attr :mode, :string, required: true
   attr :wrap_lines, :boolean, required: true
@@ -1564,7 +1573,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :ruler_columns, :list, required: true
 
   # Each file section reads its per-file values only from its entry
-  # (see `file_entries/7`), never from a review-wide map of them: change
+  # (see `file_entries/8`), never from a review-wide map of them: change
   # tracking compares each entry with the one rendered before under the
   # same key, so an event re-sends only the sections whose entry changed.
   defp file_list(assigns) do
@@ -1575,6 +1584,7 @@ defmodule MeerkatWeb.ReviewLive do
           %{file: file, idx: idx} = entry <-
             file_entries(
               @state,
+              @ordered_files,
               @expanded_approved,
               @collapsed_unapproved,
               @rendered_files,
@@ -2729,10 +2739,11 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # One entry per file in the review, holding the per-file values its
-  # section renders.
+  # One entry per file in the review, in `ordered_files`' order, holding
+  # the per-file values its section renders.
   defp file_entries(
          state,
+         ordered_files,
          expanded_approved,
          collapsed_unapproved,
          rendered,
@@ -2743,9 +2754,7 @@ defmodule MeerkatWeb.ReviewLive do
     inline_comments = group_inline_by_file(state.comments)
     file_comments = group_file_by_file_with_html(state.file_comments)
 
-    state.files
-    |> Enum.with_index()
-    |> Enum.map(fn {file, idx} ->
+    Enum.map(ordered_files, fn {file, idx} ->
       name = file.file_name
 
       %{

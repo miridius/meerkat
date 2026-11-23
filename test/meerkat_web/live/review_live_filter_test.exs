@@ -616,21 +616,33 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     assert has_element?(view, "#DiffViewer-0")
   end
 
+  test "the file list follows the file tree's order, keeping each file's index", %{conn: conn} do
+    files = for name <- ~w(z/a b c), do: %{@plain_file | file_name: name, effective_oid: nil}
+    view = mount_unbound(conn, %ReviewState{files: files})
+
+    ids = Regex.scan(~r/<article[^>]* id="(file-\d+)"/, render(view), capture: :all_but_first)
+
+    assert ids == [["file-1"], ["file-2"], ["file-0"]]
+  end
+
   test "collapsing a file scrolls to the next shown file, or to its own when none follows", %{
     conn: conn
   } do
-    files = for name <- ~w(a b c d), do: %{@plain_file | file_name: name, effective_oid: nil}
-    view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"b" => :hide}})
+    # The list's order is b, c, z/a, z/d.
+    files = for name <- ~w(z/a b c z/d), do: %{@plain_file | file_name: name, effective_oid: nil}
+    view = mount_unbound(conn, %ReviewState{files: files, file_overrides: %{"c" => :hide}})
     toggle = &render_click(view, "file.toggle_expanded", %{"file_name" => &1})
 
-    # b is hidden, so a's next shown file is c.
-    toggle.("a")
-    assert_push_event(view, "scroll-into-view", %{id: "file-2"})
-    toggle.("d")
+    # c is hidden, so b's next shown file is z/a.
+    toggle.("b")
+    assert_push_event(view, "scroll-into-view", %{id: "file-0"})
+    toggle.("z/a")
+    assert_push_event(view, "scroll-into-view", %{id: "file-3"})
+    toggle.("z/d")
     assert_push_event(view, "scroll-into-view", %{id: "file-3"})
 
     # Expanding, or a file the review lacks, does not scroll.
-    toggle.("a")
+    toggle.("b")
     toggle.("nope")
     refute_push_event(view, "scroll-into-view", _, 0)
   end
@@ -725,7 +737,7 @@ defmodule MeerkatWeb.ReviewLiveFilterTest do
     state = %ReviewState{
       files: [
         %{@plain_file | effective_oid: nil},
-        %{@plain_file | file_name: "src/next.rs", effective_oid: nil}
+        %{@plain_file | file_name: "src/x_next.rs", effective_oid: nil}
       ],
       head_branch: "main"
     }

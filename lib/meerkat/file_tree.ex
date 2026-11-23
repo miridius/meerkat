@@ -28,6 +28,13 @@ defmodule Meerkat.FileTree do
     |> rows("")
   end
 
+  @doc "`entries` in the order the tree's file rows read, top to bottom."
+  @spec order([entry()]) :: [entry()]
+  def order(entries), do: entries |> build() |> Enum.flat_map(&row_entries/1)
+
+  defp row_entries(%{file: entry}), do: [entry]
+  defp row_entries(%{children: children}), do: Enum.flat_map(children, &row_entries/1)
+
   defp rows(items, parent) do
     {files, dirs} = Enum.split_with(items, &match?({[_name], _entry}, &1))
 

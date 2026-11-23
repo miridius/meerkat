@@ -13,6 +13,12 @@ defmodule Meerkat.FileTreeTest do
     end)
   end
 
+  test "order lists the entries as the tree's file rows read" do
+    names = ["lib/web/live/review.ex", "b.ex", "lib/a/x.ex", "lib/y.ex", "A.md"]
+
+    assert names |> entries() |> FileTree.order() |> Enum.map(&elem(&1, 1)) == [4, 1, 3, 2, 0]
+  end
+
   test "lists files before subfolders, each sorted by name ignoring case" do
     tree = FileTree.build(entries(["b.ex", "a/z.ex", "A.md", "B/y.ex", "a/c.ex"]))
 
