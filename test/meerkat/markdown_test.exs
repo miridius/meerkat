@@ -57,7 +57,7 @@ defmodule Meerkat.MarkdownTest do
 
       assert html =~ "<table>"
       assert html =~ "<del>gone</del>"
-      assert html =~ ~s(<a href="https://example.com">)
+      assert html =~ ~s(<a href="https://example.com" target="_blank")
     end
 
     test "renders list" do

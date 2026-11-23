@@ -851,7 +851,8 @@ defmodule Meerkat.CLI do
 
     case Application.ensure_all_started(:meerkat) do
       {:ok, _} -> :ok
-      # muex:ignore unreachable I/O seam: the test BEAM already runs the app, so starting it never fails under ExUnit; killed by e2e port.spec.ts "without --port, a review binds its stable port, or another port while another review holds it"
+      # The test BEAM already runs the app, so starting it never fails there.
+      # muex:ignore unreachable I/O seam: killed by cli_main_test "a review whose preferred port is taken…"
       {:error, reason} -> {:error, reason}
     end
   end

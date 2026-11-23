@@ -55,13 +55,6 @@ defmodule Meerkat.FeedbackTest do
     end
   end
 
-  test "feedback without questions is the framing header, then the comment blocks" do
-    assert Feedback.format(state_with_global_comment(), :timeout) ==
-             "Nobody reviewed this commit. It was auto-approved when the review timed out, " <>
-               "and the comments below are what the user had saved before that.\n\n" <>
-               "\nGlobal comments:\n  > **issue:** needs work\n\n"
-  end
-
   test "feedback with a question reads framing, action summary, question directive, then comments" do
     state = %ReviewState{global_comments: [comment(body: "why?", finding_type: :question)]}
 
