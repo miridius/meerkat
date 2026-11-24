@@ -88,6 +88,10 @@ defmodule MeerkatWeb.ReviewLive do
      assign(socket,
        page_title: page_title(state),
        state: state,
+       # Each file's index in `state.files`, which DOM ids and the
+       # filters key on, in the file tree's order, which the main file
+       # list follows. Computed once: `state.files` is frozen after mount.
+       file_order: state.files |> Enum.with_index() |> FileTree.order() |> Enum.map(&elem(&1, 1)),
        review_id: review_id,
        repo_path: repo_path,
        version: Meerkat.Version.info(),
@@ -1018,21 +1022,25 @@ defmodule MeerkatWeb.ReviewLive do
     end)
   end
 
-  # Scrolls to the next shown file after `file_name`, whose section has
-  # just collapsed, or to `file_name`'s own when none follows.
+  # Scrolls past `file_name`, whose section has just collapsed, to the
+  # next shown file in the list's order, or to its own section when
+  # none follows.
   defp scroll_past_file(socket, file_name) do
-    %{state: state, filter_input: filter_input, only_file_index: only_file_index} =
-      socket.assigns
+    %{
+      state: state,
+      file_order: file_order,
+      filter_input: filter_input,
+      only_file_index: only_file_index
+    } = socket.assigns
 
     case Enum.find_index(state.files, &(&1.file_name == file_name)) do
       nil ->
         socket
 
       idx ->
-        target =
-          visible_indices(state, filter_input, only_file_index)
-          |> Enum.filter(&(&1 > idx))
-          |> Enum.min(fn -> idx end)
+        shown = visible_indices(state, filter_input, only_file_index)
+        [^idx | rest] = Enum.drop_while(file_order, &(&1 != idx))
+        target = Enum.find(rest, idx, &MapSet.member?(shown, &1))
 
         push_event(socket, "scroll-into-view", %{id: "file-#{target}"})
     end
@@ -1217,6 +1225,7 @@ defmodule MeerkatWeb.ReviewLive do
       <div class="review-body">
         <.file_list
           state={@state}
+          file_order={@file_order}
           socket={@socket}
           mode={@diff_mode}
           wrap_lines={@wrap_lines}
@@ -1545,6 +1554,8 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   attr :state, ReviewState, required: true
+  # muex:ignore equivalent: attr is compile-time metadata; every caller passes it
+  attr :file_order, :list, required: true
   attr :socket, :any, required: true
   attr :mode, :string, required: true
   attr :wrap_lines, :boolean, required: true
@@ -1564,7 +1575,7 @@ defmodule MeerkatWeb.ReviewLive do
   attr :ruler_columns, :list, required: true
 
   # Each file section reads its per-file values only from its entry
-  # (see `file_entries/7`), never from a review-wide map of them: change
+  # (see `file_entries/8`), never from a review-wide map of them: change
   # tracking compares each entry with the one rendered before under the
   # same key, so an event re-sends only the sections whose entry changed.
   defp file_list(assigns) do
@@ -1575,6 +1586,7 @@ defmodule MeerkatWeb.ReviewLive do
           %{file: file, idx: idx} = entry <-
             file_entries(
               @state,
+              @file_order,
               @expanded_approved,
               @collapsed_unapproved,
               @rendered_files,
@@ -2729,10 +2741,11 @@ defmodule MeerkatWeb.ReviewLive do
   defp status_label(:deleted), do: "Deleted"
   defp status_label(:renamed), do: "Renamed"
 
-  # One entry per file in the review, holding the per-file values its
-  # section renders.
+  # One entry per file in the review, in `file_order`, holding the
+  # per-file values its section renders.
   defp file_entries(
          state,
+         file_order,
          expanded_approved,
          collapsed_unapproved,
          rendered,
@@ -2743,9 +2756,10 @@ defmodule MeerkatWeb.ReviewLive do
     inline_comments = group_inline_by_file(state.comments)
     file_comments = group_file_by_file_with_html(state.file_comments)
 
-    state.files
-    |> Enum.with_index()
-    |> Enum.map(fn {file, idx} ->
+    files = List.to_tuple(state.files)
+
+    Enum.map(file_order, fn idx ->
+      file = elem(files, idx)
       name = file.file_name
 
       %{
