@@ -365,10 +365,9 @@ defmodule Meerkat.Git do
   # can't write to a spawned process's stdin without falling back to a
   # Port + close-after-write that races the child's read; positional
   # args avoid that race entirely.
-  # The first clause saves a git process: with no paths, `check-attr`
-  # fails, and `split_unset_diff_text`, the one caller that can pass no
-  # paths, reads a failure as no text paths.
-  # muex:ignore equivalent: its caller reads an error the same, and swapped wildcards change nothing
+  # The first clause saves a git process, and a warning: with no paths,
+  # `check-attr` fails.
+  # muex:ignore equivalent: swapped wildcards change nothing
   defp check_attrs(_repo_path, _attrs, []), do: {:ok, %{}}
 
   defp check_attrs(repo_path, attrs, paths) do
@@ -583,7 +582,7 @@ defmodule Meerkat.Git do
           file = materialise_staged(repo_path, entry, generated_map, hunks_map, oid_map)
 
           file
-          # muex:ignore equivalent: materialise_staged/5 never sets :is_binary, so put_new sets it too
+          # muex:ignore equivalent: materialise_staged/5 sets :is_binary to entry.is_binary or not at all
           |> Map.put(:is_binary, entry.is_binary)
           |> Map.put(:read_errors, file.read_errors ++ global_read_errors)
         end)

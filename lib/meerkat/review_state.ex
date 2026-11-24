@@ -343,7 +343,7 @@ defmodule Meerkat.ReviewState do
   # If a file's current staged blob OID matches one this branch (or, on
   # a detached HEAD, this worktree) already approved, tick it on mount
   # so the reviewer doesn't have to re-tick on every round.
-  # muex:ignore equivalent: the general clause finds nothing under a nil key either; cache keys are strings
+  # muex:ignore equivalent: swapped wildcards change nothing
   defp hydrate_approved_from_cache(_repo_path, nil, _files), do: MapSet.new()
 
   defp hydrate_approved_from_cache(repo_path, branch, files) do

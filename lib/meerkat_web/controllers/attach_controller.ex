@@ -286,7 +286,7 @@ defmodule MeerkatWeb.AttachController do
   end
 
   defp halt_after_response(code) do
-    # muex:ignore unreachable I/O seam: the default halts the VM, which ExUnit cannot survive; killed by e2e detach.spec.ts "a rerun after the staged diff changed replaces the review its attached caller waits on"
+    # muex:ignore unreachable I/O seam: the default halts the VM, which ExUnit cannot survive; killed by e2e detach.spec.ts "a rerun after the staged diff changed replaces the review its attached caller waits on…"
     halt = Application.get_env(:meerkat, :restart_fun, &System.halt/1)
 
     Task.start(fn ->

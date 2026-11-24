@@ -856,7 +856,7 @@ defmodule MeerkatWeb.ReviewLive do
 
     clear_pending_answers()
 
-    # Decision.submit/1 broadcasts the decision to this LiveView, whose
+    # Decision.submit_review/4 broadcasts the decision to this LiveView, whose
     # :meerkat_decision handler wipes the drafts; {:already_decided, _}
     # follows an earlier broadcast that already did.
     {:noreply, assign(socket, done: done_view(settled(submitted)), pending_answers: nil)}

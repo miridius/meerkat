@@ -225,7 +225,7 @@ defmodule Meerkat.Moves do
   # The run extends while the next lines on both sides match AND
   # continue contiguously in the same file.
   defp run_length(removed_arr, r, added_arr, a, len \\ 1) do
-    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    # muex:ignore equivalent: the two bounds checks are pure and neither raises, so their order changes nothing
     if r + 1 < tuple_size(removed_arr) and a + 1 < tuple_size(added_arr) and
          extends?(removed_arr, r, added_arr, a) do
       run_length(removed_arr, r + 1, added_arr, a + 1, len + 1)

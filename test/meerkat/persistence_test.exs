@@ -7,11 +7,9 @@ defmodule Meerkat.PersistenceTest do
   # * Deleting `serialise({:open_forms, _})`: Jason encodes the raw
   #   form's atom keys and values as strings, `keys: :atoms!` decodes
   #   the same keys, and `deserialise_form/1` rebuilds only the listed
-  #   keys from either string or atom keys, dropping nils either way.
+  #   keys, dropping nils either way.
   # * Deleting `migrate_finding_type(%{finding_type: :thought})`: load
   #   decodes JSON, so `finding_type` is always a string there.
-  # * Deleting `surface_atom("inline")`: the catch-all clause also
-  #   returns `:inline`.
   import ExUnit.CaptureIO, only: [with_io: 2]
 
   alias Meerkat.{Comment, Persistence, ReviewState}

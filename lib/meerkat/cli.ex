@@ -254,10 +254,10 @@ defmodule Meerkat.CLI do
         start_endpoint!(opts.port, state, review_id, repo_path())
         # In the test VM `review_url/0` raises the same error with this call
         # or without it, before anything is announced.
-        # muex:ignore unreachable I/O seam: killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+        # muex:ignore unreachable I/O seam: killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
         announce_url(target, serve_dir)
         # No in-VM test gets here: the test VM's endpoint already runs
-        # without a server, so `review_url/0` raises in `announce_url/4`.
+        # without a server, so `review_url/0` raises in `announce_url/2`.
         # muex:ignore unreachable I/O seam: killed by cli_main_test "a review whose preferred port is taken…"
         open_browser_unless_disabled(opts.no_open, review_url(), &Meerkat.Browser.open/1)
 
@@ -279,7 +279,7 @@ defmodule Meerkat.CLI do
          serve_dir,
          review_id,
          log,
-         # muex:ignore unreachable I/O seam: only run_live_review/2, which no in-VM test gets past announce_url in, takes the default; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+         # muex:ignore unreachable I/O seam: only run_live_review/2, which no in-VM test gets past announce_url in, takes the default; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
          pause \\ &Process.sleep/1
        ) do
     {delete_snapshot?, deliver_to} = settle(tag, serve_dir)
@@ -755,8 +755,6 @@ defmodule Meerkat.CLI do
   ## Endpoint startup
 
   defp start_endpoint!(requested_port, %ReviewState{} = state, review_id, repo_path) do
-    # ExUnit runs no live review in its own VM, where a regression would
-    # wait on a human forever.
     meerkat_dir = cache_review_paths(repo_path)
 
     # Application env carries the derived target + initial state into
@@ -774,10 +772,8 @@ defmodule Meerkat.CLI do
     # only the URL + verdict, not 40+ lines of server log.
     Application.put_env(:meerkat, :log_path, redirect_logs_to_file(meerkat_dir))
 
-    # muex:ignore unreachable I/O seam: no in-VM test boots the endpoint; killed by review-page.spec.ts's MEERKAT_PORT check
     preferred = preferred_port_from_env(System.get_env("MEERKAT_PREFERRED_PORT"))
 
-    # muex:ignore unreachable I/O seam: no in-VM test boots the endpoint; killed by review-page.spec.ts's MEERKAT_PORT check
     start_app!(requested_port, preferred, &start_app/1, &review_url/0)
   end
 
@@ -1020,7 +1016,7 @@ defmodule Meerkat.CLI do
          target,
          serve_dir,
          url \\ review_url(),
-         # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a stand-in; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+         # muex:ignore unreachable I/O seam: the test VM's endpoint serves nothing, so tests pass a stand-in; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
          server_info \\ &MeerkatWeb.Endpoint.server_info/1
        ) do
     banner =
@@ -1146,10 +1142,10 @@ defmodule Meerkat.CLI do
   # may be 0. `run_live_review_safe/2` turns the raise into a REJECT
   # before any URL is announced or opened.
   defp review_url do
-    # muex:ignore unreachable I/O seam: the test VM's endpoint reports no port under any name; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+    # muex:ignore unreachable I/O seam: the test VM's endpoint reports no port under any name; killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
     case MeerkatWeb.Endpoint.server_info(:http) do
       {:ok, {_ip, port}} ->
-        # muex:ignore unreachable I/O seam: tests run the endpoint with server: false, so it reports no bound port; the e2e runner opens this URL, so killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs"
+        # muex:ignore unreachable I/O seam: tests run the endpoint with server: false, so it reports no bound port; the e2e runner opens this URL, so killed by e2e decision.spec.ts "feedback typed in plain and Suggestion forms and sent by its shortcut reaches the caller as exit 1 with the comments bracketed, saved to a file, and no server logs…"
         "http://127.0.0.1:#{port}/"
 
       other ->

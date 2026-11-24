@@ -159,8 +159,8 @@ defmodule Meerkat.VersionWatcherTest do
     pid = start(link, viewers_fun: fn -> 1 end)
 
     File.rm!(link)
-    # Long enough for several polls to find no link.
-    Process.sleep(50)
+    send(pid, :poll)
+    :sys.get_state(pid)
     assert Process.alive?(pid)
 
     File.ln_s!(Path.join(dir, "v2"), link)

@@ -379,12 +379,12 @@ defmodule MeerkatWeb.AttachControllerTest do
     end)
 
     change_staged_content(current)
+    started = System.monotonic_time(:millisecond)
 
     assert attach(conn, "later-run").status == 409
-    answered_at = System.monotonic_time(:millisecond)
 
     assert_receive {:halted, 1, halted_at}
-    assert halted_at - answered_at >= 100
+    assert halted_at - started >= 200
   end
 
   # A caller attached for `run` that, once displaced, runs `on_displaced`
@@ -662,10 +662,13 @@ defmodule MeerkatWeb.AttachControllerTest do
   test "a caller waiting on the review is sent a heartbeat while nobody decides",
        %{conn: conn} do
     shorten_heartbeat()
+    # Reports each chunk the traced request writes.
+    :erlang.trace_pattern({Plug.Conn, :chunk, 2}, true, [])
+    on_exit(fn -> :erlang.trace_pattern({Plug.Conn, :chunk, 2}, false, []) end)
     task = Task.async(fn -> attach(conn, @own_run) end)
+    :erlang.trace(task.pid, true, [:call])
     await_attached()
-    # Several heartbeat intervals.
-    Process.sleep(50)
+    assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}
     :ok = Decision.publish({0, "approved\n"})
 
     assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/

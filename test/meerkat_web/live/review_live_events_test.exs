@@ -707,6 +707,14 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "Feedback sent"
   end
 
+  test "reject in bound mode wipes drafts", %{conn: conn} do
+    repo = state_repo()
+    {view, rid} = mount_bound(conn, %ReviewState{files: [@plain_file]}, repo)
+
+    assert render_click(view, "decision.reject", %{}) =~ "Feedback sent"
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
+  end
+
   test "a decision in one tab puts every other open tab on the done view", %{conn: conn} do
     view = mount_unbound(conn)
     {:ok, other, _html} = live_isolated(conn, ReviewLive)
@@ -803,6 +811,7 @@ defmodule MeerkatWeb.ReviewLiveEventsTest do
     assert html =~ "Cancelled"
     assert Decision.current() == {:cancel, ""}
     assert ReviewServer.get_state(rid).global_comments == []
+    assert_push_event(view, "drafts:wipe", %{review_id: ^rid})
   end
 
   test "post_to_github without an attached PR flashes and dismisses", %{conn: conn} do

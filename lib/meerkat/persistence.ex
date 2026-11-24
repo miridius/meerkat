@@ -281,8 +281,8 @@ defmodule Meerkat.Persistence do
 
   defp serialise(other), do: other
 
-  # Convert atoms to strings before JSON encode so the form round-
-  # trips deterministically (the `:atoms!` decode path requires
+  # Convert the surface atom to a string before JSON encode so the form
+  # round-trips deterministically (the `:atoms!` decode path requires
   # every atom to pre-exist, which fails for dynamic keys like the
   # surface name during a fresh boot).
   defp normalise_form(form) do
@@ -342,9 +342,9 @@ defmodule Meerkat.Persistence do
     Map.new(map, fn
       {k, "show"} -> {to_string(k), :show}
       {k, "hide"} -> {to_string(k), :hide}
-      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
+      # muex:ignore equivalent: load decodes JSON, so a value is never :show or :hide here
       {k, :show} -> {to_string(k), :show}
-      # muex:ignore equivalent: load decodes JSON, so a value is never an atom here
+      # muex:ignore equivalent: load decodes JSON, so a value is never :show or :hide here
       {k, :hide} -> {to_string(k), :hide}
       kv -> kv
     end)
@@ -375,9 +375,9 @@ defmodule Meerkat.Persistence do
   defp migrate_finding_type(%{finding_type: "thought"} = c),
     do: Map.put(c, :finding_type, "follow_up")
 
-  # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
+  # muex:ignore equivalent: load decodes JSON, so finding_type is never :thought here
   defp migrate_finding_type(%{finding_type: :thought} = c),
-    # muex:ignore equivalent: load decodes JSON, so finding_type is never an atom here
+    # muex:ignore equivalent: load decodes JSON, so finding_type is never :thought here
     do: Map.put(c, :finding_type, :follow_up)
 
   defp migrate_finding_type(c), do: c

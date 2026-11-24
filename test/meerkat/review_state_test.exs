@@ -10,7 +10,7 @@ defmodule Meerkat.ReviewStateTest do
   # is process-global.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, read_tree: 3]
+  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, make_git_repo: 1, read_tree: 3]
 
   alias Meerkat.ReviewState
 
@@ -439,6 +439,19 @@ defmodule Meerkat.ReviewStateTest do
       assert ReviewState.hydrate_approved_from_cache_for_test("/no/such/repo", nil, [
                file("a.rs", "oid1")
              ]) == MapSet.new()
+    end
+
+    test "a review with no approval key leaves the repo's cache unread" do
+      repo = make_git_repo("meerkat-hydrate-nil")
+      on_exit(fn -> File.rm_rf!(repo) end)
+      path = ApprovalCache.path_for(repo)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "not json")
+
+      assert ReviewState.hydrate_approved_from_cache_for_test(repo, nil, [file("a.rs", "oid1")]) ==
+               MapSet.new()
+
+      assert File.read!(path) == "not json"
     end
 
     test "an empty OID is rejected even if the cache holds an approval AT \"\"" do

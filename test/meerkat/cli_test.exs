@@ -1,8 +1,8 @@
 defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
-  # `main/1` itself, including a live review run in the test BEAM, is
-  # covered by cli_main_test.exs. Mutants no ExUnit test can reach carry a
+  # `main/1` itself is covered by cli_main_test.exs, and a live review run
+  # in the test BEAM by cli_live_review_test.exs. Mutants no ExUnit test can reach carry a
   # `# muex:ignore` comment in cli.ex naming the e2e test that kills them.
 
   import Meerkat.TestHelpers
