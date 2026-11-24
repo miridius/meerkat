@@ -168,6 +168,5 @@ defmodule Meerkat.Settings do
   defp valid_font_size(n) when is_integer(n), do: clamp_font_size(n)
   defp valid_font_size(_), do: @defaults.font_size_px
 
-  # muex:ignore equivalent: `n in 999..1` holds for the same integers
-  defp ruler_column?(n), do: is_integer(n) and n in 1..999
+  defp ruler_column?(n), do: n in 1..999//1
 end

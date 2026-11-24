@@ -867,8 +867,7 @@ defmodule Meerkat.CLI do
 
   defp preferred_port(value) do
     case Integer.parse(value) do
-      # muex:ignore equivalent: `in` admits the same integers from a range whichever end comes first
-      {port, ""} when port in 1..65_535 -> port
+      {port, ""} when port in 1..65_535//1 -> port
       _ -> nil
     end
   end

@@ -98,36 +98,20 @@ defmodule MeerkatWeb.EndpointTest do
     assert %{method: "PUT", status: 404} = post(conn, "/", %{"_method" => "PUT"})
   end
 
-  test "an API route answers a client that asks for HTML", %{conn: conn} do
-    conn =
-      conn
-      |> put_req_header("accept", "text/html")
-      |> get("/api/plantuml/svg", src: String.duplicate("a", 64 * 1024 + 1))
+  test "an API route answers a client that accepts only HTML, plain text or SVG", %{conn: conn} do
+    for accept <- ["text/html", "text/plain", "image/svg+xml"] do
+      conn =
+        conn
+        |> put_req_header("accept", accept)
+        |> get("/api/plantuml/svg", src: String.duplicate("a", 64 * 1024 + 1))
 
-    assert conn.status == 413
+      assert conn.status == 413
+    end
   end
 
   test "the page refuses a client that accepts only JSON", %{conn: conn} do
     conn = put_req_header(conn, "accept", "application/json")
     assert_raise Phoenix.NotAcceptableError, fn -> get(conn, "/") end
-  end
-
-  test "an API route answers a client that accepts only plain text", %{conn: conn} do
-    conn =
-      conn
-      |> put_req_header("accept", "text/plain")
-      |> get("/api/plantuml/svg", src: String.duplicate("a", 64 * 1024 + 1))
-
-    assert conn.status == 413
-  end
-
-  test "an API route answers a client that accepts only SVG", %{conn: conn} do
-    conn =
-      conn
-      |> put_req_header("accept", "image/svg+xml")
-      |> get("/api/plantuml/svg", src: String.duplicate("a", 64 * 1024 + 1))
-
-    assert conn.status == 413
   end
 
   test "a HEAD request is answered as the GET it stands for", %{conn: conn} do
