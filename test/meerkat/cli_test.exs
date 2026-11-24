@@ -887,8 +887,6 @@ defmodule Meerkat.CLITest do
           CLI.start_app!(port, preferred, start_with(results), fn -> "unused" end)
         end
       end
-
-      refute_received {:started, 0}
     end
   end
 

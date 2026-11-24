@@ -121,6 +121,15 @@ defmodule MeerkatWeb.EndpointTest do
     assert conn.status == 413
   end
 
+  test "an API route answers a client that accepts only SVG", %{conn: conn} do
+    conn =
+      conn
+      |> put_req_header("accept", "image/svg+xml")
+      |> get("/api/plantuml/svg", src: String.duplicate("a", 64 * 1024 + 1))
+
+    assert conn.status == 413
+  end
+
   test "a HEAD request is answered as the GET it stands for", %{conn: conn} do
     capture_io(:stderr, fn -> send(self(), {:conn, head(conn, "/api/plantuml/svg")}) end)
 

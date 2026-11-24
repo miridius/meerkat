@@ -665,11 +665,17 @@ defmodule MeerkatWeb.AttachControllerTest do
     # Reports each chunk the traced request writes.
     :erlang.trace_pattern({Plug.Conn, :chunk, 2}, true, [])
     on_exit(fn -> :erlang.trace_pattern({Plug.Conn, :chunk, 2}, false, []) end)
+    started = System.monotonic_time(:millisecond)
     task = Task.async(fn -> attach(conn, @own_run) end)
     :erlang.trace(task.pid, true, [:call])
     await_attached()
-    # Sooner than the default 500 ms interval.
-    assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}, 400
+
+    for _ <- 1..5 do
+      assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}
+    end
+
+    # Five beats at the default 500 ms interval take 2.5 s.
+    assert System.monotonic_time(:millisecond) - started < 2_000
     :ok = Decision.publish({0, "approved\n"})
 
     assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/

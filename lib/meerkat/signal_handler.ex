@@ -39,7 +39,7 @@ defmodule Meerkat.SignalHandler do
   def init({[], _erl_signal_handler_result}), do: :erl_signal_handler.init([])
 
   @impl true
-  # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143…" ExUnit test and e2e detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…" kill it
+  # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143 and a REJECT message" ExUnit test and e2e detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…" kill it
   def handle_event(:sigterm, state) do
     # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143 and a REJECT message" ExUnit test and e2e detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…" kill it
     announce_sigterm()
