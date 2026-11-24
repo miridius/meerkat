@@ -153,9 +153,7 @@ defmodule Meerkat.Git do
 
     with {:ok, output} <- run_git(repo_path, args),
          "refs/heads/" <> name <-
-           output
-           |> String.split("\n", trim: true)
-           |> Enum.find_value(&read_head_name/1),
+           output |> String.split("\n") |> Enum.find_value(&read_head_name/1),
          true <- name != "" do
       {:rebasing, name}
     else

@@ -370,7 +370,7 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert_receive {:halted, 1}
   end
 
-  test "a replaced review halts its backend only after the 409 has had time to reach the caller",
+  test "a replaced review waits 200 ms before halting its backend, so the 409 can reach the caller",
        %{conn: conn, current: current} do
     test_pid = self()
 
@@ -668,7 +668,8 @@ defmodule MeerkatWeb.AttachControllerTest do
     task = Task.async(fn -> attach(conn, @own_run) end)
     :erlang.trace(task.pid, true, [:call])
     await_attached()
-    assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}
+    # Sooner than the default 500 ms interval.
+    assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}, 400
     :ok = Decision.publish({0, "approved\n"})
 
     assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/

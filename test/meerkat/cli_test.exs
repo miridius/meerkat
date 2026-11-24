@@ -1,9 +1,10 @@
 defmodule Meerkat.CLITest do
   use ExUnit.Case, async: true
 
-  # `main/1` itself is covered by cli_main_test.exs, and a live review run
-  # in the test BEAM by cli_live_review_test.exs. Mutants no ExUnit test can reach carry a
-  # `# muex:ignore` comment in cli.ex naming the e2e test that kills them.
+  # `main/1` itself is covered by cli_main_test.exs, and a live review
+  # run in the test BEAM by cli_live_review_test.exs. Mutants no in-VM
+  # test can reach carry a `# muex:ignore` comment in cli.ex naming the
+  # e2e or cli_main_test test that kills them.
 
   import Meerkat.TestHelpers
 
@@ -877,14 +878,17 @@ defmodule Meerkat.CLITest do
       refute_received {:started, 4444}
     end
 
-    test "any other start error is a crash" do
-      for {port, preferred} <- [{0, 4444}, {4321, nil}] do
-        start = start_with(%{port => {:error, :eacces}, 4444 => {:error, :eacces}})
-
+    test "any other start error is a crash, with no fallback port tried" do
+      for {port, preferred, results} <- [
+            {0, 4444, %{4444 => {:error, :eacces}, 0 => :ok}},
+            {4321, nil, %{4321 => {:error, :eacces}}}
+          ] do
         assert_raise RuntimeError, "meerkat failed to start: :eacces", fn ->
-          CLI.start_app!(port, preferred, start, fn -> "unused" end)
+          CLI.start_app!(port, preferred, start_with(results), fn -> "unused" end)
         end
       end
+
+      refute_received {:started, 0}
     end
   end
 

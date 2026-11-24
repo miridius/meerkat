@@ -281,10 +281,7 @@ defmodule Meerkat.Persistence do
 
   defp serialise(other), do: other
 
-  # Convert the surface atom to a string before JSON encode so the form
-  # round-trips deterministically (the `:atoms!` decode path requires
-  # every atom to pre-exist, which fails for dynamic keys like the
-  # surface name during a fresh boot).
+  # Keep only the form fields a reload restores.
   defp normalise_form(form) do
     %{
       "surface" => to_string(form.surface),
