@@ -98,6 +98,7 @@ defmodule Meerkat.Markdown do
   # ~~~ prefix) while inside a code block; a blank line only ends the
   # current block when no fence is open.
   defp group_lines(lines) do
+    # muex:ignore equivalent: swapping the accumulator's two empty lists changes nothing
     {blocks, current, _fence} = Enum.reduce(lines, {[], [], nil}, &group_line/2)
 
     flush(blocks, current) |> Enum.reverse()

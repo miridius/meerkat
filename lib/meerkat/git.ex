@@ -271,7 +271,7 @@ defmodule Meerkat.Git do
       {:ok, output} ->
         map =
           output
-          |> String.split("\n", trim: true)
+          |> String.split("\n")
           |> Enum.reduce(%{}, &put_head_oid/2)
 
         {:ok, map}
@@ -972,6 +972,7 @@ defmodule Meerkat.Git do
   defp unescape_git_path(<<?", _rest::binary>>, acc), do: acc
 
   defp unescape_git_path(<<?\\, a, b, c, rest::binary>>, acc)
+       # muex:ignore equivalent: `in` admits the same integers from a range whichever end comes first
        when a in ?0..?7 and b in ?0..?7 and c in ?0..?7 do
     # muex:ignore equivalent: `+ ?0` on `a` or `b` adds 96 * 64 or 96 * 8, multiples of 256 `<<byte>>` drops
     byte = (a - ?0) * 64 + (b - ?0) * 8 + (c - ?0)

@@ -77,6 +77,15 @@ defmodule MeerkatWeb.PlantUMLControllerTest do
       assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
     end
 
+    test "a request accepting only SVG is served", %{conn: conn} do
+      conn =
+        conn
+        |> put_req_header("accept", "image/svg+xml")
+        |> get("/api/plantuml/svg", src: "A -> B")
+
+      assert conn.status == 200
+    end
+
     test "a src exactly at the cap is rendered", %{conn: conn} do
       src = String.duplicate("a", 64 * 1024)
       conn = get(conn, "/api/plantuml/svg", src: src)
