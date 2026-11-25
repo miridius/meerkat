@@ -84,7 +84,10 @@ describe("expandSelection", () => {
 		expect(expand(`f(a, "b\\n"|);`, javascript())).toBe(`f(a, <"b\\n">);`);
 		expect(expand(`f(a, f'{b}'|)`, python())).toBe(`f(a, <f'{b}'>)`);
 		expect(expand(`f(a, u8"b"|);`, cpp())).toBe(`f(a, <u8"b">);`);
-		expect(expand("(a @|(b) d)", clojure())).toBe("(a @<(b)> d)");
+		for (const form of ["#|(inc %)", "@|(b)", "'|#{b}", "'#|{b}", "#?|@(:clj [b])", "#::|{:b 1}", "#:a|{:b 1}", "#:foo.bar|{:b 1}", "#my.Rec|{:b 1}", "^:m |(e)"]) {
+			expect(expand(`(a ${form} d)`, clojure())).toBe(`(a <${form.replace("|", "")}> d)`);
+		}
+		expect(expand("f(a, -|(b));", javascript())).toBe("f(a, <-(b)>);");
 		expect(expand("x = |[a][0];", javascript())).toBe("x = <[a]>[0];");
 		expect(expand('x = |"a"[0];', javascript())).toBe('x = <"a">[0];');
 		expect(expand("((b)| d)", clojure())).toBe("(<(b)> d)");
@@ -102,6 +105,7 @@ describe("expandSelection", () => {
 		expect(expand("_ = (a)|;")).toBe("_ = <(a)>;");
 		expect(expand("$ = (a)|;")).toBe("$ = <(a)>;");
 		expect(expand("x = |!f(y);")).toBe("x = <!>f(y);");
+		expect(expand("x = foo|(y);")).toBe("x = <foo>(y);");
 	});
 
 	test("grows by syntax in other languages", () => {
