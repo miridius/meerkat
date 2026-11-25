@@ -136,7 +136,7 @@ export class CljPointer {
 		const link = this.link;
 		if (link && sameSymbol(link.spot, spot, link.jump)) {
 			this.#unlink();
-			this.#jump(link.jump, link.side);
+			this.#go(link.jump, link.side);
 		} else {
 			this.#requestDefinition(spot, { x: e.clientX, y: e.clientY });
 		}
@@ -224,7 +224,7 @@ export class CljPointer {
 		this.#definitionRequest = null;
 		const { spot, side, go } = request;
 		if (go) {
-			if (jump) this.#jump(jump, side);
+			if (jump) this.#go(jump, side);
 			// A symbol only the other side defines does nothing, as hover.
 			else if (!other_side) this.#showNote(go.x, go.y);
 		} else if (jump && spot.raw.isConnected) {
@@ -236,6 +236,14 @@ export class CljPointer {
 			}));
 			this.link = { boxes, jump, spot, side };
 		}
+	}
+
+	// Jumps, closing the popup, which would cover where it lands.
+	#go(jump: CljJump, side: Side) {
+		clearTimeout(this.#hoverTimer);
+		this.#hoverRequest = null;
+		this.shown = null;
+		this.#jump(jump, side);
 	}
 
 	#showNote(x: number, y: number) {

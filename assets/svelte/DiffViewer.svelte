@@ -332,7 +332,6 @@
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        cancelMovedFlash();
         const rowsBySideLine = buildAnchorIndex();
         applyCommentMarkers(rowsBySideLine);
         renderInlineComments();
@@ -340,6 +339,7 @@
         // The library reuses row elements for other lines, so the moved
         // tint and arrows must be placed again by line number.
         applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
+        reflashMoved();
         drawRulers();
       });
     });
@@ -1094,15 +1094,52 @@
     { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
     { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6, easing: "ease-out" },
   ];
-  // The running flash. A hunk expand reuses its cells for other lines,
-  // so the expand cancels it.
-  let movedFlash: Animation[] = [];
+  const MOVED_FLASH_MS = 1600;
+  // The running flash, the lines it shows and when it started.
+  let movedFlash: {
+    side: "old" | "new";
+    lineStart: number;
+    lineEnd: number;
+    start: number;
+    animations: Animation[];
+  } | null = null;
 
   function cancelMovedFlash() {
-    movedFlash.forEach((a) => {
+    movedFlash?.animations.forEach((a) => {
       a.cancel();
     });
-    movedFlash = [];
+    movedFlash = null;
+  }
+
+  // Flashes the side's cells of the lines for 1.6s from `at` ms in, as
+  // an inset shadow over their opaque backgrounds, which hide the row's
+  // own.
+  function flashMoved(side: "old" | "new", lineStart: number, lineEnd: number, at = 0) {
+    cancelMovedFlash();
+    const animations: Animation[] = [];
+    for (let ln = lineStart; ln <= lineEnd; ln++) {
+      anchorRowsFor(side, ln).forEach((r) => {
+        r.querySelectorAll(
+          `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
+        ).forEach((td) => {
+          const animation = td.animate(MOVED_FLASH_KEYFRAMES, MOVED_FLASH_MS);
+          animation.currentTime = at;
+          animations.push(animation);
+        });
+      });
+    }
+    movedFlash = { side, lineStart, lineEnd, start: performance.now() - at, animations };
+  }
+
+  // The library reuses rows for other lines as it renders, as when a
+  // hunk expands or a file just revealed draws, so a running flash
+  // moves to its lines' rows, carrying on where it was.
+  function reflashMoved() {
+    if (!movedFlash) return;
+    const { side, lineStart, lineEnd, start } = movedFlash;
+    const at = performance.now() - start;
+    if (at < MOVED_FLASH_MS) flashMoved(side, lineStart, lineEnd, at);
+    else movedFlash = null;
   }
 
   // Listen for jump events to a moved block's counterpart. If the
@@ -1135,20 +1172,8 @@
       ev.preventDefault();
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Flash the target side's cells for 1.6s, as an inset shadow over
-      // their opaque backgrounds, which hide the row's own. A click
-      // during a flash starts it again.
-      const side = ev.detail.side;
-      cancelMovedFlash();
-      for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-        anchorRowsFor(side, ln).forEach((r) => {
-          r.querySelectorAll(
-            `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
-          ).forEach((td) => {
-            movedFlash.push(td.animate(MOVED_FLASH_KEYFRAMES, 1600));
-          });
-        });
-      }
+      // A click during a flash starts it again.
+      flashMoved(ev.detail.side, ev.detail.lineStart, ev.detail.lineEnd);
     };
     document.addEventListener("meerkat-move-jump", handler);
     return () => document.removeEventListener("meerkat-move-jump", handler);

@@ -1,6 +1,6 @@
 import { restOn, stagedReview, symbolPoint } from "./lib/clj";
 import { startMeerkat } from "./lib/runner";
-import { expect, test } from "./lib/test";
+import { afterNextFrame, expect, test } from "./lib/test";
 
 // Clojure go to definition (docs/features/clojure-go-to-definition.md)
 // across the browser to LiveView seam: Cmd (Ctrl off macOS) underlines
@@ -69,8 +69,16 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		await page.mouse.click(plain.x, plain.y);
 		await expect(page.locator('[data-test="clj-file-view"]')).toHaveCount(0);
 
-		// A Cmd-click reveals a definition folded context hides.
-		await cmdClick(page, "new", "u/helper");
+		// A Cmd-click reveals a definition folded context hides, closing
+		// the hover popup the pointer opened, which would cover it.
+		const helper = await restOn(page, "new", "u/helper");
+		await expect(page.locator('[data-test="clj-hover"]')).toBeVisible();
+		await page.keyboard.down("ControlOrMeta");
+		await expect(link).toBeVisible();
+		await page.mouse.click(helper.x, helper.y);
+		await page.keyboard.up("ControlOrMeta");
+		// Closed by the click itself, before the jump scrolls the page.
+		expect(await page.locator('[data-test="clj-hover"]').count()).toBe(0);
 		await expect(helperRow).toBeInViewport();
 
 		// A var outside the diff opens the file view at its line.
@@ -103,7 +111,7 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		await expect(view).toHaveCount(0);
 
 		// A symbol nothing defines shows a brief note.
-		await cmdClick(page, "new", "u/nope");
+		await cmdClick(page, "new", "u/nope", 1, false);
 		await expect(page.locator('[data-test="clj-no-definition"]')).toHaveText("No definition found");
 		await expect(page.locator('[data-test="clj-no-definition"]')).toHaveCount(0);
 
@@ -114,15 +122,42 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		await restOn(page, "new", "u/helper");
 		await popup.getByRole("button", { name: "Go to" }).click();
 		await expect(helperRow).toBeInViewport();
+		// It flashes on through the file drawing, which reuses its rows.
+		await expect
+			.poll(() =>
+				helperRow.evaluate((num) =>
+					Math.max(
+						0,
+						...(num.closest("tr")?.getAnimations({ subtree: true }) ?? []).map((a) => Number(a.currentTime)),
+					),
+				),
+			)
+			.toBeGreaterThan(1000);
 	} finally {
 		await meerkat.kill();
 	}
 });
 
-// Cmd-clicks (Ctrl off macOS) the `nth` `word` (see `symbolPoint`).
-async function cmdClick(page: Parameters<typeof symbolPoint>[0], side: "old" | "new" | "view", word: string, nth = 1) {
-	const { x, y } = await symbolPoint(page, side, word, nth);
+// Cmd-clicks (Ctrl off macOS) the `nth` `word` (see `symbolPoint`) as a
+// reviewer does: once a jump before has stopped scrolling the page, Cmd
+// held over it until it underlines, when it resolves, then a click.
+async function cmdClick(
+	page: Parameters<typeof symbolPoint>[0],
+	side: "old" | "new" | "view",
+	word: string,
+	nth = 1,
+	resolves = true,
+) {
+	await expect
+		.poll(async () => {
+			const before = await symbolPoint(page, side, word, nth);
+			await afterNextFrame(page);
+			return (await symbolPoint(page, side, word, nth)).y === before.y;
+		})
+		.toBe(true);
+	const { x, y } = await restOn(page, side, word, nth);
 	await page.keyboard.down("ControlOrMeta");
+	if (resolves) await expect(page.locator('[data-test="clj-link"]')).toBeVisible();
 	await page.mouse.click(x, y);
 	await page.keyboard.up("ControlOrMeta");
 }
