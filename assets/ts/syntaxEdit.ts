@@ -124,15 +124,17 @@ function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 }
 
 /** The next range out from `range`: the word at a caret, or the form
- *  whose bracket, quote or prefix it touches, then each enclosing node,
- *  the inside of its brackets before the node itself. */
+ *  whose bracket, quote or prefix it touches, the form first between a
+ *  prefix and its bracket, as in `#:a|{`; then each enclosing node, the
+ *  inside of its brackets before the node itself. */
 function expandRange(state: EditorState, range: SelectionRange): { from: number; to: number } | null {
 	const { from, to } = range;
 	let start: SyntaxNode | null = null;
 	if (range.empty) {
-		const word = state.wordAt(from);
-		if (word && word.from < word.to) return word;
 		start = formAtCaret(state, from);
+		const word = state.wordAt(from);
+		const inForm = start !== null && start.from < from && start.to > from;
+		if (word && word.from < word.to && !inForm) return word;
 	}
 	const larger = (r: { from: number; to: number } | null) =>
 		r !== null && r.from <= from && r.to >= to && r.to - r.from > to - from;

@@ -160,7 +160,8 @@ everywhere.
 ⌥↑ first selects the word at the caret, or the whole form when the
 caret is just before its opening bracket or quote or any prefix on it
 (with every prefix, such as Clojure's `#{`, so `#|(inc %)` selects
-`#(inc %)`), or just after its closing one, the form after
+`#(inc %)`, and `#:a|{:b 1}` selects `#:a{:b 1}` rather than the word
+`a`), or just after its closing one, the form after
 the caret when it touches two; then each enclosing node, the inside
 of its brackets before the node itself. In a Clojure map,
 a key moves with its value, along with a `#_` form between them, and
