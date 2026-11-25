@@ -158,8 +158,9 @@ everywhere.
 | ⇧⌘↑ / ⇧⌘↓ | Move the node at the caret (statement, list element, argument, map or dict entry) past its previous / next sibling |
 
 ⌥↑ first selects the word at the caret, or the whole form when the
-caret is just before its opening bracket or quote (with any prefix,
-such as Clojure's `#{`) or just after its closing one, the form after
+caret is just before its opening bracket or quote or any prefix on it
+(with every prefix, such as Clojure's `#{`, so `#|(inc %)` selects
+`#(inc %)`), or just after its closing one, the form after
 the caret when it touches two; then each enclosing node, the inside
 of its brackets before the node itself. In a Clojure map,
 a key moves with its value, along with a `#_` form between them, and
@@ -218,12 +219,11 @@ changes each list once.
   typed as text only at a caret in text or over a selection within one
   text. Typing a closer just before the same matched closer steps over
   it. `'` is a quote and gets no partner.
-- Backspace or Delete on one bracket of a matched pair, or on the
-  prefix of its opener (the `#` of `#{` and `#(`, the `#?` of `#?(`,
-  the `#?@` of `#?@(`, the `#:` of `#:ns{`), is blocked: the caret
-  steps over the prefix and bracket on that side. A namespace name
-  stays plain text. Inside an empty pair, either deletes both, with
-  its opener's prefix.
+- Backspace or Delete on one bracket of a matched pair is blocked:
+  the caret steps over the bracket. The prefix of its opener (the `#`
+  of `#{` and `#(`, the `#?` of `#?(`, the `#:` of `#:ns{`) deletes as
+  text. Inside an empty pair, either deletes both, with its opener's
+  prefix.
 - Backspace or Delete deletes an unmatched bracket, opener or closer,
   such as one the seeded lines cut off from its partner.
 - Deleting a selection is never blocked.

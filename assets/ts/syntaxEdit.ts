@@ -61,23 +61,26 @@ function closing(state: EditorState, node: SyntaxNode): boolean {
  *  or `#^:m`. */
 const PREFIX_NODES = new Set(["KeywordPrefix", "ReaderTag", "ConstructorPrefix", "Metadata", "ReaderMetadata"]);
 
-/** Whether only prefixes, and some, come before `node` in its parent:
+/** Whether only prefixes, if any, come before `node` in its parent:
  *  punctuation or one of `PREFIX_NODES`. */
-function prefixed(state: EditorState, node: SyntaxNode): boolean {
-	if (!node.prevSibling) return false;
+function prefixesOnly(state: EditorState, node: SyntaxNode): boolean {
 	for (let sib = node.prevSibling; sib; sib = sib.prevSibling) {
 		if (!PREFIX_NODES.has(sib.name) && !punctuation(state, sib)) return false;
 	}
 	return true;
 }
 
+/** Whether only prefixes, and some, come before `node` in its parent. */
+function prefixed(state: EditorState, node: SyntaxNode): boolean {
+	return !!node.prevSibling && prefixesOnly(state, node);
+}
+
 /** The form `end`, a closing bracket or quote, ends, taking in any
- *  prefix such as `#`, `'` or `#:ns` while the form starts after
- *  `start`. Null when `end` is no closer. */
-function closedForm(state: EditorState, end: SyntaxNode, start = -1): SyntaxNode | null {
+ *  prefix such as `#`, `'` or `#:ns`. Null when `end` is no closer. */
+function closedForm(state: EditorState, end: SyntaxNode): SyntaxNode | null {
 	if (!end.parent || !closing(state, end)) return null;
 	let node = end.parent;
-	while (node.from > start && node.parent && !node.nextSibling && prefixed(state, node)) node = node.parent;
+	while (node.parent && !node.nextSibling && prefixed(state, node)) node = node.parent;
 	return node;
 }
 
@@ -89,12 +92,21 @@ function stringToken(state: EditorState, node: SyntaxNode): boolean {
 	return !!open && node.to - node.from > open[0].length && state.doc.sliceString(node.to - 1, node.to) === open[1];
 }
 
+/** Whether `form` starts at or before `node`, with only prefixes before
+ *  it in each node from `node` up to `form`. */
+function prefixesTo(state: EditorState, node: SyntaxNode, form: SyntaxNode): boolean {
+	if (form.from > node.from) return false;
+	for (let n: SyntaxNode | null = node; n && n.from > form.from; n = n.parent) {
+		if (!prefixesOnly(state, n)) return false;
+	}
+	return true;
+}
+
 /** The form a caret at `pos` sits just before or just after: the
- *  bracketed form, with any prefix such as `#{`, `@(` or `#:ns{`, that
- *  starts or ends there, or a string that ends there; between a prefix
- *  and its bracket, the form without the prefix. The form after the
- *  caret, with each prefix from the caret on, wins when both hold. Null
- *  elsewhere. */
+ *  bracketed form, with every prefix such as `#{`, `@(` or `#:ns{`, whose
+ *  bracket or a prefix starts there or that ends there, or a string that
+ *  ends there; so between a prefix and its bracket, the form with the
+ *  prefix. The form after the caret wins when both hold. Null elsewhere. */
 function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 	const tree = syntaxTree(state);
 	let found: SyntaxNode | null = null;
@@ -102,8 +114,8 @@ function formAtCaret(state: EditorState, pos: number): SyntaxNode | null {
 		// Out of punctuation or a prefix only, not a form such as `[a]` or
 		// `"a"` in `[a][0]` or `"a"[0]`.
 		if (!PREFIX_NODES.has(node.name) && !punctuation(state, node)) break;
-		const form = closedForm(state, tree.resolveInner(node.parent.to, -1), pos);
-		if (form?.from === pos) found = form;
+		const form = closedForm(state, tree.resolveInner(node.parent.to, -1));
+		if (form && prefixesTo(state, node, form)) found = form;
 	}
 	if (found) return found;
 	const before = tree.resolveInner(pos, -1);

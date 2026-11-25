@@ -802,39 +802,18 @@ function prefixedColl(node: SyntaxNode): SyntaxNode | null {
 	return coll && isColl(coll) && closerOf(coll) ? coll : null;
 }
 
-/** The matched collection whose prefix holds the character at `at`, as
- *  `#` does in `#{`: the `#`, `#?` or `#?@` before its opener, or the
- *  `#:` or `#::` of a namespaced map, whose namespace stays plain text. */
-function prefixOf(state: EditorState, at: number): SyntaxNode | null {
-	if (at < 0 || at >= state.doc.length) return null;
-	for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(at, 1); node; node = node.parent) {
-		if (!PREFIXED.has(node.name)) continue;
-		const coll = prefixedColl(node);
-		if (!coll) return null;
-		if (node.name !== "NamespacedMap") return at < coll.from ? coll : null;
-		const autoResolved = state.doc.sliceString(node.from, node.from + 3) === "#::";
-		return at < node.from + (autoResolved ? 3 : 2) ? coll : null;
-	}
-	return null;
-}
-
 /** Backspace (`dir` -1) or Delete (`dir` 1) at a caret beside a bracket
- *  of a matched pair, or its opener's prefix: steps over it, or deletes the
- *  pair when the caret sits inside it and it is empty. Null when no caret
- *  is beside one, so the editor's own deletion runs; a selection always
- *  deletes. While any caret is guarded, the other carets delete one
- *  character here, not through the editor's own deletion. */
+ *  of a matched pair: steps over it, or deletes the pair, with its
+ *  opener's prefix, when the caret sits inside it and it is empty. Null
+ *  when no caret is beside one, so the editor's own deletion runs; a
+ *  selection always deletes. While any caret is guarded, the other carets
+ *  delete one character here, not through the editor's own deletion. */
 export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec | null {
 	if (state.selection.ranges.some((r) => !r.empty)) return null;
 	let guarded = false;
 	const spec = state.changeByRange((range) => {
 		const pos = range.head;
 		const at = dir < 0 ? pos - 1 : pos;
-		const coll = prefixOf(state, at);
-		if (coll?.firstChild) {
-			guarded = true;
-			return { range: EditorSelection.cursor(dir < 0 ? openStart(coll) : coll.firstChild.to) };
-		}
 		const bracket = bracketAt(state, at);
 		if (!bracket?.matched) {
 			const line = state.doc.lineAt(pos);
@@ -854,9 +833,7 @@ export function deleteGuarded(state: EditorState, dir: -1 | 1): TransactionSpec 
 			const set = state.changes({ from, to: closer.to });
 			return { changes: set, range: EditorSelection.cursor(from) };
 		}
-		// Backspace steps over a prefix with its opener.
-		const to = dir < 0 && bracket.node.from === opener.from ? openStart(parent) : pos + dir;
-		return { range: EditorSelection.cursor(to) };
+		return { range: EditorSelection.cursor(pos + dir) };
 	});
 	if (!guarded) return null;
 	return { ...spec, scrollIntoView: true, userEvent: dir < 0 ? "delete.backward" : "delete.forward" };

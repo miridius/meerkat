@@ -715,32 +715,20 @@ describe("deleteGuarded", () => {
 		expect(fwd("#(|)")).toBe("|");
 	});
 
-	test("steps over a # prefix with its opener", () => {
-		expect(back("x #{|a b}")).toBe("x |#{a b}");
-		expect(back("x #|{a b}")).toBe("x |#{a b}");
-		expect(back("#?(|:clj a)")).toBe("|#?(:clj a)");
-		expect(fwd("x |#{a b}")).toBe("x #{|a b}");
-		expect(fwd("|#?(:clj a)")).toBe("#?(|:clj a)");
-		expect(fwd("#|?(:clj a)")).toBe("#?(|:clj a)");
-		expect(back("#?@(|:clj [a])")).toBe("|#?@(:clj [a])");
-		expect(back("#?@|(:clj [a])")).toBe("|#?@(:clj [a])");
-		expect(back("#:a{|:b 1}")).toBe("|#:a{:b 1}");
-		expect(back("#:|a{:b 1}")).toBe("|#:a{:b 1}");
-		expect(fwd("|#?@(:clj [a])")).toBe("#?@(|:clj [a])");
-		expect(fwd("#?|@(:clj [a])")).toBe("#?@(|:clj [a])");
-		expect(fwd("|#:a{:b 1}")).toBe("#:a{|:b 1}");
-		expect(fwd("#|:a{:b 1}")).toBe("#:a{|:b 1}");
+	test("steps over a prefixed opener without its prefix", () => {
+		expect(back("x #{|a b}")).toBe("x #|{a b}");
+		expect(back("#?@(|:clj [a])")).toBe("#?@|(:clj [a])");
+		expect(fwd("#:a|{:b 1}")).toBe("#:a{|:b 1}");
 		expect(back("x #?@(|) y")).toBe("x | y");
-		expect(back("#::|{:a 1}")).toBe("|#::{:a 1}");
-		expect(back("#::|al{:a 1}")).toBe("|#::al{:a 1}");
-		expect(fwd("#:|:{:a 1}")).toBe("#::{|:a 1}");
-		expect(back("#::a|l{:b 1}")).toBeNull();
-		expect(back("#:a|b{:b 1}")).toBeNull();
 	});
 
-	test("leaves a namespace name and an unmatched opener's # plain text", () => {
-		expect(back("#:ab|{:b 1}")).toBeNull();
-		expect(back("x #|{a b")).toBeNull();
+	test("leaves an opener's prefix plain text", () => {
+		for (const doc of ["x #|{a b}", "#|(inc %)", "#?@|(:clj [a])", "#:|a{:b 1}", "#::|{:a 1}", "#:ab|{:b 1}", "x #|{a b"]) {
+			expect(back(doc)).toBeNull();
+		}
+		for (const doc of ["x |#{a b}", "|#(inc %)", "#|?(:clj a)", "#?|@(:clj [a])", "|#:a{:b 1}"]) {
+			expect(fwd(doc)).toBeNull();
+		}
 	});
 
 	test("lets an unmatched bracket be deleted", () => {
