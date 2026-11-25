@@ -252,6 +252,7 @@ defmodule Meerkat.ReviewStateTest do
 
       assert {:ok, state} = ReviewState.from_target({:staged, commit_msg}, repo)
       assert state.precommit?
+      assert state.reviewed_ref == "HEAD"
       assert state.commit_message == "Subject\n\nReal body line."
 
       assert [%{start_line: 1, text: "Subject"}, %{start_line: 3, text: "Real body line."}] =
@@ -290,11 +291,13 @@ defmodule Meerkat.ReviewStateTest do
       assert {:ok, state} = ReviewState.from_target({:single_ref, "HEAD"}, repo)
       assert [%{file_name: "feature.rs", status: :added}] = state.files
       assert state.commit_message == "Add feature module"
+      assert state.reviewed_ref == "HEAD"
       assert [%{start_line: 1, text: "Add feature module"}] = state.commit_message_blocks
 
       assert {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
       assert [%{file_name: "feature.rs"}] = state.files
       assert state.commit_message == ""
+      assert state.reviewed_ref == "HEAD"
       assert state.state_signature == Meerkat.Persistence.state_signature(state)
     end
 
@@ -351,6 +354,7 @@ defmodule Meerkat.ReviewStateTest do
       assert state.pr == %{number: 123, title: pr.title, url: pr.url}
       assert state.commit_message == pr.body
       assert {state.head_branch, state.base_branch} == {"feat/the-feature", "main"}
+      assert state.reviewed_ref == "refs/meerkat-pr/123/head"
       # Its head branch may name a local branch, whose staged approvals it must not touch.
       assert state.approval_key == nil
       refute state.precommit?

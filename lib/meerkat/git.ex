@@ -479,6 +479,33 @@ defmodule Meerkat.Git do
     end
   end
 
+  @doc "The text of repo-root-relative `path` at `ref`, or `:error`."
+  @spec show(String.t(), String.t(), String.t()) :: {:ok, String.t()} | :error
+  def show(root, ref, path) do
+    case run_git(root, ["show", "#{ref}:#{path}"]) do
+      {:ok, text} -> {:ok, text}
+      {:error, _} -> :error
+    end
+  end
+
+  @doc """
+  The repo-root-relative paths of the files at `ref` that `pathspecs`
+  match and whose text matches extended regex `pattern`.
+  """
+  @spec grep(String.t(), String.t(), String.t(), [String.t()]) :: [String.t()]
+  def grep(root, ref, pattern, pathspecs) do
+    # Exits 1 when no file matches.
+    case run_git(root, ["grep", "-l", "-E", "-e", pattern, ref, "--" | pathspecs]) do
+      {:ok, out} ->
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.map(&String.replace_prefix(&1, ref <> ":", ""))
+
+      {:error, _} ->
+        []
+    end
+  end
+
   @doc """
   Per-worktree meerkat state directory: `<gitdir>/meerkat-precommit`,
   for the worktree holding `repo_path`. A subdirectory of the

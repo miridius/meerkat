@@ -1,6 +1,7 @@
-// Clojure hover (docs/features/clojure-hover.md): finds the character
-// under the pointer in a diff code cell, places the popup, and shapes
-// its docstring.
+// Clojure hover (docs/features/clojure-hover.md) and go to definition
+// (docs/features/clojure-go-to-definition.md): finds the character under
+// the pointer in a diff code cell or a file view line, places the popup,
+// and shapes its docstring.
 
 /** How long the pointer rests on a symbol before the popup opens. */
 export const HOVER_DELAY_MS = 400;
@@ -24,6 +25,20 @@ export function openingTab(hover: CljHover): "doc" | "source" {
 	return hover.in_repo ? "source" : "doc";
 }
 
+/** Where go to definition lands (`Meerkat.CljHover.definition/5`): a
+ *  diff file's line on a side, or a file view's line. */
+export type CljTarget = { file_index: number; side: "old" | "new"; line: number } | { where: string; line: number };
+
+/** A symbol at columns `col` to before `end_col`, and where it is
+ *  defined. */
+export type CljJump = { col: number; end_col: number; to: CljTarget };
+
+/** Whether a click is a go to definition click: Cmd-click on macOS,
+ *  Ctrl-click elsewhere. */
+export function isNavClick(e: Pick<MouseEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, mac: boolean): boolean {
+	return (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey;
+}
+
 export type HoverSpot = {
 	side: "old" | "new";
 	line: number;
@@ -31,6 +46,8 @@ export type HoverSpot = {
 	col: number;
 	/** That character's box, to place the popup under. */
 	rect: DOMRect;
+	/** The line's code, whose text the columns count. */
+	raw: Element;
 };
 
 /** A symbol's box, in the window, and the page's scroll when it was
@@ -102,15 +119,17 @@ export function popupLeft(left: number, width: number, viewWidth: number): numbe
 	return Math.max(POPUP_MARGIN, Math.min(left, viewWidth - width - POPUP_MARGIN));
 }
 
-/** The code character at viewport point (x, y) in a diff table, or null
- *  when the point is not over a character of a code line. */
+/** The code character at viewport point (x, y) in a diff table or a
+ *  file view, or null when the point is not over a character of a code
+ *  line. A file view's line has no side, and reads as new. */
 export function spotAt(x: number, y: number): HoverSpot | null {
 	const caret = caretAt(x, y);
 	if (!caret || caret.node.nodeType !== Node.TEXT_NODE) return null;
 	const raw = caret.node.parentElement?.closest(".diff-line-syntax-raw, .diff-line-content-raw");
-	const cell = raw?.closest("td");
-	if (!raw || !cell) return null;
-	const where = lineOf(cell);
+	if (!raw) return null;
+	const viewLine = Number(raw.closest("[data-clj-line]")?.getAttribute("data-clj-line"));
+	const cell = raw.closest("td");
+	const where = viewLine > 0 ? { side: "new" as const, line: viewLine } : cell && lineOf(cell);
 	if (!where) return null;
 
 	// The caret sits at the character boundary nearest the point, so the
@@ -126,9 +145,31 @@ export function spotAt(x: number, y: number): HoverSpot | null {
 		const before = document.createRange();
 		before.setStart(raw, 0);
 		before.setEnd(text, offset);
-		return { ...where, col: before.toString().length + 1, rect };
+		return { ...where, col: before.toString().length + 1, rect, raw };
 	}
 	return null;
+}
+
+/** The boxes of columns `col` to before `endCol` of `raw`'s text, one
+ *  per row the text wraps onto. */
+export function columnRects(raw: Element, col: number, endCol: number): DOMRect[] {
+	const range = document.createRange();
+	const walker = document.createTreeWalker(raw, NodeFilter.SHOW_TEXT);
+	let seen = 0;
+	let started = false;
+	for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+		const length = (node as Text).length;
+		if (!started && col - 1 < seen + length) {
+			range.setStart(node, col - 1 - seen);
+			started = true;
+		}
+		if (started && endCol - 1 <= seen + length) {
+			range.setEnd(node, endCol - 1 - seen);
+			return Array.from(range.getClientRects());
+		}
+		seen += length;
+	}
+	return [];
 }
 
 function caretAt(x: number, y: number): { node: Node; offset: number } | null {

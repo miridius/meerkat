@@ -7,10 +7,6 @@
     return sharedHighlighter;
   }
 
-  // Clojure hover request ids, unique across every DiffViewer on the
-  // page, since each one hears every answer.
-  let lastHoverId = 0;
-
   // A code cell font's `2em` and `1ch` in px, by font, for the rulers.
   const fontWidthCache = new Map<string, { offset: number; ch: number }>();
   // How many columns a row of wrapped code holds, by font and width.
@@ -24,8 +20,9 @@
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
-  import CljHoverPopup from "./CljHoverPopup.svelte";
-  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
+  import CljPointerLayer from "./CljPointerLayer.svelte";
+  import { jumpTo } from "../ts/cljJump";
+  import { CljPointer } from "../ts/cljPointer.svelte";
   import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground, wrappedRulerBackground } from "../ts/rulers";
@@ -652,7 +649,8 @@
   // expanded, which renders collapsed again after a reload or a view
   // toggle. It must stay visible (an open form blocks the decision
   // buttons), so expand the whole file once per diff instance and view
-  // mode; the hunk-expand observer then places it.
+  // mode; the hunk-expand observer then places it. Go to definition
+  // reveals a folded definition line the same way.
   const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
   function expandToShowHiddenAnchor() {
     if (!diffInstance) return;
@@ -890,7 +888,7 @@
   }
 
   function handlePointerMove(e: PointerEvent) {
-    if (clj_hover) restartHoverTimer(e.clientX, e.clientY);
+    if (clj_hover) cljPointer.move(e, dragStart !== null);
     if (!dragStart) return;
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
     if (!el) return;
@@ -976,79 +974,19 @@
     }
   });
 
-  // --- Clojure hover (docs/features/clojure-hover.md) ---
-  //
-  // A pointer resting on a code character asks the server what var it
-  // names; the answer to the latest request opens the popup there.
-  // Resting where no var answers, or leaving both the diff and the
-  // popup, closes it.
+  // --- Clojure hover and go to definition ---
+  // (docs/features/clojure-hover.md, docs/features/clojure-go-to-definition.md)
 
-  const HOVER_CLOSE_MS = 300;
-  let hoverTimer = 0;
-  let hoverCloseTimer = 0;
-  // `row` names the side and line hovered.
-  let hoverRequest: { id: number; anchor: HoverAnchor; row: string } | null = null;
-  let shownHover = $state<{ hover: CljHover; anchor: HoverAnchor; row: string } | null>(null);
-
-  function restartHoverTimer(x: number, y: number) {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-    hoverTimer = window.setTimeout(() => requestHover(x, y), HOVER_DELAY_MS);
-  }
-
-  function requestHover(x: number, y: number) {
-    const spot = dragStart ? null : spotAt(x, y);
-    if (!spot) {
-      hoverRequest = null;
-      shownHover = null;
-      return;
-    }
-    lastHoverId += 1;
-    hoverRequest = {
-      id: lastHoverId,
-      anchor: { rect: spot.rect, scrollX: window.scrollX, scrollY: window.scrollY },
-      row: `${spot.side}:${spot.line}`,
-    };
-    live.pushEvent("clj.hover", {
-      id: lastHoverId,
-      file_index,
-      side: spot.side,
-      line: spot.line,
-      col: spot.col,
-    });
-  }
-
-  function closeHoverSoon() {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-    hoverCloseTimer = window.setTimeout(() => {
-      hoverRequest = null;
-      shownHover = null;
-    }, HOVER_CLOSE_MS);
-  }
-
-  function keepHoverOpen() {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-  }
+  const cljPointer = new CljPointer(
+    live,
+    () => ({ file_index }),
+    (spot) => spot.side,
+    (jump, side) => jumpTo(jump, side, live),
+  );
 
   $effect(() => {
-    if (!clj_hover) return;
-    const onAnswer = (e: Event) => {
-      const { id, hover } = (e as CustomEvent<{ id: number; hover: CljHover | null }>).detail;
-      if (id !== hoverRequest?.id) return;
-      const { anchor, row } = hoverRequest;
-      if (keepsPopup(shownHover, row, hover)) return;
-      // The page may have scrolled while the answer was on its way; the
-      // popup picks its side by where the symbol is now.
-      shownHover = hover ? { hover, anchor: rescrolled(anchor, window.scrollX, window.scrollY), row } : null;
-    };
-    window.addEventListener("phx:clj:hover", onAnswer);
-    return () => {
-      window.removeEventListener("phx:clj:hover", onAnswer);
-      clearTimeout(hoverTimer);
-      clearTimeout(hoverCloseTimer);
-    };
+    if (!clj_hover || !diffContainer) return;
+    return cljPointer.listen(diffContainer);
   });
 
   function readLineNum(el: HTMLElement, attr: string): number | null {
@@ -1174,14 +1112,26 @@
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {
-      const ev = e as CustomEvent<{ fileName: string; side: "old" | "new"; lineStart: number; lineEnd: number }>;
-      if (!ev.detail || ev.detail.fileName !== file.file_name) return;
+      const ev = e as CustomEvent<{
+        fileName?: string;
+        fileIndex?: number;
+        side: "old" | "new";
+        lineStart: number;
+        lineEnd: number;
+        expand?: boolean;
+      }>;
+      if (!ev.detail || (ev.detail.fileName !== file.file_name && ev.detail.fileIndex !== file_index)) return;
       // live_svelte unmounts a removed viewer only at the next
       // `phx:page-loading-stop`, so a collapsed file's old viewer still
       // listens, over rows no longer on the page.
       if (!diffContainer?.isConnected) return;
       const rows = anchorRowsFor(ev.detail.side, ev.detail.lineStart);
-      if (rows.length === 0) return;
+      if (rows.length === 0) {
+        // Go to definition reveals a line folded context hides; the
+        // expand renders it for the sender's next try.
+        if (ev.detail.expand) expandToShowHiddenAnchor();
+        return;
+      }
       ev.preventDefault();
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1260,7 +1210,8 @@
     onpointerup={handlePointerUp}
     onlostpointercapture={handlePointerCancel}
     onpointercancel={handlePointerCancel}
-    onpointerleave={clj_hover ? closeHoverSoon : undefined}
+    onpointerleave={clj_hover ? () => cljPointer.leave() : undefined}
+    class:clj-linking={cljPointer.link !== null}
     style:tab-size={tab_size}
     style:--tab-size={tab_size}
   >
@@ -1275,18 +1226,8 @@
       registerHighlighter={highlighter ?? undefined}
     />
   </div>
-  {#if shownHover}
-    {#key shownHover}
-      <CljHoverPopup
-        hover={shownHover.hover}
-        anchor={shownHover.anchor}
-        {highlighter}
-        theme={DIFF_THEME}
-        {font_size_px}
-        onpointerenter={keepHoverOpen}
-        onpointerleave={closeHoverSoon}
-      />
-    {/key}
+  {#if clj_hover}
+    <CljPointerLayer pointer={cljPointer} {highlighter} theme={DIFF_THEME} {font_size_px} />
   {/if}
 {/if}
 
@@ -1338,6 +1279,11 @@
   .diff-content:not(.no-wrap) :global([data-no-newline-at-end-of-file-symbol]) {
     display: inline-block;
     vertical-align: middle;
+  }
+  /* Cmd over a symbol that resolves: a link. */
+  .diff-content.clj-linking :global(.diff-line-syntax-raw),
+  .diff-content.clj-linking :global(.diff-line-content-raw) {
+    cursor: pointer;
   }
   /* Line-number gutter cells: drag-select-only zone. Disabling user
      selection here prevents the drag from looking like a text

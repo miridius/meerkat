@@ -1,8 +1,4 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { Page } from "@playwright/test";
-import { makeFixture } from "./lib/fixture";
+import { restOn, stagedReview } from "./lib/clj";
 import { startMeerkat } from "./lib/runner";
 import { expect, test } from "./lib/test";
 
@@ -25,58 +21,6 @@ const core = (body: string) => `(ns app.core
 (defn run [y]
   ${body})
 `;
-
-// A staged review of `files` changed from `base`.
-function stagedReview(base: Record<string, string>, files: Record<string, string>) {
-	const fixture = makeFixture({ files: {} });
-	const write = (all: Record<string, string>) => {
-		for (const [path, body] of Object.entries(all)) {
-			mkdirSync(join(fixture.dir, path, ".."), { recursive: true });
-			writeFileSync(join(fixture.dir, path), body);
-			fixture.git("add", path);
-		}
-	};
-	write(base);
-	fixture.git("commit", "-qm", "base");
-	write(files);
-	// The user's own clj-kondo run, whose cache names each namespace's file.
-	mkdirSync(join(fixture.dir, ".clj-kondo"));
-	spawnSync("clj-kondo", ["--lint", "src"], { cwd: fixture.dir });
-	return fixture;
-}
-
-// Rests the pointer on the first character of `word` in a code cell of
-// `side`, the way a reviewer does, and returns that character's box.
-async function restOn(page: Page, side: "old" | "new", word: string) {
-	// Unified view's rows show a side by the line numbers they carry.
-	const cells =
-		side === "old"
-			? "td.diff-line-old-content, tr:not(:has([data-line-new-num])) > td.diff-line-content"
-			: "td.diff-line-new-content, tr:has([data-line-new-num]) > td.diff-line-content";
-	const point = await page.evaluate(
-		({ cells, word }) => {
-			for (const cell of document.querySelectorAll(cells)) {
-				const raw = cell.querySelector(".diff-line-syntax-raw, .diff-line-content-raw");
-				if (!raw) continue;
-				const walker = document.createTreeWalker(raw, NodeFilter.SHOW_TEXT);
-				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-					const at = node.textContent?.indexOf(word) ?? -1;
-					if (at < 0) continue;
-					const range = document.createRange();
-					range.setStart(node, at);
-					range.setEnd(node, at + 1);
-					const r = range.getBoundingClientRect();
-					return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, bottom: r.bottom };
-				}
-			}
-			return null;
-		},
-		{ cells, word },
-	);
-	if (!point) throw new Error(`no ${word} on the ${side} side`);
-	await page.mouse.move(point.x, point.y);
-	return point;
-}
 
 test("resting on a symbol shows its docs and source for that row's side, and a long source scrolls in a popup the reviewer can resize", async ({
 	page,
