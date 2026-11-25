@@ -38,6 +38,9 @@ subtle background, not the accent colour.
   jar and entry) and its line: its whole source, highlighted with the
   diff's own highlighter, theme and font size.
 
+A `Go to` link in the header jumps to the definition (see
+[go to definition](clojure-go-to-definition.md)).
+
 The popup opens below the symbol, unless below has less room than 60%
 of the window and above has more. It stays on that side, at most 60%
 of the window tall, and content larger than it scrolls inside it.
@@ -102,4 +105,4 @@ found`.
 
 ## Not covered
 
-Jump to definition, namespaces and keywords, and locals.
+Hover on namespaces, keywords and locals; go to definition covers them.
