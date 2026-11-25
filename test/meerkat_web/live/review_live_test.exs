@@ -22,9 +22,11 @@ defmodule MeerkatWeb.ReviewLiveTest do
       assert ReviewLive.label_for_github_for_test("revert", "") ==
                "**restore from HEAD**"
 
-      # Whitespace-only body trips the same branch.
+      # Whitespace-only and missing bodies trip the same branch.
       assert ReviewLive.label_for_github_for_test(:revert, "   \n  ") ==
                "**restore from HEAD**"
+
+      assert ReviewLive.label_for_github_for_test(:revert, nil) == "**restore from HEAD**"
     end
 
     test "revert with prose body still renders the type prefix" do
@@ -39,6 +41,7 @@ defmodule MeerkatWeb.ReviewLiveTest do
     test "missing finding-type falls back to bare body" do
       assert ReviewLive.label_for_github_for_test("", "just text") == "just text"
       assert ReviewLive.label_for_github_for_test(nil, "just text") == "just text"
+      assert ReviewLive.label_for_github_for_test("  ", "just text") == "just text"
     end
   end
 

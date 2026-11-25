@@ -15,7 +15,6 @@ defmodule Meerkat.Markdown do
   """
   @spec to_safe_html(String.t() | nil) :: String.t()
   def to_safe_html(nil), do: ""
-  def to_safe_html(""), do: ""
 
   def to_safe_html(body) do
     render_fragment(body, hardbreaks: true, escape: true)
@@ -93,13 +92,13 @@ defmodule Meerkat.Markdown do
     |> String.split("\n")
     |> group_lines()
     |> Enum.map(&String.trim_trailing/1)
-    |> Enum.reject(&(String.trim(&1) == ""))
   end
 
   # Fold lines into blocks. `fence` holds the open fence marker (```` or
   # ~~~ prefix) while inside a code block; a blank line only ends the
   # current block when no fence is open.
   defp group_lines(lines) do
+    # muex:ignore equivalent: swapping the accumulator's two empty lists changes nothing
     {blocks, current, _fence} = Enum.reduce(lines, {[], [], nil}, &group_line/2)
 
     flush(blocks, current) |> Enum.reverse()
@@ -143,6 +142,7 @@ defmodule Meerkat.Markdown do
 
     case Regex.run(~r/^\s{0,3}([`~]{3,})\s*$/, line) do
       [_, marker] ->
+        # muex:ignore equivalent: swapping the two pure checks joined by `and` changes nothing
         String.first(marker) == char and String.length(marker) >= String.length(fence)
 
       _ ->

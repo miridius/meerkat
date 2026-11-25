@@ -60,6 +60,7 @@ defmodule Meerkat.Timeout do
       {:unrecognised, raw} ->
         IO.puts(
           :stderr,
+          # muex:ignore pure observability: only reorders the warning text
           "meerkat: ignoring MEERKAT_AUTO_APPROVE_ON_TIMEOUT=#{inspect(raw)} " <>
             "(expected true or false); a review that times out will wait."
         )
@@ -73,9 +74,15 @@ defmodule Meerkat.Timeout do
     raw = System.get_env("MEERKAT_AUTO_APPROVE_ON_TIMEOUT", "")
 
     case raw |> String.trim() |> String.downcase() do
-      value when value in ["1", "true", "yes"] -> :approve
-      value when value in ["", "0", "false", "no"] -> :wait
-      _ -> {:unrecognised, raw}
+      value when value in ["1", "true", "yes"] ->
+        :approve
+
+      # muex:ignore equivalent: callers only tell :approve and {:unrecognised, _} apart, never this atom's name
+      value when value in ["", "0", "false", "no"] ->
+        :wait
+
+      _ ->
+        {:unrecognised, raw}
     end
   end
 
@@ -94,8 +101,9 @@ defmodule Meerkat.Timeout do
     if disabled?(), do: nil, else: started_at_ms(repo_path, review_id, run) + limit_ms()
   end
 
-  @spec expired?(integer()) :: boolean()
-  def expired?(deadline_ms), do: System.system_time(:millisecond) >= deadline_ms
+  @spec expired?(integer(), integer()) :: boolean()
+  def expired?(deadline_ms, now_ms \\ System.system_time(:millisecond)),
+    do: now_ms >= deadline_ms
 
   @doc """
   Deletes `review_id`'s anchor for `run`, and that run's deadline
@@ -118,6 +126,7 @@ defmodule Meerkat.Timeout do
   """
   @spec prune_stale(String.t()) :: :ok
   def prune_stale(repo_path) do
+    # muex:ignore equivalent: disabled, do_prune_stale/1 adds :infinity, raises, and its catch returns :ok
     if disabled?() do
       :ok
     else
@@ -141,6 +150,7 @@ defmodule Meerkat.Timeout do
           _ = File.rm_rf(Path.join(parent, entry))
         end
 
+      # muex:ignore equivalent: without this clause the catch below turns the CaseClauseError into the same :ok
       _ ->
         :ok
     end
@@ -222,6 +232,7 @@ defmodule Meerkat.Timeout do
   defp saved_state(repo_path, review_id) do
     case Application.get_env(:meerkat, :review_state) do
       %ReviewState{} = base -> Persistence.load(repo_path, review_id, base)
+      # muex:ignore equivalent: without this clause the catch below turns the CaseClauseError into the same nil
       _ -> nil
     end
   catch

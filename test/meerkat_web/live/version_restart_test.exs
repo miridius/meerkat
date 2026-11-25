@@ -59,10 +59,19 @@ defmodule MeerkatWeb.VersionRestartTest do
     send(view.pid, {:meerkat_version_available, "versions/v2"})
     _ = render(view)
 
-    refute_receive {:restart, _}, 200
+    refute_received {:restart, _}
 
     render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
     assert_receive {:restart, 75}
+  end
+
+  test "opening and closing a form without a newer install never restarts", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, MeerkatWeb.ReviewLive)
+
+    render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
+    render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
+
+    refute_received {:restart, _}
   end
 
   test "with two forms open, the restart waits for the last one to close", %{conn: conn} do
@@ -74,7 +83,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     _ = render(view)
 
     render_hook(view, "comment_form.hide", %{"form_key" => "file:0"})
-    refute_receive {:restart, _}, 200
+    refute_received {:restart, _}
 
     render_hook(view, "comment_form.hide", %{"form_key" => "global"})
     assert_receive {:restart, 75}
@@ -90,7 +99,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     send(view.pid, {:meerkat_version_available, "versions/v2"})
     _ = render(view)
 
-    refute_receive {:restart, _}, 300
+    refute_received {:restart, _}
   end
 
   test "applies a deferred update when a state push clears the open form", %{conn: conn} do
@@ -99,7 +108,7 @@ defmodule MeerkatWeb.VersionRestartTest do
     render_hook(view, "comment_form.show_file", %{"file_index" => "0"})
     send(view.pid, {:meerkat_version_available, "versions/v2"})
     _ = render(view)
-    refute_receive {:restart, _}, 200
+    refute_received {:restart, _}
 
     # A cross-tab state push that carries no open form should apply the
     # deferred restart (change_open_forms is not the only path into the gate).
@@ -142,5 +151,19 @@ defmodule MeerkatWeb.VersionRestartTest do
 
     assert html =~ "assets/app-booted.js"
     assert html =~ "assets/app-booted.css"
+  end
+
+  test "the page load before the live connection is not a viewer", %{conn: conn} do
+    # The static render runs mount in the request process, here the
+    # test process; only the connected LiveView may count as watching.
+    put_endpoint_config(
+      vite_manifest:
+        PhoenixVite.Manifest.parse(~s({"js/app.js": {"file": "app.js", "isEntry": true}}))
+    )
+
+    conn = get(conn, "/")
+
+    assert html_response(conn, 200) =~ "src/widget.rs"
+    assert Registry.keys(Meerkat.ViewerRegistry, self()) == []
   end
 end

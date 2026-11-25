@@ -565,7 +565,10 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
       "lint_rule" => false
     })
 
-    assert_reply(view, %{status: "error", message: "This comment form is no longer open" <> _})
+    assert_reply(view, %{
+      status: "error",
+      message: "This comment form is no longer open, so the comment wasn't saved."
+    })
 
     render_hook(view, "comment_form.show_global", %{})
 

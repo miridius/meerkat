@@ -670,5 +670,12 @@ defmodule Meerkat.MovesTest do
 
       assert moved(files) == [[]]
     end
+
+    test "replaces moved_lines left over from an earlier detect" do
+      stale = %{side: :old, line_start: 1, line_end: 3, pair_id: 0}
+      files = [%{file("solo.txt", [hunk(1, 1, [{"-", "alpha"}])]) | moved_lines: [stale]}]
+
+      assert [%{moved_lines: []}] = Moves.detect(files)
+    end
   end
 end

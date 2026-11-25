@@ -7,11 +7,10 @@ defmodule Meerkat.PersistenceTest do
   # * Deleting `serialise({:open_forms, _})`: Jason encodes the raw
   #   form's atom keys and values as strings, `keys: :atoms!` decodes
   #   the same keys, and `deserialise_form/1` rebuilds only the listed
-  #   keys from either string or atom keys, dropping nils either way.
+  #   keys, dropping nils either way.
   # * Deleting `migrate_finding_type(%{finding_type: :thought})`: load
   #   decodes JSON, so `finding_type` is always a string there.
-  # * Deleting `surface_atom("inline")`: the catch-all clause also
-  #   returns `:inline`.
+  import ExUnit.CaptureIO, only: [with_io: 2]
 
   alias Meerkat.{Comment, Persistence, ReviewState}
 
@@ -46,6 +45,13 @@ defmodule Meerkat.PersistenceTest do
     test "a saved review without comments holds none", %{repo: repo, review_id: id} do
       :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1"})
       refute Persistence.held_comments?(repo, id, fn -> {:ok, "s1"} end)
+    end
+
+    test "the signature is not computed for a snapshot without comments",
+         %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{state_signature: "s1"})
+      refute Persistence.held_comments?(repo, id, fn -> send(self(), :signed) && {:ok, "s1"} end)
+      refute_received :signed
     end
 
     test "a different signature does not", %{repo: repo, review_id: id} do
@@ -148,17 +154,86 @@ defmodule Meerkat.PersistenceTest do
       assert reloaded.files == []
     end
 
+    test "a snapshot holds the persistable fields and the signature only",
+         %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{commit_message: "in-memory only"})
+
+      saved = Persistence.path_for(repo, id) |> File.read!() |> Jason.decode!()
+
+      assert Enum.sort(Map.keys(saved)) ==
+               ~w(approved_file_names comments commit_message_comments file_comments
+                  file_overrides global_comments hidden_extensions open_forms show_generated
+                  state_signature)
+    end
+
+    test "fields holding a value of another type save and load unchanged",
+         %{repo: repo, review_id: id} do
+      :ok = Persistence.save(repo, id, %ReviewState{file_overrides: "x", open_forms: "x"})
+
+      assert %{file_overrides: "x", open_forms: "x"} = Persistence.load(repo, id, %ReviewState{})
+    end
+
+    test "approvals and hidden extensions that are not lists load unchanged",
+         %{repo: repo, review_id: id} do
+      path = Persistence.path_for(repo, id)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, ~s({"approved_file_names": "x", "hidden_extensions": "x"}))
+
+      assert %{approved_file_names: "x", hidden_extensions: "x"} =
+               Persistence.load(repo, id, %ReviewState{})
+    end
+
     test "load/3 returns the given state unchanged when no save exists", %{repo: repo} do
       seed = %ReviewState{commit_message: "fresh"}
       assert Persistence.load(repo, "nonexistent_id_xyz", seed) == seed
     end
 
-    test "load/3 tolerates a corrupt file", %{repo: repo, review_id: id} do
+    for {label, body, reason} <- [
+          {"invalid JSON", "not valid json {", "unexpected byte at position 0: 0x6E (\"n\")"},
+          {"a JSON array", "[1]", "expected JSON object, got something else"},
+          {"an unknown key", ~s({"zz_meerkat_never_an_atom_q7": 1}),
+           "unknown key (atom not yet defined; file likely from a different version)"}
+        ] do
+      test "load/3 quarantines a snapshot holding #{label} and returns the given state",
+           %{repo: repo, review_id: id} do
+        path = Persistence.path_for(repo, id)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, unquote(body))
+        seed = %ReviewState{commit_message: "seed"}
+
+        {result, stderr} = with_io(:stderr, fn -> Persistence.load(repo, id, seed) end)
+
+        assert result == seed
+        refute File.exists?(path)
+
+        assert stderr =~
+                 ~r/in-progress snapshot at #{Regex.escape(path)} unusable \(#{Regex.escape(unquote(reason))}\); moved to \S+\. Starting from an empty state\.\n/
+      end
+    end
+
+    test "load/3 warns about an unreadable snapshot and returns the given state",
+         %{repo: repo, review_id: id} do
       path = Persistence.path_for(repo, id)
-      File.mkdir_p!(Path.dirname(path))
-      File.write!(path, "not valid json {")
+      File.mkdir_p!(path)
       seed = %ReviewState{commit_message: "seed"}
-      assert Persistence.load(repo, id, seed) == seed
+
+      {result, stderr} = with_io(:stderr, fn -> Persistence.load(repo, id, seed) end)
+
+      assert result == seed
+
+      assert stderr =~
+               "meerkat: warning — couldn't read in-progress snapshot at #{path}: :eisdir"
+    end
+
+    test "a restored review keeps the caller's state_signature, not the snapshot's",
+         %{repo: repo, review_id: id} do
+      files = [%{file_name: "a.rs", effective_oid: "oid-a"}]
+      :ok = Persistence.save(repo, id, %ReviewState{files: files, show_generated: true})
+
+      loaded = Persistence.load(repo, id, %ReviewState{files: files})
+
+      assert loaded.show_generated
+      assert loaded.state_signature == nil
     end
 
     test "open_forms (inline) round-trip with atom surface + anchor keys, in order",
@@ -183,6 +258,63 @@ defmodule Meerkat.PersistenceTest do
       assert a.surface == :inline
       assert a.anchor == %{file_index: 0, start_line: 4, end_line: 6, side: "new"}
       assert b.anchor == %{file_index: 1, start_line: 9, end_line: 9, side: "old"}
+    end
+
+    test "open_forms are saved as surface, anchor and edit prefill only",
+         %{repo: repo, review_id: id} do
+      form = %{surface: :inline, anchor: %{file_index: 0}, edit_id: "e1", scroll_hint: "top"}
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: [form]})
+
+      saved = Persistence.path_for(repo, id) |> File.read!() |> Jason.decode!()
+
+      assert saved["open_forms"] == [
+               %{
+                 "surface" => "inline",
+                 "anchor" => %{"file_index" => 0},
+                 "edit_id" => "e1",
+                 "initial_body" => nil,
+                 "initial_finding_type" => nil,
+                 "initial_correct_instructions" => nil,
+                 "initial_lint_rule" => nil
+               }
+             ]
+    end
+
+    test "an open form's anchor that is not a map is saved as given",
+         %{repo: repo, review_id: id} do
+      :ok =
+        Persistence.save(repo, id, %ReviewState{open_forms: [%{surface: :inline, anchor: "x"}]})
+
+      saved = Persistence.path_for(repo, id) |> File.read!() |> Jason.decode!()
+      assert [%{"anchor" => "x"}] = saved["open_forms"]
+    end
+
+    test "open forms on every surface round-trip", %{repo: repo, review_id: id} do
+      forms = for surface <- [:inline, :file, :global, :commit_msg], do: %{surface: surface}
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: forms})
+
+      loaded = Persistence.load(repo, id, %ReviewState{})
+
+      assert Enum.map(loaded.open_forms, & &1.surface) == [:inline, :file, :global, :commit_msg]
+    end
+
+    test "an open form loads without the prefill fields it was saved without",
+         %{repo: repo, review_id: id} do
+      form = %{surface: :file, anchor: %{file_index: 0}}
+      :ok = Persistence.save(repo, id, %ReviewState{open_forms: [form]})
+
+      assert Persistence.load(repo, id, %ReviewState{}).open_forms == [form]
+    end
+
+    test "an open form's surface that names none loads as inline, and a JSON literal as itself",
+         %{repo: repo, review_id: id} do
+      path = Persistence.path_for(repo, id)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, ~s({"open_forms": [{"surface": "bogus"}, {"surface": false}]}))
+
+      loaded = Persistence.load(repo, id, %ReviewState{})
+
+      assert Enum.map(loaded.open_forms, & &1.surface) == [:inline, false]
     end
 
     test "empty open_forms stays empty through round-trip", %{repo: repo, review_id: id} do
@@ -254,11 +386,29 @@ defmodule Meerkat.PersistenceTest do
       assert [%{id: "g1"}] = loaded.global_comments
     end
 
+    test "a review's snapshot is <review_id>.json in the meerkat dir's in-progress dir",
+         %{repo: repo, review_id: id} do
+      assert Persistence.path_for(repo, id) ==
+               Path.join(Meerkat.Git.meerkat_dir(repo), "in-progress/abc1234567890def.json")
+    end
+
     test "delete/2 removes the file", %{repo: repo, review_id: id} do
       :ok = Persistence.save(repo, id, %ReviewState{})
       assert File.exists?(Persistence.path_for(repo, id))
       :ok = Persistence.delete(repo, id)
       refute File.exists?(Persistence.path_for(repo, id))
+    end
+
+    test "delete/2 warns when the snapshot cannot be removed", %{repo: repo, review_id: id} do
+      path = Persistence.path_for(repo, id)
+      File.mkdir_p!(path)
+
+      {result, stderr} = with_io(:stderr, fn -> Persistence.delete(repo, id) end)
+
+      assert result == :ok
+
+      assert stderr =~
+               ~r/meerkat: warning — couldn't delete in-progress snapshot at #{Regex.escape(path)}: :\w+\. Next review may show stale state\.\n/
     end
   end
 
@@ -318,15 +468,21 @@ defmodule Meerkat.PersistenceTest do
           global_comments: [global_comment_with(body: "from previous session")]
         })
 
-      assert File.exists?(Persistence.path_for(repo, id))
+      path = Persistence.path_for(repo, id)
+      assert File.exists?(path)
 
-      reloaded =
-        Persistence.load(repo, id, %ReviewState{
-          files: [%{file_name: "a.rs", effective_oid: "oid-DIFFERENT"}]
-        })
+      {reloaded, stderr} =
+        with_io(:stderr, fn ->
+          Persistence.load(repo, id, %ReviewState{
+            files: [%{file_name: "a.rs", effective_oid: "oid-DIFFERENT"}]
+          })
+        end)
 
       assert reloaded.global_comments == []
-      refute File.exists?(Persistence.path_for(repo, id))
+      refute File.exists?(path)
+
+      assert stderr =~
+               "meerkat: discarding stale in-progress snapshot at #{path} (different staged state)\n"
     end
 
     test "a stale snapshot that cannot be removed still loads as an empty review",
@@ -349,7 +505,10 @@ defmodule Meerkat.PersistenceTest do
         end)
 
       assert reloaded.global_comments == []
-      assert stderr =~ "stale snapshot rm failed"
+
+      assert stderr =~
+               "in-progress snapshot at #{Persistence.path_for(repo, id)} " <>
+                 "unusable (stale snapshot rm failed: :eacces)"
     end
 
     test "cached state_signature on the input ReviewState is used over the live hash",
@@ -420,6 +579,17 @@ defmodule Meerkat.PersistenceTest do
         })
 
       assert sig_a == sig_b
+    end
+
+    test "state_signature is the first 32 hex digits of the SHA-256 of the sorted name-tab-oid lines" do
+      files = [
+        %{file_name: "b.rs", effective_oid: "oid-b"},
+        %{file_name: "a.rs", effective_oid: "oid-a"}
+      ]
+
+      # sha256("a.rs\toid-a\nb.rs\toid-b"), cut to 32 digits.
+      assert Persistence.state_signature(%ReviewState{files: files}) ==
+               "0eca3cd190c8b8cb6613d95a695cf2fa"
     end
 
     test "state_signature changes when content changes" do

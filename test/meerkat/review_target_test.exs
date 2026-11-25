@@ -49,6 +49,14 @@ defmodule Meerkat.ReviewTargetTest do
     test "empty-string options are treated as unset (fall through)" do
       assert ReviewTarget.from_opts(%{pr: "", positional: "HEAD"}) == {:single_ref, "HEAD"}
       assert ReviewTarget.from_opts(%{commit_msg_path: ""}) == {:staged, nil}
+      assert ReviewTarget.from_opts(%{positional: ""}) == {:staged, nil}
+    end
+
+    test "a range splits at its first dots, leaving later dots in the head" do
+      assert ReviewTarget.from_opts(%{positional: "a...b...c"}) ==
+               {:range, "a", "b...c", :three_dot}
+
+      assert ReviewTarget.from_opts(%{positional: "a..b..c"}) == {:range, "a", "b..c", :two_dot}
     end
 
     test "range with an empty base or head still parses" do

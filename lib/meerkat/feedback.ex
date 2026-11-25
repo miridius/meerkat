@@ -21,6 +21,7 @@ defmodule Meerkat.Feedback do
   message instead.
   """
   @spec format(ReviewState.t()) :: String.t()
+  # muex:ignore equivalent: the mode picks only the framing header, "" for :auto and any unknown mode
   def format(state), do: format(state, :auto)
 
   @doc """
@@ -118,6 +119,7 @@ defmodule Meerkat.Feedback do
     end
   end
 
+  # muex:ignore equivalent: plural/1 is only interpolated, and nil interpolates as ""
   defp plural(list) when length(list) == 1, do: ""
   defp plural(_), do: "s"
 
@@ -259,6 +261,8 @@ defmodule Meerkat.Feedback do
     body =
       Enum.map_join(state.comments, "", fn c ->
         path = file_name_for(state, c.file_index)
+
+        # muex:ignore equivalent: both operands of `or` are pure booleans, so their order changes nothing
         arrow = if c.side == "old" or c.side == :old, do: "-", else: "+"
         range = line_range(c.start_line, c.end_line)
         quoted = quote_content(extract_lines(state, c), arrow)
@@ -350,6 +354,7 @@ defmodule Meerkat.Feedback do
 
     cond do
       ft_str == "" -> body || ""
+      # muex:ignore equivalent: both operands of `and` are pure booleans, so their order changes nothing
       body_trim == "" and ft_str == "revert" -> "**restore from HEAD**"
       true -> "**#{ft_str}:** #{body || ""}"
     end
@@ -368,9 +373,6 @@ defmodule Meerkat.Feedback do
       nil ->
         ""
 
-      "" ->
-        ""
-
       str ->
         str
         |> String.split("\n")
@@ -380,6 +382,7 @@ defmodule Meerkat.Feedback do
   end
 
   defp extract_commit_msg_lines(%ReviewState{commit_message: msg}, cmc) do
+    # muex:ignore equivalent: both operands of `and` are pure booleans, so their order changes nothing
     if is_binary(msg) and msg != "" do
       msg
       |> String.split("\n")
@@ -390,6 +393,7 @@ defmodule Meerkat.Feedback do
     end
   end
 
+  # muex:ignore equivalent: quote_content/2 is only interpolated, and nil interpolates as ""
   defp quote_content("", _prefix), do: ""
 
   defp quote_content(text, prefix) do
@@ -446,5 +450,6 @@ defmodule Meerkat.Feedback do
   defp q_reminder(%{finding_type: "question"}),
     do: "\n      ↳ question — answer with analysis only. Do NOT edit code for this comment."
 
+  # muex:ignore equivalent: q_reminder/1 is only interpolated, and nil interpolates as ""
   defp q_reminder(_), do: ""
 end

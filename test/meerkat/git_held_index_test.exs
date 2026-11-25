@@ -150,10 +150,23 @@ defmodule Meerkat.GitHeldIndexTest do
 
   test "a named index git has already removed is an error, not an empty review",
        %{dir: dir, held_dir: held_dir} do
-    put_env("GIT_INDEX_FILE", Path.join(dir, ".git/index.lock"))
+    index = Path.join(dir, ".git/index.lock")
+    put_env("GIT_INDEX_FILE", index)
 
-    assert {:error, message} = Git.hold_temporary_index(dir, held_dir)
-    assert message =~ "no longer exists"
+    assert Git.hold_temporary_index(dir, held_dir) ==
+             {:error, "the commit's index #{index} no longer exists"}
+
+    assert Application.fetch_env(:meerkat, :held_index) == :error
+  end
+
+  test "a named index that cannot be read is an error", %{dir: dir, held_dir: held_dir} do
+    index = Path.join(dir, ".git")
+    put_env("GIT_INDEX_FILE", index)
+
+    assert Git.hold_temporary_index(dir, held_dir) ==
+             {:error,
+              "couldn't read the commit's index #{index}: illegal operation on a directory"}
+
     assert Application.fetch_env(:meerkat, :held_index) == :error
   end
 
@@ -161,8 +174,9 @@ defmodule Meerkat.GitHeldIndexTest do
     put_env("GIT_INDEX_FILE", index(dir, "index.lock", :x))
 
     # A file where the copy's directory should be, which even root cannot write under.
-    assert {:error, message} = Git.hold_temporary_index(dir, Path.join(dir, "a.txt"))
-    assert message =~ "couldn't keep a copy"
+    assert Git.hold_temporary_index(dir, Path.join(dir, "a.txt")) ==
+             {:error, "couldn't keep a copy of the commit's index: not a directory"}
+
     assert Application.fetch_env(:meerkat, :held_index) == :error
   end
 
@@ -177,12 +191,14 @@ defmodule Meerkat.GitHeldIndexTest do
   end
 
   test "with no index file named there is nothing to keep", %{dir: dir, held_dir: held_dir} do
-    put_env("GIT_INDEX_FILE", nil)
+    for name <- [nil, ""] do
+      put_env("GIT_INDEX_FILE", name)
 
-    Git.hold_temporary_index(dir, held_dir)
+      assert Git.hold_temporary_index(dir, held_dir) == :ok
 
-    assert File.ls!(held_dir) == []
-    assert Application.fetch_env(:meerkat, :held_index) == :error
+      assert File.ls!(held_dir) == []
+      assert Application.fetch_env(:meerkat, :held_index) == :error
+    end
   end
 
   test "`with_index/3` reads the index that is named, not the copy", %{
@@ -217,6 +233,29 @@ defmodule Meerkat.GitHeldIndexTest do
 
       assert {:ok, [%{new_content: "outer\n"}]} = Git.staged_file_diffs(dir)
     end)
+  end
+
+  test "`with_index/3` leaves no index named for later reads once it returns", %{dir: dir} do
+    index = index(dir, "next-index-6.lock", :x)
+
+    assert Git.with_index(dir, index, fn -> :ran end) == :ran
+    refute :meerkat_index in Process.get_keys()
+  end
+
+  test "`with_index/3` takes an absolute name as it is, without asking git for the work tree",
+       %{dir: dir} do
+    index = index(dir, "next-index-10.lock", :x)
+    Meerkat.TestHelpers.stub_git(fn argv -> flunk("ran #{inspect(argv)}") end)
+
+    assert Git.with_index(dir, index, fn -> :ran end) == :ran
+  end
+
+  test "`with_index/3` naming an index that is gone is an error, and `fun` is not run",
+       %{dir: dir} do
+    gone = Path.join(dir, ".git/next-index-5.lock")
+
+    assert Git.with_index(dir, gone, fn -> flunk("ran with a missing index") end) ==
+             {:error, "the index #{gone} no longer exists"}
   end
 
   test "with no copy kept, reads use the index the environment names", %{dir: dir} do

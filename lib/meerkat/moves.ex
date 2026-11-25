@@ -102,6 +102,7 @@ defmodule Meerkat.Moves do
   # lines a block gains or loses change neither, and runs such as an
   # `end` and a blank, shared by unrelated code, can be many.
   defp substantial_run?(removed_arr, run) do
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
     Enum.count(run, &elem(removed_arr, &1).substantial) >= @min_substantial_lines and
       Enum.sum_by(run, &elem(removed_arr, &1).alnum) >= @min_alnum_chars
   end
@@ -118,10 +119,9 @@ defmodule Meerkat.Moves do
         a = extend(added_arr, a_start, len, a_taken)
 
         state =
-          if taken?(r_taken, r) or taken?(a_taken, a) or
-               (Range.size(r) < @min_block_size and Range.size(a) < @min_block_size),
-             do: {acc, r_taken, a_taken},
-             else: {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
+          if skip?(r, a, r_taken, a_taken),
+            do: {acc, r_taken, a_taken},
+            else: {[{r, a} | acc], Enum.into(r, r_taken), Enum.into(a, a_taken)}
 
         pick(rest, removed_arr, added_arr, state)
 
@@ -132,15 +132,28 @@ defmodule Meerkat.Moves do
     end
   end
 
+  # A block clashes with one already taken, or is too short on both sides.
+  defp skip?(r, a, r_taken, a_taken) do
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    clash = taken?(r_taken, r) or taken?(a_taken, a)
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    small = Range.size(r) < @min_block_size and Range.size(a) < @min_block_size
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    clash or small
+  end
+
   # The run's length without the blank lines at its end that a block
   # found earlier has taken in: they are that block's, not a clash with it.
   defp drop_taken_blanks(removed_arr, r_start, a_start, len, r_taken, a_taken) do
     last = len - 1
+    blank = elem(removed_arr, r_start + last).content == ""
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    taken = MapSet.member?(r_taken, r_start + last) or MapSet.member?(a_taken, a_start + last)
 
-    if elem(removed_arr, r_start + last).content == "" and
-         (MapSet.member?(r_taken, r_start + last) or MapSet.member?(a_taken, a_start + last)),
-       do: drop_taken_blanks(removed_arr, r_start, a_start, last, r_taken, a_taken),
-       else: len
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
+    if blank and taken,
+      do: drop_taken_blanks(removed_arr, r_start, a_start, last, r_taken, a_taken),
+      else: len
   end
 
   # The block's index range on one side: the run, widened over the
@@ -164,6 +177,7 @@ defmodule Meerkat.Moves do
        else: i
   end
 
+  # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
   defp joins?(arr, j, taken), do: elem(arr, j).content == "" and not MapSet.member?(taken, j)
 
   defp taken?(taken, range), do: Enum.any?(range, &MapSet.member?(taken, &1))
@@ -211,6 +225,7 @@ defmodule Meerkat.Moves do
   # The run extends while the next lines on both sides match AND
   # continue contiguously in the same file.
   defp run_length(removed_arr, r, added_arr, a, len \\ 1) do
+    # muex:ignore equivalent: the two bounds checks are pure and neither raises, so their order changes nothing
     if r + 1 < tuple_size(removed_arr) and a + 1 < tuple_size(added_arr) and
          extends?(removed_arr, r, added_arr, a) do
       run_length(removed_arr, r + 1, added_arr, a + 1, len + 1)
@@ -223,11 +238,13 @@ defmodule Meerkat.Moves do
     next_r = elem(removed_arr, r + 1)
     next_a = elem(added_arr, a + 1)
 
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
     next_r.content == next_a.content and continues?(elem(removed_arr, r), next_r) and
       continues?(elem(added_arr, a), next_a)
   end
 
   defp continues?(prev, line),
+    # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
     do: line.file_idx == prev.file_idx and line.number == prev.number + 1
 
   # Indexes substantial lines only, as only they start a block.
@@ -331,6 +348,7 @@ defmodule Meerkat.Moves do
   # Letters and digits in any script. Walks the bytes, as a regex scan
   # of every changed line of a large diff takes most of a second.
   defp alnum_count(<<c, rest::binary>>, n)
+       # muex:ignore equivalent: the checks are pure and none raises, so their order changes nothing
        when c in ?a..?z//1 or c in ?A..?Z//1 or c in ?0..?9//1,
        do: alnum_count(rest, n + 1)
 

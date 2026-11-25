@@ -1,16 +1,23 @@
 defmodule MeerkatWeb.AttachControllerTest do
   use MeerkatWeb.ConnCase, async: false
 
-  # Surviving muex mutant in attach_controller.ex, and why it is not a test gap:
-  # - await_outcome/1 (delete the `{:error, _} -> conn` clause from
-  #   `case chunk(conn, ["d ", text, "\n"])`) handles a displaced caller whose
-  #   connection closed before the `d` frame was written. Plug's test adapter
-  #   never fails a chunk, so ExUnit cannot reach it.
-
   import Meerkat.TestHelpers
 
   alias Meerkat.{Decision, PendingAnswers, PendingQuestions, ReviewState}
   alias MeerkatWeb.AttachController
+  alias Plug.Adapters.Test.Conn, as: TestAdapter
+
+  defmodule ClosedAdapter do
+    @moduledoc false
+    # Plug's test adapter, except that every chunk fails as on a closed connection.
+
+    defdelegate send_resp(state, status, headers, body), to: TestAdapter
+    defdelegate send_chunked(state, status, headers), to: TestAdapter
+    defdelegate read_req_body(state, opts), to: TestAdapter
+    defdelegate get_peer_data(state), to: TestAdapter
+    defdelegate get_http_protocol(state), to: TestAdapter
+    def chunk(_state, _body), do: {:error, :closed}
+  end
 
   @token "test-token"
   @own_run "own-run"
@@ -250,9 +257,21 @@ defmodule MeerkatWeb.AttachControllerTest do
   end
 
   @tag :no_review
+  test "an authorized delivery report with no run or a non-string run is a bad request", %{
+    conn: conn
+  } do
+    :ok = Decision.publish({0, "approved\n"})
+
+    for path <- ["/api/attach/delivered", "/api/attach/delivered?run[]=later-run"] do
+      refused = conn |> put_req_header("x-meerkat-token", @token) |> post(path)
+      assert {refused.status, refused.resp_body} == {400, "bad request\n"}
+    end
+  end
+
+  @tag :no_review
   test "a request without the backend's token is refused", %{conn: conn} do
     conn = get(conn, "/api/attach?run=#{@own_run}")
-    assert conn.status == 403
+    assert {conn.status, conn.resp_body} == {403, "forbidden\n"}
   end
 
   @tag :no_review
@@ -279,6 +298,15 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert conn.resp_body =~ ~r/\Ao BANNER line\n(k\n)*o feedback\nx 1\n\z/
   end
 
+  test "a backend with no banner sends the waiting caller none", %{conn: conn} do
+    Application.delete_env(:meerkat, :review_banner)
+    task = Task.async(fn -> attach(conn, @own_run) end)
+    await_attached()
+    :ok = Decision.publish({0, "approved\n"})
+
+    assert Task.await(task).resp_body =~ ~r/\A(k\n)*o approved\nx 0\n\z/
+  end
+
   test "a later invocation of the same review replays the held outcome byte for byte, without the banner",
        %{conn: conn} do
     :ok = Decision.publish({0, "The user approved your commit. Proceeding.\n"})
@@ -287,6 +315,17 @@ defmodule MeerkatWeb.AttachControllerTest do
     assert conn.status == 200
     assert conn.resp_body == "o The user approved your commit. Proceeding.\nx 0\n"
     refute_receive {:halted, _}, 300
+  end
+
+  test "the invocation that started the backend collects the outcome without comparing the review",
+       %{conn: conn, current: current} do
+    :ok = Decision.publish({0, "approved\n"})
+    change_staged_content(current)
+
+    conn = attach(conn, @own_run)
+
+    assert {conn.status, conn.resp_body} == {200, "o approved\nx 0\n"}
+    refute_received {:halted, _}
   end
 
   test "a later invocation attaching after the click, before the outcome is published, gets no banner and opens no tab",
@@ -327,9 +366,92 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     conn = attach(conn, "later-run")
 
-    assert conn.status == 409
-    refute conn.resp_body =~ "approved"
+    assert {conn.status, conn.resp_body} == {409, "stale\n"}
     assert_receive {:halted, 1}
+  end
+
+  test "a replaced review waits 200 ms before halting its backend, so the 409 can reach the caller",
+       %{conn: conn, current: current} do
+    test_pid = self()
+
+    Application.put_env(:meerkat, :restart_fun, fn code ->
+      send(test_pid, {:halted, code, System.monotonic_time(:millisecond)})
+    end)
+
+    change_staged_content(current)
+    started = System.monotonic_time(:millisecond)
+
+    assert attach(conn, "later-run").status == 409
+
+    assert_receive {:halted, 1, halted_at}
+    assert halted_at - started >= 200
+  end
+
+  # A caller attached for `run` that, once displaced, runs `on_displaced`
+  # and then exits.
+  defp fake_caller(run, on_displaced) do
+    test_pid = self()
+
+    pid =
+      spawn(fn ->
+        {:ok, _} = Decision.attach(run)
+        send(test_pid, {:attached, self()})
+
+        receive do
+          {:meerkat_displaced, _} -> on_displaced.()
+        end
+      end)
+
+    assert_receive {:attached, ^pid}
+    pid
+  end
+
+  test "a replaced review answers 409 only once its displaced callers have exited",
+       %{conn: conn, current: current} do
+    slow = fake_caller("waiting-run", fn -> Process.sleep(200) end)
+    change_staged_content(current)
+    started = System.monotonic_time(:millisecond)
+
+    assert attach(conn, "later-run").status == 409
+
+    refute Process.alive?(slow)
+    assert System.monotonic_time(:millisecond) - started < 1_000
+  end
+
+  test "a displaced caller that never exits holds back the 409 only for the exit wait",
+       %{conn: conn, current: current} do
+    Application.put_env(:meerkat, :displaced_exit_wait_ms, 300)
+    on_exit(fn -> Application.delete_env(:meerkat, :displaced_exit_wait_ms) end)
+    stuck = for _ <- 1..2, do: fake_caller("waiting-run", fn -> Process.sleep(:infinity) end)
+    change_staged_content(current)
+
+    task =
+      Task.async(fn ->
+        conn = attach(conn, "later-run")
+        {:monitors, monitors} = Process.info(self(), :monitors)
+        {conn, monitors}
+      end)
+
+    # Hold the request past its wait for the first caller, so the second
+    # caller's wait starts after the deadline.
+    assert eventually(fn ->
+             {:monitors, monitors} = Process.info(task.pid, :monitors)
+
+             Enum.all?(stuck, &({:process, &1} in monitors)) and
+               Process.info(task.pid, :status) == {:status, :waiting}
+           end)
+
+    :erlang.suspend_process(task.pid)
+    Process.sleep(310)
+    resumed = System.monotonic_time(:millisecond)
+    :erlang.resume_process(task.pid)
+
+    {conn, monitors} = Task.await(task)
+    # Its wait was already over, far short of the default second.
+    assert System.monotonic_time(:millisecond) - resumed < 500
+    assert conn.status == 409
+    assert Enum.all?(stuck, &({:process, &1} not in monitors))
+    Enum.each(stuck, &Process.exit(&1, :kill))
   end
 
   test "a later invocation whose commit message changed replaces the review",
@@ -466,7 +588,10 @@ defmodule MeerkatWeb.AttachControllerTest do
     conn = attach(conn, "later-run")
 
     assert conn.status == 502
-    assert conn.resp_body =~ ~r/\Ao meerkat: error resolving review target: .+\n(o .*\n)*\z/
+
+    assert conn.resp_body ==
+             "o meerkat: error resolving review target: unknown revision no-such-ref\n"
+
     refute_receive {:halted, _}, 300
     assert map_size(:sys.get_state(Decision).callers) == 1, "the attached caller stays attached"
 
@@ -477,7 +602,8 @@ defmodule MeerkatWeb.AttachControllerTest do
   @tag :no_review
   test "a run id that is not a launcher run id is refused", %{conn: conn} do
     for run <- ["..", "a%2Fb", "."] do
-      assert attach(conn, run).status == 400
+      refused = attach(conn, run)
+      assert {refused.status, refused.resp_body} == {400, "bad request\n"}
       assert delivered(conn, run).status == 400
       assert leave(conn, run).status == 400
     end
@@ -522,6 +648,139 @@ defmodule MeerkatWeb.AttachControllerTest do
     end
   end
 
+  test "a request with no run id, or a run that is not a string, is refused", %{conn: conn} do
+    conn = put_req_header(conn, "x-meerkat-token", @token)
+
+    for query <- ["", "?run[]=a", "?run[x]=a"] do
+      refuted = get(conn, "/api/attach" <> query)
+      assert {refuted.status, refuted.resp_body} == {400, "bad request\n"}
+    end
+
+    assert map_size(:sys.get_state(Decision).callers) == 0
+  end
+
+  test "a caller waiting on the review is sent a heartbeat while nobody decides",
+       %{conn: conn} do
+    shorten_heartbeat()
+    # Reports each chunk the traced request writes.
+    :erlang.trace_pattern({Plug.Conn, :chunk, 2}, true, [])
+    on_exit(fn -> :erlang.trace_pattern({Plug.Conn, :chunk, 2}, false, []) end)
+    started = System.monotonic_time(:millisecond)
+    task = Task.async(fn -> attach(conn, @own_run) end)
+    :erlang.trace(task.pid, true, [:call])
+    await_attached()
+
+    for _ <- 1..5 do
+      assert_receive {:trace, _, :call, {Plug.Conn, :chunk, [_, "k\n"]}}
+    end
+
+    # Five beats at the default 500 ms interval take 2.5 s.
+    assert System.monotonic_time(:millisecond) - started < 2_000
+    :ok = Decision.publish({0, "approved\n"})
+
+    assert Task.await(task).resp_body =~ ~r/\Ao BANNER line\n(k\n)+o approved\nx 0\n\z/
+  end
+
+  defp shorten_heartbeat do
+    Application.put_env(:meerkat, :attach_heartbeat_ms, 10)
+    on_exit(fn -> Application.delete_env(:meerkat, :attach_heartbeat_ms) end)
+  end
+
+  # Monitors the one attached caller's connection process.
+  defp monitor_caller do
+    [{pid, _run}] = Map.values(:sys.get_state(Decision).callers)
+    Process.monitor(pid)
+  end
+
+  describe "a caller whose connection has closed" do
+    # Plug's test adapter never fails a chunk, so these go over a real socket.
+    setup do
+      http = Meerkat.CLI.endpoint_config_for_test(0)[:http]
+      server = start_supervised!({Bandit, [plug: MeerkatWeb.Endpoint] ++ http})
+      {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+      %{port: port}
+    end
+
+    # Attaches as `run` over TCP, reads the banner, then hangs up. Zero
+    # linger resets the connection, so the server's next write fails.
+    defp attach_and_hang_up(port, run) do
+      {:ok, socket} =
+        :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false, linger: {true, 0}])
+
+      :ok =
+        :gen_tcp.send(
+          socket,
+          "GET /api/attach?run=#{run}&quiet=0 HTTP/1.1\r\nhost: localhost\r\n" <>
+            "x-meerkat-token: #{@token}\r\n\r\n"
+        )
+
+      recv_until(socket, "BANNER line", "")
+      :ok = :gen_tcp.close(socket)
+    end
+
+    defp recv_until(socket, wanted, seen) do
+      unless seen =~ wanted do
+        {:ok, more} = :gen_tcp.recv(socket, 0, 5_000)
+        recv_until(socket, wanted, seen <> more)
+      end
+    end
+
+    test "stops waiting once a heartbeat cannot be sent, without crashing", %{port: port} do
+      shorten_heartbeat()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          attach_and_hang_up(port, @own_run)
+          await_attached()
+          ref = monitor_caller()
+          # A write to the closed socket fails within a few heartbeats,
+          # and the handler returns.
+          await_callers(0)
+          assert_receive {:DOWN, ^ref, :process, _, _}
+        end)
+
+      refute log =~ "error"
+    end
+
+    test "is displaced quietly, without crashing", %{conn: conn, port: port} do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          attach_and_hang_up(port, @own_run)
+          await_attached()
+          ref = monitor_caller()
+          task = Task.async(fn -> attach(conn, "later-run") end)
+          await_attached()
+          :ok = Decision.publish({0, "approved\n"})
+          Task.await(task)
+          assert_receive {:DOWN, ^ref, :process, _, _}
+        end)
+
+      refute log =~ "error"
+    end
+  end
+
+  describe "a caller whose connection fails its first write" do
+    # Attaches as the backend's own run through `ClosedAdapter`, which fails
+    # every chunk the way a closed connection does.
+    defp attach_closed(conn) do
+      conn = TestAdapter.conn(conn, :get, "/api/attach?run=#{@own_run}&quiet=0", nil)
+      {TestAdapter, state} = conn.adapter
+
+      %{conn | adapter: {ClosedAdapter, state}}
+      |> put_req_header("x-meerkat-token", @token)
+      |> MeerkatWeb.Endpoint.call([])
+    end
+
+    test "gives up on the banner without crashing", %{conn: conn} do
+      assert attach_closed(conn).state == :chunked
+    end
+
+    test "gives up on a held outcome without crashing", %{conn: conn} do
+      :ok = Decision.publish({0, "approved\n"})
+      assert attach_closed(conn).state == :chunked
+    end
+  end
+
   test "a delivery report hands the CLI the run that took delivery", %{conn: conn} do
     parent = self()
     spawn_link(fn -> send(parent, {:delivered_to, Decision.await_delivery()}) end)
@@ -529,7 +788,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     conn = delivered(conn, "later-run")
 
-    assert conn.status == 200
+    assert {conn.status, conn.resp_body} == {200, "ok\n"}
     assert_receive {:delivered_to, "later-run"}
   end
 
@@ -550,7 +809,7 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     conn = delivered(conn, "later-run")
 
-    assert conn.status == 409
+    assert {conn.status, conn.resp_body} == {409, "no outcome\n"}
     refute_receive {:delivered_to, _}, 100
   end
 
@@ -574,8 +833,31 @@ defmodule MeerkatWeb.AttachControllerTest do
 
     test "a later invocation with no tab connected opens the review", %{conn: conn} do
       finish = attach_waiting(conn, "later-run")
-      assert_receive {:opened, "http://127.0.0.1:" <> _}
+      assert_receive {:opened, "http://127.0.0.1:80/"}
       finish.()
+    end
+
+    test "a backend not told --no-open opens the review", %{conn: conn} do
+      Application.delete_env(:meerkat, :no_open)
+      finish = attach_waiting(conn, "later-run")
+      assert_receive {:opened, _}
+      finish.()
+    end
+
+    test "with no opener configured, the OS open command opens the review", %{conn: conn} do
+      bin = tmp_path("meerkat-attach-open")
+      File.mkdir_p!(bin)
+      on_exit(fn -> File.rm_rf!(bin) end)
+      log = Path.join(bin, "args")
+      {cmd, _args} = Meerkat.Browser.open_argv_for(:os.type(), "")
+      File.write!(Path.join(bin, cmd), "#!/bin/sh\nprintf '%s\\n' \"$@\" > '#{log}'\n")
+      File.chmod!(Path.join(bin, cmd), 0o755)
+      put_env("PATH", bin <> ":" <> System.fetch_env!("PATH"))
+      Application.delete_env(:meerkat, :browser_open_fun)
+
+      attach_waiting(conn, "later-run").()
+
+      assert File.read!(log) == "http://127.0.0.1:80/\n"
     end
 
     test "a later invocation collecting a held outcome does not open the review",
@@ -621,7 +903,7 @@ defmodule MeerkatWeb.AttachControllerTest do
          %{conn: conn} do
       finish = attach_waiting(conn, "later-run", "1")
       refute_receive {:opened, _}, 100
-      finish.()
+      assert finish.().resp_body =~ ~r/\A(k\n)*o approved\nx 0\n\z/
     end
   end
 end

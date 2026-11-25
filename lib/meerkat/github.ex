@@ -130,19 +130,21 @@ defmodule Meerkat.GitHub do
         end
     end
   rescue
-    e in [ErlangError] ->
-      IO.puts(
-        :stderr,
-        "meerkat: warning — gh pr view: gh not on PATH (#{Exception.message(e)})"
-      )
-
-      nil
-
-    e in [KeyError, ArgumentError, FunctionClauseError] ->
+    # Before ErlangError, which also catches these: they start as Erlang
+    # errors such as {:badkey, _} and :badarg.
+    e in [KeyError, ArgumentError, FunctionClauseError, BadMapError] ->
       IO.puts(
         :stderr,
         "meerkat: warning — gh pr view returned an unexpected JSON shape: " <>
           "#{Exception.message(e)}"
+      )
+
+      nil
+
+    e in [ErlangError] ->
+      IO.puts(
+        :stderr,
+        "meerkat: warning — gh pr view: gh not on PATH (#{Exception.message(e)})"
       )
 
       nil
@@ -191,7 +193,6 @@ defmodule Meerkat.GitHub do
   def post_review(repo_path, pr_number, payload) do
     body_json = Jason.encode!(payload)
 
-    # muex:ignore equivalent: any name no other run uses serves, and gh reads --input by path
     tmp = Meerkat.TmpPath.unique("meerkat-gh") <> ".json"
 
     try do

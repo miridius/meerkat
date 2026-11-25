@@ -1,6 +1,8 @@
 defmodule Meerkat.PendingAnswersTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO, only: [with_io: 2]
+
   alias Meerkat.PendingAnswers
 
   setup do
@@ -38,7 +40,7 @@ defmodule Meerkat.PendingAnswersTest do
 
       assert %{version: 1, created_at: created_at, answers: answers} = PendingAnswers.load(repo)
       assert [%{location: "src/foo.rs:42", question: "why?", answer: "because"}] == answers
-      assert {:ok, %DateTime{}, 0} = DateTime.from_iso8601(created_at)
+      assert created_at =~ ~r/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\z/
 
       assert %{"version" => 1, "createdAt" => ^created_at} =
                repo |> PendingAnswers.path_for() |> File.read!() |> Jason.decode!()
@@ -80,6 +82,36 @@ defmodule Meerkat.PendingAnswersTest do
                PendingAnswers.load(repo)
     end
 
+    for {label, input} <- [
+          {"invalid JSON", "not json"},
+          {"a JSON array", "[]"},
+          {"an object without answers", ~s({"other": 1})},
+          {"answers that is not a list", ~s({"answers": "x"})},
+          {"an empty answers list", ~s({"answers": []})},
+          {"an answer missing a field", ~s({"answers": [{"location": "a", "question": "q"}]})},
+          {"an answer with a non-string answer",
+           ~s({"answers": [{"location": "a", "question": "q", "answer": 1}]})},
+          {"an answer with a non-string location",
+           ~s({"answers": [{"location": 1, "question": "q", "answer": "a"}]})},
+          {"an answer with a non-string question",
+           ~s({"answers": [{"location": "a", "question": 1, "answer": "a"}]})},
+          {"an answer that is not an object", ~s({"answers": ["a"]})}
+        ] do
+      test "rejects #{label} and writes nothing", %{git_repo: repo} do
+        assert {:error, :invalid_input, message} = PendingAnswers.save(repo, unquote(input))
+        assert is_binary(message) and message != ""
+        refute File.exists?(PendingAnswers.path_for(repo))
+      end
+    end
+
+    test "names the first invalid answer by its index", %{git_repo: repo} do
+      input = ~s({"answers": [{"location": "a", "question": "q", "answer": "a"}, {}]})
+
+      assert PendingAnswers.save(repo, input) ==
+               {:error, :invalid_input,
+                ~s(answers[1] must have string "location", "question" and "answer")}
+    end
+
     test "a rejected input leaves the earlier file untouched", %{git_repo: repo} do
       assert {:ok, 1} = PendingAnswers.save(repo, @valid_input)
       before = File.read!(PendingAnswers.path_for(repo))
@@ -91,13 +123,14 @@ defmodule Meerkat.PendingAnswersTest do
     test "reports a write failure instead of raising", %{git_repo: repo} do
       File.write!(Path.dirname(PendingAnswers.path_for(repo)), "a file, not a directory")
 
+      path = PendingAnswers.path_for(repo)
       assert {:error, :write_failed, message} = PendingAnswers.save(repo, @valid_input)
-      assert message =~ "couldn't write"
+      assert message =~ ~r/\Acouldn't write #{Regex.escape(path)}: :\w+\z/
     end
 
     test "refuses a directory that is not a git repository", %{repo: not_a_repo} do
       assert {:error, :not_a_repo, message} = PendingAnswers.save(not_a_repo, @valid_input)
-      assert message =~ "not a git repository"
+      assert message =~ ~r/\Anot a git repository: git rev-parse --show-toplevel exited /
       refute File.exists?(PendingAnswers.path_for(not_a_repo))
     end
   end
@@ -120,25 +153,34 @@ defmodule Meerkat.PendingAnswersTest do
                 ]}
     end
 
-    for {label, input} <- [
-          {"invalid JSON", "not json"},
-          {"a JSON array", "[]"},
-          {"an object without answers", ~s({"other": 1})},
-          {"answers that is not a list", ~s({"answers": "x"})},
-          {"an empty answers list", ~s({"answers": []})},
-          {"an answer missing a field", ~s({"answers": [{"location": "a", "question": "q"}]})},
+    @answer_fields ~s(answers[0] must have string "location", "question" and "answer")
+
+    for {label, input, message} <- [
+          {"a JSON array", "[]", ~s(expected a JSON object with an "answers" list)},
+          {"an object without answers", ~s({"other": 1}), ~s(missing "answers" list)},
+          {"answers that is not a list", ~s({"answers": "x"}), ~s("answers" must be a list)},
+          {"an empty answers list", ~s({"answers": []}), ~s("answers" must not be empty)},
+          {"an answer missing a field", ~s({"answers": [{"location": "a", "question": "q"}]}),
+           @answer_fields},
           {"an answer with a non-string answer",
-           ~s({"answers": [{"location": "a", "question": "q", "answer": 1}]})},
+           ~s({"answers": [{"location": "a", "question": "q", "answer": 1}]}), @answer_fields},
           {"an answer with a non-string location",
-           ~s({"answers": [{"location": 1, "question": "q", "answer": "a"}]})},
+           ~s({"answers": [{"location": 1, "question": "q", "answer": "a"}]}), @answer_fields},
           {"an answer with a non-string question",
-           ~s({"answers": [{"location": "a", "question": 1, "answer": "a"}]})},
-          {"an answer that is not an object", ~s({"answers": ["a"]})}
+           ~s({"answers": [{"location": "a", "question": 1, "answer": "a"}]}), @answer_fields},
+          {"an answer that is not an object", ~s({"answers": ["a"]}), @answer_fields}
         ] do
-      test "rejects #{label}" do
-        assert {:error, :invalid_input, message} = PendingAnswers.parse(unquote(input))
-        assert is_binary(message) and message != ""
+      test "rejects #{label}, saying why" do
+        assert PendingAnswers.parse(unquote(input)) ==
+                 {:error, :invalid_input, unquote(message)}
       end
+    end
+
+    test "rejects invalid JSON, quoting the parser" do
+      {:error, err} = Jason.decode("not json")
+
+      assert PendingAnswers.parse("not json") ==
+               {:error, :invalid_input, "invalid JSON: " <> Exception.message(err)}
     end
   end
 
@@ -209,6 +251,16 @@ defmodule Meerkat.PendingAnswersTest do
       assert PendingAnswers.load(repo) == nil
       assert File.exists?(path)
     end
+
+    test "an unreadable file returns nil and warns", %{repo: repo} do
+      path = PendingAnswers.path_for(repo)
+      File.mkdir_p!(path)
+
+      {result, stderr} = with_io(:stderr, fn -> PendingAnswers.load(repo) end)
+
+      assert result == nil
+      assert stderr =~ "meerkat: warning — couldn't read pending-answers at #{path}: :eisdir"
+    end
   end
 
   describe "load/1 — quarantine paths" do
@@ -221,7 +273,13 @@ defmodule Meerkat.PendingAnswersTest do
         Jason.encode!(%{"version" => 999, "answers" => [], "createdAt" => "x"})
       )
 
-      assert PendingAnswers.load(repo) == nil
+      {result, stderr} = with_io(:stderr, fn -> PendingAnswers.load(repo) end)
+
+      assert result == nil
+
+      assert stderr =~
+               "pending-answers at #{path} unusable (schema mismatch (expected version 1))"
+
       refute File.exists?(path)
       # The bad file is renamed to .corrupt.<ts>, so something in the
       # parent dir starts with the original filename + ".corrupt.".
@@ -235,9 +293,20 @@ defmodule Meerkat.PendingAnswersTest do
       path = PendingAnswers.path_for(repo)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, "not json at all")
+      {:error, err} = Jason.decode("not json at all")
 
-      assert PendingAnswers.load(repo) == nil
+      {result, stderr} = with_io(:stderr, fn -> PendingAnswers.load(repo) end)
+
+      assert result == nil
+      assert stderr =~ "unusable (JSON parse failed: #{Exception.message(err)})"
       refute File.exists?(path)
+    end
+  end
+
+  describe "path_for/1" do
+    test "names pending-answers.json in the repo's meerkat dir", %{repo: repo} do
+      assert PendingAnswers.path_for(repo) ==
+               Path.join(Meerkat.Git.meerkat_dir(repo), "pending-answers.json")
     end
   end
 
@@ -253,6 +322,18 @@ defmodule Meerkat.PendingAnswersTest do
 
     test "no-op when file is missing", %{repo: repo} do
       assert :ok = PendingAnswers.clear(repo)
+    end
+
+    test "a file that cannot be deleted still returns :ok and warns", %{repo: repo} do
+      path = PendingAnswers.path_for(repo)
+      File.mkdir_p!(path)
+
+      {result, stderr} = with_io(:stderr, fn -> PendingAnswers.clear(repo) end)
+
+      assert result == :ok
+
+      assert stderr =~
+               ~r/\Ameerkat: warning — couldn't delete pending-answers at #{Regex.escape(path)}: :\w+\. Banner may reappear on the next review\.\n\z/
     end
   end
 end

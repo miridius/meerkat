@@ -28,26 +28,21 @@ defmodule Meerkat.SignalHandler do
     if __MODULE__ in :gen_event.which_handlers(:erl_signal_server) do
       :ok
     else
-      :ok =
-        :gen_event.swap_handler(
-          :erl_signal_server,
-          {:erl_signal_handler, []},
-          {__MODULE__, []}
-        )
+      # muex:ignore equivalent: erl_signal_handler's terminate/2, the [] arg's one reader, ignores it
+      otp_handler = {:erl_signal_handler, []}
+      :ok = :gen_event.swap_handler(:erl_signal_server, otp_handler, {__MODULE__, []})
     end
   end
 
   @impl true
+  # muex:ignore equivalent: erl_signal_handler's init/1 ignores its argument
   def init({[], _erl_signal_handler_result}), do: :erl_signal_handler.init([])
 
   @impl true
+  # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143 and a REJECT message" ExUnit test and e2e detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…" kill it
   def handle_event(:sigterm, state) do
-    IO.puts(
-      :stderr,
-      "meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted)."
-    )
-
-    Meerkat.CLI.flush_logs()
+    # muex:ignore unreachable I/O seam: the clause halts the VM, so ExUnit runs it only in a child VM that cover does not see; the "a SIGTERM halts the VM with 143 and a REJECT message" ExUnit test and e2e detach.spec.ts "a rerun after the staged diff changed replaces the review…, and a SIGTERM to the new BEAM…" kill it
+    announce_sigterm()
     {:ok, state}
   after
     # Halt even if printing raised: gen_event would drop a crashed handler,
@@ -57,6 +52,17 @@ defmodule Meerkat.SignalHandler do
   end
 
   def handle_event(signal, state), do: :erl_signal_handler.handle_event(signal, state)
+
+  @doc false
+  # Test seam: what a SIGTERM does before the VM halts.
+  def announce_sigterm do
+    IO.puts(
+      :stderr,
+      "meerkat: received SIGTERM — stopping the review, defaulting to REJECT (commit aborted)."
+    )
+
+    Meerkat.CLI.flush_logs()
+  end
 
   @impl true
   def handle_call(request, state), do: :erl_signal_handler.handle_call(request, state)

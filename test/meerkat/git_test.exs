@@ -72,7 +72,7 @@ defmodule Meerkat.GitTest do
     test "raises on unrecognised status code" do
       out = "X\0weird\0"
 
-      assert_raise RuntimeError, ~r/unrecognised --name-status code/, fn ->
+      assert_raise RuntimeError, ~s(Meerkat.Git: unrecognised --name-status code "X"), fn ->
         Git.parse_name_status(out)
       end
     end
@@ -222,6 +222,18 @@ defmodule Meerkat.GitTest do
       assert Map.keys(result) == ["tab\there\r\nlf.txt"]
     end
 
+    test "a quoted path's bell, backspace, form-feed and vertical-tab escapes stand for " <>
+           "their bytes" do
+      diff =
+        ~s(diff --git "a/x\\a\\b\\f\\v.txt" "b/x\\a\\b\\f\\v.txt"\n) <>
+          ~s(--- "a/x\\a\\b\\f\\v.txt"\n) <>
+          ~s(+++ "b/x\\a\\b\\f\\v.txt"\n) <>
+          "@@ -1 +1 @@\n-a\n+b\n"
+
+      {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
+      assert Map.keys(result) == ["x\a\b\f\v.txt"]
+    end
+
     test "a backslash short of three octal digits stands for itself" do
       diff =
         ~s(diff --git "a/a\\00n.txt" "b/a\\00n.txt"\n) <>
@@ -231,6 +243,53 @@ defmodule Meerkat.GitTest do
 
       {:ok, result} = Git.parse_multi_file_diff_for_test(diff)
       assert Map.keys(result) == ["a00n.txt"]
+    end
+
+    test "an octal escape takes the digits 0 to 7 in each place, and no others" do
+      for {escaped, name} <- [
+            # `\700` overflows a byte, which keeps its low 8 bits.
+            {~S(\000\700\070\007), <<0, 0o700 - 256, 0o70, 0o7>>},
+            {~S(\/00\0/0\00/\800\080\008), "/00" <> "0/0" <> "00/" <> "800" <> "080" <> "008"}
+          ] do
+        diff = ~s(--- "a/#{escaped}"\n+++ "b/#{escaped}"\n@@ -1 +1 @@\n-a\n+b\n)
+
+        assert {:ok, %{^name => _}} =
+                 Git.parse_multi_file_diff_for_test("diff --git x x\n" <> diff)
+      end
+    end
+
+    test "a quoted path missing its closing quote runs to the end of the line" do
+      diff = ~s(diff --git x x\n--- "a/open.txt\n+++ "b/open.txt\n@@ -1 +1 @@\n-a\n+b\n)
+
+      assert {:ok, %{"open.txt" => _}} = Git.parse_multi_file_diff_for_test(diff)
+    end
+
+    test "the suffix git appends after a tab is not part of the path" do
+      diff = "diff --git x x\n--- a/t.txt\t(mode)\n+++ b/t.txt\t(mode)\n@@ -1 +1 @@\n-a\n+b\n"
+
+      assert {:ok, %{"t.txt" => _}} = Git.parse_multi_file_diff_for_test(diff)
+    end
+
+    test "a post-image marker that names no path falls back to the pre-image path" do
+      diff = "diff --git x x\n--- a/kept.txt\n+++ b/\n@@ -1 +1 @@\n-a\n+b\n"
+
+      assert {:ok, %{"kept.txt" => _}} = Git.parse_multi_file_diff_for_test(diff)
+    end
+
+    test "a file named by two blocks keeps the later block's hunks" do
+      block = &"diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+#{&1}\n"
+
+      assert {:ok, %{"f" => {[hunk], []}}} =
+               Git.parse_multi_file_diff_for_test(block.("first") <> block.("second"))
+
+      assert hunk =~ "+second"
+    end
+
+    test "output that is not a diff is an error" do
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert Git.parse_multi_file_diff_for_test("x") ==
+                 {:error, "couldn't parse staged-diff block (first line: x)"}
+      end)
     end
 
     test "one octal digit after the backslash is not an octal escape" do
@@ -317,7 +376,34 @@ defmodule Meerkat.GitTest do
       assert_received {:result, result}
       assert {:error, reason} = result
       assert reason =~ "couldn't parse staged-diff block"
-      assert capture =~ reason
+      assert capture == "meerkat: warning — #{reason}\n"
+    end
+
+    test "with valid blocks beside them, every malformed block is reported in order" do
+      diff =
+        "diff --git one\n@@ -1 +1 @@\n-x\n+y\n" <>
+          "diff --git a/ok b/ok\n--- a/ok\n+++ b/ok\n@@ -1 +1 @@\n-x\n+y\n" <>
+          "diff --git two\n@@ -1 +1 @@\n-x\n+y\n"
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:partial, %{"ok" => _},
+                "couldn't parse staged-diff block (first line: diff --git one); " <>
+                  "couldn't parse staged-diff block (first line: diff --git two)"} =
+                 Git.parse_multi_file_diff_for_test(diff)
+      end)
+    end
+
+    test "each malformed block is reported in order by its first line, cut to 200 characters" do
+      long = "diff --git " <> String.duplicate("x", 300)
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert Git.parse_multi_file_diff_for_test(
+                 long <> "\n@@ -1 +1 @@\n-x\n+y\ndiff --git second\n@@ -1 +1 @@\n-x\n+y\n"
+               ) ==
+                 {:error,
+                  "couldn't parse staged-diff block (first line: #{String.slice(long, 0, 200)}); " <>
+                    "couldn't parse staged-diff block (first line: diff --git second)"}
+      end)
     end
   end
 
@@ -495,6 +581,25 @@ defmodule Meerkat.GitTest do
   describe "current_branch/1" do
     test "names the branch HEAD is on", %{repo: repo} do
       assert Git.current_branch(repo) == "feature/x"
+    end
+  end
+
+  describe "commit_message/2" do
+    setup do
+      dir = make_git_repo("meerkat-git-commit-message")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      %{dir: dir}
+    end
+
+    test "is the commit's full message, trimmed", %{dir: dir} do
+      commit(dir, "Subject\n\nBody line.")
+
+      assert Git.commit_message(dir, "HEAD") == {:ok, "Subject\n\nBody line."}
+    end
+
+    test "for a ref that names no commit, returns git's error", %{dir: dir} do
+      assert {:error, "git log -1 --format=%B no-such-ref exited 128: " <> _} =
+               Git.commit_message(dir, "no-such-ref")
     end
   end
 
@@ -827,6 +932,15 @@ defmodule Meerkat.GitTest do
                }
     end
 
+    test "when git answers a path twice, its last answer counts", %{no_repo: dir} do
+      stub_git(
+        "check-attr",
+        {"a.rs\0linguist-generated\0set\0a.rs\0linguist-generated\0unset\0", 0}
+      )
+
+      assert Git.linguist_generated_many(dir, ["a.rs"]) == %{"a.rs" => {:generated, false}}
+    end
+
     test "a warning git prints about .gitattributes leaves every path's answer intact",
          %{repo: repo} do
       assert Git.linguist_generated_many(repo, ["warn/a.rs", "warn/b.txt"]) == %{
@@ -862,6 +976,88 @@ defmodule Meerkat.GitTest do
 
       assert Git.linguist_generated_many(dir, []) == %{}
       assert Git.staged_blob_oids_many(dir, []) == {:ok, %{}}
+    end
+  end
+
+  describe "local_branches/1" do
+    test "is the set of branch names git lists", %{no_repo: dir} do
+      stub_git("for-each-ref", {"main\nfeature/x\n", 0})
+
+      assert Git.local_branches(dir) == {:ok, MapSet.new(["main", "feature/x"])}
+    end
+
+    test "returns git's error rather than no branches", %{no_repo: dir} do
+      stub_git("for-each-ref", {"fatal: broken\n", 128})
+
+      assert Git.local_branches(dir) ==
+               {:error,
+                "git for-each-ref --format=%(refname:short) refs/heads/ exited 128: fatal: broken"}
+    end
+  end
+
+  describe "blob OID lookups, with git's answers given" do
+    @oid String.duplicate("a", 40)
+    @other String.duplicate("b", 40)
+
+    test "a staged blob OID git cannot look up reads as missing", %{no_repo: dir} do
+      stub_git("ls-files", {"fatal: index file corrupt\n", 128})
+
+      assert Git.staged_blob_oid(dir, "a.rs") == ""
+    end
+
+    test "an index entry's fields are read whether git separates them by spaces or tabs",
+         %{no_repo: dir} do
+      stub_git("ls-files", {"100644\t#{@oid} 0\ta.rs\n", 0})
+
+      assert Git.fetch_staged_blob_oid(dir, "a.rs") == {:ok, @oid}
+    end
+
+    test "batched lookups skip lines they cannot read, and a path git lists twice keeps its " <>
+           "last OID",
+         %{no_repo: dir} do
+      stub_git(fn
+        [_git | args] = argv ->
+          cond do
+            "ls-files" in args ->
+              {"garbage\n100644 #{@oid} 1\ta.rs\n100644 #{@other} 3\ta.rs\n", 0}
+
+            "ls-tree" in args ->
+              {"garbage\n100644 blob #{@oid}\tb c.rs\n100644 blob #{@other}\tb c.rs\n", 0}
+
+            true ->
+              flunk("ran #{inspect(argv)}")
+          end
+      end)
+
+      assert Git.staged_blob_oids_many(dir, ["a.rs"]) == {:ok, %{"a.rs" => @other}}
+      assert Git.head_blob_oids_many(dir, ["b c.rs"]) == {:ok, %{"b c.rs" => @other}}
+    end
+
+    test "an entry listed both as deleted and as present takes its HEAD OID", %{no_repo: dir} do
+      stub_git(fn [_git | args] ->
+        if "ls-tree" in args,
+          do: {"100644 blob #{@oid}\ta.rs\n", 0},
+          else: {"100644 #{@other} 0\ta.rs\n", 0}
+      end)
+
+      entries = [
+        %{file_name: "a.rs", status: :deleted, old_file_name: nil},
+        %{file_name: "a.rs", status: :added, old_file_name: nil}
+      ]
+
+      assert Git.effective_oids_many(dir, entries) == {:ok, %{"a.rs" => @oid}}
+    end
+
+    test "paths that are not a list are refused before any git command runs", %{no_repo: dir} do
+      stub_git(fn argv -> flunk("ran #{inspect(argv)}") end)
+
+      for lookup <- [
+            &Git.staged_blob_oids_many/2,
+            &Git.head_blob_oids_many/2,
+            &Git.linguist_generated_many/2
+          ] do
+        assert_raise FunctionClauseError, fn -> lookup.(dir, "a.rs") end
+      end
     end
   end
 
@@ -986,6 +1182,18 @@ defmodule Meerkat.GitMeerkatDirTest do
   test "with no cached value, meerkat_dir/1 from a subdirectory is the repo's own", %{dir: dir} do
     Application.delete_env(:meerkat, :meerkat_dir)
     assert Git.meerkat_dir(Path.join([dir, "services", "api"])) == Git.meerkat_dir(dir)
+  end
+
+  test "git_dir/1 and git_common_dir/1 of a directory inside a repo, but not its root, are " <>
+         "errors",
+       %{dir: dir} do
+    sub = Path.join([dir, "services", "api"])
+
+    assert {:error, "git rev-parse --git-dir exited 128: fatal: not a git repository" <> _} =
+             Git.git_dir(sub)
+
+    assert {:error, "git rev-parse --git-common-dir exited 128: fatal: not a git repository" <> _} =
+             Git.git_common_dir(sub)
   end
 
   test "with no cached value and no repo, meerkat_dir/1 is meerkat-precommit under <dir>/.git",

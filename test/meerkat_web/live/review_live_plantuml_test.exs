@@ -82,6 +82,12 @@ defmodule MeerkatWeb.ReviewLivePlantUMLTest do
     assert render_review(conn, ["docs/FLOW.PUML"]) =~ @available
   end
 
+  test "a diagram among other files still gets its preview", %{conn: conn} = ctx do
+    stub_plantuml(ctx, 0)
+
+    assert render_review(conn, ["src/widget.rs", "docs/flow.puml"]) =~ @available
+  end
+
   test "a review with a .puml file shows the install hint when plantuml fails",
        %{conn: conn} = ctx do
     stub_plantuml(ctx, 1)

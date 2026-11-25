@@ -10,7 +10,7 @@ defmodule Meerkat.ReviewStateTest do
   # is process-global.
   use Meerkat.Case, async: false
 
-  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, read_tree: 3]
+  import Meerkat.TestHelpers, only: [git: 2, import_commits: 2, make_state_repo: 1, read_tree: 3]
 
   alias Meerkat.ReviewState
 
@@ -126,6 +126,41 @@ defmodule Meerkat.ReviewStateTest do
                ReviewState.blocks("```\na\n\nb\n```")
     end
 
+    test "prose after a fenced block keeps its order, and a later fence is still found" do
+      msg = "Intro\n```\ncode\n```\nafter one\nafter two\n~~~\nmore\n~~~"
+
+      assert [
+               %{start_line: 1, end_line: 1, text: "Intro"},
+               %{start_line: 2, end_line: 4},
+               %{start_line: 5, end_line: 6, text: "after one\nafter two"},
+               %{start_line: 7, end_line: 9, text: "~~~\nmore\n~~~"}
+             ] = ReviewState.blocks(msg)
+    end
+
+    test "asterisk bullets are list items too" do
+      assert [
+               %{start_line: 1, end_line: 1},
+               %{start_line: 3, end_line: 3, text: "* one"},
+               %{start_line: 4, end_line: 4, text: "* two"}
+             ] = ReviewState.blocks("Subject\n\n* one\n* two")
+    end
+
+    test "a fence left open runs to the end of the message" do
+      assert ReviewState.blocks("Subject\n\n```\ncode") == [
+               %{start_line: 1, end_line: 1, text: "Subject"},
+               %{start_line: 3, end_line: 4, text: "```\ncode"}
+             ]
+    end
+
+    test "a paragraph that only starts with a bullet stays one block" do
+      assert [%{start_line: 1, end_line: 2}] = ReviewState.blocks("- first\nnot a bullet")
+    end
+
+    test "indented bullets are list items too" do
+      assert [%{start_line: 1, end_line: 1}, %{start_line: 2, end_line: 2}] =
+               ReviewState.blocks("  - one\n  - two")
+    end
+
     test "a whitespace-only separator line produces no block of its own" do
       # The separator is `" "`, not the empty string, so it is dropped by
       # the all-blank check rather than the leading-empty-line check.
@@ -170,6 +205,18 @@ defmodule Meerkat.ReviewStateTest do
     {:ok, repo: Path.join(template, "repo"), pr_repo: Path.join(template, "pr")}
   end
 
+  test "a fresh state has no files, blocks, comments or open forms" do
+    assert %ReviewState{
+             files: [],
+             commit_message_blocks: [],
+             comments: [],
+             file_comments: [],
+             global_comments: [],
+             commit_message_comments: [],
+             open_forms: []
+           } = %ReviewState{}
+  end
+
   describe "from_target/2 — real git, `gh` stubbed on PATH" do
     setup do
       base = Meerkat.TestHelpers.tmp_path("meerkat-review-state")
@@ -211,6 +258,31 @@ defmodule Meerkat.ReviewStateTest do
                state.commit_message_blocks
     end
 
+    test "a staged review on a PR's branch carries the PR, even with no readable message",
+         %{base: base, repo: repo} do
+      pr = %{
+        number: 7,
+        baseRefName: "develop",
+        headRefName: "main",
+        title: "Add a",
+        body: "Adds a.",
+        url: "https://github.com/example/example/pull/7"
+      }
+
+      stub_gh(base, """
+      cat <<'EOF_JSON'
+      #{Jason.encode!(pr)}
+      EOF_JSON
+      """)
+
+      missing_msg = Path.join(base, "NO_SUCH_COMMIT_MSG")
+
+      assert {:ok, state} = ReviewState.from_target({:staged, missing_msg}, repo)
+      assert state.commit_message == ""
+      assert state.pr == %{number: 7, title: "Add a", url: pr.url}
+      assert state.base_branch == "develop"
+    end
+
     test "a single ref reviews that commit and its message; a two-dot range, only its files",
          %{base: base, repo: repo} do
       stub_gh(base, ~s(echo 'no pull requests found for branch "main"' >&2; exit 1))
@@ -223,6 +295,31 @@ defmodule Meerkat.ReviewStateTest do
       assert {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD", :two_dot}, repo)
       assert [%{file_name: "feature.rs"}] = state.files
       assert state.commit_message == ""
+      assert state.state_signature == Meerkat.Persistence.state_signature(state)
+    end
+
+    test "a single ref or a range on a PR's branch carries the PR and diffs against its base",
+         %{base: base, repo: repo} do
+      pr = %{
+        number: 7,
+        baseRefName: "develop",
+        headRefName: "main",
+        title: "Add a",
+        body: "Adds a.",
+        url: "https://github.com/example/example/pull/7"
+      }
+
+      stub_gh(base, """
+      cat <<'EOF_JSON'
+      #{Jason.encode!(pr)}
+      EOF_JSON
+      """)
+
+      for target <- [{:single_ref, "HEAD"}, {:range, "HEAD~1", "HEAD", :two_dot}] do
+        assert {:ok, state} = ReviewState.from_target(target, repo)
+        assert state.pr == %{number: 7, title: "Add a", url: pr.url}
+        assert state.base_branch == "develop"
+      end
     end
 
     test "--pr reviews the PR head against its base, with the PR's metadata", %{
@@ -338,6 +435,23 @@ defmodule Meerkat.ReviewStateTest do
                MapSet.new()
     end
 
+    test "a review with no approval key re-ticks nothing" do
+      assert ReviewState.hydrate_approved_from_cache_for_test("/no/such/repo", nil, [
+               file("a.rs", "oid1")
+             ]) == MapSet.new()
+    end
+
+    test "a review with no approval key leaves the repo's cache unread" do
+      repo = make_state_repo("meerkat-hydrate-nil")
+      path = ApprovalCache.path_for(repo)
+      File.write!(path, "not json")
+
+      assert ReviewState.hydrate_approved_from_cache_for_test(repo, nil, [file("a.rs", "oid1")]) ==
+               MapSet.new()
+
+      assert File.read!(path) == "not json"
+    end
+
     test "an empty OID is rejected even if the cache holds an approval AT \"\"" do
       # A corrupt/hand-edited cache could hold an entry at "", so the
       # `oid != ""` guard has to reject the sentinel on its own.
@@ -358,6 +472,7 @@ defmodule Meerkat.ReviewStateTest do
 
       assert {:ok, state} = ReviewState.from_target({:staged, nil}, dir)
       assert state.head_branch == "feature"
+      assert state.commit_message == ""
       assert state.approved_file_names == MapSet.new(["one.rs"])
     end
   end
