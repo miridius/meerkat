@@ -26,7 +26,7 @@ not necessarily the worktree.
 
 ## Popup
 
-The header is two tabs. The popup opens on Source for a var defined
+The header is two tabs and a `Go to` link. The popup opens on Source for a var defined
 in a file inside the repo, and on Docs for one from a dependency: a
 jar, or a directory outside the repo. The selected tab is marked by a
 subtle background, not the accent colour.
@@ -105,4 +105,5 @@ found`.
 
 ## Not covered
 
-Hover on namespaces, keywords and locals; go to definition covers them.
+Hover on namespaces, keywords and locals. Go to definition jumps to
+namespaces, spec keywords and locals.

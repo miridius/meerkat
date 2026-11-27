@@ -20,42 +20,49 @@ hover is.
 ## What resolves
 
 - **Vars**: as hover finds them.
-- **Locals**: a `let`, `fn` or destructuring binding, in the same file.
+- **Locals**: a local binding, such as from `let`, `loop`, `fn`
+  parameters or destructuring, in the same file.
 - **Namespaces**: a namespace symbol, such as in a `:require`, jumps to
-  its file's `ns` form.
+  its file's `ns` form, picking among `.clj`, `.cljc` and `.cljs` files
+  in hover's language order.
 - **Spec keywords**: a keyword with an `s/def` (`clojure.spec.alpha` or
-  `cljs.spec.alpha`) in the project jumps to that `s/def`. meerkat looks
-  in the side's diff files, then in the keyword's namespace's file, then
-  in the repo's other Clojure files whose text holds a `def` of it.
+  `cljs.spec.alpha`) jumps to that `s/def`. meerkat looks in the side's
+  diff files, then in the keyword's namespace's file, then in the
+  repo's other Clojure files that mention the keyword's name, as the
+  side holds them, finding `s/def`s written with an alias too. It keeps
+  what it finds for the rest of the review.
 
 ## Where it lands
 
 - **A diff file**: the diff scrolls the definition's line on that side
   into view and flashes it. A file the filter hides or that is collapsed
-  is shown, and a line hidden by folded context is revealed by
-  expanding the file's context.
-- **Any other file**, in the repo or a dependency jar: a read-only
-  file view opens over the diff. It shows the whole file as reviewed:
-  a repo file as the jump's side holds it (the base for the old side;
+  is shown, by clearing a filter that hides it and expanding it if
+  collapsed, and a line hidden by folded context is revealed by
+  expanding the file's context. A jump from a file view to a diff file
+  closes the file view.
+- **Any other file**, in the repo or a dependency: a read-only file
+  view opens over the diff. It shows the whole file as reviewed: a
+  repo file as the jump's side holds it (the base for the old side;
   for the new side the index for staged reviews, the head ref for
   ranges and PRs); a dependency's file as its jar or directory holds
   it. It is highlighted with the diff's highlighter, theme and font
   size, with line numbers, and scrolled to the definition in that text,
   whose line is flashed. Its header names the file. When that text
-  doesn't define the symbol, as when the worktree's copy hover read
-  differs from the reviewed one, the jump shows `No definition found`. Hover and go to definition work in it, on the
-  side the jump came from.
+  doesn't hold the file or doesn't define the symbol, as when the
+  worktree's copy hover read differs from the reviewed one, the jump
+  shows `No definition found`. Hover and go to definition work in it,
+  on the side the jump came from, against the text it shows. A jump to
+  the file it already shows scrolls within it.
 
 ## Getting back
 
 Jumps add no browser history entries, so the review tab still closes
 itself when the review ends.
 
-- **`Esc`** steps back one jump: from a file view to the file view the
-  jump came from, or to the diff; in the diff, it scrolls back to
-  where the last jump within the diff started, and again to earlier
-  ones. It does so
-  only when no popup, form or dropdown is open and focus isn't in a
-  text field.
+- **`Esc`** steps back one jump, to where it started: the file view it
+  came from, or the diff scrolled to where it was. Pressing it again
+  steps back through earlier jumps. It does so only when no popup,
+  form or dropdown is open and focus isn't in a text field.
 - **A click outside the file view**, or its close button, closes it,
-  back to the diff where the first jump into it started.
+  back to the diff where the first jump into it started. `Esc` then
+  steps back through the jumps before that one.
