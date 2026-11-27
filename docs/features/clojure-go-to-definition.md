@@ -44,11 +44,18 @@ hover is.
   whose line is flashed. Its header names the file. When that text
   doesn't define the symbol, as when the worktree's copy hover read
   differs from the reviewed one, the jump shows `No definition found`. Hover and go to definition work in it, on the
-  side the jump came from. `Esc`, or its close button, closes it.
+  side the jump came from.
 
 ## Getting back
 
-Each jump is a browser history entry. Back returns to where the jump
-started: the diff at its scroll position, or the file view it came
-from. Forward repeats the jump. `Esc` in the file view goes back to the
-diff entry before the first file view.
+Jumps add no browser history entries, so the review tab still closes
+itself when the review ends.
+
+- **`Esc`** steps back one jump: from a file view to the file view the
+  jump came from, or to the diff; in the diff, it scrolls back to
+  where the last jump within the diff started, and again to earlier
+  ones. It does so
+  only when no popup, form or dropdown is open and focus isn't in a
+  text field.
+- **A click outside the file view**, or its close button, closes it,
+  back to the diff where the first jump into it started.

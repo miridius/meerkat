@@ -85,10 +85,6 @@ button {
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease;
 }
-button:hover:not(:disabled) {
-  background: var(--panel);
-  border-color: var(--border-strong);
-}
 button:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -615,19 +611,18 @@ a.chip-link:hover .chip-value {
   color: var(--muted);
   cursor: pointer;
 }
+.commit-msg-gutter,
+.commit-msg-gutter > li,
+.commit-msg-gutter > li .gutter-line-num {
+  user-select: none;
+  -webkit-user-select: none;
+}
 /* :not(:disabled) lifts this above the generic
    button:hover:not(:disabled) rule, which would otherwise win. */
 .gutter-line-num:hover:not(:disabled) {
   background: var(--accent-strong);
   color: #ffffff;
   border-color: var(--accent-strong);
-}
-
-.commit-msg-gutter,
-.commit-msg-gutter > li,
-.commit-msg-gutter > li .gutter-line-num {
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .commit-msg-gutter > li.dragging {
@@ -753,6 +748,12 @@ a.chip-link:hover .chip-value {
   font-size: 0.8rem;
   padding: 2px 8px;
 }
+/* Every button's hover: after each lighter rule on buttons, and before
+   each heavier one. */
+button:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--border-strong);
+}
 .note header .flag-toggle + button {
   margin-left: 4px;
 }
@@ -767,7 +768,8 @@ a.chip-link:hover .chip-value {
 }
 
 .comment-body p { margin: 0 0 4px; }
-.comment-body p:last-child { margin-bottom: 0; }
+/* :where keeps this no heavier than the later .md-body p. */
+.comment-body p:where(:last-child) { margin-bottom: 0; }
 .comment-body code {
   background: var(--chip-bg);
   padding: 1px 4px;
@@ -803,6 +805,16 @@ a.chip-link:hover .chip-value {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 4px 10px;
+}
+/* The squeeze floor: 6ch, or the whole text when shorter. Browsers
+   without calc-size() pad a shorter text out to 6ch. */
+.diff-toolbar {
+  --squeeze-floor: 6ch;
+}
+@supports (min-width: calc-size(max-content, size)) {
+  .diff-toolbar {
+    --squeeze-floor: calc-size(max-content, min(size, 6ch));
+  }
 }
 
 /* --- Toolbar squeeze steps ---
@@ -905,16 +917,6 @@ a.chip-link:hover .chip-value {
 .diff-toolbar[data-squeeze~="base"] > .branch-chip {
   flex-shrink: 1;
   min-width: 0;
-}
-/* The floor: 6ch, or the whole text when shorter. Browsers without
-   calc-size() pad a shorter text out to 6ch. */
-.diff-toolbar {
-  --squeeze-floor: 6ch;
-}
-@supports (min-width: calc-size(max-content, size)) {
-  .diff-toolbar {
-    --squeeze-floor: calc-size(max-content, min(size, 6ch));
-  }
 }
 .diff-toolbar[data-squeeze~="title"] > .toolbar-title,
 .diff-toolbar[data-squeeze~="base"] .branch-base,
