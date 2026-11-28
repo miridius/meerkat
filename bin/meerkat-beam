@@ -1,5 +1,7 @@
-#!/usr/bin/env bun
-// The dev launcher: see lib/beam.ts.
+#!/usr/bin/env -S bun --no-env-file
+// The dev launcher: see lib/beam.ts. Bun loads no .env from the reviewed
+// repo, whose variables would reach the BEAM.
 import { main } from "./lib/beam.ts";
+import { launch } from "./lib/serve.ts";
 
-await main(process.argv.slice(2));
+await launch(main);

@@ -13,21 +13,22 @@
 // caller's cwd in $MEERKAT_PWD so `Meerkat.CLI` reads git state from the
 // right tree.
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { attach } from "./attach.ts";
-import { CLI_HALT, requireAnswersInput, runOnce, say, selfCommand, serve, status, wantsAnswers } from "./serve.ts";
+import { attach, say } from "./attach.ts";
+import { CLI_HALT, requireAnswersInput, runOnce, selfCommand, serve, status, wantsAnswers } from "./serve.ts";
 
 // The checkout: Bun names it by its physical path.
 const ROOT = resolve(import.meta.dir, "../..");
 
 // Whether any file under `paths`, taken from the checkout, has a newer
-// mtime than `than`. Stops at the first one.
+// mtime than `than`. Stops at the first one. Like `find`, it follows no
+// symlink, so a link cycle cannot trap it.
 export function anyNewer(root: string, paths: string[], than: number): boolean {
 	const newer = (path: string): boolean => {
-		let stat: ReturnType<typeof statSync>;
+		let stat: ReturnType<typeof lstatSync>;
 		try {
-			stat = statSync(path);
+			stat = lstatSync(path);
 		} catch {
 			return false;
 		}

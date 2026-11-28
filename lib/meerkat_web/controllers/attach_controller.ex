@@ -151,7 +151,7 @@ defmodule MeerkatWeb.AttachController do
     case conn.params do
       %{"run" => run} when is_binary(run) ->
         # Run ids name directories under deadlines, so reject paths like "..";
-        # launcher ids are UUIDs from uuidgen.
+        # launcher ids are UUIDs.
         if run =~ ~r/\A[A-Za-z0-9-]+\z/,
           do: conn,
           else: conn |> send_resp(400, "bad request\n") |> halt()

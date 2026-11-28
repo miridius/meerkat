@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	symlinkSync,
 	utimesSync,
@@ -13,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { CLI_HALT } from "../bin/lib/serve.ts";
 import {
 	buildShepherd,
 	dirInUse,
@@ -29,6 +31,12 @@ import {
 	versionManifest,
 	withoutGitVars,
 } from "./install";
+
+const executable = (path: string, content: string) => {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, content);
+	chmodSync(path, 0o755);
+};
 
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 
@@ -210,6 +218,25 @@ describe("on disk", () => {
 		const run = Bun.spawnSync([out], { env: { ...process.env, MEERKAT_CURRENT_LINK: "" }, stderr: "pipe" });
 		expect([run.exitCode, run.stderr.toString()]).toEqual([1, "meerkat-shepherd: MEERKAT_CURRENT_LINK not set\n"]);
 		expect(readdirSync(base).filter((name) => name.endsWith(".bun-build"))).toEqual([]);
+
+		// Run as an installed meerkat, it re-runs itself detached to serve
+		// the review, with the arguments it was given, and passes on the
+		// BEAM's approval. Neither half loads the reviewed repo's .env.
+		const release = join(base, "release");
+		const argsFile = join(base, "beam-args");
+		executable(
+			join(release, "bin/meerkat"),
+			`#!/bin/sh\nprintf '%s\\n' "$@" "\${FROM_DOTENV-unset}" >'${argsFile}'\nexit 76\n`,
+		);
+		symlinkSync(release, join(base, "current"));
+		writeFileSync(join(scratch, ".env"), "FROM_DOTENV=leaked\n");
+		const review = Bun.spawnSync([out, "--commit-msg", "MSG", "--no-open"], {
+			cwd: scratch,
+			env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
+			stderr: "pipe",
+		});
+		expect([review.exitCode, review.stderr.toString()]).toEqual([0, ""]);
+		expect(readFileSync(argsFile, "utf8")).toBe(`eval\n${CLI_HALT}\n--commit-msg\nMSG\n--no-open\nunset\n`);
 	});
 
 	test("buildShepherd removes an executable that does not run the shepherd", () => {
@@ -232,12 +259,6 @@ describe("on disk", () => {
 describe("install.sh and install.ts", () => {
 	let base: string;
 	let env: Record<string, string | undefined>;
-
-	const executable = (path: string, content: string) => {
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, content);
-		chmodSync(path, 0o755);
-	};
 
 	const git = (cwd: string, ...args: string[]) => {
 		const result = Bun.spawnSync(["git", ...args], { cwd, env, stderr: "inherit" });

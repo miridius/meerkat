@@ -34,7 +34,7 @@ const psOf =
 		const pid = Number(args[args.indexOf("-p") + 1]);
 		const fields = args[args.indexOf("-o") + 1] ?? "";
 		const row = table[pid];
-		if (row === undefined) return { out: "", failed: true, killed: false };
+		if (row === undefined) return { out: "", killed: false };
 		const [ppid, pgid, command] = row;
 		const values: Record<string, string> = {
 			"pid=": String(pid),
@@ -42,7 +42,7 @@ const psOf =
 			"ppid=,comm=": `${ppid} ${command.split(" ")[0]}`,
 			"command=": command,
 		};
-		return { out: `${values[fields] ?? ""}\n`, failed: false, killed: false };
+		return { out: `${values[fields] ?? ""}\n`, killed: false };
 	};
 
 // The caller, pid 100, runs under a hook (99) under git (98), which leads
@@ -141,7 +141,7 @@ describe("a caller given the decision", () => {
 	// Where ps is denied, it cannot tell, so it takes delivery.
 	test("takes delivery where ps cannot see processes", async () => {
 		const runs = tmp();
-		const { c, seen } = caller(runs, { stream: outcome, ps: () => ({ out: "", failed: true, killed: false }) });
+		const { c, seen } = caller(runs, { stream: outcome, ps: () => ({ out: "", killed: false }) });
 		c.ancestors = [55];
 		c.dir = decided(runs);
 		expect(await exitCode(c.attachStream({}))).toBe(1);
@@ -164,10 +164,14 @@ describe("a caller given the decision", () => {
 			sleep: async () => {
 				naps++;
 			},
+			request: async (method, url, token) => {
+				seen.requests.push(`${method} ${url} ${token}`);
+				return { status: 200, body: "", timedOut: false };
+			},
 		});
 		c.dir = decided(runs);
 		expect(await exitCode(c.attachStream({}))).toBe(1);
-		expect(seen.requests).toEqual(["POST http://127.0.0.1:4242/api/attach/delivered?run=run"]);
+		expect(seen.requests).toEqual(["POST http://127.0.0.1:4242/api/attach/delivered?run=run token"]);
 		expect(naps).toBe(0);
 	});
 });
@@ -338,7 +342,7 @@ describe("a caller whose backend is dead", () => {
 		const { c, seen } = caller(runs, {
 			ps: (args) => {
 				if (args.includes("command=")) rmSync(join(runs, "key.r"), { recursive: true });
-				return { out: "x\n", failed: false, killed: false };
+				return { out: "x\n", killed: false };
 			},
 		});
 		c.dir = join(runs, "key.r");
@@ -352,7 +356,7 @@ describe("a caller whose backend is dead", () => {
 	// checks the BEAM's pid, which may since have been reused.
 	test("whose check of the BEAM is killed by a signal does not kill that pid", () => {
 		const runs = buryRuns();
-		const { c, seen } = caller(runs, { ps: () => ({ out: "", failed: true, killed: true }) });
+		const { c, seen } = caller(runs, { ps: () => ({ out: "", killed: true }) });
 		c.dir = join(runs, "key.r");
 		c.buryServer();
 		expect(seen.kills).toEqual([]);
@@ -437,4 +441,74 @@ test("a caller dropping a run the key no longer names leaves an older meerkat's 
 	expect(c.retire(join(runs, "key.finished"))).toBe(true);
 	expect(existsSync(join(runs, "key.retiring.run"))).toBe(false);
 	expect(lstatSync(join(runs, "key")).isDirectory()).toBe(true);
+});
+
+// The caller reads nothing from the reviewed repo's working directory:
+// neither a file named `exit` nor, through Bun, its `.env`.
+test("a review in a repo holding `exit` and `.env` files runs as in any other", () => {
+	const base = tmp();
+	const repo = join(base, "repo");
+	mkdirSync(repo);
+	writeFileSync(join(repo, "exit"), "0\n");
+	writeFileSync(join(repo, ".env"), "FROM_DOTENV=leaked\n");
+	const release = join(base, "release");
+	mkdirSync(join(release, "bin"), { recursive: true });
+	writeFileSync(join(release, "bin/meerkat"), `#!/bin/sh\necho "\${FROM_DOTENV-unset}" >'${base}/seen'\nexit 76\n`);
+	chmodSync(join(release, "bin/meerkat"), 0o755);
+	symlinkSync(release, join(base, "current"));
+	const run = Bun.spawnSync([join(import.meta.dir, "../meerkat-shepherd"), "--no-open"], {
+		cwd: repo,
+		env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
+		stderr: "pipe",
+		// Within the test's own 5 s, so a caller that spins is killed.
+		timeout: 4000,
+		killSignal: "SIGKILL",
+	});
+	expect([run.exitCode, run.stderr.toString(), readFileSync(join(base, "seen"), "utf8")]).toEqual([0, "", "unset\n"]);
+});
+
+describe("a real caller's requests", () => {
+	test("report a deadline that ended one", async () => {
+		const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+		try {
+			expect(await realDeps.request("POST", `http://127.0.0.1:${server.port}/`, "t", 50)).toEqual({
+				status: 0,
+				body: "",
+				timedOut: true,
+			});
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	test("read the attach stream's frames whole, however its reads split them", async () => {
+		const encode = (text: string) => new TextEncoder().encode(text);
+		const server = Bun.serve({
+			port: 0,
+			fetch: () =>
+				new Response(
+					new ReadableStream({
+						async start(controller) {
+							controller.enqueue(encode("o out"));
+							await Bun.sleep(20);
+							controller.enqueue(encode("come\nx 1\n"));
+							controller.close();
+						},
+					}),
+				),
+		});
+		const lines: string[] = [];
+		try {
+			const status = await realDeps.stream(
+				`http://127.0.0.1:${server.port}/`,
+				"t",
+				new AbortController().signal,
+				(line) => lines.push(line),
+				() => {},
+			);
+			expect([status, lines]).toEqual([200, ["o outcome", "x 1"]]);
+		} finally {
+			server.stop(true);
+		}
+	});
 });

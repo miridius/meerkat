@@ -1,6 +1,6 @@
 // CI builds from source the tools .github/toolchain.env pins that the
-// macOS runner lacks or has too old: GNU bash, since its bash 3.2 lacks
-// the EPOCHREALTIME scripts/gate-lock.sh times its tickets with, and
+// macOS runner lacks or has too old: GNU bash, so the bash scripts are
+// tested under the bash 5.3 local runs use, not the runner's 3.2, and
 // Graphviz, whose dot PlantUML lays
 // diagrams out with. It fetches the release's files, checks them together
 // against <TOOL>_SHA256, and installs to the PREFIX argument.

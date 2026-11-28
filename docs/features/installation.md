@@ -4,7 +4,7 @@
 installs the prod release there: it installs Bun through mise when
 mise is here, then runs `scripts/install.ts`, which does the work.
 
-`bin/meerkat-beam`, the dev launcher, runs meerkat from a checkout
+`bin/meerkat-beam`, the dev launcher, runs on Bun and runs meerkat from a checkout
 under `MIX_ENV=dev`, compiling and building assets first when they are
 stale. It runs `mix compile` when a source is newer than the build or
 the launcher last compiled it in another checkout, so a build copied

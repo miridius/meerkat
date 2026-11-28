@@ -4,9 +4,9 @@
 // there for that caller.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
-import { reviewHash, reviewRoot } from "./attach.ts";
+import { reviewHash, reviewRoot, SIGNALS, say, writeAtomically } from "./attach.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -19,17 +19,22 @@ export const CLI_HALT = "System.halt(case Meerkat.CLI.main(System.argv()) do 0 -
 // The exit code a BEAM halts with to be restarted onto a new version.
 export const RESTART_EXIT_CODE = 75;
 
-const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
-
 // The command that runs this launcher again: its compiled executable, or
-// Bun running its entry script.
-export const selfCommand = () => (Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main]);
+// Bun running its entry script, loading no .env from the reviewed repo.
+export const selfCommand = () =>
+	Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, "--no-env-file", Bun.main];
 
-export const say = (text: string) => {
+// Runs a launcher's `main` on its arguments. An unexpected failure, such
+// as a runs dir it cannot create or a missing `mix`, ends it as a crash
+// does, with 2 and a REJECT, never 1, which says the reviewer rejected.
+export async function launch(main: (args: string[]) => Promise<never>): Promise<never> {
 	try {
-		writeSync(2, text);
-	} catch {}
-};
+		return await main(process.argv.slice(2));
+	} catch (error) {
+		say(`meerkat: ${error instanceof Error ? error.message : error} — defaulting to REJECT (commit aborted).\n`);
+		process.exit(2);
+	}
+}
 
 export function decisionCode(code: number): number {
 	if (code === 76) return 0;
@@ -102,14 +107,6 @@ export async function runOnce(command: string[]): Promise<never> {
 	trapSignals();
 	process.exit(decisionCode(await runBeam(command, "inherit")));
 }
-
-// Writes `text` to `path` atomically.
-const writeAtomically = (path: string, text: string) => {
-	try {
-		writeFileSync(`${path}.tmp`, text);
-		renameSync(`${path}.tmp`, path);
-	} catch {}
-};
 
 // A shepherd calls this before each BEAM it starts. It rewrites a missing
 // `token` or `pid`, so losing one cannot leave callers unable to

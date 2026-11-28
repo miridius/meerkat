@@ -279,15 +279,25 @@ const readlinkOr = (path: string) => {
 
 // Compiles the shepherd in `root` into a standalone executable at `out`,
 // so the installed meerkat needs no Bun on the PATH git hooks run with.
-// Bun leaves a temporary `.*.bun-build` copy in its working directory, so
+// The executable loads no .env or bunfig.toml from the reviewed repo it
+// runs in. Bun leaves a temporary `.*.bun-build` copy in its working directory, so
 // it compiles in `scratch`. Then it runs the binary once: one missing the
 // shepherd's code would exit 0 and approve every commit unreviewed, and
-// the run takes part of the scan macOS gives a new executable off the
-// first review's path. Returns why it failed, leaving nothing at `out`,
+// the run moves part of macOS's first-launch scan of a new executable out
+// of the first review's wait. Returns why it failed, leaving nothing at `out`,
 // or null.
 export function buildShepherd(root: string, out: string, scratch: string, env: Env): string | null {
 	const build = Bun.spawnSync(
-		[process.execPath, "build", "--compile", join(root, "bin/lib/shepherd.ts"), "--outfile", out],
+		[
+			process.execPath,
+			"build",
+			"--compile",
+			"--no-compile-autoload-dotenv",
+			"--no-compile-autoload-bunfig",
+			join(root, "bin/lib/shepherd.ts"),
+			"--outfile",
+			out,
+		],
 		{ env, cwd: scratch, stdout: "ignore", stderr: "pipe" },
 	);
 	const check =
@@ -436,7 +446,7 @@ function install(args: string[]): void {
 	// Install the shepherd by atomic rename: a shepherd a review is already
 	// running keeps its old inode, so replacing the path can't disturb it.
 	renameSync(shepherdTmp, paths.shepherd);
-	// What the bash shepherd an earlier install left sourced.
+	// The library an earlier install's bash shepherd sourced.
 	rmSync(join(paths.share, "meerkat-attach"), { force: true });
 
 	writeFileSync(paths.wrapper, expected);

@@ -17,8 +17,17 @@
 // so the hook proceeds (0) or aborts.
 
 import { accessSync, constants, readlinkSync } from "node:fs";
-import { attach } from "./attach.ts";
-import { CLI_HALT, requireAnswersInput, runOnce, say, selfCommand, serve, wantsAnswers } from "./serve.ts";
+import { attach, say } from "./attach.ts";
+import {
+	CLI_HALT,
+	launch,
+	RESTART_EXIT_CODE,
+	requireAnswersInput,
+	runOnce,
+	selfCommand,
+	serve,
+	wantsAnswers,
+} from "./serve.ts";
 
 // The release `current` names, or an exit with 127 without one.
 function resolveRelease(link: string): string {
@@ -65,7 +74,7 @@ export async function main(args: string[]): Promise<never> {
 		// the respawn), then abort so the commit fails closed. A restart
 		// resets the budget.
 		retry(code) {
-			if (code === 75) crashed = false;
+			if (code === RESTART_EXIT_CODE) crashed = false;
 			if (code !== 2 || crashed) return false;
 			crashed = true;
 			say("meerkat: BEAM crashed (exit 2); respawning once before aborting...\n");
@@ -78,4 +87,4 @@ export async function main(args: string[]): Promise<never> {
 // from an entry without a `.ts` extension, such as bin/meerkat-shepherd,
 // `bun build --compile` bundles none of its imports and builds a binary
 // that does nothing.
-if (import.meta.main) await main(process.argv.slice(2));
+if (import.meta.main) await launch(main);

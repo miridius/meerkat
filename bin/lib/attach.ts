@@ -45,9 +45,28 @@ import { basename, dirname, join, resolve } from "node:path";
 
 type Env = Record<string, string | undefined>;
 
+// The signals that stop a launcher.
+export const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+
+export const say = (text: string) => {
+	try {
+		writeSync(2, text);
+	} catch {}
+};
+
+// Writes `text` to `path` atomically, through a temporary name private to
+// this process, as the caller and the shepherd both write some run files.
+export const writeAtomically = (path: string, text: string) => {
+	const tmp = `${path}.tmp.${process.pid}`;
+	try {
+		writeFileSync(tmp, text);
+		renameSync(tmp, path);
+	} catch {}
+};
+
 // What a run of ps gives back: its stdout, or `killed` when a signal
 // ended it, as one sent to this invocation's whole process group.
-export type PsResult = { out: string; failed: boolean; killed: boolean };
+export type PsResult = { out: string; killed: boolean };
 
 // The answer to a request to the backend. `status` is the HTTP status, or
 // 0 when the request got none; `timedOut` says a deadline ended it.
@@ -64,7 +83,7 @@ export type Deps = {
 	request: (method: string, url: string, token: string, timeoutMs?: number) => Promise<Reply>;
 	// The attach stream: calls `line` with each complete line it reads,
 	// and resolves with the HTTP status once it ends, or 0 when it got
-	// none. Calls `tick` after each 0.2 s without a line.
+	// none. Calls `tick` after each 0.2 s in which nothing arrives.
 	stream: (
 		url: string,
 		token: string,
@@ -218,14 +237,16 @@ export class Caller {
 		mkdirSync(this.runs, { recursive: true });
 		this.ancestors = this.ancestorChain();
 		if (signals)
-			for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const)
+			for (const signal of SIGNALS)
 				process.on(signal, () => void this.stopped(signal));
 		this.reapFinished();
 
 		while (true) {
 			if (!this.owned && !this.findServer()) continue;
 
-			if (isFile(join(this.dir, "exit"))) {
+			// With no run, `dir` is "", and `exit` would name a file in the
+			// working directory.
+			if (this.dir !== "" && isFile(join(this.dir, "exit"))) {
 				if (this.owned && !this.held) {
 					// A reattach whose server exited before it heard from it: that
 					// exit code was not this invocation's. Hand the run back to the
@@ -239,7 +260,7 @@ export class Caller {
 				if (this.owned) {
 					this.relayLog();
 					const code = Number.parseInt(readOr(join(this.dir, "exit")) ?? "", 10);
-					this.removeRun();
+					this.removeDecidedRun();
 					this.exit(Number.isNaN(code) ? 2 : code);
 				}
 				// Its exit code is for the caller attached to it, which removes it.
@@ -396,7 +417,7 @@ export class Caller {
 				return;
 			}
 			if (standing !== "ended" && (!existsSync(join(this.dir, "served")) || reply?.timedOut)) {
-				const pid = Number(readOr(join(this.dir, "pid"))?.trim());
+				const pid = Number.parseInt(readOr(join(this.dir, "pid")) ?? "", 10);
 				if (isFile(join(this.dir, "pid")) && this.serverAlive()) {
 					try {
 						this.deps.kill(pid, "SIGTERM");
@@ -418,8 +439,8 @@ export class Caller {
 	}
 
 	// Open the run's log, closing the last run's, and fail when it has none
-	// yet. The open file keeps the caller's place, so relaying forks
-	// nothing.
+	// yet. The open file keeps the caller's place in the log between
+	// relays.
 	openLog(): boolean {
 		if (this.logFd !== null) closeSync(this.logFd);
 		this.logFd = null;
@@ -523,6 +544,14 @@ export class Caller {
 		return !existsSync(this.dir);
 	}
 
+	// Remove the run whose decision the caller holds: failing to cannot
+	// cost the decision.
+	removeDecidedRun() {
+		try {
+			this.removeRun();
+		} catch {}
+	}
+
 	// Make a change to the runs dir, failing closed if it cannot be made:
 	// retrying it would spin, and going on with a run half removed would
 	// misread it.
@@ -539,11 +568,7 @@ export class Caller {
 	// Write a pid, this caller's by default, to the run's `caller` file,
 	// atomically: a reader seeing it empty would take the caller for dead.
 	writeCaller(pid: string | number = this.pid) {
-		const tmp = join(this.dir, `caller.${this.pid}`);
-		try {
-			writeFileSync(tmp, `${pid}\n`);
-			renameSync(tmp, join(this.dir, "caller"));
-		} catch {}
+		writeAtomically(join(this.dir, "caller"), `${pid}\n`);
 	}
 
 	// A reattach the server refused, whose server exited before it heard
@@ -749,7 +774,7 @@ export class Caller {
 					code = Number.parseInt(line.slice(2), 10);
 					this.held = true;
 					// The outcome is printed: a signal now just ends the caller.
-					for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.removeAllListeners(signal);
+					for (const signal of SIGNALS) process.removeAllListeners(signal);
 				} else if (line === "d") {
 					// Keep for older backends that send bare d; an orphaned review
 					// lives until reattached, so the backend can outlast an upgrade.
@@ -780,7 +805,7 @@ export class Caller {
 			await this.deps.request("POST", this.url(`attach/delivered?run=${this.run}`), this.token);
 			await this.waitForExit();
 			this.relayLog();
-			this.removeRun();
+			this.removeDecidedRun();
 			this.exit(Number.isNaN(code) ? 2 : code);
 		}
 
@@ -808,7 +833,7 @@ export class Caller {
 export const realDeps: Deps = {
 	ps(args) {
 		const result = spawnSync("ps", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-		return { out: result.stdout ?? "", failed: result.status !== 0, killed: result.signal !== null };
+		return { out: result.stdout ?? "", killed: result.signal !== null };
 	},
 	kill: (pid, signal) => process.kill(pid, signal),
 	now: () => performance.now(),
@@ -884,18 +909,9 @@ export const realDeps: Deps = {
 			} catch {}
 		});
 		child.unref();
-		if (child.pid !== undefined) {
-			try {
-				writeFileSync(join(dir, "pid.tmp"), `${child.pid}\n`);
-				renameSync(join(dir, "pid.tmp"), join(dir, "pid"));
-			} catch {}
-		}
+		if (child.pid !== undefined) writeAtomically(join(dir, "pid"), `${child.pid}\n`);
 	},
-	stderr(text) {
-		try {
-			writeSync(2, text);
-		} catch {}
-	},
+	stderr: say,
 	exit: (code) => process.exit(code),
 };
 

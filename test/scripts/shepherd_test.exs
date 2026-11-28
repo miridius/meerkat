@@ -655,7 +655,7 @@ defmodule Meerkat.ShepherdTest do
                "meerkat: stopped waiting (SIGTERM) before the review completed. Run the same command again.\n"
 
       assert File.read!(caller) == "#{first_pid}\n"
-      # The caller sends a leave before it exits, so none was sent.
+      # A leave would have been sent before the caller exited, so none was.
       refute File.exists?(leaves)
     end
   end
