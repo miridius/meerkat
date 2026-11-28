@@ -35,11 +35,10 @@ hover is.
 ## Where it lands
 
 - **A diff file**: the diff scrolls the definition's line on that side
-  into view and flashes it. A file the filter hides or that is collapsed
-  is shown, by clearing a filter that hides it and expanding it if
-  collapsed, and a line hidden by folded context is revealed by
-  expanding the file's context. A jump from a file view to a diff file
-  closes the file view.
+  into view and flashes it. A file that is filtered out or collapsed
+  is shown first, as a moved-code arrow shows it, and a line hidden by
+  folded context is revealed by expanding the file's context. A jump
+  from a file view to a diff file closes the file view.
 - **Any other file**, in the repo or a dependency: a read-only file
   view opens over the diff. It shows the whole file as reviewed: a
   repo file as the jump's side holds it (the base for the old side;
@@ -57,15 +56,15 @@ hover is.
 ## Getting back
 
 Jumps add no browser history entries, so the review tab still closes
-itself when the review ends.
+itself after a decision.
 
 - **`Esc`** steps back one jump, to where it started: the file view it
-  came from, or the diff scrolled to where it was. Pressing it again
-  steps back through earlier jumps. It does so only when no popup,
+  came from, or the diff scrolled back to the line it showed. Pressing
+  it again steps back through earlier jumps. It does so only when no popup,
   form or dropdown is open and focus isn't in a text field.
 - **A click outside the file view**, or its close button, closes it,
-  back to the diff where the first jump into it started. `Esc` then
+  back to the diff where the jump that opened it started. `Esc` then
   steps back through the jumps before that one.
 
-Stepping back only scrolls: a filter a jump cleared, or a file it
-expanded, stays as the jump left it.
+Stepping back undoes nothing a jump revealed: a file it showed or
+expanded stays as the jump left it.

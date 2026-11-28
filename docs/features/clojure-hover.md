@@ -105,5 +105,5 @@ found`.
 
 ## Not covered
 
-Hover on namespaces, keywords and locals. Go to definition jumps to
-namespaces, spec keywords and locals.
+Hover on namespaces, keywords and locals; go to definition handles
+those.
