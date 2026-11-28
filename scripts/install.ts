@@ -33,9 +33,9 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { constants as osConstants, homedir, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { CLI_HALT, decisionCode } from "../bin/lib/serve.ts";
+import { CLI_HALT, decisionCode, status } from "../bin/lib/serve.ts";
 
 // How many version dirs to retain for rollback/history. A version a
 // running review is still pinned to is always kept, even past this.
@@ -233,13 +233,6 @@ export function withoutGitVars(env: Record<string, string | undefined>): Record<
 
 type Env = Record<string, string | undefined>;
 
-// The exit status bash gives a command that `Bun.spawnSync` reports.
-export function status(result: { exitCode: number | null; signalCode?: string | null }): number {
-	if (result.exitCode !== null) return result.exitCode;
-	const signal = result.signalCode ? osConstants.signals[result.signalCode as keyof typeof osConstants.signals] : 0;
-	return 128 + (signal ?? 0);
-}
-
 // Runs `cmd` with the given env, looking it up on that env's PATH, and
 // exits with its status if it fails, as `set -e` does.
 function run(cmd: string[], env: Env, cwd?: string): void {
@@ -289,9 +282,9 @@ const readlinkOr = (path: string) => {
 // Bun leaves a temporary `.*.bun-build` copy in its working directory, so
 // it compiles in `scratch`. Then it runs the binary once: one missing the
 // shepherd's code would exit 0 and approve every commit unreviewed, and
-// macOS scans a new executable on its first run, which a review would
-// otherwise wait on. Returns why it failed, leaving nothing at `out`, or
-// null.
+// the run takes part of the scan macOS gives a new executable off the
+// first review's path. Returns why it failed, leaving nothing at `out`,
+// or null.
 export function buildShepherd(root: string, out: string, scratch: string, env: Env): string | null {
 	const build = Bun.spawnSync(
 		[process.execPath, "build", "--compile", join(root, "bin/lib/shepherd.ts"), "--outfile", out],

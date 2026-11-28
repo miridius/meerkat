@@ -54,7 +54,7 @@ const mtime = (path: string): number | null => {
 // stdout is the caller's, and returns its exit status.
 function run(command: string[], cwd: string, env: Record<string, string | undefined> = process.env): number {
 	const result = Bun.spawnSync(command, { cwd, env, stdio: ["inherit", 2, "inherit"] });
-	return status(result.exitCode, result.signalCode ?? null);
+	return status(result);
 }
 
 // Pre-compile guard. Cheap when the build is warm: the walk stops at the

@@ -42,10 +42,10 @@ export function decisionCode(code: number): number {
 	return code;
 }
 
-// The exit status a shell gives a process that `exited` reports.
-export function status(exitCode: number | null, signal: string | null): number {
-	if (exitCode !== null) return exitCode;
-	return 128 + (constants.signals[signal as keyof typeof constants.signals] ?? 0);
+// The exit status a shell gives a process that Bun reports ended.
+export function status(result: { exitCode: number | null; signalCode?: string | null }): number {
+	if (result.exitCode !== null) return result.exitCode;
+	return 128 + (constants.signals[result.signalCode as keyof typeof constants.signals] ?? 0);
 }
 
 // Whether `args` asks for answers read from stdin.
@@ -93,7 +93,7 @@ export async function runBeam(command: string[], stdin: "inherit" | "ignore" = "
 	beam = proc;
 	await proc.exited;
 	beam = null;
-	return status(proc.exitCode, proc.signalCode);
+	return status(proc);
 }
 
 // Runs the BEAM command given once, with the caller's stdin, and exits
