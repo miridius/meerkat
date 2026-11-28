@@ -180,6 +180,8 @@ describe("setup", () => {
 // and `pnpm` that log each run: the lock lets only the first fetch the Mix
 // deps, and the stub pnpm's failure, stdout and stderr, reaches each run's
 // output.
+// The hooks take turns behind a stub mix that sleeps 1 s, which on a
+// loaded machine can take longer than bun's 5 s default.
 test("hooks starting at once in one checkout take turns", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-setup-"));
 	try {
@@ -226,4 +228,4 @@ test("hooks starting at once in one checkout take turns", async () => {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
-});
+}, 60_000);
