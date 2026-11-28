@@ -9,7 +9,8 @@ pointer on a symbol shows the docs and source of the var it names.
   the popup below it. Moving to another symbol and resting there
   replaces it.
 - The popup stays open while the pointer is over the symbol or the
-  popup, and closes shortly after the pointer leaves both.
+  popup, and closes shortly after the pointer leaves both, or on
+  Escape.
 - A plain click still selects text, as before; the line-number
   gutter still starts comment drags.
 - A symbol meerkat can't resolve, or whose definition it can't find,
@@ -26,10 +27,10 @@ not necessarily the worktree.
 
 ## Popup
 
-The header is two tabs. The popup opens on Source for a var defined
-in a file inside the repo, and on Docs for one from a dependency: a
-jar, or a directory outside the repo. The selected tab is marked by a
-subtle background, not the accent colour.
+The header is two tabs and a `Go to` link. The popup opens on Source
+for a var defined in a file inside the repo, and on Docs for one from
+a dependency: a jar, or a directory outside the repo. The selected tab
+is marked by a subtle background, not the accent colour.
 
 - **Docs**, labelled with the var's qualified name (`ns/name`), marked
   `macro` for a macro: its signature, one line per arglist, then its
@@ -37,6 +38,9 @@ subtle background, not the accent colour.
 - **Source**, labelled with where the var is defined (repo path, or
   jar and entry) and its line: its whole source, highlighted with the
   diff's own highlighter, theme and font size.
+
+The `Go to` link jumps to the definition (see
+[go to definition](clojure-go-to-definition.md)).
 
 The popup opens below the symbol, unless below has less room than 60%
 of the window and above has more. It stays on that side, at most 60%
@@ -102,4 +106,5 @@ found`.
 
 ## Not covered
 
-Jump to definition, namespaces and keywords, and locals.
+Hover on namespaces, keywords and locals; go to definition handles
+those.
