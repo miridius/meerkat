@@ -26,6 +26,8 @@ const notInputs: RegExp[] = [
 	// and sets their build environment, with checked-trees.ts's
 	// withoutGitLocals, and this file decides when they may be skipped.
 	/^scripts\/(?!(check\.ts|checked-trees\.ts|e2e-inputs\.ts)$)/,
+	// The launchers' unit tests.
+	/^bin\/lib\/[^/]+\.test\.ts$/,
 	// The toolchain.env pins pick the Hex and rebar3 that build the e2e run's
 	// dependencies.
 	/^\.github\/(?!toolchain\.env$)/,

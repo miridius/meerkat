@@ -44,8 +44,9 @@ jobs:
         with:
           cache: true
 
-      # bin/meerkat-attach opens a named fd (`exec {fd}<`), which the
-      # image's bash 3.2 lacks.
+      # Tests the bash scripts under the pinned GNU bash 5.3, as local runs
+      # use, not the image's 3.2: run-test-file.sh's TIMEFORMAT, for one,
+      # differs.
       - id: gnu-bash
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -150,7 +151,7 @@ jobs:
 
       - run: bun test tests/e2e/lib
 
-      - run: bun test scripts
+      - run: bun test scripts bin/
 
       # The browser is cached per Playwright version.
       - name: Read the Playwright version

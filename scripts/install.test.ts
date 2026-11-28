@@ -1,8 +1,22 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { CLI_HALT } from "../bin/lib/serve.ts";
 import {
+	buildShepherd,
 	dirInUse,
 	freeVersionDir,
 	gcVictims,
@@ -11,13 +25,18 @@ import {
 	launcher,
 	repoUrl,
 	shellQuote,
-	status,
 	upToDate,
 	versionDirs,
 	versionId,
 	versionManifest,
 	withoutGitVars,
 } from "./install";
+
+const executable = (path: string, content: string) => {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, content);
+	chmodSync(path, 0o755);
+};
 
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 
@@ -30,7 +49,6 @@ describe("installPaths", () => {
 			current: "/home/u/.local/share/meerkat-beam/current",
 			wrapper: "/home/u/.local/bin/meerkat",
 			shepherd: "/home/u/.local/share/meerkat-beam/meerkat-shepherd",
-			attach: "/home/u/.local/share/meerkat-beam/meerkat-attach",
 		});
 	});
 
@@ -91,7 +109,6 @@ describe("upToDate", () => {
 		stamp: HEAD,
 		releaseExecutable: true,
 		shepherdExecutable: true,
-		attachIsFile: true,
 	};
 
 	test("holds for a clean build of this commit with this script's launcher", () => {
@@ -109,7 +126,6 @@ describe("upToDate", () => {
 		expect(upToDate(false, HEAD, false, expected, { ...installed, stamp: `${HEAD}-wip` })).toBe(false);
 		expect(upToDate(false, HEAD, false, expected, { ...installed, releaseExecutable: false })).toBe(false);
 		expect(upToDate(false, HEAD, false, expected, { ...installed, shepherdExecutable: false })).toBe(false);
-		expect(upToDate(false, HEAD, false, expected, { ...installed, attachIsFile: false })).toBe(false);
 	});
 });
 
@@ -156,11 +172,6 @@ describe("gcVictims", () => {
 	});
 });
 
-test("status gives a command killed by a signal 128 plus its number, as bash does", () => {
-	expect(status(Bun.spawnSync(["sh", "-c", "kill -KILL $$"]))).toBe(137);
-	expect(status(Bun.spawnSync(["sh", "-c", "exit 3"]))).toBe(3);
-});
-
 describe("withoutGitVars", () => {
 	test("drops every GIT_ variable", () => {
 		expect(withoutGitVars({ GIT_DIR: "/r/.git", GIT_INDEX_FILE: "i", PATH: "/bin", MIGIT_X: "y" })).toEqual({
@@ -199,6 +210,50 @@ describe("on disk", () => {
 		]);
 		expect(versionDirs(join(base, "missing"))).toEqual([]);
 	});
+
+	test("buildShepherd compiles the shepherd into an executable that runs it, in its scratch dir", () => {
+		const scratch = mkdtempSync(join(base, "scratch-"));
+		const out = join(base, "shepherd");
+		expect(buildShepherd(join(import.meta.dir, ".."), out, scratch, process.env)).toBeNull();
+		const run = Bun.spawnSync([out], { env: { ...process.env, MEERKAT_CURRENT_LINK: "" }, stderr: "pipe" });
+		expect([run.exitCode, run.stderr.toString()]).toEqual([1, "meerkat-shepherd: MEERKAT_CURRENT_LINK not set\n"]);
+		expect(readdirSync(base).filter((name) => name.endsWith(".bun-build"))).toEqual([]);
+
+		// Run as an installed meerkat, it re-runs itself detached to serve
+		// the review, with the arguments it was given, and passes on the
+		// BEAM's approval. Neither half loads the reviewed repo's .env.
+		const release = join(base, "release");
+		const argsFile = join(base, "beam-args");
+		executable(
+			join(release, "bin/meerkat"),
+			`#!/bin/sh\nprintf '%s\\n' "$@" "\${FROM_DOTENV-unset}" >'${argsFile}'\nexit 76\n`,
+		);
+		symlinkSync(release, join(base, "current"));
+		writeFileSync(join(scratch, ".env"), "FROM_DOTENV=leaked\n");
+		writeFileSync(join(scratch, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+		writeFileSync(join(scratch, "preload.ts"), "process.exit(9);\n");
+		const review = Bun.spawnSync([out, "--commit-msg", "MSG", "--no-open"], {
+			cwd: scratch,
+			env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
+			stderr: "pipe",
+			// So a caller that spins cannot hang the run.
+			timeout: 4000,
+			killSignal: "SIGKILL",
+		});
+		expect([review.exitCode, review.stderr.toString()]).toEqual([0, ""]);
+		expect(readFileSync(argsFile, "utf8")).toBe(`eval\n${CLI_HALT}\n--commit-msg\nMSG\n--no-open\nunset\n`);
+	});
+
+	test("buildShepherd removes an executable that does not run the shepherd", () => {
+		const root = join(base, "noop");
+		mkdirSync(join(root, "bin/lib"), { recursive: true });
+		writeFileSync(join(root, "bin/lib/shepherd.ts"), "export {};\n");
+		const out = join(base, "noop-shepherd");
+		expect(buildShepherd(root, out, mkdtempSync(join(base, "scratch-")), process.env)).toMatch(
+			/^the shepherd did not compile into a working executable/,
+		);
+		expect(existsSync(out)).toBe(false);
+	});
 });
 
 // The real scripts/install.sh and install.ts, run from a committed, clean
@@ -209,12 +264,6 @@ describe("on disk", () => {
 describe("install.sh and install.ts", () => {
 	let base: string;
 	let env: Record<string, string | undefined>;
-
-	const executable = (path: string, content: string) => {
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, content);
-		chmodSync(path, 0o755);
-	};
 
 	const git = (cwd: string, ...args: string[]) => {
 		const result = Bun.spawnSync(["git", ...args], { cwd, env, stderr: "inherit" });
@@ -230,9 +279,9 @@ describe("install.sh and install.ts", () => {
 			GIT_CONFIG_GLOBAL: join(import.meta.dir, "../test/support/test.gitconfig"),
 			GIT_CONFIG_NOSYSTEM: "1",
 		};
-		for (const name of ["install.sh", "install.ts"]) {
-			mkdirSync(join(repo, "scripts"), { recursive: true });
-			copyFileSync(join(import.meta.dir, name), join(repo, "scripts", name));
+		for (const name of ["scripts/install.sh", "scripts/install.ts", "bin/lib/serve.ts", "bin/lib/attach.ts"]) {
+			mkdirSync(dirname(join(repo, name)), { recursive: true });
+			copyFileSync(join(import.meta.dir, "..", name), join(repo, name));
 		}
 		git(base, "init", "-q", "--template=", repo);
 		git(repo, "add", ".");
@@ -245,7 +294,6 @@ describe("install.sh and install.ts", () => {
 		writeFileSync(join(version, "INSTALLED_COMMIT"), `${head}\n`);
 		symlinkSync(version, join(share, "current"));
 		executable(join(share, "meerkat-shepherd"), "#!/bin/sh\n");
-		writeFileSync(join(share, "meerkat-attach"), "");
 		executable(join(base, "bin/meerkat"), launcher(join(share, "current"), join(share, "meerkat-shepherd")));
 
 		const shim = join(base, "shim");

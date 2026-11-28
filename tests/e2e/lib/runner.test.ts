@@ -178,7 +178,7 @@ test("the reapers list only their own parent dir, not the whole OS temp dir", as
 test("a meerkat that exits before printing its URL leaves no backend, fixture, runs or config dir behind", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "meerkat-start-"));
 	const seen = join(dir, "seen");
-	// Starts a backend and records it the way meerkat-attach does, then
+	// Starts a backend and records it the way bin/lib/attach.ts does, then
 	// exits without a review URL.
 	const bin = join(dir, "meerkat");
 	writeFileSync(

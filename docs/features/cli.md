@@ -197,7 +197,10 @@ another.
   a URL or opening a browser: meerkat never opens or announces a URL
   on any port but the one it bound. The dev launcher exits 2 with a
   REJECT message when it cannot build meerkat. Under `--answers`: the
-  dev launcher could not build meerkat, so it stored nothing.
+  dev launcher could not build meerkat, so it stored nothing. Any
+  other unexpected launcher failure, such as a runs dir it cannot
+  create, exits 2 with its error and a REJECT message, or under
+  `--answers` a message that the answers were not stored.
 - `64` — the arguments were rejected (unknown flag, conflicting
   positional, etc.), an explicit nonzero `--port` was already in use,
   or the review target didn't resolve (a bad ref, a failed `--pr`

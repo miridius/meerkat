@@ -5,7 +5,7 @@ defmodule Meerkat.Caller do
   until a caller attaches, so a review whose invocation died before it
   attached can still end.
 
-  Mirrors the launcher's own check in `bin/meerkat-attach`: a caller is
+  Mirrors the launcher's own check in `bin/lib/attach.ts`: a caller is
   gone only once `ps` shows its pid is not a running meerkat, as a reused
   pid would run something else. When the file cannot be read, or `ps`
   cannot see processes at all (a sandbox denies it), it cannot tell, and

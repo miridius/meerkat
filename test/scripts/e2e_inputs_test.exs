@@ -13,6 +13,7 @@ defmodule Meerkat.E2eInputsTest do
     scripts/mix-test.ts
     scripts/check.ts.bak
     scripts/verified-push.ts
+    bin/lib/attach.test.ts
     .github/workflows/ci.yml
     .lefthook/pre-push/pre-push.ts
     lefthook.yml
@@ -31,6 +32,7 @@ defmodule Meerkat.E2eInputsTest do
     config/dev.exs
     assets/svelte/DiffViewer.svelte
     bin/meerkat-beam
+    bin/lib/attach.ts
     tests/e2e/decision.spec.ts
     tests/e2e/lib/setup.ts
     test/support/test.gitconfig

@@ -21,7 +21,6 @@
 import {
 	accessSync,
 	constants,
-	copyFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -34,8 +33,9 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { constants as osConstants, homedir, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { CLI_HALT, decisionCode, status } from "../bin/lib/serve.ts";
 
 // How many version dirs to retain for rollback/history. A version a
 // running review is still pinned to is always kept, even past this.
@@ -50,7 +50,6 @@ export type Paths = {
 	// The prod shepherd lives outside the version dirs (it re-resolves
 	// `current` every spawn, so it's version-agnostic and survives GC).
 	shepherd: string;
-	attach: string;
 };
 
 export function installPaths(env: Record<string, string | undefined>, home: string): Paths {
@@ -63,7 +62,6 @@ export function installPaths(env: Record<string, string | undefined>, home: stri
 		current: join(share, "current"),
 		wrapper: join(bin, "meerkat"),
 		shepherd: join(share, "meerkat-shepherd"),
-		attach: join(share, "meerkat-attach"),
 	};
 }
 
@@ -116,7 +114,6 @@ export type InstalledState = {
 	stamp: string;
 	releaseExecutable: boolean;
 	shepherdExecutable: boolean;
-	attachIsFile: boolean;
 };
 
 // Idempotency: the post-merge / post-checkout hooks fire this on every
@@ -141,8 +138,7 @@ export function upToDate(
 		trimNewlines(state.wrapper) === trimNewlines(expectedLauncher) &&
 		state.stamp === head &&
 		state.releaseExecutable &&
-		state.shepherdExecutable &&
-		state.attachIsFile
+		state.shepherdExecutable
 	);
 }
 
@@ -237,13 +233,6 @@ export function withoutGitVars(env: Record<string, string | undefined>): Record<
 
 type Env = Record<string, string | undefined>;
 
-// The exit status bash gives a command that `Bun.spawnSync` reports.
-export function status(result: { exitCode: number | null; signalCode?: string | null }): number {
-	if (result.exitCode !== null) return result.exitCode;
-	const signal = result.signalCode ? osConstants.signals[result.signalCode as keyof typeof osConstants.signals] : 0;
-	return 128 + (signal ?? 0);
-}
-
 // Runs `cmd` with the given env, looking it up on that env's PATH, and
 // exits with its status if it fails, as `set -e` does.
 function run(cmd: string[], env: Env, cwd?: string): void {
@@ -288,13 +277,35 @@ const readlinkOr = (path: string) => {
 	}
 };
 
-const isFile = (path: string) => {
-	try {
-		return statSync(path).isFile();
-	} catch {
-		return false;
-	}
-};
+// Compiles the shepherd in `root` into a standalone executable at `out`,
+// so the installed meerkat needs no Bun on the PATH git hooks run with.
+// The executable loads no .env or bunfig.toml from the reviewed repo it
+// runs in. Bun leaves a temporary `.*.bun-build` copy in its working
+// directory, so it compiles in `scratch`. Then it runs the binary once:
+// one missing the shepherd's code would exit 0 and approve every commit
+// unreviewed, and the run moves part of macOS's first-launch scan of a
+// new executable out of the first review's wait. Returns why it failed,
+// leaving nothing at `out`, or null.
+export function buildShepherd(root: string, out: string, scratch: string, env: Env): string | null {
+	const build = Bun.spawnSync(
+		[
+			process.execPath,
+			"build",
+			"--compile",
+			"--no-compile-autoload-dotenv",
+			"--no-compile-autoload-bunfig",
+			join(root, "bin/lib/shepherd.ts"),
+			"--outfile",
+			out,
+		],
+		{ env, cwd: scratch, stdout: "ignore", stderr: "pipe" },
+	);
+	const check =
+		build.exitCode === 0 && Bun.spawnSync([out], { env: { ...env, MEERKAT_CURRENT_LINK: "" }, stderr: "pipe" });
+	if (check && check.exitCode === 1 && check.stderr.toString().includes("MEERKAT_CURRENT_LINK not set")) return null;
+	rmSync(out, { force: true });
+	return `the shepherd did not compile into a working executable:\n${(check || build).stderr}`;
+}
 
 const psCommands = () => output(["ps", "-axo", "command="], process.env);
 
@@ -312,7 +323,6 @@ function install(args: string[]): void {
 		stamp: trimNewlines(readOr(join(currentTarget, "INSTALLED_COMMIT"), "")),
 		releaseExecutable: executable(join(currentTarget, "bin/meerkat")),
 		shepherdExecutable: executable(paths.shepherd),
-		attachIsFile: isFile(paths.attach),
 	};
 	if (upToDate(args[0] === "--force", head, dirty, expected, state)) {
 		console.log(
@@ -407,18 +417,23 @@ function install(args: string[]): void {
 	writeFileSync(join(smoke, "MSG"), "msg\n");
 	// Invoke the new version's release exactly as the shepherd does, but
 	// against the new dir directly, since `current` isn't pointed at it yet.
-	run(
-		[
-			"bash",
-			"-c",
-			'source "$1"; meerkat_run_once "$2" eval "$MEERKAT_CLI_HALT" --commit-msg MSG --no-open',
-			"smoke",
-			join(process.cwd(), "bin/meerkat-attach"),
-			join(finalDir, "bin/meerkat"),
-		],
-		{ ...smokeEnv, MEERKAT_PWD: smoke },
-		smoke,
+	const smokeCode = decisionCode(
+		status(
+			Bun.spawnSync([join(finalDir, "bin/meerkat"), "eval", CLI_HALT, "--commit-msg", "MSG", "--no-open"], {
+				env: { ...smokeEnv, MEERKAT_PWD: smoke },
+				cwd: smoke,
+				stdio: ["inherit", "inherit", "inherit"],
+			}),
+		),
 	);
+	if (smokeCode !== 0) process.exit(smokeCode);
+
+	const shepherdTmp = `${paths.shepherd}.tmp.${process.pid}`;
+	const built = buildShepherd(process.cwd(), shepherdTmp, smoke, env);
+	if (built !== null) {
+		process.stderr.write(`meerkat: ${built}`);
+		process.exit(1);
+	}
 
 	// Flip `current` at the smoke-tested version. A rename replaces the
 	// `current` symlink itself rather than following it. Absolute target so
@@ -428,17 +443,11 @@ function install(args: string[]): void {
 	symlinkSync(finalDir, tmpLink);
 	renameSync(tmpLink, paths.current);
 
-	// The shepherd below sources this, so this lands first.
-	copyFileSync("bin/meerkat-attach", `${paths.attach}.tmp.${process.pid}`);
-	renameSync(`${paths.attach}.tmp.${process.pid}`, paths.attach);
-
-	// Install the shepherd via temp + atomic rename: a shepherd a review is
-	// already running keeps its old inode (bash reads the script by offset
-	// as it loops), so replacing the path can't corrupt it mid-review.
-	const shepherdTmp = `${paths.shepherd}.tmp.${process.pid}`;
-	copyFileSync("bin/meerkat-shepherd", shepherdTmp);
-	run(["chmod", "+x", shepherdTmp], env);
+	// Install the shepherd by atomic rename: a shepherd a review is already
+	// running keeps its old inode, so replacing the path can't disturb it.
 	renameSync(shepherdTmp, paths.shepherd);
+	// The library an earlier install's bash shepherd sourced.
+	rmSync(join(paths.share, "meerkat-attach"), { force: true });
 
 	writeFileSync(paths.wrapper, expected);
 	run(["chmod", "+x", paths.wrapper], env);
