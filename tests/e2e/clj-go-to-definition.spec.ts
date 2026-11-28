@@ -27,6 +27,8 @@ const other = `(ns app.other
   "Other doc."
   [z]
   z)
+
+(defn tail [] (missing-fn))
 `;
 
 const core = (body: string) => `(ns app.core
@@ -137,9 +139,25 @@ test("Cmd underlines a symbol that resolves, a Cmd-click or Go to jumps to its d
 		await expect(view).toHaveCount(0);
 		await expect.poll(async () => (await symbolPoint(page, "new", "o/thing")).y).toBeCloseTo(helper.y, -1);
 
-		// A spec keyword opens its s/def.
+		// A spec keyword opens its s/def, in the file the view showed
+		// before it closed, flashing the line.
 		await cmdClick(page, "new", ":app.other/thing");
 		await expect(view.locator('[data-clj-line="4"]')).toBeInViewport();
+		await expect.poll(() => view.locator('[data-clj-line="4"]').evaluate((row) => row.getAnimations().length)).toBe(1);
+
+		// A click on a note the view shows, hanging past its edge, keeps it.
+		const size = page.viewportSize();
+		if (!size) throw new Error("no viewport");
+		await page.setViewportSize({ width: size.width, height: 260 });
+		await view.locator('[data-clj-line="11"]').evaluate((row) => row.scrollIntoView({ block: "end" }));
+		await cmdClick(page, "view", "missing-fn", 1, false);
+		const note = await page.locator('[data-test="clj-no-definition"]').boundingBox();
+		const edge = await view.boundingBox();
+		if (!note || !edge) throw new Error("no note or view");
+		expect(note.y + note.height).toBeGreaterThan(edge.y + edge.height + 2);
+		await page.mouse.click(note.x + 4, (note.y + note.height + edge.y + edge.height) / 2);
+		await expect(view).toBeVisible();
+		await page.setViewportSize(size);
 		await view.getByRole("button", { name: "Close file view" }).click();
 		await expect(view).toHaveCount(0);
 

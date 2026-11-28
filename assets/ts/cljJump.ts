@@ -82,7 +82,8 @@ const ESC_OWNERS = ".clj-hover-popup, .keys-sheet, #file-filter, .version-popove
 
 /** Whether Esc, as `e`, steps back from a jump. */
 export function escStepsBack(e: KeyboardEvent): boolean {
-	if (e.key !== "Escape" || e.defaultPrevented || starts.length === 0) return false;
+	// One press steps back one jump, however long it is held.
+	if (e.key !== "Escape" || e.repeat || e.defaultPrevented || starts.length === 0) return false;
 	if (document.querySelector(ESC_OWNERS)) return false;
 	const focus = document.activeElement as HTMLElement | null;
 	return !(focus?.isContentEditable || focus?.matches("input, textarea, select"));

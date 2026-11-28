@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
+  import { tick } from "svelte";
   import { type View, type ViewDetail, VIEW_EVENT, closeView, escStepsBack, jumpTo, stepBack } from "../ts/cljJump";
   import { CljPointer } from "../ts/cljPointer.svelte";
   import { DIFF_THEME, sharedHighlighter } from "../ts/diffHighlighter";
@@ -65,8 +66,9 @@
       const detail = (e as CustomEvent<ViewDetail>).detail;
       open = detail;
       if (!detail) return;
+      // A view closed since draws its body again first.
       if (detail.where === shownWhere && text !== null) {
-        show(detail);
+        tick().then(() => show(detail));
         return;
       }
       text = null;
@@ -95,10 +97,16 @@
       e.preventDefault();
       stepBack();
     };
-    // A click outside the view, and the popups it opens, closes it.
+    // A click outside the view, and the popup and notes it opens,
+    // closes it. A note lets clicks through, so its box is checked.
     const onPointer = (e: PointerEvent) => {
       const target = e.target as Element | null;
-      if (open && !target?.closest(".clj-file-view, .clj-hover-popup")) closeView();
+      if (!open || target?.closest(".clj-file-view, .clj-hover-popup")) return;
+      const onNote = [...document.querySelectorAll(".clj-note")].some((note) => {
+        const r = note.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      });
+      if (!onNote) closeView();
     };
     window.addEventListener(VIEW_EVENT, onView);
     window.addEventListener("phx:clj:view", onText);
