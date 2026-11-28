@@ -1,8 +1,20 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	buildShepherd,
 	dirInUse,
 	freeVersionDir,
 	gcVictims,
@@ -30,7 +42,6 @@ describe("installPaths", () => {
 			current: "/home/u/.local/share/meerkat-beam/current",
 			wrapper: "/home/u/.local/bin/meerkat",
 			shepherd: "/home/u/.local/share/meerkat-beam/meerkat-shepherd",
-			attach: "/home/u/.local/share/meerkat-beam/meerkat-attach",
 		});
 	});
 
@@ -91,7 +102,6 @@ describe("upToDate", () => {
 		stamp: HEAD,
 		releaseExecutable: true,
 		shepherdExecutable: true,
-		attachIsFile: true,
 	};
 
 	test("holds for a clean build of this commit with this script's launcher", () => {
@@ -109,7 +119,6 @@ describe("upToDate", () => {
 		expect(upToDate(false, HEAD, false, expected, { ...installed, stamp: `${HEAD}-wip` })).toBe(false);
 		expect(upToDate(false, HEAD, false, expected, { ...installed, releaseExecutable: false })).toBe(false);
 		expect(upToDate(false, HEAD, false, expected, { ...installed, shepherdExecutable: false })).toBe(false);
-		expect(upToDate(false, HEAD, false, expected, { ...installed, attachIsFile: false })).toBe(false);
 	});
 });
 
@@ -199,6 +208,26 @@ describe("on disk", () => {
 		]);
 		expect(versionDirs(join(base, "missing"))).toEqual([]);
 	});
+
+	test("buildShepherd compiles the shepherd into an executable that runs it, in its scratch dir", () => {
+		const scratch = mkdtempSync(join(base, "scratch-"));
+		const out = join(base, "shepherd");
+		expect(buildShepherd(join(import.meta.dir, ".."), out, scratch, process.env)).toBeNull();
+		const run = Bun.spawnSync([out], { env: { ...process.env, MEERKAT_CURRENT_LINK: "" }, stderr: "pipe" });
+		expect([run.exitCode, run.stderr.toString()]).toEqual([1, "meerkat-shepherd: MEERKAT_CURRENT_LINK not set\n"]);
+		expect(readdirSync(base).filter((name) => name.endsWith(".bun-build"))).toEqual([]);
+	});
+
+	test("buildShepherd removes an executable that does not run the shepherd", () => {
+		const root = join(base, "noop");
+		mkdirSync(join(root, "bin/lib"), { recursive: true });
+		writeFileSync(join(root, "bin/lib/shepherd.ts"), "export {};\n");
+		const out = join(base, "noop-shepherd");
+		expect(buildShepherd(root, out, mkdtempSync(join(base, "scratch-")), process.env)).toMatch(
+			/^the shepherd did not compile into a working executable/,
+		);
+		expect(existsSync(out)).toBe(false);
+	});
 });
 
 // The real scripts/install.sh and install.ts, run from a committed, clean
@@ -245,7 +274,6 @@ describe("install.sh and install.ts", () => {
 		writeFileSync(join(version, "INSTALLED_COMMIT"), `${head}\n`);
 		symlinkSync(version, join(share, "current"));
 		executable(join(share, "meerkat-shepherd"), "#!/bin/sh\n");
-		writeFileSync(join(share, "meerkat-attach"), "");
 		executable(join(base, "bin/meerkat"), launcher(join(share, "current"), join(share, "meerkat-shepherd")));
 
 		const shim = join(base, "shim");

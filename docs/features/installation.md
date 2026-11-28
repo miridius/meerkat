@@ -20,8 +20,10 @@ scripts/install.sh
 - Builds a `mix release` under `_build/<env>/rel/meerkat`.
 - Copies it to `~/.local/share/meerkat-beam/` (override via
   `MEERKAT_INSTALL_PREFIX`).
-- Installs the prod shepherd `meerkat-shepherd`, and the
-  `meerkat-attach` library it sources, beside the versions.
+- Compiles the prod shepherd (`bin/lib/shepherd.ts`) with
+  `bun build --compile` into a standalone `meerkat-shepherd` beside
+  the versions, so the installed meerkat needs no Bun on the `PATH`
+  a git hook runs with.
 - Writes `~/.local/bin/meerkat` to exec that shepherd, which runs
   the release: no Mix. It replaces any other launcher there.
 

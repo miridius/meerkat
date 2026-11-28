@@ -73,3 +73,9 @@ export async function main(args: string[]): Promise<never> {
 		},
 	});
 }
+
+// scripts/install.ts compiles this file into the installed shepherd:
+// from an entry without a `.ts` extension, such as bin/meerkat-shepherd,
+// `bun build --compile` bundles none of its imports and builds a binary
+// that does nothing.
+if (import.meta.main) await main(process.argv.slice(2));
