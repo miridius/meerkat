@@ -234,6 +234,9 @@ describe("on disk", () => {
 			cwd: scratch,
 			env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
 			stderr: "pipe",
+			// Killed within the test's own 5 s, should its caller spin.
+			timeout: 4000,
+			killSignal: "SIGKILL",
 		});
 		expect([review.exitCode, review.stderr.toString()]).toEqual([0, ""]);
 		expect(readFileSync(argsFile, "utf8")).toBe(`eval\n${CLI_HALT}\n--commit-msg\nMSG\n--no-open\nunset\n`);

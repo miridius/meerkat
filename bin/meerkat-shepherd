@@ -1,6 +1,7 @@
-#!/usr/bin/env -S bun --no-env-file
-// The prod shepherd: see lib/shepherd.ts. Bun loads no .env from the
-// reviewed repo, whose variables would reach the BEAM.
+#!/usr/bin/env -S bun --no-env-file --config=/dev/null
+// The prod shepherd: see lib/shepherd.ts. Bun loads no .env or
+// bunfig.toml from the reviewed repo, whose variables would reach the
+// BEAM and whose preloads would run in the launcher.
 import { launch } from "./lib/serve.ts";
 import { main } from "./lib/shepherd.ts";
 

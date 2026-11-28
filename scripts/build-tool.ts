@@ -1,8 +1,7 @@
 // CI builds from source the tools .github/toolchain.env pins that the
 // macOS runner lacks or has too old: GNU bash, so the bash scripts are
-// tested under the bash 5.3 local runs use, not the runner's 3.2, and
-// Graphviz, whose dot PlantUML lays
-// diagrams out with. It fetches the release's files, checks them together
+// tested under the pinned 5.3, as local runs use, not the runner's 3.2,
+// and Graphviz, whose dot PlantUML lays diagrams out with. It fetches the release's files, checks them together
 // against <TOOL>_SHA256, and installs to the PREFIX argument.
 //
 //   bun scripts/build-tool.ts bash|graphviz PREFIX

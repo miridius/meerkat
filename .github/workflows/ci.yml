@@ -44,8 +44,9 @@ jobs:
         with:
           cache: true
 
-      # Tests the bash scripts under the bash 5.3 local runs use, not the
-      # image's 3.2: run-test-file.sh's TIMEFORMAT, for one, differs.
+      # Tests the bash scripts under the pinned GNU bash 5.3, as local runs
+      # use, not the image's 3.2: run-test-file.sh's TIMEFORMAT, for one,
+      # differs.
       - id: gnu-bash
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

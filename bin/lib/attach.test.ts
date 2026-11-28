@@ -443,28 +443,67 @@ test("a caller dropping a run the key no longer names leaves an older meerkat's 
 	expect(lstatSync(join(runs, "key")).isDirectory()).toBe(true);
 });
 
-// The caller reads nothing from the reviewed repo's working directory:
-// neither a file named `exit` nor, through Bun, its `.env`.
-test("a review in a repo holding `exit` and `.env` files runs as in any other", () => {
-	const base = tmp();
+// Runs the Bun-run shepherd from `base`/repo with the runs dir given, on a
+// fake release whose BEAM records FROM_DOTENV in `base`/seen and
+// approves. It is killed within the test's own 5 s, should its caller
+// spin.
+function shepherdIn(base: string, runs: string) {
 	const repo = join(base, "repo");
-	mkdirSync(repo);
-	writeFileSync(join(repo, "exit"), "0\n");
-	writeFileSync(join(repo, ".env"), "FROM_DOTENV=leaked\n");
+	mkdirSync(repo, { recursive: true });
 	const release = join(base, "release");
 	mkdirSync(join(release, "bin"), { recursive: true });
 	writeFileSync(join(release, "bin/meerkat"), `#!/bin/sh\necho "\${FROM_DOTENV-unset}" >'${base}/seen'\nexit 76\n`);
 	chmodSync(join(release, "bin/meerkat"), 0o755);
 	symlinkSync(release, join(base, "current"));
-	const run = Bun.spawnSync([join(import.meta.dir, "../meerkat-shepherd"), "--no-open"], {
+	return Bun.spawnSync([join(import.meta.dir, "../meerkat-shepherd"), "--no-open"], {
 		cwd: repo,
-		env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
+		env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: runs },
 		stderr: "pipe",
-		// Within the test's own 5 s, so a caller that spins is killed.
 		timeout: 4000,
 		killSignal: "SIGKILL",
 	});
+}
+
+// The caller reads no stray file in the reviewed repo's working
+// directory: neither a file named `exit` nor, through Bun, its `.env` or
+// `bunfig.toml`.
+test("a review in a repo holding `exit`, `.env` and `bunfig.toml` files runs as in any other", () => {
+	const base = tmp();
+	const repo = join(base, "repo");
+	mkdirSync(repo);
+	writeFileSync(join(repo, "exit"), "0\n");
+	writeFileSync(join(repo, ".env"), "FROM_DOTENV=leaked\n");
+	writeFileSync(join(repo, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+	writeFileSync(join(repo, "preload.ts"), "process.exit(9);\n");
+	const run = shepherdIn(base, join(base, "runs"));
 	expect([run.exitCode, run.stderr.toString(), readFileSync(join(base, "seen"), "utf8")]).toEqual([0, "", "unset\n"]);
+});
+
+test("a launcher that cannot create its runs dir exits 2 with a REJECT", () => {
+	const base = tmp();
+	writeFileSync(join(base, "file"), "");
+	const run = shepherdIn(base, join(base, "file/runs"));
+	expect(run.exitCode).toBe(2);
+	expect(run.stderr.toString()).toEndWith("meerkat: the launcher failed — defaulting to REJECT (commit aborted).\n");
+});
+
+// An old-layout run dir in a runs dir that cannot be changed: removing it
+// fails, and the caller exits with the decision all the same.
+test("a caller keeps a decision it cannot clean up after", async () => {
+	const runs = tmp();
+	const { c } = caller(runs, { stream: outcome });
+	c.dir = c.link;
+	mkdirSync(c.dir);
+	writeFileSync(join(c.dir, "port"), "4242 1\n");
+	writeFileSync(join(c.dir, "token"), "token\n");
+	writeFileSync(join(c.dir, "exit"), "1\n");
+	writeFileSync(join(c.dir, "sub"), "");
+	chmodSync(c.dir, 0o555);
+	try {
+		expect(await exitCode(c.attachStream({}))).toBe(1);
+	} finally {
+		chmodSync(c.dir, 0o755);
+	}
 });
 
 describe("a real caller's requests", () => {

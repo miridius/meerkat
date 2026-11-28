@@ -20,18 +20,26 @@ export const CLI_HALT = "System.halt(case Meerkat.CLI.main(System.argv()) do 0 -
 export const RESTART_EXIT_CODE = 75;
 
 // The command that runs this launcher again: its compiled executable, or
-// Bun running its entry script, loading no .env from the reviewed repo.
+// Bun running its entry script, loading no .env or bunfig.toml from the
+// reviewed repo.
 export const selfCommand = () =>
-	Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, "--no-env-file", Bun.main];
+	Bun.main.startsWith("/$bunfs/")
+		? [process.execPath]
+		: [process.execPath, "--no-env-file", "--config=/dev/null", Bun.main];
 
 // Runs a launcher's `main` on its arguments. An unexpected failure, such
 // as a runs dir it cannot create or a missing `mix`, ends it as a crash
-// does, with 2 and a REJECT, never 1, which says the reviewer rejected.
+// does: with 2, never 1, which says the reviewer rejected, and reported
+// as a REJECT, or under `--answers` as nothing stored.
 export async function launch(main: (args: string[]) => Promise<never>): Promise<never> {
+	const args = process.argv.slice(2);
 	try {
-		return await main(process.argv.slice(2));
+		return await main(args);
 	} catch (error) {
-		say(`meerkat: ${error instanceof Error ? error.message : error} — defaulting to REJECT (commit aborted).\n`);
+		const outcome = wantsAnswers(args)
+			? "the answers were not stored"
+			: "defaulting to REJECT (commit aborted)";
+		say(`${error instanceof Error ? error.stack : error}\nmeerkat: the launcher failed — ${outcome}.\n`);
 		process.exit(2);
 	}
 }
