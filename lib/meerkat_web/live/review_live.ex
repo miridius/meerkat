@@ -83,7 +83,7 @@ defmodule MeerkatWeb.ReviewLive do
     # still wipes the drafts the broadcast would have wiped.
     done = done_view(Decision.current())
 
-    clj_hover = start_clj_hover(state.files, review_id, repo_path)
+    clj_hover = start_clj_hover(state, review_id, repo_path)
 
     {:ok,
      assign(socket,
@@ -150,13 +150,13 @@ defmodule MeerkatWeb.ReviewLive do
   # Whether the review has Clojure hover, its index started when it
   # does. Hover needs a review server to key its index on, so an
   # unbound review gets none.
-  defp start_clj_hover(files, review_id, repo_path) do
+  defp start_clj_hover(%ReviewState{files: files, reviewed_ref: ref}, review_id, repo_path) do
     clojure? = Enum.any?(files, &CljHover.clojure_file?(&1.file_name))
     kondo? = CljHover.Kondo.available?()
 
     # muex:ignore equivalent: all three operands are booleans computed above, so their order changes nothing
     on? = clojure? and kondo? and review_id != "unbound"
-    if on?, do: {:ok, _pid} = CljHover.ensure_started(review_id, repo_path, files)
+    if on?, do: {:ok, _pid} = CljHover.ensure_started(review_id, repo_path, files, ref)
 
     # muex:ignore equivalent: both operands are booleans computed above, so their order changes nothing
     %{on: on?, kondo_missing: clojure? and not kondo?}
@@ -672,20 +672,35 @@ defmodule MeerkatWeb.ReviewLive do
     end
   end
 
-  # A moved line's arrow: show its counterpart's file in diff view,
-  # then have the browser scroll to the counterpart lines.
-  def handle_event("moved.jump", %{"file_name" => name} = target, socket) do
-    case Enum.find_index(socket.assigns.state.files, &(&1.file_name == name)) do
+  # A moved line's arrow, or a go to definition into a diff file named
+  # by index: show the file in diff view, then have the browser scroll
+  # to the lines, expanding folded context to reach them when `expand`.
+  def handle_event("moved.jump", target, socket) do
+    files = socket.assigns.state.files
+
+    idx =
+      case target do
+        %{"file_index" => idx} when is_integer(idx) and idx >= 0 and idx < length(files) -> idx
+        %{"file_name" => name} -> Enum.find_index(files, &(&1.file_name == name))
+        _ -> nil
+      end
+
+    case idx do
       nil ->
         {:noreply, socket}
 
       idx ->
+        name = Enum.at(files, idx).file_name
+
         {:noreply,
          socket
          |> show_file(idx, name, true)
          |> push_event(
            "moved:jump",
-           Map.take(target, ["file_name", "side", "line_start", "line_end"])
+           target
+           |> Map.take(["side", "line_start", "line_end", "expand"])
+           # muex:ignore equivalent: the take leaves no "file_name", so put and put_new agree
+           |> Map.put("file_name", name)
          )}
     end
   end
@@ -819,22 +834,37 @@ defmodule MeerkatWeb.ReviewLive do
     {:noreply, socket}
   end
 
-  ## --- Clojure hover ---
+  ## --- Clojure hover and go to definition ---
 
-  # Answered through `handle_async/3`, so a slow first hover doesn't
-  # hold up other events; a later hover's answer replaces an earlier one's.
-  def handle_event("clj.hover", params, %{assigns: %{clj_hover: true}} = socket) do
-    %{"id" => id, "file_index" => idx, "side" => side, "line" => line, "col" => col} = params
-    rid = socket.assigns.review_id
-    side = if side == "old", do: :old, else: :new
+  # Answered through `handle_async/3`, so a slow first lookup doesn't
+  # hold up other events; a later request's answer replaces an earlier
+  # one's of the same kind. A request names a diff file by
+  # `file_index`, or a file view by `where`.
+  def handle_event("clj.hover", params, socket) do
+    {id, args} = clj_args(socket, params)
+    {:noreply, clj_async(socket, :clj_hover, fn -> %{id: id, hover: clj(:hover, args)} end)}
+  end
+
+  # A jump's request and an underline's each replace only their own kind.
+  def handle_event("clj.definition", params, socket) do
+    {id, args} = clj_args(socket, params)
+
+    # muex:ignore equivalent: swapping which kind gets which name keeps them apart, and both answer alike
+    kind = if params["jump"] == true, do: :clj_jump, else: :clj_definition
 
     {:noreply,
-     start_async(socket, :clj_hover, fn ->
-       %{id: id, hover: hover(rid, idx, side, line, col)}
+     clj_async(socket, kind, fn ->
+       case clj(:definition, args) do
+         :other_side -> %{id: id, jump: nil, other_side: true}
+         jump -> %{id: id, jump: jump, other_side: false}
+       end
      end)}
   end
 
-  def handle_event("clj.hover", _params, socket), do: {:noreply, socket}
+  def handle_event("clj.view", %{"id" => id, "where" => where}, socket) do
+    rid = socket.assigns.review_id
+    {:noreply, clj_async(socket, :clj_view, fn -> %{id: id, view: clj(:view, [rid, where])} end)}
+  end
 
   ## --- Decision ---
 
@@ -1118,19 +1148,42 @@ defmodule MeerkatWeb.ReviewLive do
   end
 
   @impl true
-  def handle_async(:clj_hover, {:ok, reply}, socket) do
-    {:noreply, push_event(socket, "clj:hover", reply)}
-  end
+  def handle_async(:clj_hover, {:ok, reply}, socket),
+    do: {:noreply, push_event(socket, "clj:hover", reply)}
 
-  # A failed hover answers nothing, so the popup of the last var closes
-  # rather than standing in for the symbol now under the pointer.
-  defp hover(rid, idx, side, line, col) do
-    CljHover.hover(rid, idx, side, line, col)
+  def handle_async(kind, {:ok, reply}, socket) when kind in [:clj_definition, :clj_jump],
+    do: {:noreply, push_event(socket, "clj:definition", reply)}
+
+  def handle_async(:clj_view, {:ok, reply}, socket),
+    do: {:noreply, push_event(socket, "clj:view", reply)}
+
+  # Only a review with Clojure hover on looks anything up.
+  defp clj_async(%{assigns: %{clj_hover: true}} = socket, name, fun),
+    do: start_async(socket, name, fun)
+
+  defp clj_async(socket, _name, _fun), do: socket
+
+  # A lookup's request id, and its arguments after the review id.
+  defp clj_args(socket, %{"id" => id, "side" => side, "line" => line, "col" => col} = params),
+    do: {id, [socket.assigns.review_id, clj_target(params), clj_side(side), line, col]}
+
+  defp clj_target(%{"where" => where}), do: {:view, where}
+  defp clj_target(%{"file_index" => idx}), do: idx
+
+  defp clj_side("old"), do: :old
+  defp clj_side(_), do: :new
+
+  # A failed lookup answers nothing, so a hover popup of the last var
+  # closes rather than standing in for the symbol now under the pointer.
+  defp clj(fun, args) do
+    apply(CljHover, fun, args)
   catch
-    # Any failure, so a hover never takes the page down with it.
+    # Any failure, so a lookup never takes the page down with it.
     kind, reason ->
       # muex:ignore observability: log text only
-      IO.puts(:stderr, "meerkat: Clojure hover failed: #{Exception.format_banner(kind, reason)}")
+      message = "meerkat: Clojure #{fun} failed: #{Exception.format_banner(kind, reason)}"
+      # muex:ignore observability: log text only
+      IO.puts(:stderr, message)
       nil
   end
 
@@ -1251,6 +1304,13 @@ defmodule MeerkatWeb.ReviewLive do
         open_forms={@open_forms}
         deadline_ms={@deadline_ms}
         timeout_action={@timeout_action}
+      />
+      <.svelte
+        :if={@clj_hover}
+        id="CljFileView"
+        name="CljFileView"
+        props={%{font_size_px: @font_size_px, tab_size: @tab_size}}
+        socket={@socket}
       />
     </main>
     """

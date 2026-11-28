@@ -17,6 +17,18 @@ defmodule Meerkat.CljHoverTest do
       "Old doc."
       [x]
       x)
+
+    (defn gone [] 1)
+    """,
+    # Specs outside the diff: one in the keyword's own namespace, one
+    # registering another namespace's keyword.
+    "src/app/specs.clj" => """
+    (ns app.specs
+      (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::id int?)
+    (s/def :user/name string?)
+    (s/def :user/first-name string?)
     """,
     "src/app/other.clj" => """
     (ns app.other)
@@ -28,11 +40,17 @@ defmodule Meerkat.CljHoverTest do
 
     (def limit "Limit doc." 10)
     """,
-    # A namespace split over two files: the diff's file answers.
+    # A namespace split over two files: the diff's file answers. Its
+    # spec opens it in a file view.
     "src/app/util_copy.clj" => """
-    (ns app.util)
+    (ns app.util
+      (:require [clojure.spec.alpha :as s]))
 
     (defn helper "Copy doc." [x] x)
+
+    (s/def ::copy int?)
+
+    (defn copy-fn [] (copy-fn))
     """,
     "src/app/core.clj" => """
     (ns app.core
@@ -40,7 +58,62 @@ defmodule Meerkat.CljHoverTest do
                 [app.other :as o]))
 
     (defn run [y]
-      (u/helper (o/thing y)))
+      (u/helper (o/thing y)) (u/later))
+    """,
+    # A namespace, and a spec, the diff deletes.
+    "src/app/dropped.clj" => """
+    (ns app.dropped
+      (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::gone int?)
+    """,
+    # A keyword two files `s/def`: its own namespace's file answers.
+    "src/app/aaa.clj" => """
+    (ns app.aaa
+      (:require [clojure.spec.alpha :as s]))
+
+    (s/def :app.my-specs/key string?)
+    """,
+    "src/app/my_specs.clj" => """
+    (ns app.my-specs
+      (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::key int?)
+    """,
+    "web/app/specs.cljs" => """
+    (ns app.web-specs
+      (:require [cljs.spec.alpha :as s]))
+
+    (s/def ::w int?)
+    """,
+    # Files the search for `:user/name`'s spec passes over: not Clojure,
+    # no `s/def`, and another keyword's.
+    "README.md" => """
+    (s/def :user/name string?)
+    """,
+    "doc/uses.clj" => """
+    (get {} :user/name)
+    """,
+    "doc/names.clj" => """
+    (s/def :user/namex string?)
+    """,
+    # A keyword two files `s/def`, neither linted nor on the classpath:
+    # the file its namespace's path names answers.
+    "doc/aaa.clj" => """
+    (ns doc.aaa (:require [clojure.spec.alpha :as s]))
+
+    (s/def :app.extra/key int?)
+    """,
+    "doc/app/extra.clj" => """
+    (ns app.extra (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::key string?)
+    """,
+    # Another namespace's `::name`, in a file that never names `user`.
+    "doc/other_name.clj" => """
+    (ns doc.other (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::name string?)
     """,
     "src/app/top.clj" => """
     (ns app.top) (defn top-fn "Top doc." [] 1)
@@ -68,6 +141,8 @@ defmodule Meerkat.CljHoverTest do
       "New doc."
       [x]
       x)
+
+    (defn later [] 1)
     """,
     "src/app/core.clj" => """
     (ns app.core
@@ -79,13 +154,21 @@ defmodule Meerkat.CljHoverTest do
                 [dep.lib :as lib]
                 [dep.shared :as sh]
                 [vend.tool :as t]
-                [vend.locked :as l] [ext.lib :as x] [app.plat :as p]))
+                [vend.locked :as l] [ext.lib :as x] [app.plat :as p] [app.dropped :as dr]))
 
     (defn run [y]
       (lib/dep-fn (u/helper (o/thing y))))
 
     (defn more []
       (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra) (x/ext-fn) (p/now))
+
+    (defn specs [] [:app.specs/id :user/name :app.model/here :app.specs/nope (u/gone) :app.dropped/gone :app.my-specs/key :app.web-specs/w :app.util/copy :user/first-name :dep.lib/dep-key :app.extra/key])
+    """,
+    # A spec in the diff.
+    "src/app/model.clj" => """
+    (ns app.model (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::here int?)
     """,
     "shared/app/both.cljc" => """
     (ns app.both (:require [dep.lib :as lib]))
@@ -118,7 +201,8 @@ defmodule Meerkat.CljHoverTest do
   }
 
   @jar [
-    {"dep/lib.clj", "(ns dep.lib)\n\n(defn dep-fn\n  \"Dep doc.\"\n  [a]\n  a)\n"},
+    {"dep/lib.clj",
+     "(ns dep.lib)\n\n(defn dep-fn\n  \"Dep doc.\"\n  [a]\n  a)\n\n(require '[clojure.spec.alpha :as s])\n(s/def ::dep-key int?)\n"},
     {"dep/lib.cljs", "(ns dep.lib)\n\n(defn dep-fn \"Dep cljs doc.\" [a] a)\n"},
     {"dep/mac.clj", "(ns dep.mac)\n\n(defmacro mac \"Mac doc.\" [a] a)\n"},
     # A ClojureScript namespace keeping its macros in its .clj file.
@@ -150,7 +234,7 @@ defmodule Meerkat.CljHoverTest do
   defp start(dir) do
     {:ok, files} = Git.staged_file_diffs(dir)
     rid = "clj-hover-#{System.unique_integer([:positive])}"
-    {:ok, pid} = CljHover.ensure_started(rid, dir, files)
+    {:ok, pid} = CljHover.ensure_started(rid, dir, files, "HEAD")
     # Stopped before the repo goes: it waits out indexing, which reads the repo.
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
     %{dir: dir, rid: rid, pid: pid, files: files}
@@ -162,7 +246,8 @@ defmodule Meerkat.CljHoverTest do
 
     import_commits(dir, [
       {"refs/heads/main", @base},
-      {"refs/meerkat-test/staged", Map.merge(@base, @staged)}
+      {"refs/meerkat-test/staged",
+       @base |> Map.merge(@staged) |> Map.delete("src/app/dropped.clj")}
     ])
 
     git(dir, ["reset", "-q", "--hard"])
@@ -203,6 +288,26 @@ defmodule Meerkat.CljHoverTest do
     if text, do: File.write!(file, text), else: File.rm!(file)
   end
 
+  # Moves HEAD to a commit on it without `path`, until the test ends.
+  defp move_head(dir, path) do
+    head = git(dir, ["rev-parse", "HEAD"])
+    index = Path.join(System.tmp_dir!(), "meerkat-index-#{System.unique_integer([:positive])}")
+    env = [{"GIT_INDEX_FILE", index}, {"GIT_AUTHOR_NAME", "t"}, {"GIT_AUTHOR_EMAIL", "t@t.t"}]
+    env = env ++ [{"GIT_COMMITTER_NAME", "t"}, {"GIT_COMMITTER_EMAIL", "t@t.t"}]
+
+    run = fn args ->
+      {out, 0} = System.cmd("git", args, cd: dir, env: env)
+      String.trim(out)
+    end
+
+    run.(["read-tree", "HEAD"])
+    run.(["rm", "-q", "--cached", path])
+    commit = run.(["commit-tree", run.(["write-tree"]), "-p", head, "-m", "move"])
+    File.rm!(index)
+    run.(["update-ref", "HEAD", commit])
+    on_exit(fn -> run.(["update-ref", "HEAD", head]) end)
+  end
+
   defp write(dir, path, text) do
     file = Path.join(dir, path)
     File.mkdir_p!(Path.dirname(file))
@@ -211,12 +316,26 @@ defmodule Meerkat.CljHoverTest do
   end
 
   # Hovers the first character of the `nth` `needle` in `file`'s text on `side`.
-  defp hover_on(ctx, file, side, needle, nth \\ 1) do
-    index = Enum.find_index(ctx.files, &(&1.file_name == file))
+  defp hover_on(ctx, file, side, needle, nth \\ 1),
+    do: on(&CljHover.hover/5, ctx, file, side, needle, nth)
+
+  # Where the symbol at the first character of the `nth` `needle` in
+  # `file`'s text on `side` is defined.
+  defp definition_on(ctx, file, side, needle, nth \\ 1) do
+    case on(&CljHover.definition/5, ctx, file, side, needle, nth) do
+      %{to: to} -> to
+      other -> other
+    end
+  end
+
+  defp on(fun, ctx, file, side, needle, nth) do
+    index = index(ctx, file)
     text = Map.fetch!(Enum.at(ctx.files, index), :"#{side}_content")
     {line, col} = position(text, needle, nth)
-    CljHover.hover(ctx.rid, index, side, line, col)
+    fun.(ctx.rid, index, side, line, col)
   end
+
+  defp index(ctx, file), do: Enum.find_index(ctx.files, &(&1.file_name == file))
 
   defp position(text, needle, nth) do
     text
@@ -268,6 +387,198 @@ defmodule Meerkat.CljHoverTest do
 
     assert %{doc: "Cljs now.", where: "web/app/plat.cljs"} =
              hover_on(ctx, "web/app/ui.cljs", :new, "p/now")
+  end
+
+  describe "go to definition" do
+    test "a var in a diff file lands on its line on the symbol's side, with the symbol's span",
+         ctx do
+      util = index(ctx, "src/app/util.clj")
+
+      # `  (lib/dep-fn (u/helper (o/thing y))))`: u/helper is cols 16-23.
+      assert %{col: 16, end_col: 24, to: %{file_index: ^util, side: :new, line: 3}} =
+               CljHover.definition(ctx.rid, index(ctx, "src/app/core.clj"), :new, 13, 18)
+
+      assert %{file_index: ^util, side: :old, line: 3} =
+               definition_on(ctx, "src/app/core.clj", :old, "u/helper")
+
+      plat = index(ctx, "web/app/plat.cljs")
+      assert %{file_index: ^plat, line: 3} = definition_on(ctx, "web/app/ui.cljs", :new, "p/now")
+    end
+
+    test "a var outside the diff opens its file view, read as reviewed", ctx do
+      assert %{where: "src/app/other.clj", line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, "o/thing")
+
+      assert CljHover.view(ctx.rid, "src/app/other.clj") ==
+               %{where: "src/app/other.clj", text: @base["src/app/other.clj"]}
+
+      assert %{where: "dep.jar:dep/lib.clj", line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
+
+      assert %{text: "(ns dep.lib)" <> _} = CljHover.view(ctx.rid, "dep.jar:dep/lib.clj")
+
+      assert %{where: "/" <> _, line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, "x/ext-fn")
+
+      # Only a jump opens a view.
+      refute CljHover.view(ctx.rid, "src/app/top.clj")
+    end
+
+    @tag :own_server
+    test "a file view lands on the reviewed text's line, however the worktree differs", ctx do
+      change(ctx, "src/app/other.clj", "\n\n" <> @base["src/app/other.clj"])
+      assert %{line: 5} = hover_on(ctx, "src/app/core.clj", :new, "o/thing")
+
+      assert %{where: "src/app/other.clj", line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, "o/thing")
+    end
+
+    test "a var only the worktree holds has no definition", ctx do
+      assert %{doc: "Draft doc."} = hover_on(ctx, "src/app/core.clj", :new, "d/draft-fn")
+      refute definition_on(ctx, "src/app/core.clj", :new, "d/draft-fn")
+    end
+
+    test "a symbol only the other side's diff files define answers :other_side", ctx do
+      assert definition_on(ctx, "src/app/core.clj", :new, "u/gone") == :other_side
+      assert definition_on(ctx, "src/app/core.clj", :old, "u/later") == :other_side
+      assert definition_on(ctx, "src/app/core.clj", :new, "app.dropped") == :other_side
+      assert definition_on(ctx, "src/app/core.clj", :new, ":app.dropped/gone") == :other_side
+    end
+
+    test "a local lands on its binding", ctx do
+      core = index(ctx, "src/app/core.clj")
+
+      assert %{file_index: ^core, side: :new, line: 12} =
+               definition_on(ctx, "src/app/core.clj", :new, "y)")
+    end
+
+    test "a namespace lands on its ns form, in the diff or a file view", ctx do
+      util = index(ctx, "src/app/util.clj")
+
+      assert %{file_index: ^util, line: 1} =
+               definition_on(ctx, "src/app/core.clj", :new, "app.util")
+
+      assert %{where: "src/app/other.clj", line: 1} =
+               definition_on(ctx, "src/app/core.clj", :new, "app.other")
+
+      assert %{where: "dep.jar:dep/lib.clj", line: 1} =
+               definition_on(ctx, "src/app/core.clj", :new, "dep.lib")
+    end
+
+    test "a spec keyword lands on its s/def, in the diff or the repo's other files", ctx do
+      model = index(ctx, "src/app/model.clj")
+
+      assert %{file_index: ^model, line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.model/here")
+
+      assert %{where: "src/app/specs.clj", line: 4} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.specs/id")
+
+      assert %{where: "src/app/specs.clj", line: 5} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/name")
+
+      refute definition_on(ctx, "src/app/core.clj", :new, ":app.specs/nope")
+
+      assert %{where: "web/app/specs.cljs", line: 4} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.web-specs/w")
+
+      assert %{where: "src/app/specs.clj", line: 6} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/first-name")
+
+      # The namespace's file, here a dependency's.
+      assert %{where: "dep.jar:dep/lib.clj", line: 9} =
+               definition_on(ctx, "src/app/core.clj", :new, ":dep.lib/dep-key")
+    end
+
+    test "a spec keyword two files define lands in its own namespace's file", ctx do
+      assert %{where: "src/app/my_specs.clj", line: 4} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.my-specs/key")
+
+      assert %{where: "doc/app/extra.clj", line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.extra/key")
+    end
+
+    test "a spec keyword's search reads only Clojure files with its s/def", ctx do
+      assert %{where: "src/app/specs.clj"} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/name")
+
+      for where <- ["README.md", "doc/uses.clj", "doc/names.clj", "doc/other_name.clj"],
+          do: refute(CljHover.view(ctx.rid, where))
+    end
+
+    @tag :own_server
+    test "a spec keyword's files are searched once per review", ctx do
+      assert %{where: "src/app/specs.clj", line: 5} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/name")
+
+      # HEAD, the reviewed ref outside the diff, moves to drop the spec.
+      move_head(ctx.dir, "src/app/specs.clj")
+
+      assert %{where: "src/app/specs.clj", line: 5} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/name")
+    end
+
+    test "hover and go to definition work in a file view, on the side asked", ctx do
+      assert %{where: "src/app/other.clj"} =
+               definition_on(ctx, "src/app/core.clj", :new, "o/thing")
+
+      view = {:view, "src/app/other.clj"}
+      # `  z)` on line 6 uses the local bound on line 5.
+      assert %{to: %{where: "src/app/other.clj", line: 5}} =
+               CljHover.definition(ctx.rid, view, :new, 6, 3)
+
+      assert %{name: "app.other/thing"} = CljHover.hover(ctx.rid, view, :new, 3, 7)
+      refute CljHover.definition(ctx.rid, {:view, "src/app/nowhere.clj"}, :new, 1, 1)
+
+      # A jar's view names its vars by the jar, as it was opened.
+      assert %{where: "dep.jar:dep/lib.clj"} =
+               definition_on(ctx, "src/app/core.clj", :new, "lib/dep-fn")
+
+      jar = {:view, "dep.jar:dep/lib.clj"}
+      # `(defn dep-fn` on line 3: dep-fn at col 7.
+      assert %{name: "dep.lib/dep-fn", where: "dep.jar:dep/lib.clj", in_repo: false} =
+               CljHover.hover(ctx.rid, jar, :new, 3, 7)
+
+      assert %{to: %{where: "dep.jar:dep/lib.clj", line: 3}} =
+               CljHover.definition(ctx.rid, jar, :new, 3, 7)
+    end
+
+    test "in a file view, a diff file's var answers first, then the view's own", ctx do
+      assert %{where: "src/app/util_copy.clj", line: 6} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.util/copy")
+
+      copy = {:view, "src/app/util_copy.clj"}
+      # `(defn helper` on line 4: helper at col 7.
+      assert %{doc: "New doc.", where: "src/app/util.clj"} =
+               CljHover.hover(ctx.rid, copy, :new, 4, 7)
+
+      # `(defn copy-fn [] (copy-fn))` on line 8: the call at col 19.
+      assert %{to: %{where: "src/app/util_copy.clj", line: 8}} =
+               CljHover.definition(ctx.rid, copy, :new, 8, 19)
+    end
+
+    test "a file view reads as its jump's side, and a diff file's var lands in the diff", ctx do
+      assert %{where: "src/app/util_copy.clj"} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.util/copy")
+
+      copy = {:view, "src/app/util_copy.clj"}
+      util = index(ctx, "src/app/util.clj")
+      assert %{doc: "Old doc."} = CljHover.hover(ctx.rid, copy, :old, 4, 7)
+
+      assert %{to: %{file_index: ^util, side: :old, line: 3}} =
+               CljHover.definition(ctx.rid, copy, :old, 4, 7)
+    end
+
+    test "a namespace lands in the file of the jump's language", ctx do
+      clj = index(ctx, "src/app/plat.clj")
+      cljs = index(ctx, "web/app/plat.cljs")
+      assert %{file_index: ^clj} = definition_on(ctx, "src/app/core.clj", :new, "app.plat")
+      assert %{file_index: ^cljs} = definition_on(ctx, "web/app/ui.cljs", :new, "app.plat")
+    end
+
+    test "a blank spot has no definition", ctx do
+      refute CljHover.definition(ctx.rid, index(ctx, "src/app/core.clj"), :new, 11, 1)
+    end
   end
 
   test "a .cljc file's :cljs branch answers as ClojureScript", ctx do
@@ -379,14 +690,14 @@ defmodule Meerkat.CljHoverTest do
     }
 
     rid = "clj-hover-#{System.unique_integer([:positive])}"
-    {:ok, pid} = CljHover.ensure_started(rid, ctx.dir, [file])
+    {:ok, pid} = CljHover.ensure_started(rid, ctx.dir, [file], "HEAD")
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
 
     assert %{name: "app.before/gone", where: "src/app/before.clj"} =
              CljHover.hover(rid, 0, :old, 3, 7)
   end
 
-  test "locals, blank lines and vars off the classpath answer nothing", ctx do
+  test "hover answers nothing for locals, blank lines and vars off the classpath", ctx do
     # The local y, clojure.core/defn (no Clojure jar on this classpath),
     # and the blank line before `(defn run`.
     refute hover_on(ctx, "src/app/core.clj", :new, "y]")
@@ -397,7 +708,7 @@ defmodule Meerkat.CljHoverTest do
 
   @tag :own_server
   test "one server per review, not restarted after a crash", ctx do
-    assert CljHover.ensure_started(ctx.rid, ctx.dir, ctx.files) == {:ok, ctx.pid}
+    assert CljHover.ensure_started(ctx.rid, ctx.dir, ctx.files, "HEAD") == {:ok, ctx.pid}
 
     # Not restarted: a crash re-indexing in a loop would take its
     # supervisor, and every other review's server, down with it.
@@ -416,7 +727,7 @@ defmodule Meerkat.CljHoverTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     rid = "clj-hover-nogit-#{System.unique_integer([:positive])}"
-    {:ok, pid} = CljHover.ensure_started(rid, dir, [])
+    {:ok, pid} = CljHover.ensure_started(rid, dir, [], "HEAD")
     refute CljHover.hover(rid, 0, :new, 1, 1)
     GenServer.stop(pid)
   end

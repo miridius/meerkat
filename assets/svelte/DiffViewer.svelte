@@ -7,10 +7,6 @@
     return sharedHighlighter;
   }
 
-  // Clojure hover request ids, unique across every DiffViewer on the
-  // page, since each one hears every answer.
-  let lastHoverId = 0;
-
   // A code cell font's `2em` and `1ch` in px, by font, for the rulers.
   const fontWidthCache = new Map<string, { offset: number; ch: number }>();
   // How many columns a row of wrapped code holds, by font and width.
@@ -24,8 +20,10 @@
   import InlineComment from "./InlineComment.svelte";
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
-  import CljHoverPopup from "./CljHoverPopup.svelte";
-  import { type CljHover, HOVER_DELAY_MS, type HoverAnchor, keepsPopup, rescrolled, spotAt } from "../ts/cljHover";
+  import CljPointerLayer from "./CljPointerLayer.svelte";
+  import { diffStart, jumpTo } from "../ts/cljJump";
+  import { FLASH_KEYFRAMES, FLASH_MS } from "../ts/flash";
+  import { CljPointer } from "../ts/cljPointer.svelte";
   import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
   import { fittingColumns, rulerBackground, wrappedRulerBackground } from "../ts/rulers";
@@ -335,7 +333,6 @@
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        cancelMovedFlash();
         const rowsBySideLine = buildAnchorIndex();
         applyCommentMarkers(rowsBySideLine);
         renderInlineComments();
@@ -343,6 +340,7 @@
         // The library reuses row elements for other lines, so the moved
         // tint and arrows must be placed again by line number.
         applyMovedHighlights(file.moved_lines ?? [], rowsBySideLine);
+        reflashMoved();
         drawRulers();
       });
     });
@@ -652,7 +650,8 @@
   // expanded, which renders collapsed again after a reload or a view
   // toggle. It must stay visible (an open form blocks the decision
   // buttons), so expand the whole file once per diff instance and view
-  // mode; the hunk-expand observer then places it.
+  // mode; the hunk-expand observer then places it. Go to definition
+  // reveals a folded definition line the same way.
   const expandedForHiddenAnchor = new WeakMap<DiffFile, Set<string>>();
   function expandToShowHiddenAnchor() {
     if (!diffInstance) return;
@@ -890,7 +889,7 @@
   }
 
   function handlePointerMove(e: PointerEvent) {
-    if (clj_hover) restartHoverTimer(e.clientX, e.clientY);
+    if (clj_hover) cljPointer.move(e, dragStart !== null);
     if (!dragStart) return;
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
     if (!el) return;
@@ -976,79 +975,20 @@
     }
   });
 
-  // --- Clojure hover (docs/features/clojure-hover.md) ---
-  //
-  // A pointer resting on a code character asks the server what var it
-  // names; the answer to the latest request opens the popup there.
-  // Resting where no var answers, or leaving both the diff and the
-  // popup, closes it.
+  // --- Clojure hover and go to definition ---
+  // (docs/features/clojure-hover.md, docs/features/clojure-go-to-definition.md)
 
-  const HOVER_CLOSE_MS = 300;
-  let hoverTimer = 0;
-  let hoverCloseTimer = 0;
-  // `row` names the side and line hovered.
-  let hoverRequest: { id: number; anchor: HoverAnchor; row: string } | null = null;
-  let shownHover = $state<{ hover: CljHover; anchor: HoverAnchor; row: string } | null>(null);
-
-  function restartHoverTimer(x: number, y: number) {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-    hoverTimer = window.setTimeout(() => requestHover(x, y), HOVER_DELAY_MS);
-  }
-
-  function requestHover(x: number, y: number) {
-    const spot = dragStart ? null : spotAt(x, y);
-    if (!spot) {
-      hoverRequest = null;
-      shownHover = null;
-      return;
-    }
-    lastHoverId += 1;
-    hoverRequest = {
-      id: lastHoverId,
-      anchor: { rect: spot.rect, scrollX: window.scrollX, scrollY: window.scrollY },
-      row: `${spot.side}:${spot.line}`,
-    };
-    live.pushEvent("clj.hover", {
-      id: lastHoverId,
-      file_index,
-      side: spot.side,
-      line: spot.line,
-      col: spot.col,
-    });
-  }
-
-  function closeHoverSoon() {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-    hoverCloseTimer = window.setTimeout(() => {
-      hoverRequest = null;
-      shownHover = null;
-    }, HOVER_CLOSE_MS);
-  }
-
-  function keepHoverOpen() {
-    clearTimeout(hoverTimer);
-    clearTimeout(hoverCloseTimer);
-  }
+  const cljPointer = new CljPointer(
+    live,
+    () => ({ file_index }),
+    (spot) => spot.side,
+    (jump, side, spot) =>
+      jumpTo(jump, side, live, diffStart(file_index, spot.side, spot.line, spot.raw.closest("tr"))),
+  );
 
   $effect(() => {
-    if (!clj_hover) return;
-    const onAnswer = (e: Event) => {
-      const { id, hover } = (e as CustomEvent<{ id: number; hover: CljHover | null }>).detail;
-      if (id !== hoverRequest?.id) return;
-      const { anchor, row } = hoverRequest;
-      if (keepsPopup(shownHover, row, hover)) return;
-      // The page may have scrolled while the answer was on its way; the
-      // popup picks its side by where the symbol is now.
-      shownHover = hover ? { hover, anchor: rescrolled(anchor, window.scrollX, window.scrollY), row } : null;
-    };
-    window.addEventListener("phx:clj:hover", onAnswer);
-    return () => {
-      window.removeEventListener("phx:clj:hover", onAnswer);
-      clearTimeout(hoverTimer);
-      clearTimeout(hoverCloseTimer);
-    };
+    if (!clj_hover || !diffContainer) return;
+    return cljPointer.listen(diffContainer);
   });
 
   function readLineNum(el: HTMLElement, attr: string): number | null {
@@ -1150,55 +1090,85 @@
     return arrow;
   }
 
-  // Held for 60% of the flash, then eased out.
-  const MOVED_FLASH_SHADOW = "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)";
-  const MOVED_FLASH_KEYFRAMES: Keyframe[] = [
-    { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
-    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6, easing: "ease-out" },
-  ];
-  // The running flash. A hunk expand reuses its cells for other lines,
-  // so the expand cancels it.
-  let movedFlash: Animation[] = [];
+  // The running flash, the lines it shows and when it started.
+  let movedFlash: {
+    side: "old" | "new";
+    lineStart: number;
+    lineEnd: number;
+    start: number;
+    animations: Animation[];
+  } | null = null;
 
   function cancelMovedFlash() {
-    movedFlash.forEach((a) => {
+    movedFlash?.animations.forEach((a) => {
       a.cancel();
     });
-    movedFlash = [];
+    movedFlash = null;
   }
 
-  // Listen for jump events to a moved block's counterpart. If the
-  // event's fileName matches THIS file and its lines are rendered,
-  // scroll them into view, flash a temporary highlight so the reviewer
-  // can spot them, and cancel the event to tell its sender it landed.
+  // Flashes the side's cells of the lines from `at` ms in: the cells,
+  // whose opaque backgrounds hide the row's own.
+  function flashMoved(side: "old" | "new", lineStart: number, lineEnd: number, at = 0) {
+    cancelMovedFlash();
+    const animations: Animation[] = [];
+    for (let ln = lineStart; ln <= lineEnd; ln++) {
+      anchorRowsFor(side, ln).forEach((r) => {
+        r.querySelectorAll(
+          `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
+        ).forEach((td) => {
+          const animation = td.animate(FLASH_KEYFRAMES, FLASH_MS);
+          animation.currentTime = at;
+          animations.push(animation);
+        });
+      });
+    }
+    movedFlash = { side, lineStart, lineEnd, start: performance.now() - at, animations };
+  }
+
+  // The library reuses rows for other lines as it renders, as when a
+  // hunk expands or a file just revealed draws, so a running flash
+  // moves to its lines' rows, carrying on where it was.
+  function reflashMoved() {
+    if (!movedFlash) return;
+    const { side, lineStart, lineEnd, start } = movedFlash;
+    const at = performance.now() - start;
+    if (at < FLASH_MS) flashMoved(side, lineStart, lineEnd, at);
+    else movedFlash = null;
+  }
+
+  // Listen for jump events, to a moved block's counterpart by fileName
+  // or to a definition by fileIndex. If the event names THIS file and
+  // its lines are rendered, scroll them into view, flash a temporary
+  // highlight so the reviewer can spot them, and cancel the event to
+  // tell its sender it landed.
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {
-      const ev = e as CustomEvent<{ fileName: string; side: "old" | "new"; lineStart: number; lineEnd: number }>;
-      if (!ev.detail || ev.detail.fileName !== file.file_name) return;
+      const ev = e as CustomEvent<{
+        fileName?: string;
+        fileIndex?: number;
+        side: "old" | "new";
+        lineStart: number;
+        lineEnd: number;
+        expand?: boolean;
+      }>;
+      if (!ev.detail || (ev.detail.fileName !== file.file_name && ev.detail.fileIndex !== file_index)) return;
       // live_svelte unmounts a removed viewer only at the next
       // `phx:page-loading-stop`, so a collapsed file's old viewer still
       // listens, over rows no longer on the page.
       if (!diffContainer?.isConnected) return;
       const rows = anchorRowsFor(ev.detail.side, ev.detail.lineStart);
-      if (rows.length === 0) return;
+      if (rows.length === 0) {
+        // Go to definition reveals a line folded context hides; the
+        // expand renders it for the sender's next try.
+        if (ev.detail.expand) expandToShowHiddenAnchor();
+        return;
+      }
       ev.preventDefault();
       const row = rows[0];
       row.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Flash the target side's cells for 1.6s, as an inset shadow over
-      // their opaque backgrounds, which hide the row's own. A click
-      // during a flash starts it again.
-      const side = ev.detail.side;
-      cancelMovedFlash();
-      for (let ln = ev.detail.lineStart; ln <= ev.detail.lineEnd; ln++) {
-        anchorRowsFor(side, ln).forEach((r) => {
-          r.querySelectorAll(
-            `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
-          ).forEach((td) => {
-            movedFlash.push(td.animate(MOVED_FLASH_KEYFRAMES, 1600));
-          });
-        });
-      }
+      // A click during a flash starts it again.
+      flashMoved(ev.detail.side, ev.detail.lineStart, ev.detail.lineEnd);
     };
     document.addEventListener("meerkat-move-jump", handler);
     return () => document.removeEventListener("meerkat-move-jump", handler);
@@ -1260,7 +1230,8 @@
     onpointerup={handlePointerUp}
     onlostpointercapture={handlePointerCancel}
     onpointercancel={handlePointerCancel}
-    onpointerleave={clj_hover ? closeHoverSoon : undefined}
+    onpointerleave={clj_hover ? () => cljPointer.leave() : undefined}
+    class:clj-linking={cljPointer.link !== null}
     style:tab-size={tab_size}
     style:--tab-size={tab_size}
   >
@@ -1275,18 +1246,8 @@
       registerHighlighter={highlighter ?? undefined}
     />
   </div>
-  {#if shownHover}
-    {#key shownHover}
-      <CljHoverPopup
-        hover={shownHover.hover}
-        anchor={shownHover.anchor}
-        {highlighter}
-        theme={DIFF_THEME}
-        {font_size_px}
-        onpointerenter={keepHoverOpen}
-        onpointerleave={closeHoverSoon}
-      />
-    {/key}
+  {#if clj_hover}
+    <CljPointerLayer pointer={cljPointer} {highlighter} theme={DIFF_THEME} {font_size_px} />
   {/if}
 {/if}
 
@@ -1338,6 +1299,11 @@
   .diff-content:not(.no-wrap) :global([data-no-newline-at-end-of-file-symbol]) {
     display: inline-block;
     vertical-align: middle;
+  }
+  /* Cmd over a symbol that resolves: a link. */
+  .diff-content.clj-linking :global(.diff-line-syntax-raw),
+  .diff-content.clj-linking :global(.diff-line-content-raw) {
+    cursor: pointer;
   }
   /* Line-number gutter cells: drag-select-only zone. Disabling user
      selection here prevents the drag from looking like a text

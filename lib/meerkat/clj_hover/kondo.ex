@@ -1,7 +1,9 @@
 defmodule Meerkat.CljHover.Kondo do
   @moduledoc """
-  Runs clj-kondo's analysis and keeps what hover needs: where each var
-  is named (`spans`, per file) and each var's definition (`defs`). Also
+  Runs clj-kondo's analysis and keeps what hover and go to definition
+  need: where each var, local, namespace and keyword is named (`spans`,
+  per file), each var's definition (`defs`), each namespace's `ns` form
+  (`namespaces`) and each spec keyword's `s/def` (`keywords`). Also
   reads which file the user's own kondo runs found a namespace in.
 
   Kondo runs from the repo root, so the repo's `.clj-kondo` config
@@ -9,18 +11,39 @@ defmodule Meerkat.CljHover.Kondo do
   """
 
   # muex:ignore equivalent: only an appended char survives; kondo reads the config's first form
-  @config "{:output {:format :json} :analysis {:arglists true} :linters ^:replace {}}"
+  @config "{:output {:format :json} :analysis {:arglists true :locals true :keywords true} :linters ^:replace {}}"
   # muex:ignore equivalent: only an appended char survives; kondo ignores that unknown flag
   @parallel "--parallel"
 
-  @type span :: %{
-          col: pos_integer(),
-          end_col: pos_integer(),
-          ns: String.t(),
-          name: String.t(),
-          # In a `.cljc` file, the reader branch's language; nil elsewhere.
-          lang: String.t() | nil
-        }
+  # The registries whose keywords go to definition jumps to.
+  @spec_defs ~w(clojure.spec.alpha/def cljs.spec.alpha/def)
+
+  # In a `.cljc` file, `lang` is the reader branch's language; nil
+  # elsewhere. A local names the row its binding is on.
+  @type span ::
+          %{
+            kind: :var,
+            col: pos_integer(),
+            end_col: pos_integer(),
+            ns: String.t(),
+            name: String.t(),
+            lang: String.t() | nil
+          }
+          | %{
+              kind: :ns,
+              col: pos_integer(),
+              end_col: pos_integer(),
+              ns: String.t(),
+              lang: String.t() | nil
+            }
+          | %{
+              kind: :keyword,
+              col: pos_integer(),
+              end_col: pos_integer(),
+              ns: String.t(),
+              name: String.t()
+            }
+          | %{kind: :local, col: pos_integer(), end_col: pos_integer(), row: pos_integer()}
 
   @type definition :: %{
           ns: String.t(),
@@ -33,16 +56,21 @@ defmodule Meerkat.CljHover.Kondo do
           macro: boolean()
         }
 
+  # Where a namespace's `ns` form or a keyword's `s/def` is.
+  @type place :: %{file: String.t(), row: pos_integer()}
+
   @type analysis :: %{
           spans: %{optional({String.t(), pos_integer()}) => [span]},
           defs: %{
             optional(
               {ns :: String.t(), name :: String.t(), ext :: String.t(), lang :: String.t() | nil}
             ) => definition
-          }
+          },
+          namespaces: %{optional({ns :: String.t(), ext :: String.t()}) => place},
+          keywords: %{optional({ns :: String.t(), name :: String.t()}) => place}
         }
 
-  @empty %{spans: %{}, defs: %{}}
+  @empty %{spans: %{}, defs: %{}, namespaces: %{}, keywords: %{}}
 
   @doc "True when `clj-kondo` is on PATH."
   @spec available?() :: boolean()
@@ -89,26 +117,30 @@ defmodule Meerkat.CljHover.Kondo do
   defp reduce(analysis) do
     # A var kondo can't place names the namespace
     # `clj-kondo/unknown-namespace`, which no classpath holds.
-    usages = analysis["var-usages"] || []
-    definitions = analysis["var-definitions"] || []
+    usages = list(analysis, "var-usages")
+    definitions = list(analysis, "var-definitions")
+    ns_definitions = list(analysis, "namespace-definitions")
+    # A keyword without a namespace is never an `s/def`'s.
+    keywords = Enum.filter(list(analysis, "keywords"), & &1["ns"])
+    locals = list(analysis, "locals")
+    binding = Map.new(locals, &{&1["id"], &1["row"]})
 
-    # muex:ignore equivalent: a usage never shares a name position with a definition, so order is moot
-    named = Enum.map(usages, &{&1, &1["to"]}) ++ Enum.map(definitions, &{&1, &1["ns"]})
-
+    # A `:keys` destructuring's local shares its keyword's position; the
+    # local, listed first, answers. A local's binding and a keyword have
+    # no separate name position.
     spans =
-      Enum.group_by(
-        named,
-        fn {v, _ns} -> {v["filename"], v["name-row"]} end,
-        fn {v, ns} ->
-          %{
-            col: v["name-col"],
-            end_col: v["name-end-col"],
-            ns: ns,
-            name: v["name"],
-            lang: v["lang"]
-          }
-        end
-      )
+      Enum.concat([
+        Enum.map(usages, &var_span(&1, &1["to"])),
+        Enum.map(definitions, &var_span(&1, &1["ns"])),
+        Enum.map(list(analysis, "namespace-usages"), &ns_span(&1, &1["to"])),
+        Enum.map(ns_definitions, &ns_span(&1, &1["name"])),
+        Enum.map(
+          list(analysis, "local-usages"),
+          &named(&1, %{kind: :local, row: binding[&1["id"]]})
+        ),
+        Enum.map(locals, &at(&1, %{kind: :local, row: &1["row"]})),
+        Enum.map(keywords, &at(&1, %{kind: :keyword, ns: &1["ns"], name: &1["name"]}))
+      ])
 
     # The last definition of a var wins, as in Clojure: `declare`, then
     # `defn`. A namespace's `.clj` and `.cljs` files are separate, and a
@@ -129,16 +161,49 @@ defmodule Meerkat.CljHover.Kondo do
          }}
       end)
 
-    %{spans: spans, defs: defs}
+    %{
+      spans: Enum.group_by(spans, &elem(&1, 0), &elem(&1, 1)),
+      defs: defs,
+      namespaces:
+        Map.new(ns_definitions, fn d ->
+          {{d["name"], Path.extname(d["filename"])}, %{file: d["filename"], row: d["row"]}}
+        end),
+      keywords:
+        for k <- keywords, k["reg"] in @spec_defs, into: %{} do
+          {{k["ns"], k["name"]}, %{file: k["filename"], row: k["row"]}}
+        end
+    }
   end
 
-  defp relative_to(%{spans: spans, defs: defs}, dir) do
+  # Kondo leaves out a kind of analysis it found none of.
+  defp list(analysis, kind), do: analysis[kind] || []
+
+  defp var_span(v, ns), do: named(v, %{kind: :var, ns: ns, name: v["name"], lang: v["lang"]})
+
+  defp ns_span(v, ns), do: named(v, %{kind: :ns, ns: ns, lang: v["lang"]})
+
+  # Keyed by the file and row of the name.
+  defp named(v, span),
+    do: place(span, {v["filename"], v["name-row"]}, v["name-col"], v["name-end-col"])
+
+  defp at(v, span), do: place(span, {v["filename"], v["row"]}, v["col"], v["end-col"])
+
+  defp place(span, at, col, end_col) do
+    cols = %{col: col, end_col: end_col}
+    # muex:ignore equivalent: a span holds no :col or :end_col, so merge order is moot
+    {at, Map.merge(span, cols)}
+  end
+
+  defp relative_to(analysis, dir) do
     prefix = dir <> "/"
     strip = &String.replace_prefix(&1, prefix, "")
+    restrip = &Map.new(&1, fn {key, d} -> {key, %{d | file: strip.(d.file)}} end)
 
     %{
-      spans: Map.new(spans, fn {{file, row}, list} -> {{strip.(file), row}, list} end),
-      defs: Map.new(defs, fn {key, d} -> {key, %{d | file: strip.(d.file)}} end)
+      spans: Map.new(analysis.spans, fn {{file, row}, list} -> {{strip.(file), row}, list} end),
+      defs: restrip.(analysis.defs),
+      namespaces: restrip.(analysis.namespaces),
+      keywords: restrip.(analysis.keywords)
     }
   end
 

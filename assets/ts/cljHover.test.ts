@@ -1,5 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { type CljHover, dedentDoc, keepsPopup, openingTab, popupLeft, popupSide, rescrolled } from "./cljHover";
+import {
+	type CljHover,
+	dedentDoc,
+	isNavClick,
+	keepsPopup,
+	openingTab,
+	popupLeft,
+	popupSide,
+	rescrolled,
+} from "./cljHover";
+
+describe("isNavClick", () => {
+	const keys = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
+
+	test("is Cmd alone on macOS and Ctrl alone elsewhere", () => {
+		expect(isNavClick({ ...keys, metaKey: true }, true)).toBe(true);
+		expect(isNavClick({ ...keys, ctrlKey: true }, true)).toBe(false);
+		expect(isNavClick({ ...keys, ctrlKey: true }, false)).toBe(true);
+		expect(isNavClick({ ...keys, metaKey: true }, false)).toBe(false);
+		expect(isNavClick(keys, true)).toBe(false);
+		expect(isNavClick(keys, false)).toBe(false);
+	});
+
+	test("is not the modifier with any other", () => {
+		for (const other of ["metaKey", "ctrlKey", "altKey", "shiftKey"] as const) {
+			expect(isNavClick({ ...keys, metaKey: true, [other]: true }, true)).toBe(other === "metaKey");
+			expect(isNavClick({ ...keys, ctrlKey: true, [other]: true }, false)).toBe(other === "ctrlKey");
+		}
+	});
+});
 
 describe("rescrolled", () => {
 	test("moves the box by how far the page scrolled since it was measured", () => {

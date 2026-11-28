@@ -110,7 +110,8 @@ function flashOnClick(file: Locator) {
 
 // Clicks the old block's first arrow, then, in the frame the flash
 // starts, a visible Expand button, and returns the line numbers of the
-// cells still flashing two frames later, well inside the 1.6s flash.
+// cells flashing two frames later, well inside the 1.6s flash, once
+// each.
 function expandDuringFlash(file: Locator) {
 	return file.evaluate(async (root, wait) => {
 		const flashing = () => Array.from(root.querySelectorAll("td")).filter((td) => td.getAnimations().length > 0);
@@ -125,7 +126,8 @@ function expandDuringFlash(file: Locator) {
 		).find((b) => b.checkVisibility());
 		(expand as HTMLElement).click();
 		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-		return flashing().map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
+		const lines = flashing().map((td) => td.closest("tr")?.querySelector("[data-line-num]")?.getAttribute("data-line-num"));
+		return [...new Set(lines)].sort();
 	}, budget(3000));
 }
 
@@ -283,9 +285,9 @@ test("every moved line's arrow is a button over its +/− mark, clear of code, t
 			await page.getByRole("checkbox", { name: "Wrap" }).click();
 			await expect(file.locator(".split-diff-view-normal")).toBeVisible();
 			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
-			// Expanding reuses the flashing cells for other lines, so it ends
-			// the flash rather than leave it there.
-			expect(await expandDuringFlash(file)).toEqual([]);
+			// Expanding reuses the flashing cells for other lines; the flash
+			// stays on its own lines.
+			expect(await expandDuringFlash(file)).toEqual(["55", "56", "57", "58", "59"]);
 			await expect.poll(() => movedState(file)).toEqual(EXPECTED);
 
 			await page.getByRole("button", { name: /^Unified$/ }).click();

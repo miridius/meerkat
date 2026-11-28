@@ -17,6 +17,10 @@ defmodule Meerkat.ReviewState do
             pr: nil,
             head_branch: nil,
             base_branch: nil,
+            # The ref holding the reviewed text of every repo file the
+            # diff doesn't change, on both sides: HEAD for staged
+            # reviews, the head ref otherwise.
+            reviewed_ref: nil,
             # Staged-diff reviews' approval-cache key, from
             # `Meerkat.ApprovalCache.key_for/2`: `head_branch`, or a
             # per-worktree key on a detached HEAD. `nil` for other
@@ -84,6 +88,7 @@ defmodule Meerkat.ReviewState do
           pr: pr_info | nil,
           head_branch: String.t() | nil,
           base_branch: String.t() | nil,
+          reviewed_ref: String.t() | nil,
           approval_key: String.t() | nil,
           comments: [Comment.inline()],
           file_comments: [Comment.file()],
@@ -121,6 +126,7 @@ defmodule Meerkat.ReviewState do
          pr: compact_pr(pr_full),
          head_branch: branch,
          base_branch: base_of(pr_full),
+         reviewed_ref: "HEAD",
          approval_key: approval_key,
          approved_file_names: approved,
          precommit?: true
@@ -140,7 +146,8 @@ defmodule Meerkat.ReviewState do
          commit_message: msg,
          pr: compact_pr(pr_full),
          head_branch: ref,
-         base_branch: base_branch(pr_full, base)
+         base_branch: base_branch(pr_full, base),
+         reviewed_ref: ref
        )}
     end
   end
@@ -155,7 +162,9 @@ defmodule Meerkat.ReviewState do
          commit_message: "",
          pr: compact_pr(pr_full),
          head_branch: head,
-         base_branch: base_branch(pr_full, base)
+         base_branch: base_branch(pr_full, base),
+         # `A..` leaves the head empty, which git reads as HEAD.
+         reviewed_ref: if(head == "", do: "HEAD", else: head)
        )}
     end
   end
@@ -170,7 +179,8 @@ defmodule Meerkat.ReviewState do
          commit_message: pr_json.body,
          pr: %{number: pr_json.number, title: pr_json.title, url: pr_json.url},
          head_branch: pr_json.head_ref,
-         base_branch: pr_json.base_ref
+         base_branch: pr_json.base_ref,
+         reviewed_ref: head_ref
        )}
     end
   end
@@ -331,6 +341,7 @@ defmodule Meerkat.ReviewState do
       pr: Keyword.get(opts, :pr),
       head_branch: Keyword.get(opts, :head_branch),
       base_branch: Keyword.get(opts, :base_branch),
+      reviewed_ref: Keyword.get(opts, :reviewed_ref),
       approval_key: Keyword.get(opts, :approval_key),
       approved_file_names: Keyword.get(opts, :approved_file_names, MapSet.new()),
       precommit?: Keyword.get(opts, :precommit?, false)

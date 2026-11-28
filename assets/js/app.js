@@ -600,11 +600,12 @@ window.addEventListener("phx:comment-form:reveal", (e) => {
   );
 });
 
-// A moved line's arrow: the target file's DiffViewer scrolls to the
-// counterpart lines and cancels the event once it has rendered them.
+// A moved line's arrow, or go to definition: the target file's
+// DiffViewer scrolls to the lines and cancels the event once it has
+// rendered them.
 window.addEventListener("phx:moved:jump", (e) => {
-  const { file_name, side, line_start, line_end } = e.detail ?? {};
-  const detail = { fileName: file_name, side, lineStart: line_start, lineEnd: line_end };
+  const { file_name, side, line_start, line_end, expand } = e.detail ?? {};
+  const detail = { fileName: file_name, side, lineStart: line_start, lineEnd: line_end, expand };
   whenRendered(
     () => !document.dispatchEvent(new CustomEvent("meerkat-move-jump", { detail, cancelable: true })),
     () => {},

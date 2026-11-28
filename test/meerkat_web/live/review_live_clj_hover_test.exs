@@ -12,6 +12,18 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
 
   @note "Clojure hover off: clj-kondo not found"
 
+  # A spec outside the diff, whose file view the tests open.
+  @specs """
+  (ns app.specs
+    (:require [clojure.spec.alpha :as s]))
+
+  (s/def ::id int?)
+
+  (defn h "Doc h." [] 1)
+
+  (h)
+  """
+
   # One staged review that every test only reads.
   setup_all do
     dir = Meerkat.TestHelpers.fixture_template("meerkat-lv-clj", &build_fixture/1)
@@ -39,16 +51,27 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     git(dir, ["config", "user.name", "t"])
     git(dir, ["config", "core.hooksPath", "/dev/null"])
     stage(dir, "README.md", "old\n")
-    stage(dir, "src/app/core.clj", "(ns app.core)\n\n(defn f\n  \"Doc f.\"\n  []\n  1)\n")
+
+    stage(
+      dir,
+      "src/app/core.clj",
+      "(ns app.core)\n\n(defn f\n  \"Doc f.\"\n  []\n  1)\n\n(defn gone [] 1)\n"
+    )
+
+    stage(dir, "src/app/specs.clj", @specs)
     git(dir, ["commit", "-qm", "base"])
     stage(dir, "README.md", "new\n")
-    stage(dir, "src/app/core.clj", "(ns app.core)\n\n(defn f\n  \"Doc f.\"\n  []\n  2)\n\n(f)\n")
+    # `(app.core/gone)` on line 10, `:app.specs/id` on line 11.
+    core =
+      "(ns app.core)\n\n(defn f\n  \"Doc f.\"\n  []\n  2)\n\n(f)\n\n(app.core/gone)\n:app.specs/id\n"
+
+    stage(dir, "src/app/core.clj", core)
   end
 
   defp mount(conn, files, rid, dir) do
     Application.put_env(:meerkat, :review_id, rid)
     Application.put_env(:meerkat, :repo_path, dir)
-    Application.put_env(:meerkat, :review_state, %ReviewState{files: files})
+    Application.put_env(:meerkat, :review_state, %ReviewState{files: files, reviewed_ref: "HEAD"})
     {:ok, view, html} = live_isolated(conn, ReviewLive)
     {view, html}
   end
@@ -104,6 +127,48 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     assert_push_event(view, "clj:hover", %{id: 10, hover: %{name: "app.core/f"}})
   end
 
+  test "go to definition answers where the symbol is defined, and a file view by name",
+       %{conn: conn} = ctx do
+    {view, _html} = mount(conn, ctx.files, bound_id(), ctx.dir)
+    idx = Enum.find_index(ctx.files, &(&1.file_name == "src/app/core.clj"))
+    params = %{"id" => 3, "file_index" => idx, "side" => "new", "line" => 8, "col" => 2}
+    render_hook(view, "clj.definition", params)
+
+    assert_push_event(view, "clj:definition", %{
+      id: 3,
+      jump: %{col: 2, end_col: 3, to: %{file_index: ^idx, side: :new, line: 3}},
+      other_side: false
+    })
+
+    render_hook(view, "clj.definition", %{params | "id" => 4, "col" => 1})
+    assert_push_event(view, "clj:definition", %{id: 4, jump: nil, other_side: false})
+
+    # Only the base defines `gone`.
+    render_hook(view, "clj.definition", %{params | "id" => 40, "line" => 10})
+    assert_push_event(view, "clj:definition", %{id: 40, jump: nil, other_side: true})
+
+    # A spec keyword opens its file's view, which hover and go to
+    # definition then name by `where`. An underline's request sent
+    # while the jump's file is read leaves the jump to answer.
+    jump = Map.put(%{params | "id" => 41, "line" => 11, "col" => 1}, "jump", true)
+    render_hook(view, "clj.definition", jump)
+    render_hook(view, "clj.definition", %{params | "id" => 44, "col" => 1})
+    assert_push_event(view, "clj:definition", %{id: 44, jump: nil})
+    to = %{where: "src/app/specs.clj", line: 4}
+    assert_push_event(view, "clj:definition", %{id: 41, jump: %{to: ^to}})
+    render_hook(view, "clj.view", %{"id" => 42, "where" => "src/app/specs.clj"})
+    assert_push_event(view, "clj:view", %{id: 42, view: %{text: @specs}})
+    in_view = Map.merge(params, %{"id" => 43, "where" => "src/app/specs.clj", "line" => 8})
+    render_hook(view, "clj.hover", in_view)
+    assert_push_event(view, "clj:hover", %{id: 43, hover: %{name: "app.specs/h"}})
+
+    # A view no jump opened, named instead of a diff file.
+    render_hook(view, "clj.definition", Map.put(%{params | "id" => 5}, "where", "a.clj"))
+    assert_push_event(view, "clj:definition", %{id: 5, jump: nil})
+    render_hook(view, "clj.view", %{"id" => 6, "where" => "a.clj"})
+    assert_push_event(view, "clj:view", %{id: 6, view: nil})
+  end
+
   test "a hover whose server is gone is logged and answers nothing", %{conn: conn} = ctx do
     rid = bound_id()
     {view, _html} = mount(conn, ctx.files, rid, ctx.dir)
@@ -140,6 +205,16 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     })
 
     refute_push_event(view, "clj:hover", %{}, 200)
+  end
+
+  test "an unbound review ignores go to definition and file view events", %{conn: conn} = ctx do
+    {view, _html} = mount(conn, ctx.files, "unbound", ctx.dir)
+    params = %{"id" => 1, "file_index" => 0, "side" => "new", "line" => 1, "col" => 1}
+    render_hook(view, "clj.definition", params)
+    render_hook(view, "clj.view", %{"id" => 2, "where" => "a.clj"})
+    # Unbound, the handlers start no lookup, so nothing can be pushed later.
+    refute_push_event(view, "clj:definition", %{}, 0)
+    refute_push_event(view, "clj:view", %{}, 0)
   end
 
   defp hide_kondo do

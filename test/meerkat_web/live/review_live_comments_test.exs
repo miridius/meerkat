@@ -532,6 +532,27 @@ defmodule MeerkatWeb.ReviewLiveCommentsTest do
     assert_push_event(view, "moved:jump", ^target)
   end
 
+  test "a go to definition into a diff file names it by index and expands its context",
+       %{conn: conn} do
+    view = mount_unbound(conn, %ReviewState{files: [@plain_file, @md_file]})
+    render_click(view, "file.toggle_expanded", %{"file_name" => "README.md"})
+    target = %{"side" => "old", "line_start" => 2, "line_end" => 2, "expand" => true}
+    render_hook(view, "moved.jump", Map.put(target, "file_index", 1))
+
+    refute has_element?(view, "#file-1.collapsed")
+    assert_push_event(view, "moved:jump", pushed)
+    assert pushed == Map.put(target, "file_name", "README.md")
+
+    render_hook(view, "moved.jump", Map.put(target, "file_index", 0))
+    plain = @plain_file.file_name
+    assert_push_event(view, "moved:jump", %{"file_name" => ^plain})
+
+    for idx <- [2, -1, "0"],
+        do: render_hook(view, "moved.jump", Map.put(target, "file_index", idx))
+
+    refute_push_event(view, "moved:jump", _, 0)
+  end
+
   test "a moved line's arrow to a file the review lacks does nothing", %{conn: conn} do
     view = mount_unbound(conn)
 

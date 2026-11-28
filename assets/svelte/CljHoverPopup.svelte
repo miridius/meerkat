@@ -2,10 +2,12 @@
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
   import { type CljHover, dedentDoc, type HoverAnchor, openingTab, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
+  import { portal } from "../ts/portal";
 
   // The Clojure hover popup (docs/features/clojure-hover.md): two tabs,
   // a var's signature and docstring under its name, and its source,
-  // highlighted the way the diff highlights code, under where it lives.
+  // highlighted the way the diff highlights code, under where it lives;
+  // and a Go to link to its definition.
 
   let {
     hover,
@@ -15,6 +17,7 @@
     font_size_px,
     onpointerenter,
     onpointerleave,
+    ongoto,
   }: {
     hover: CljHover;
     anchor: HoverAnchor;
@@ -23,6 +26,7 @@
     font_size_px: number;
     onpointerenter: () => void;
     onpointerleave: () => void;
+    ongoto: () => void;
   } = $props();
 
   // A tab click overrides it.
@@ -34,13 +38,6 @@
     const ast = highlighter?.getAST(hover.source, "hover.clj", "clojure");
     return ast ? hastToHtml(ast) : null;
   });
-
-  // On <body>, so the diff's horizontal scroller doesn't clip it, and
-  // in page coordinates, so it scrolls with the line it describes.
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
-  }
 
   // The side is chosen at open and the popup fits the room there, so a
   // taller or wider tab scrolls rather than leaving the window. Above,
@@ -61,6 +58,8 @@
   });
 </script>
 
+<!-- On <body>, so the diff's horizontal scroller doesn't clip it, and
+     in page coordinates, so it scrolls with the line it describes. -->
 <div
   class="clj-hover-popup"
   role="tooltip"
@@ -97,6 +96,7 @@
     >
       {hover.where}:{hover.line}
     </button>
+    <button type="button" class="clj-hover-goto" onclick={ongoto}>Go to</button>
   </div>
   <div class="clj-hover-panel" role="tabpanel">
     {#if tab === "doc"}
@@ -179,6 +179,18 @@
     background: var(--chip-bg);
     border-color: var(--border);
     color: var(--text);
+  }
+  .clj-hover-goto {
+    padding: 2px 6px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .clj-hover-goto:hover {
+    background: var(--panel-2);
+    border-color: transparent;
+    text-decoration: underline;
   }
   .clj-hover-name {
     font-weight: 600;

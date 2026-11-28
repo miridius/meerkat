@@ -6,7 +6,7 @@ defmodule Meerkat.CljHover.KondoTest do
 
   alias Meerkat.CljHover.Kondo
 
-  @empty %{spans: %{}, defs: %{}}
+  @empty %{spans: %{}, defs: %{}, namespaces: %{}, keywords: %{}}
 
   setup do
     dir = Meerkat.TestHelpers.tmp_path("meerkat-kondo-test")
@@ -45,7 +45,7 @@ defmodule Meerkat.CljHover.KondoTest do
            }
 
     assert %{macro: true, arglists: ["[]"]} = analysis.defs[{"a", "m", ".clj", nil}]
-    span = %{col: 7, end_col: 8, ns: "a", name: "f", lang: nil}
+    span = %{kind: :var, col: 7, end_col: 8, ns: "a", name: "f", lang: nil}
     assert span in analysis.spans[{"src/a.clj", 3}]
     assert File.ls!(tmp) == []
   end
@@ -84,6 +84,62 @@ defmodule Meerkat.CljHover.KondoTest do
     %{defs: defs} = Kondo.analyse_texts(dir, %{"a.cljc" => text})
     assert %{doc: "JVM."} = defs[{"a", "x", ".cljc", "clj"}]
     assert %{doc: "JS."} = defs[{"a", "x", ".cljc", "cljs"}]
+  end
+
+  test "a local's binding and each use name the binding's row", %{dir: dir} do
+    text = "(ns a)\n(defn f [x]\n  (let [y x]\n    y))\n"
+    %{spans: spans} = Kondo.analyse_texts(dir, %{"a.clj" => text})
+    local = &%{kind: :local, col: &1, end_col: &1 + 1, row: &2}
+    assert local.(10, 2) in spans[{"a.clj", 2}]
+    assert local.(9, 3) in spans[{"a.clj", 3}]
+    assert local.(11, 2) in spans[{"a.clj", 3}]
+    assert spans[{"a.clj", 4}] == [local.(5, 3)]
+  end
+
+  test "a namespace's ns form, and each namespace it requires, are spans", %{dir: dir} do
+    texts = %{"a.clj" => "(ns a\n  (:require [b :as bb]))\n", "b.cljs" => "(ns b)\n"}
+    %{spans: spans, namespaces: namespaces} = Kondo.analyse_texts(dir, texts)
+
+    assert namespaces == %{
+             {"a", ".clj"} => %{file: "a.clj", row: 1},
+             {"b", ".cljs"} => %{file: "b.cljs", row: 1}
+           }
+
+    assert %{kind: :ns, ns: "a", col: 5, end_col: 6, lang: nil} in spans[{"a.clj", 1}]
+    assert %{kind: :ns, ns: "b", col: 14, end_col: 15, lang: nil} in spans[{"a.clj", 2}]
+  end
+
+  test "a ClojureScript spec's s/def defines its keyword", %{dir: dir} do
+    text = "(ns a (:require [cljs.spec.alpha :as s]))\n(s/def ::w int?)\n"
+    %{keywords: keywords} = Kondo.analyse_texts(dir, %{"a.cljs" => text})
+    assert keywords == %{{"a", "w"} => %{file: "a.cljs", row: 2}}
+  end
+
+  test "a .cljc file's require names its reader branch's language", %{dir: dir} do
+    text = "(ns c\n  (:require #?(:cljs [b :as bb])))\n"
+    %{spans: spans} = Kondo.analyse_texts(dir, %{"c.cljc" => text})
+    assert %{kind: :ns, ns: "b", lang: "cljs"} = Enum.find(spans[{"c.cljc", 2}], &(&1.ns == "b"))
+  end
+
+  test "only a spec's s/def defines a keyword, and every namespaced keyword is a span",
+       %{dir: dir} do
+    text = """
+    (ns a (:require [clojure.spec.alpha :as s] [b :as b]))
+    (s/def ::id int?)
+    (s/def :x/y string?)
+    (def m {::b/k 1 :plain 2 :z/w 3})
+    """
+
+    %{spans: spans, keywords: keywords} = Kondo.analyse_texts(dir, %{"a.clj" => text})
+
+    assert keywords == %{
+             {"a", "id"} => %{file: "a.clj", row: 2},
+             {"x", "y"} => %{file: "a.clj", row: 3}
+           }
+
+    assert %{kind: :keyword, ns: "a", name: "id", col: 8, end_col: 12} in spans[{"a.clj", 2}]
+    named = for %{kind: :keyword} = k <- spans[{"a.clj", 4}], do: {k.ns, k.name}
+    assert Enum.sort(named) == [{"b", "k"}, {"z", "w"}]
   end
 
   test "output that isn't an analysis analyses to nothing", %{dir: dir} do
