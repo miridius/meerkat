@@ -299,6 +299,14 @@ defmodule Meerkat.ReviewStateTest do
       assert state.commit_message == ""
       assert state.reviewed_ref == "HEAD"
       assert state.state_signature == Meerkat.Persistence.state_signature(state)
+
+      # `meerkat HEAD~1..` reviews up to HEAD.
+      assert {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "", :two_dot}, repo)
+      assert [%{file_name: "feature.rs"}] = state.files
+      assert state.reviewed_ref == "HEAD"
+
+      assert {:ok, state} = ReviewState.from_target({:range, "HEAD~1", "HEAD~0", :two_dot}, repo)
+      assert state.reviewed_ref == "HEAD~0"
     end
 
     test "a single ref or a range on a PR's branch carries the PR and diffs against its base",

@@ -125,8 +125,9 @@ defmodule Meerkat.CljHover.Kondo do
     locals = list(analysis, "locals")
     binding = Map.new(locals, &{&1["id"], &1["row"]})
 
-    # No two of these share a position, so their order is moot. A local's
-    # binding and a keyword have no separate name position.
+    # A `:keys` destructuring's local shares its keyword's position; the
+    # local, listed first, answers. A local's binding and a keyword have
+    # no separate name position.
     spans =
       Enum.concat([
         Enum.map(usages, &var_span(&1, &1["to"])),

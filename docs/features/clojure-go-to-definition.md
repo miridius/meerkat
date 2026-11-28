@@ -28,7 +28,8 @@ hover is.
 - **Spec keywords**: a keyword with an `s/def` (`clojure.spec.alpha` or
   `cljs.spec.alpha`) jumps to that `s/def`. meerkat looks in the side's
   diff files, then in the keyword's namespace's file, then in the
-  repo's other Clojure files that mention the keyword's name, as the
+  repo's other Clojure files that mention the keyword's name and
+  namespace, as the
   side holds them, finding `s/def`s written with an alias too. It keeps
   what it finds for the rest of the review.
 

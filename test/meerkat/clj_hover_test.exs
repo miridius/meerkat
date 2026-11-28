@@ -28,6 +28,7 @@ defmodule Meerkat.CljHoverTest do
 
     (s/def ::id int?)
     (s/def :user/name string?)
+    (s/def :user/first-name string?)
     """,
     "src/app/other.clj" => """
     (ns app.other)
@@ -96,6 +97,24 @@ defmodule Meerkat.CljHoverTest do
     "doc/names.clj" => """
     (s/def :user/namex string?)
     """,
+    # A keyword two files `s/def`, neither linted nor on the classpath:
+    # the file its namespace's path names answers.
+    "doc/aaa.clj" => """
+    (ns doc.aaa (:require [clojure.spec.alpha :as s]))
+
+    (s/def :app.extra/key int?)
+    """,
+    "doc/app/extra.clj" => """
+    (ns app.extra (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::key string?)
+    """,
+    # Another namespace's `::name`, in a file that never names `user`.
+    "doc/other_name.clj" => """
+    (ns doc.other (:require [clojure.spec.alpha :as s]))
+
+    (s/def ::name string?)
+    """,
     "src/app/top.clj" => """
     (ns app.top) (defn top-fn "Top doc." [] 1)
     """,
@@ -143,7 +162,7 @@ defmodule Meerkat.CljHoverTest do
     (defn more []
       (c/common-fn) (d/draft-fn) (sh/shared-fn 1) (t/tool-fn) (l/locked-fn) o/limit (tp/top-fn) (u/extra) (x/ext-fn) (p/now))
 
-    (defn specs [] [:app.specs/id :user/name :app.model/here :app.specs/nope (u/gone) :app.dropped/gone :app.my-specs/key :app.web-specs/w :app.util/copy])
+    (defn specs [] [:app.specs/id :user/name :app.model/here :app.specs/nope (u/gone) :app.dropped/gone :app.my-specs/key :app.web-specs/w :app.util/copy :user/first-name :dep.lib/dep-key :app.extra/key])
     """,
     # A spec in the diff.
     "src/app/model.clj" => """
@@ -182,7 +201,8 @@ defmodule Meerkat.CljHoverTest do
   }
 
   @jar [
-    {"dep/lib.clj", "(ns dep.lib)\n\n(defn dep-fn\n  \"Dep doc.\"\n  [a]\n  a)\n"},
+    {"dep/lib.clj",
+     "(ns dep.lib)\n\n(defn dep-fn\n  \"Dep doc.\"\n  [a]\n  a)\n\n(require '[clojure.spec.alpha :as s])\n(s/def ::dep-key int?)\n"},
     {"dep/lib.cljs", "(ns dep.lib)\n\n(defn dep-fn \"Dep cljs doc.\" [a] a)\n"},
     {"dep/mac.clj", "(ns dep.mac)\n\n(defmacro mac \"Mac doc.\" [a] a)\n"},
     # A ClojureScript namespace keeping its macros in its .clj file.
@@ -461,18 +481,28 @@ defmodule Meerkat.CljHoverTest do
 
       assert %{where: "web/app/specs.cljs", line: 4} =
                definition_on(ctx, "src/app/core.clj", :new, ":app.web-specs/w")
+
+      assert %{where: "src/app/specs.clj", line: 6} =
+               definition_on(ctx, "src/app/core.clj", :new, ":user/first-name")
+
+      # The namespace's file, here a dependency's.
+      assert %{where: "dep.jar:dep/lib.clj", line: 9} =
+               definition_on(ctx, "src/app/core.clj", :new, ":dep.lib/dep-key")
     end
 
     test "a spec keyword two files define lands in its own namespace's file", ctx do
       assert %{where: "src/app/my_specs.clj", line: 4} =
                definition_on(ctx, "src/app/core.clj", :new, ":app.my-specs/key")
+
+      assert %{where: "doc/app/extra.clj", line: 3} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.extra/key")
     end
 
     test "a spec keyword's search reads only Clojure files with its s/def", ctx do
       assert %{where: "src/app/specs.clj"} =
                definition_on(ctx, "src/app/core.clj", :new, ":user/name")
 
-      for where <- ["README.md", "doc/uses.clj", "doc/names.clj"],
+      for where <- ["README.md", "doc/uses.clj", "doc/names.clj", "doc/other_name.clj"],
           do: refute(CljHover.view(ctx.rid, where))
     end
 
@@ -525,6 +555,25 @@ defmodule Meerkat.CljHoverTest do
       # `(defn copy-fn [] (copy-fn))` on line 8: the call at col 19.
       assert %{to: %{where: "src/app/util_copy.clj", line: 8}} =
                CljHover.definition(ctx.rid, copy, :new, 8, 19)
+    end
+
+    test "a file view reads as its jump's side, and a diff file's var lands in the diff", ctx do
+      assert %{where: "src/app/util_copy.clj"} =
+               definition_on(ctx, "src/app/core.clj", :new, ":app.util/copy")
+
+      copy = {:view, "src/app/util_copy.clj"}
+      util = index(ctx, "src/app/util.clj")
+      assert %{doc: "Old doc."} = CljHover.hover(ctx.rid, copy, :old, 4, 7)
+
+      assert %{to: %{file_index: ^util, side: :old, line: 3}} =
+               CljHover.definition(ctx.rid, copy, :old, 4, 7)
+    end
+
+    test "a namespace lands in the file of the jump's language", ctx do
+      clj = index(ctx, "src/app/plat.clj")
+      cljs = index(ctx, "web/app/plat.cljs")
+      assert %{file_index: ^clj} = definition_on(ctx, "src/app/core.clj", :new, "app.plat")
+      assert %{file_index: ^cljs} = definition_on(ctx, "web/app/ui.cljs", :new, "app.plat")
     end
 
     test "a blank spot has no definition", ctx do

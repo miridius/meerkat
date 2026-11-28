@@ -2,6 +2,7 @@
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
   import { type CljHover, dedentDoc, type HoverAnchor, openingTab, POPUP_GAP, popupLeft, popupSide } from "../ts/cljHover";
+  import { portal } from "../ts/portal";
 
   // The Clojure hover popup (docs/features/clojure-hover.md): two tabs,
   // a var's signature and docstring under its name, and its source,
@@ -38,13 +39,6 @@
     return ast ? hastToHtml(ast) : null;
   });
 
-  // On <body>, so the diff's horizontal scroller doesn't clip it, and
-  // in page coordinates, so it scrolls with the line it describes.
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
-  }
-
   // The side is chosen at open and the popup fits the room there, so a
   // taller or wider tab scrolls rather than leaving the window. Above,
   // its bottom stays at the symbol. Once the reviewer resizes it, which
@@ -64,6 +58,8 @@
   });
 </script>
 
+<!-- On <body>, so the diff's horizontal scroller doesn't clip it, and
+     in page coordinates, so it scrolls with the line it describes. -->
 <div
   class="clj-hover-popup"
   role="tooltip"

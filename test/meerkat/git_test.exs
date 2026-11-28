@@ -603,6 +603,30 @@ defmodule Meerkat.GitTest do
     end
   end
 
+  describe "show/3 and grep/4" do
+    setup do
+      dir = make_git_repo("meerkat-git-show")
+      on_exit(fn -> File.rm_rf!(dir) end)
+      File.write!(Path.join(dir, "a.clj"), "(ns a)\n(def x 1)\n")
+      File.write!(Path.join(dir, "b.clj"), "(ns b)\n(def x 1)\n")
+      git(dir, ["add", "."])
+      commit(dir, "files")
+      # A branch and a tag of one name make git warn on stderr.
+      git(dir, ["branch", "same"])
+      git(dir, ["tag", "same"])
+      %{dir: dir}
+    end
+
+    test "read a ref's text and files, without git's warnings", %{dir: dir} do
+      assert Git.show(dir, "same", "a.clj") == {:ok, "(ns a)\n(def x 1)\n"}
+      assert Git.show(dir, "same", "none.clj") == :error
+      assert Git.grep(dir, "same", ["def x"], ["*.clj"]) == ["a.clj", "b.clj"]
+      # Every pattern must match.
+      assert Git.grep(dir, "same", ["def x", "ns b"], ["*.clj"]) == ["b.clj"]
+      assert Git.grep(dir, "same", ["def y"], ["*.clj"]) == []
+    end
+  end
+
   describe "staged_file_diffs/1" do
     test "an added, a deleted, a renamed-and-edited and a modified file each carry their " <>
            "contents, hunks and staged blob OID",

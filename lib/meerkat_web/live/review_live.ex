@@ -838,18 +838,22 @@ defmodule MeerkatWeb.ReviewLive do
 
   # Answered through `handle_async/3`, so a slow first lookup doesn't
   # hold up other events; a later request's answer replaces an earlier
-  # one's. A request names a diff file by `file_index`, or a file view
-  # by `where`.
+  # one's of the same kind. A request names a diff file by
+  # `file_index`, or a file view by `where`.
   def handle_event("clj.hover", params, socket) do
     {id, args} = clj_args(socket, params)
     {:noreply, clj_async(socket, :clj_hover, fn -> %{id: id, hover: clj(:hover, args)} end)}
   end
 
+  # A jump's request and an underline's each replace only their own kind.
   def handle_event("clj.definition", params, socket) do
     {id, args} = clj_args(socket, params)
 
+    # muex:ignore equivalent: swapping which kind gets which name keeps them apart, and both answer alike
+    kind = if params["jump"] == true, do: :clj_jump, else: :clj_definition
+
     {:noreply,
-     clj_async(socket, :clj_definition, fn ->
+     clj_async(socket, kind, fn ->
        case clj(:definition, args) do
          :other_side -> %{id: id, jump: nil, other_side: true}
          jump -> %{id: id, jump: jump, other_side: false}
@@ -1147,7 +1151,7 @@ defmodule MeerkatWeb.ReviewLive do
   def handle_async(:clj_hover, {:ok, reply}, socket),
     do: {:noreply, push_event(socket, "clj:hover", reply)}
 
-  def handle_async(:clj_definition, {:ok, reply}, socket),
+  def handle_async(kind, {:ok, reply}, socket) when kind in [:clj_definition, :clj_jump],
     do: {:noreply, push_event(socket, "clj:definition", reply)}
 
   def handle_async(:clj_view, {:ok, reply}, socket),

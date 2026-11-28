@@ -5,8 +5,8 @@
 
 import type { CljJump } from "./cljHover";
 
-type Live = { pushEvent: (event: string, payload: unknown) => void };
-type Side = "old" | "new";
+export type Live = { pushEvent: (event: string, payload: unknown) => void };
+export type Side = "old" | "new";
 
 /** The window event that opens the file view, with `{where, line,
  *  side}`, or closes it, with null. A `scrollTop` scrolls the view

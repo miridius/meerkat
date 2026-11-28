@@ -163,7 +163,8 @@ defmodule Meerkat.ReviewState do
          pr: compact_pr(pr_full),
          head_branch: head,
          base_branch: base_branch(pr_full, base),
-         reviewed_ref: head
+         # `A..` leaves the head empty, which git reads as HEAD.
+         reviewed_ref: if(head == "", do: "HEAD", else: head)
        )}
     end
   end

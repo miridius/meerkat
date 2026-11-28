@@ -121,7 +121,8 @@ export function popupLeft(left: number, width: number, viewWidth: number): numbe
 
 /** The code character at viewport point (x, y) in a diff table or a
  *  file view, or null when the point is not over a character of a code
- *  line. A file view's line has no side, and reads as new. */
+ *  line. A file view's line has no side of its own: it is marked new,
+ *  and the view reads it as its jump's side. */
 export function spotAt(x: number, y: number): HoverSpot | null {
 	const caret = caretAt(x, y);
 	if (!caret || caret.node.nodeType !== Node.TEXT_NODE) return null;

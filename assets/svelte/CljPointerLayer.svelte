@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import type { CljPointer } from "../ts/cljPointer.svelte";
+  import { portal } from "../ts/portal";
   import CljHoverPopup from "./CljHoverPopup.svelte";
 
   // What a CljPointer shows: the hover popup, Cmd's underline under a
@@ -17,12 +18,6 @@
     theme: "light" | "dark";
     font_size_px: number;
   } = $props();
-
-  // On <body>, so no scroller clips them.
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
-  }
 </script>
 
 {#if pointer.shown}

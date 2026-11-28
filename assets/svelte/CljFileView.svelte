@@ -5,6 +5,7 @@
   import { type View, type ViewDetail, VIEW_EVENT, closeView, escStepsBack, jumpTo, stepBack } from "../ts/cljJump";
   import { CljPointer } from "../ts/cljPointer.svelte";
   import { DIFF_THEME, sharedHighlighter } from "../ts/diffHighlighter";
+  import { FLASH_KEYFRAMES, FLASH_MS } from "../ts/flash";
   import { languageFor } from "../ts/languageFor";
   import CljPointerLayer from "./CljPointerLayer.svelte";
 
@@ -137,13 +138,7 @@
     const row = body?.querySelector<HTMLElement>(`[data-clj-line="${n}"]`);
     if (!row) return;
     row.scrollIntoView({ block: "center" });
-    row.animate(
-      [
-        { boxShadow: "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)", offset: 0 },
-        { boxShadow: "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)", offset: 0.6, easing: "ease-out" },
-      ],
-      1600,
-    );
+    row.animate(FLASH_KEYFRAMES, FLASH_MS);
   }
 </script>
 
@@ -218,6 +213,8 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    /* The page under it stays put, and so does a hover popup on it. */
+    overscroll-behavior: contain;
     padding: 6px 0;
     font-family: Menlo, Consolas, monospace;
   }

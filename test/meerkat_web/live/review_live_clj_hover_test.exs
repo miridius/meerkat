@@ -148,8 +148,12 @@ defmodule MeerkatWeb.ReviewLiveCljHoverTest do
     assert_push_event(view, "clj:definition", %{id: 40, jump: nil, other_side: true})
 
     # A spec keyword opens its file's view, which hover and go to
-    # definition then name by `where`.
-    render_hook(view, "clj.definition", %{params | "id" => 41, "line" => 11, "col" => 1})
+    # definition then name by `where`. An underline's request sent
+    # while the jump's file is read leaves the jump to answer.
+    jump = Map.put(%{params | "id" => 41, "line" => 11, "col" => 1}, "jump", true)
+    render_hook(view, "clj.definition", jump)
+    render_hook(view, "clj.definition", %{params | "id" => 44, "col" => 1})
+    assert_push_event(view, "clj:definition", %{id: 44, jump: nil})
     to = %{where: "src/app/specs.clj", line: 4}
     assert_push_event(view, "clj:definition", %{id: 41, jump: %{to: ^to}})
     render_hook(view, "clj.view", %{"id" => 42, "where" => "src/app/specs.clj"})

@@ -22,6 +22,7 @@
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import CljPointerLayer from "./CljPointerLayer.svelte";
   import { diffStart, jumpTo } from "../ts/cljJump";
+  import { FLASH_KEYFRAMES, FLASH_MS } from "../ts/flash";
   import { CljPointer } from "../ts/cljPointer.svelte";
   import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
@@ -1089,13 +1090,6 @@
     return arrow;
   }
 
-  // Held for 60% of the flash, then eased out.
-  const MOVED_FLASH_SHADOW = "inset 0 0 0 100vmax rgba(88, 166, 255, 0.35)";
-  const MOVED_FLASH_KEYFRAMES: Keyframe[] = [
-    { boxShadow: MOVED_FLASH_SHADOW, offset: 0 },
-    { boxShadow: MOVED_FLASH_SHADOW, offset: 0.6, easing: "ease-out" },
-  ];
-  const MOVED_FLASH_MS = 1600;
   // The running flash, the lines it shows and when it started.
   let movedFlash: {
     side: "old" | "new";
@@ -1112,9 +1106,8 @@
     movedFlash = null;
   }
 
-  // Flashes the side's cells of the lines for 1.6s from `at` ms in, as
-  // an inset shadow over their opaque backgrounds, which hide the row's
-  // own.
+  // Flashes the side's cells of the lines from `at` ms in: the cells,
+  // whose opaque backgrounds hide the row's own.
   function flashMoved(side: "old" | "new", lineStart: number, lineEnd: number, at = 0) {
     cancelMovedFlash();
     const animations: Animation[] = [];
@@ -1123,7 +1116,7 @@
         r.querySelectorAll(
           `td.diff-line-${side}-num, td.diff-line-${side}-content, td.diff-line-num, td.diff-line-content`,
         ).forEach((td) => {
-          const animation = td.animate(MOVED_FLASH_KEYFRAMES, MOVED_FLASH_MS);
+          const animation = td.animate(FLASH_KEYFRAMES, FLASH_MS);
           animation.currentTime = at;
           animations.push(animation);
         });
@@ -1139,14 +1132,15 @@
     if (!movedFlash) return;
     const { side, lineStart, lineEnd, start } = movedFlash;
     const at = performance.now() - start;
-    if (at < MOVED_FLASH_MS) flashMoved(side, lineStart, lineEnd, at);
+    if (at < FLASH_MS) flashMoved(side, lineStart, lineEnd, at);
     else movedFlash = null;
   }
 
-  // Listen for jump events to a moved block's counterpart. If the
-  // event's fileName matches THIS file and its lines are rendered,
-  // scroll them into view, flash a temporary highlight so the reviewer
-  // can spot them, and cancel the event to tell its sender it landed.
+  // Listen for jump events, to a moved block's counterpart by fileName
+  // or to a definition by fileIndex. If the event names THIS file and
+  // its lines are rendered, scroll them into view, flash a temporary
+  // highlight so the reviewer can spot them, and cancel the event to
+  // tell its sender it landed.
   $effect(() => {
     if (!diffContainer) return;
     const handler = (e: Event) => {

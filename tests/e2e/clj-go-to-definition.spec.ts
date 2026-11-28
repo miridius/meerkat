@@ -99,10 +99,19 @@ test("Cmd underlines a symbol that resolves, a Cmd-click or Go to jumps to its d
 		await page.keyboard.press("Escape");
 		await expect.poll(async () => (await symbolPoint(page, "new", "u/helper")).y).toBeCloseTo(helper.y, -1);
 
-		// A var outside the diff opens the file view at its line.
-		await cmdClick(page, "new", "o/thing");
+		// A var outside the diff opens the file view at its line, also on a
+		// Cmd-click that comes before the underline, the pointer moving on
+		// while the file is read: the first read, so kondo's run outlasts
+		// the underline's lookup delay.
+		await untilStill(page, "new", "o/thing");
+		const thing = await symbolPoint(page, "new", "o/thing");
+		await page.keyboard.down("ControlOrMeta");
+		await page.mouse.move(thing.x, thing.y);
+		await page.mouse.click(thing.x, thing.y);
+		await page.mouse.move(thing.x + 1, thing.y);
 		const view = page.locator('[data-test="clj-file-view"]');
 		await expect(view.locator("header")).toContainText("src/app/other.clj");
+		await page.keyboard.up("ControlOrMeta");
 		await expect(view.locator('[data-clj-line="6"]')).toBeInViewport();
 		await expect(view.locator('[data-clj-line="6"]')).toHaveText("6(defn thing");
 		// Highlighted as the diff is.
@@ -114,6 +123,9 @@ test("Cmd underlines a symbol that resolves, a Cmd-click or Go to jumps to its d
 		await restOn(page, "view", "thing", 2);
 		const popup = page.locator('[data-test="clj-hover"]');
 		await expect(popup).toContainText("app.other/thing");
+		// The view scrolling under it closes it.
+		await view.locator(".body").evaluate((body) => body.dispatchEvent(new Event("scroll")));
+		await expect(popup).toHaveCount(0);
 		// `z`'s second appearance is its use.
 		await cmdClick(page, "view", "z", 2);
 		await expect(view.locator('[data-clj-line="8"]')).toBeInViewport();
@@ -214,6 +226,17 @@ async function cmdClick(
 	nth = 1,
 	resolves = true,
 ) {
+	await untilStill(page, side, word, nth);
+	const { x, y } = await restOn(page, side, word, nth);
+	await page.keyboard.down("ControlOrMeta");
+	if (resolves) await expect(page.locator('[data-test="clj-link"]')).toBeVisible();
+	await page.mouse.click(x, y);
+	await page.keyboard.up("ControlOrMeta");
+}
+
+// Waits until the `nth` `word` stops moving, as after an earlier jump's
+// smooth scroll.
+async function untilStill(page: Parameters<typeof symbolPoint>[0], side: "old" | "new" | "view", word: string, nth = 1) {
 	await expect
 		.poll(async () => {
 			const before = await symbolPoint(page, side, word, nth);
@@ -221,9 +244,4 @@ async function cmdClick(
 			return (await symbolPoint(page, side, word, nth)).y === before.y;
 		})
 		.toBe(true);
-	const { x, y } = await restOn(page, side, word, nth);
-	await page.keyboard.down("ControlOrMeta");
-	if (resolves) await expect(page.locator('[data-test="clj-link"]')).toBeVisible();
-	await page.mouse.click(x, y);
-	await page.keyboard.up("ControlOrMeta");
 }

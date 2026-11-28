@@ -253,7 +253,7 @@ defmodule Meerkat.CljHover do
 
   # A var the side's diff files don't define: its namespace's file for
   # the first of `exts` that defines it, each file analysed on first
-  # hover. A diff file answers only from the side's text.
+  # lookup. A diff file answers only from the side's text.
   defp outside_definition(state, var, exts, lang) do
     first_found(exts, state, fn ext, state -> defined_in(state, var, ext, lang) end)
   end
@@ -430,20 +430,8 @@ defmodule Meerkat.CljHover do
 
     case Enum.find_value(exts, &state.sides[side].namespaces[{ns, &1}]) do
       nil ->
-        first_found(exts, state, &ns_in_view(&2, ns, &1))
-
-      %{file: file, row: row} ->
-        {%{file_index: diff_index(state.files, side, file), side: side, line: row}, state}
-    end
-  end
-
-  defp jump_to(state, side, _at, %{kind: :keyword, ns: ns, name: name}) do
-    case state.sides[side].keywords[{ns, name}] do
-      nil ->
-        {files, state} = spec_files(state, ns, name)
-
-        first_found(files, state, fn file, state ->
-          in_view(state, {:dir, state.root, file}, & &1.keywords[{ns, name}])
+        first_found(exts, state, fn ext, state ->
+          ns_in_view(state, ns, ext, & &1.namespaces[{ns, ext}])
         end)
 
       %{file: file, row: row} ->
@@ -451,12 +439,28 @@ defmodule Meerkat.CljHover do
     end
   end
 
-  # Namespace `ns`'s file with extension `ext` outside the diff, in a
-  # file view.
-  defp ns_in_view(state, ns, ext) do
+  defp jump_to(state, side, at, %{kind: :keyword, ns: ns, name: name} = span) do
+    case state.sides[side].keywords[{ns, name}] do
+      nil ->
+        {_, exts} = lang_exts(span, at.path)
+        find = & &1.keywords[{ns, name}]
+
+        with {nil, state} <- first_found(exts, state, &ns_in_view(&2, ns, &1, find)) do
+          {files, state} = spec_files(state, ns, name)
+          first_found(files, state, &in_view(&2, {:dir, &2.root, &1}, find))
+        end
+
+      %{file: file, row: row} ->
+        {%{file_index: diff_index(state.files, side, file), side: side, line: row}, state}
+    end
+  end
+
+  # The line `find` finds in namespace `ns`'s file with extension `ext`
+  # outside the diff, in a file view.
+  defp ns_in_view(state, ns, ext, find) do
     case outside_location(state, ns, ext) do
       {nil, state} -> {nil, state}
-      {location, state} -> in_view(state, location, & &1.namespaces[{ns, ext}])
+      {location, state} -> in_view(state, location, find)
     end
   end
 
@@ -533,22 +537,24 @@ defmodule Meerkat.CljHover do
   end
 
   # The repo's Clojure files at the reviewed ref, outside the diff, with
-  # a line that may `s/def` keyword `ns/name`; the namespace's own file
-  # first. Searched once per keyword.
+  # a line that may `s/def` keyword `ns/name`; files whose path the
+  # namespace names first. Searched once per keyword.
   defp spec_files(state, ns, name) do
     case Map.fetch(state.spec_files, {ns, name}) do
       {:ok, files} ->
         {files, state}
 
       :error ->
-        # `def` and the keyword, maybe written `::name` or `::alias/name`.
+        # `def` and the keyword, maybe written `::name` or `::alias/name`,
+        # in a file naming its namespace, as its `ns` form, the `:require`
+        # giving the alias, or the keyword written out does.
         pattern = "def[[:space:]]+::?([^[:space:]/]+/)?#{Regex.escape(name)}([[:space:]()]|$)"
         diff = Enum.flat_map(state.files, &[&1.file_name, &1.old_file_name])
         own = ns |> String.replace("-", "_") |> String.replace(".", "/")
 
         files =
           state.root
-          |> Git.grep(state.ref, pattern, ~w(*.clj *.cljc *.cljs))
+          |> Git.grep(state.ref, [pattern, Regex.escape(ns)], ~w(*.clj *.cljc *.cljs))
           |> Enum.reject(&(&1 in diff))
           |> Enum.sort_by(&(not String.contains?(&1, own)))
 

@@ -17,14 +17,11 @@ import {
 	rescrolled,
 	spotAt,
 } from "./cljHover";
+import type { Live, Side } from "./cljJump";
 import { isMacPlatform } from "./sendFeedbackShortcut";
-
-type Live = { pushEvent: (event: string, payload: unknown) => void };
 
 /** The file requests name: a diff file, or a file view. */
 export type CljFile = { file_index: number } | { where: string };
-
-type Side = "old" | "new";
 
 // Request ids, unique across every pointer on the page, since each one
 // hears every answer.
@@ -39,6 +36,8 @@ const NOTE_MS = 1500;
 const mac = () => typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
 
 type Box = { top: number; left: number; width: number; height: number };
+
+type DefinitionRequest = { id: number; spot: HoverSpot; side: Side };
 
 export class CljPointer {
 	/** The hover popup's var, where it opens, and the spot it was asked for. */
@@ -57,9 +56,11 @@ export class CljPointer {
 	#linkTimer = 0;
 	#noteTimer = 0;
 	#hoverRequest: { id: number; anchor: HoverAnchor; row: string; spot: HoverSpot; side: Side } | null = null;
-	// A definition request: to underline its symbol, or to jump there.
-	#definitionRequest: { id: number; spot: HoverSpot; side: Side; go: { x: number; y: number } | null } | null =
-		null;
+	// Definition requests: one to underline its symbol, and one to jump
+	// there, from the point `go`. Neither replaces the other, here or on
+	// the server.
+	#linkRequest: DefinitionRequest | null = null;
+	#jumpRequest: (DefinitionRequest & { go: { x: number; y: number } }) | null = null;
 	#pointer: { x: number; y: number } | null = null;
 
 	/** `side` picks the side a spot reads as; `jump` takes the reviewer
@@ -76,8 +77,9 @@ export class CljPointer {
 		this.#jump = jump;
 	}
 
-	/** Listens for clicks on `el`, the file's code, the server's answers
-	 *  and the Cmd key; returns the cleanup, for an effect to return. */
+	/** Listens for clicks on `el`, the file's code, the server's answers,
+	 *  the Cmd and Esc keys, and scrolls; returns the cleanup, for an
+	 *  effect to return. */
 	listen(el: HTMLElement): () => void {
 		const onClick = (e: MouseEvent) => this.#click(e);
 		const onHover = (e: Event) => this.#onHover((e as CustomEvent).detail);
@@ -94,6 +96,15 @@ export class CljPointer {
 			else this.#unlink();
 		};
 		const unlink = () => this.#unlink();
+		const onScroll = (e: Event) => {
+			this.#unlink();
+			// The popup sits in the page, so a scroller holding the code,
+			// such as a file view's, leaves it behind.
+			if (e.target instanceof Element && e.target.contains(el)) {
+				this.#hoverRequest = null;
+				this.shown = null;
+			}
+		};
 		el.addEventListener("click", onClick);
 		window.addEventListener("phx:clj:hover", onHover);
 		window.addEventListener("phx:clj:definition", onDefinition);
@@ -101,7 +112,7 @@ export class CljPointer {
 		window.addEventListener("keyup", onKey);
 		window.addEventListener("blur", unlink);
 		// The underline sits in the window, so a scroll leaves it behind.
-		window.addEventListener("scroll", unlink, { capture: true, passive: true });
+		window.addEventListener("scroll", onScroll, { capture: true, passive: true });
 		return () => {
 			el.removeEventListener("click", onClick);
 			window.removeEventListener("phx:clj:hover", onHover);
@@ -109,11 +120,12 @@ export class CljPointer {
 			window.removeEventListener("keydown", onKey);
 			window.removeEventListener("keyup", onKey);
 			window.removeEventListener("blur", unlink);
-			window.removeEventListener("scroll", unlink, { capture: true });
+			window.removeEventListener("scroll", onScroll, { capture: true });
 			for (const t of [this.#hoverTimer, this.#closeTimer, this.#linkTimer, this.#noteTimer]) clearTimeout(t);
 			// A file view that opens again starts with nothing showing.
 			this.#hoverRequest = null;
-			this.#definitionRequest = null;
+			this.#linkRequest = null;
+			this.#jumpRequest = null;
 			this.shown = null;
 			this.link = null;
 			this.note = null;
@@ -211,34 +223,49 @@ export class CljPointer {
 		const spot = spotAt(x, y);
 		const link = this.link;
 		if (spot && link && sameSymbol(link.spot, spot, link.jump)) return;
-		this.link = null;
+		// The symbol left behind isn't underlined when its answer comes.
+		this.#unlink();
 		if (!spot) return;
 		this.#linkTimer = window.setTimeout(() => this.#requestDefinition(spot, null), LINK_DELAY_MS);
 	}
 
 	#unlink() {
 		clearTimeout(this.#linkTimer);
-		if (!this.#definitionRequest?.go) this.#definitionRequest = null;
+		this.#linkRequest = null;
 		this.link = null;
 	}
 
 	#requestDefinition(spot: HoverSpot, go: { x: number; y: number } | null) {
 		lastId += 1;
 		const side = this.#side(spot);
-		this.#definitionRequest = { id: lastId, spot, side, go };
-		this.#live.pushEvent("clj.definition", { id: lastId, ...this.#file(), side, line: spot.line, col: spot.col });
+		const request = { id: lastId, spot, side };
+		if (go) this.#jumpRequest = { ...request, go };
+		else this.#linkRequest = request;
+		this.#live.pushEvent("clj.definition", {
+			id: lastId,
+			...this.#file(),
+			side,
+			line: spot.line,
+			col: spot.col,
+			jump: go !== null,
+		});
 	}
 
 	#onDefinition({ id, jump, other_side }: { id: number; jump: CljJump | null; other_side: boolean }) {
-		const request = this.#definitionRequest;
-		if (id !== request?.id) return;
-		this.#definitionRequest = null;
-		const { spot, side, go } = request;
-		if (go) {
+		const jumpRequest = this.#jumpRequest;
+		if (id === jumpRequest?.id) {
+			this.#jumpRequest = null;
+			const { spot, side, go } = jumpRequest;
 			if (jump) this.#go(jump, side, spot);
 			// A symbol only the other side defines does nothing, as hover.
 			else if (!other_side) this.#showNote(go.x, go.y);
-		} else if (jump && spot.raw.isConnected) {
+			return;
+		}
+		const request = this.#linkRequest;
+		if (id !== request?.id) return;
+		this.#linkRequest = null;
+		const { spot, side } = request;
+		if (jump && spot.raw.isConnected) {
 			const boxes = columnRects(spot.raw, jump.col, jump.end_col).map(({ top, left, width, height }) => ({
 				top,
 				left,
