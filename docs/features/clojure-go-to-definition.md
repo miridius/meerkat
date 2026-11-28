@@ -66,3 +66,6 @@ itself when the review ends.
 - **A click outside the file view**, or its close button, closes it,
   back to the diff where the first jump into it started. `Esc` then
   steps back through the jumps before that one.
+
+Stepping back only scrolls: a filter a jump cleared, or a file it
+expanded, stays as the jump left it.

@@ -26,10 +26,10 @@ not necessarily the worktree.
 
 ## Popup
 
-The header is two tabs and a `Go to` link. The popup opens on Source for a var defined
-in a file inside the repo, and on Docs for one from a dependency: a
-jar, or a directory outside the repo. The selected tab is marked by a
-subtle background, not the accent colour.
+The header is two tabs and a `Go to` link. The popup opens on Source
+for a var defined in a file inside the repo, and on Docs for one from
+a dependency: a jar, or a directory outside the repo. The selected tab
+is marked by a subtle background, not the accent colour.
 
 - **Docs**, labelled with the var's qualified name (`ns/name`), marked
   `macro` for a macro: its signature, one line per arglist, then its
@@ -38,7 +38,7 @@ subtle background, not the accent colour.
   jar and entry) and its line: its whole source, highlighted with the
   diff's own highlighter, theme and font size.
 
-A `Go to` link in the header jumps to the definition (see
+The `Go to` link jumps to the definition (see
 [go to definition](clojure-go-to-definition.md)).
 
 The popup opens below the symbol, unless below has less room than 60%
