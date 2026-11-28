@@ -21,7 +21,7 @@
   import CommentForm from "./CommentForm.svelte";
   import PlantUmlPreview from "./PlantUmlPreview.svelte";
   import CljPointerLayer from "./CljPointerLayer.svelte";
-  import { jumpTo } from "../ts/cljJump";
+  import { diffStart, jumpTo } from "../ts/cljJump";
   import { CljPointer } from "../ts/cljPointer.svelte";
   import { textAbove } from "../ts/cmIndent";
   import { languageFor } from "../ts/languageFor";
@@ -981,7 +981,8 @@
     live,
     () => ({ file_index }),
     (spot) => spot.side,
-    (jump, side) => jumpTo(jump, side, live),
+    (jump, side, spot) =>
+      jumpTo(jump, side, live, diffStart(file_index, spot.side, spot.line, spot.raw.closest("tr"))),
   );
 
   $effect(() => {

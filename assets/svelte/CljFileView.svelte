@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DiffHighlighter } from "@git-diff-view/shiki";
   import { hastToHtml } from "shiki";
-  import { type ViewDetail, VIEW_EVENT, jumpTo } from "../ts/cljJump";
+  import { type View, type ViewDetail, VIEW_EVENT, closeView, escStepsBack, jumpTo, stepBack } from "../ts/cljJump";
   import { CljPointer } from "../ts/cljPointer.svelte";
   import { DIFF_THEME, sharedHighlighter } from "../ts/diffHighlighter";
   import { languageFor } from "../ts/languageFor";
@@ -25,7 +25,7 @@
   // Request ids, unique to this view: only it asks for files.
   let lastId = 0;
   let request = 0;
-  let open = $state<NonNullable<ViewDetail> | null>(null);
+  let open = $state<View | null>(null);
   // The open file's text, once the server sends it.
   let text = $state<string | null>(null);
   let shownWhere: string | null = null;
@@ -52,7 +52,9 @@
     live,
     () => ({ where: open?.where ?? "" }),
     () => open?.side ?? "new",
-    (jump, side) => jumpTo(jump, side, live),
+    (jump, side) => {
+      if (open) jumpTo(jump, side, live, { view: { ...open, scrollTop: body?.scrollTop ?? 0 } });
+    },
   );
 
   $effect(() => {
@@ -64,7 +66,7 @@
       open = detail;
       if (!detail) return;
       if (detail.where === shownWhere && text !== null) {
-        reveal(detail.line);
+        show(detail);
         return;
       }
       text = null;
@@ -76,25 +78,37 @@
     const onText = (e: Event) => {
       const { id, view } = (e as CustomEvent<{ id: number; view: { where: string; text: string } | null }>).detail;
       if (id !== request || !open) return;
+      // The file is gone: back to where the jump started.
       if (!view) {
-        open = null;
+        if (!stepBack()) open = null;
         return;
       }
       text = view.text;
       shownWhere = view.where;
-      const line = open.line;
-      requestAnimationFrame(() => reveal(line));
+      const shown = open;
+      requestAnimationFrame(() => show(shown));
     };
+    // Esc steps back from the latest jump, in the view or the diff. It
+    // listens first, to see the page before Esc closes anything.
     const onKey = (e: KeyboardEvent) => {
-      if (open && e.key === "Escape") close();
+      if (!escStepsBack(e)) return;
+      e.preventDefault();
+      stepBack();
+    };
+    // A click outside the view, and the popups it opens, closes it.
+    const onPointer = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (open && !target?.closest(".clj-file-view, .clj-hover-popup")) closeView();
     };
     window.addEventListener(VIEW_EVENT, onView);
     window.addEventListener("phx:clj:view", onText);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
     return () => {
       window.removeEventListener(VIEW_EVENT, onView);
       window.removeEventListener("phx:clj:view", onText);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
     };
   });
 
@@ -102,8 +116,12 @@
     if (body) return pointer.listen(body);
   });
 
-  function close() {
-    open = null;
+  // Scrolls the view where `view` says: where it was, or to its line,
+  // flashed.
+  function show(view: View | null) {
+    if (view?.scrollTop === undefined) {
+      if (view) reveal(view.line);
+    } else if (body) body.scrollTop = view.scrollTop;
   }
 
   // Scrolls line `n` to the middle of the view and flashes it.
@@ -126,7 +144,7 @@
     <header>
       <code class="where">{open.where}</code>
       <span class="hint">Read-only</span>
-      <button type="button" class="close" aria-label="Close file view" title="Close (Esc)" onclick={close}>×</button>
+      <button type="button" class="close" aria-label="Close file view" title="Close" onclick={closeView}>×</button>
     </header>
     <div
       class="body diff-tailwindcss-wrapper"

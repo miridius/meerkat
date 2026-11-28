@@ -37,7 +37,7 @@ const core = (body: string) => `(ns app.core
   ${body})
 `;
 
-test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to its definition in the diff, revealing it, or in a file view", async ({
+test("Cmd underlines a symbol that resolves, a Cmd-click or Go to jumps to its definition in the diff, revealing it, or in a file view, and Esc or a click outside steps back", async ({
 	page,
 }) => {
 	const fixture = stagedReview(
@@ -50,6 +50,7 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 	const meerkat = await startMeerkat({ fixture });
 	try {
 		await page.goto(meerkat.url);
+		const history = await page.evaluate(() => window.history.length);
 		const util = page.locator(".file-section").filter({ hasText: "src/app/util.clj" });
 		const helperRow = util.locator('td.diff-line-new-num span[data-line-num="3"]');
 		// Folded away from the diff's one change.
@@ -80,6 +81,21 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		// Closed by the click itself, before the jump scrolls the page.
 		expect(await page.locator('[data-test="clj-hover"]').count()).toBe(0);
 		await expect(helperRow).toBeInViewport();
+		// The jump has landed once the line flashes and the page stops.
+		await expect
+			.poll(() => helperRow.evaluate((num) => num.closest("tr")?.getAnimations({ subtree: true }).length))
+			.toBeGreaterThan(0);
+		await expect
+			.poll(async () => {
+				const before = await page.evaluate(() => window.scrollY);
+				await afterNextFrame(page);
+				return before > 0 && before === (await page.evaluate(() => window.scrollY));
+			})
+			.toBe(true);
+
+		// Esc steps back to where the jump started.
+		await page.keyboard.press("Escape");
+		await expect.poll(async () => (await symbolPoint(page, "new", "u/helper")).y).toBeCloseTo(helper.y, -1);
 
 		// A var outside the diff opens the file view at its line.
 		await cmdClick(page, "new", "o/thing");
@@ -100,9 +116,26 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		await cmdClick(page, "view", "z", 2);
 		await expect(view.locator('[data-clj-line="8"]')).toBeInViewport();
 
-		// Esc closes it.
+		// Esc closes the popup first, then steps back through the jumps:
+		// to the file view the jump to `z` started in, then to the diff.
+		await restOn(page, "view", "thing", 2);
+		await expect(popup).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(popup).toHaveCount(0);
+		await expect(view).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(view).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(view).toHaveCount(0);
+		await expect.poll(async () => (await symbolPoint(page, "new", "o/thing")).y).toBeCloseTo(helper.y, -1);
+
+		// A click outside closes it, back past the jumps within it to the
+		// diff.
+		await cmdClick(page, "new", "o/thing");
+		await cmdClick(page, "view", "z", 2);
+		await page.mouse.click(4, 4);
+		await expect(view).toHaveCount(0);
+		await expect.poll(async () => (await symbolPoint(page, "new", "o/thing")).y).toBeCloseTo(helper.y, -1);
 
 		// A spec keyword opens its s/def.
 		await cmdClick(page, "new", ":app.other/thing");
@@ -122,17 +155,32 @@ test("Cmd underlines a symbol that resolves, and a Cmd-click or Go to jumps to i
 		await restOn(page, "new", "u/helper");
 		await popup.getByRole("button", { name: "Go to" }).click();
 		await expect(helperRow).toBeInViewport();
-		// It flashes on through the file drawing, which reuses its rows.
-		await expect
-			.poll(() =>
-				helperRow.evaluate((num) =>
-					Math.max(
-						0,
-						...(num.closest("tr")?.getAnimations({ subtree: true }) ?? []).map((a) => Number(a.currentTime)),
-					),
-				),
-			)
-			.toBeGreaterThan(1000);
+		// It flashes on through the file drawing, which reuses its rows:
+		// watched every frame, as a poll can miss the flash's last 600ms.
+		const flashed = await page.evaluate(
+			() =>
+				new Promise<number>((resolve) => {
+					let longest = 0;
+					const tick = () => {
+						const section = [...document.querySelectorAll(".file-section")].find((s) =>
+							s.textContent?.includes("src/app/util.clj"),
+						);
+						const row = section?.querySelector('td.diff-line-new-num span[data-line-num="3"]')?.closest("tr");
+						const at = Math.max(0, ...(row?.getAnimations({ subtree: true }) ?? []).map((a) => Number(a.currentTime)));
+						// Over 1s, or cut short.
+						if (at > 1000 || (longest > 0 && at === 0)) resolve(Math.max(at, longest));
+						else {
+							longest = Math.max(longest, at);
+							requestAnimationFrame(tick);
+						}
+					};
+					tick();
+				}),
+		);
+		expect(flashed).toBeGreaterThan(1000);
+
+		// No jump added a browser history entry.
+		expect(await page.evaluate(() => window.history.length)).toBe(history);
 	} finally {
 		await meerkat.kill();
 	}

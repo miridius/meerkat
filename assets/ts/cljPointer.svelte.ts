@@ -51,7 +51,7 @@ export class CljPointer {
 	#live: Live;
 	#file: () => CljFile;
 	#side: (spot: HoverSpot) => Side;
-	#jump: (jump: CljJump, side: Side) => void;
+	#jump: (jump: CljJump, side: Side, spot: HoverSpot) => void;
 	#hoverTimer = 0;
 	#closeTimer = 0;
 	#linkTimer = 0;
@@ -63,8 +63,13 @@ export class CljPointer {
 	#pointer: { x: number; y: number } | null = null;
 
 	/** `side` picks the side a spot reads as; `jump` takes the reviewer
-	 *  to a definition. */
-	constructor(live: Live, file: () => CljFile, side: (spot: HoverSpot) => Side, jump: (jump: CljJump, side: Side) => void) {
+	 *  to a definition, from the symbol at `spot`. */
+	constructor(
+		live: Live,
+		file: () => CljFile,
+		side: (spot: HoverSpot) => Side,
+		jump: (jump: CljJump, side: Side, spot: HoverSpot) => void,
+	) {
 		this.#live = live;
 		this.#file = file;
 		this.#side = side;
@@ -78,6 +83,12 @@ export class CljPointer {
 		const onHover = (e: Event) => this.#onHover((e as CustomEvent).detail);
 		const onDefinition = (e: Event) => this.#onDefinition((e as CustomEvent).detail);
 		const onKey = (e: KeyboardEvent) => {
+			// Esc closes the popup, before a later one steps back from a jump.
+			if (e.key === "Escape" && e.type === "keydown" && this.shown) {
+				this.#hoverRequest = null;
+				this.shown = null;
+				return;
+			}
 			if (e.key !== (mac() ? "Meta" : "Control")) return;
 			if (e.type === "keydown" && this.#pointer) this.#lookUpSoon(this.#pointer.x, this.#pointer.y);
 			else this.#unlink();
@@ -136,7 +147,7 @@ export class CljPointer {
 		const link = this.link;
 		if (link && sameSymbol(link.spot, spot, link.jump)) {
 			this.#unlink();
-			this.#go(link.jump, link.side);
+			this.#go(link.jump, link.side, link.spot);
 		} else {
 			this.#requestDefinition(spot, { x: e.clientX, y: e.clientY });
 		}
@@ -224,7 +235,7 @@ export class CljPointer {
 		this.#definitionRequest = null;
 		const { spot, side, go } = request;
 		if (go) {
-			if (jump) this.#go(jump, side);
+			if (jump) this.#go(jump, side, spot);
 			// A symbol only the other side defines does nothing, as hover.
 			else if (!other_side) this.#showNote(go.x, go.y);
 		} else if (jump && spot.raw.isConnected) {
@@ -239,11 +250,11 @@ export class CljPointer {
 	}
 
 	// Jumps, closing the popup, which would cover where it lands.
-	#go(jump: CljJump, side: Side) {
+	#go(jump: CljJump, side: Side, spot: HoverSpot) {
 		clearTimeout(this.#hoverTimer);
 		this.#hoverRequest = null;
 		this.shown = null;
-		this.#jump(jump, side);
+		this.#jump(jump, side, spot);
 	}
 
 	#showNote(x: number, y: number) {
