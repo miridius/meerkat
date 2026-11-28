@@ -42,7 +42,7 @@ bridges the two by exercising the docs against the running app.
 - [clojure-hover.md](clojure-hover.md) — hover a symbol in a Clojure diff for its docs and source, via clj-kondo.
 - [clojure-go-to-definition.md](clojure-go-to-definition.md) — Cmd-click a Clojure symbol to jump to its definition, in the diff or a read-only file view.
 - [approved-collapse.md](approved-collapse.md) — approved files collapse; click header to re-expand.
-- [pending-answers.md](pending-answers.md) — pinned banner, schema, lifecycle.
+- [pending-answers.md](pending-answers.md) — answers page, pinned banner, schema, lifecycle.
 - [multi-tab.md](multi-tab.md) — PubSub state convergence, tab close behavior.
 
 ## Pending / not-yet-written
