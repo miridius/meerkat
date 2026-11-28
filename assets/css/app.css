@@ -748,8 +748,9 @@ a.chip-link:hover .chip-value {
   font-size: 0.8rem;
   padding: 2px 8px;
 }
-/* Every button's hover: after each lighter rule on buttons, and before
-   each heavier one. */
+/* Every button's hover. It follows the last lighter rule ending in
+   `button`, .note header button, as biome's noDescendingSpecificity
+   requires. */
 button:hover:not(:disabled) {
   background: var(--panel);
   border-color: var(--border-strong);
@@ -805,10 +806,8 @@ button:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 4px 10px;
-}
-/* The squeeze floor: 6ch, or the whole text when shorter. Browsers
-   without calc-size() pad a shorter text out to 6ch. */
-.diff-toolbar {
+  /* The squeeze floor: 6ch, or the whole text when shorter. Browsers
+     without calc-size() pad a shorter text out to 6ch. */
   --squeeze-floor: 6ch;
 }
 @supports (min-width: calc-size(max-content, size)) {
