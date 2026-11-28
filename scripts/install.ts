@@ -281,11 +281,11 @@ const readlinkOr = (path: string) => {
 // so the installed meerkat needs no Bun on the PATH git hooks run with.
 // The executable loads no .env or bunfig.toml from the reviewed repo it
 // runs in. Bun leaves a temporary `.*.bun-build` copy in its working
-// directory, so it compiles in `scratch`. Then it runs the binary once: one missing the
-// shepherd's code would exit 0 and approve every commit unreviewed, and
-// the run moves part of macOS's first-launch scan of a new executable out
-// of the first review's wait. Returns why it failed, leaving nothing at `out`,
-// or null.
+// directory, so it compiles in `scratch`. Then it runs the binary once:
+// one missing the shepherd's code would exit 0 and approve every commit
+// unreviewed, and the run moves part of macOS's first-launch scan of a
+// new executable out of the first review's wait. Returns why it failed,
+// leaving nothing at `out`, or null.
 export function buildShepherd(root: string, out: string, scratch: string, env: Env): string | null {
 	const build = Bun.spawnSync(
 		[

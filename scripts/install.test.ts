@@ -230,11 +230,13 @@ describe("on disk", () => {
 		);
 		symlinkSync(release, join(base, "current"));
 		writeFileSync(join(scratch, ".env"), "FROM_DOTENV=leaked\n");
+		writeFileSync(join(scratch, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+		writeFileSync(join(scratch, "preload.ts"), "process.exit(9);\n");
 		const review = Bun.spawnSync([out, "--commit-msg", "MSG", "--no-open"], {
 			cwd: scratch,
 			env: { ...process.env, MEERKAT_CURRENT_LINK: join(base, "current"), MEERKAT_RUNS_DIR: join(base, "runs") },
 			stderr: "pipe",
-			// Killed within the test's own 5 s, should its caller spin.
+			// So a caller that spins cannot hang the run.
 			timeout: 4000,
 			killSignal: "SIGKILL",
 		});

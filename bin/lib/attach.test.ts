@@ -484,11 +484,12 @@ test("a launcher that cannot create its runs dir exits 2 with a REJECT", () => {
 	writeFileSync(join(base, "file"), "");
 	const run = shepherdIn(base, join(base, "file/runs"));
 	expect(run.exitCode).toBe(2);
+	expect(run.stderr.toString()).toContain("ENOTDIR");
 	expect(run.stderr.toString()).toEndWith("meerkat: the launcher failed — defaulting to REJECT (commit aborted).\n");
 });
 
-// An old-layout run dir in a runs dir that cannot be changed: removing it
-// fails, and the caller exits with the decision all the same.
+// An old-layout run dir that cannot be removed: the caller exits with
+// the decision all the same.
 test("a caller keeps a decision it cannot clean up after", async () => {
 	const runs = tmp();
 	const { c } = caller(runs, { stream: outcome });
