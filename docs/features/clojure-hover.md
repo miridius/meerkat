@@ -9,7 +9,8 @@ pointer on a symbol shows the docs and source of the var it names.
   the popup below it. Moving to another symbol and resting there
   replaces it.
 - The popup stays open while the pointer is over the symbol or the
-  popup, and closes shortly after the pointer leaves both.
+  popup, and closes shortly after the pointer leaves both, or on
+  Escape.
 - A plain click still selects text, as before; the line-number
   gutter still starts comment drags.
 - A symbol meerkat can't resolve, or whose definition it can't find,

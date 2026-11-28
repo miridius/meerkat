@@ -61,7 +61,8 @@ itself after a decision.
 - **`Esc`** steps back one jump, to where it started: the file view it
   came from, or the diff scrolled back to the line it showed. Pressing
   it again steps back through earlier jumps. It does so only when no popup,
-  form or dropdown is open and focus isn't in a text field.
+  form or dropdown is open and focus isn't in a text field; an open
+  hover popup closes on the first `Esc`.
 - **A click outside the file view**, or its close button, closes it,
   back to the diff where the jump that opened it started. `Esc` then
   steps back through the jumps before that one.
